@@ -28,7 +28,7 @@ const HeroSection = () => {
                 muted
                 playsInline
             >
-                <source src="video/homeSampleVideo.mp4" type="video/mp4"/>
+                <source src="/hdsign/video/homeSampleVideo.mp4" type="video/mp4"/>
             </video>
 
             <div className="overlay-text">
