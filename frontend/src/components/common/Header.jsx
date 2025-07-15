@@ -51,7 +51,7 @@ function Header() {
             }}
         >
             <div className="logo">
-                <Link to={'/'}>HDSIGN</Link>
+                <Link to={'/hdsign'}>HDSIGN</Link>
             </div>
             <nav
                 className="nav"
@@ -65,7 +65,7 @@ function Header() {
                     }
                 }}
             >
-                <Link to={'/'}>홈</Link>
+                <Link to={'/hdsign'}>홈</Link>
                 <Link to={'/Gallery'}>갤러리</Link>
                 <Link to={'/Contact'}>문의</Link>
             </nav>

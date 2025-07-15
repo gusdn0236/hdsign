@@ -28,7 +28,7 @@ const HeroSection = () => {
                 muted
                 playsInline
             >
-                <source src="/video/homeSampleVideo.mp4" type="video/mp4"/>
+                <source src="video/homeSampleVideo.mp4" type="video/mp4"/>
             </video>
 
             <div className="overlay-text">
@@ -42,7 +42,7 @@ const HeroSection = () => {
 
             <button className="video-toggle-btn" onClick={toggleVideo}>
                 <img
-                    src={isPlaying ? '/img/pause.png' : '/img/play.png'}
+                    src={isPlaying ? 'img/pause.png' : 'img/play.png'}
                     alt={isPlaying ? '일시정지' : '재생'}
                     className="video-toggle-icon"
                 />
