@@ -66,7 +66,8 @@ function Header() {
                 }}
             >
                 <Link to={'/'}>홈</Link>
-                <Link to={'/Gallery'}>갤러리</Link>
+                <Link to={'/About'}>회사 소개</Link>
+                <Link to={'/Gallery'}>제품 사진</Link>
                 <Link to={'/Contact'}>문의</Link>
             </nav>
         </header>
