@@ -1,5 +1,6 @@
 import React, {useRef, useState} from "react";
 import './HeroSection.css'
+import {useGsapFadeUp} from "../../hooks/useGsapFadeUp.js";
 
 const HeroSection = () => {
 
@@ -18,6 +19,13 @@ const HeroSection = () => {
             }
         }
     }
+    const titleRef = useRef(null);
+    const subtitleRef = useRef(null);
+    const buttonRef = useRef(null);
+
+    useGsapFadeUp([titleRef, subtitleRef, buttonRef]);
+
+
     return (
         <div className="hero-section">
             <video
@@ -32,13 +40,13 @@ const HeroSection = () => {
             </video>
 
             <div className="overlay-text">
-                <h1 className="title">
+                <h1 className="title" ref={titleRef}>
                     간판 제작의 새로운 기준,HDSIGN
                 </h1>
-                <p className="subtitle">20년 동안 변함없는 품질과 신뢰로 고객 만족을 실현합니다.</p>
+                <p className="subtitle" ref={subtitleRef}>20년 동안 변함없는 품질과 신뢰로 고객 만족을 실현합니다.</p>
             </div>
 
-            <button className="video-toggle-btn" onClick={toggleVideo}>
+            <button className="video-toggle-btn" onClick={toggleVideo} ref={buttonRef}>
                 <img
                     src={isPlaying ? import.meta.env.BASE_URL + "img/pause.png" : import.meta.env.BASE_URL + "img/play.png"}
                     alt={isPlaying ? '일시정지' : '재생'}
