@@ -41,7 +41,7 @@ const HeroSection = () => {
 
             <div className="overlay-text">
                 <h1 className="title" ref={titleRef}>
-                    간판 제작의 새로운 기준,HDSIGN
+                    간판 제작의 새로운 기준, HDSIGN
                 </h1>
                 <p className="subtitle" ref={subtitleRef}>20년 동안 변함없는 품질과 신뢰로 고객 만족을 실현합니다.</p>
             </div>
