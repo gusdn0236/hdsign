@@ -14,6 +14,6 @@ export const useGsapFadeUp = (refs) => {
                 ease: "power3.out"
             }, index === 0 ? 0 : `-=${0.5 - index * 0.1}`);
         });
-    }, [refs]);
+    }, []);
 };
 
