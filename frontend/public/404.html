@@ -1,8 +1,12 @@
-<!-- public/404.html -->
 <!DOCTYPE html>
 <html>
 <head>
-    <meta content="0; URL=/hdsign/index.html" http-equiv="refresh"/>
+    <script>
+        // URL 끝이 '/'가 아니면 '/' 붙이고 새로고침
+        if (!location.pathname.endsWith('/')) {
+            location.replace(location.pathname + '/' + location.search + location.hash);
+        }
+    </script>
 </head>
 <body></body>
 </html>
