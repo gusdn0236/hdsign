@@ -12,7 +12,7 @@ function App() {
         <>
             <Header/>
             <Routes>
-                <Route path="/hdsign" element={<Home/>}/>
+                <Route path="/" element={<Home/>}/>
                 <Route path="/gallery" element={<Gallery/>}/>
                 <Route path="/contact" element={<Contact/>}/>
             </Routes>

@@ -31,15 +31,6 @@
     font-weight: bold;
 }
 
-.highlight-h {
-    color: #1E88E5; /* 머티리얼 Blue 600 */
-    font-weight: 800;
-}
-
-.highlight-d {
-    color: #F4A261; /* 부드러운 살구 오렌지 */
-    font-weight: 800;
-}
 
 .subtitle {
     font-size: 18px;
