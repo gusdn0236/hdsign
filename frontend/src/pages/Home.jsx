@@ -4,6 +4,7 @@ import HeroSection from "../components/home/HeroSection.jsx";
 import './Home.css'
 import TrustBannerSection from "../components/home/TrustBannerSection.jsx";
 import QualityBannerSection from "../components/home/QualityBannerSection.jsx";
+import ContactBannerSection from "../components/home/ContactBannerSection.jsx";
 
 
 function Home() {
@@ -13,6 +14,7 @@ function Home() {
             <HeroSection></HeroSection>
             <TrustBannerSection></TrustBannerSection>
             <QualityBannerSection></QualityBannerSection>
+            <ContactBannerSection></ContactBannerSection>
         </div>
 
     );
