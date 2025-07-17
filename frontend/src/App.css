@@ -1,0 +1,17 @@
+/* 전체를 100% 높이로 설정 */
+html, body, #root {
+    height: 100%;
+    margin: 0;
+}
+
+/* App 전체 레이아웃을 Flex column으로 */
+.app-wrapper {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* 콘텐츠는 늘어나고, footer는 아래로 밀려남 */
+.content {
+    flex: 1;
+}

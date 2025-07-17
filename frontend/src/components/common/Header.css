@@ -9,8 +9,8 @@
     justify-content: center;
     background-color: transparent;
     color: white;
-    transition: transform 0.3s ease-out, opacity 0.3s ease-out;
-    z-index: 10;
+    transition: transform 0.3s ease-out, opacity 0.3s ease-out, background-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
+    z-index: 1000; /* ⭐ z-index를 높여 다른 콘텐츠 위에 표시되도록 함 ⭐ */
 }
 
 .header.hidden {
@@ -20,11 +20,9 @@
 }
 
 .header.hovered {
-
     background-color: white;
     color: black;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-
 }
 
 .logo {
@@ -49,18 +47,114 @@
 .nav {
     display: flex;
     gap: 40px;
-
+    height: 100%; /* nav도 높이를 가져야 자식 요소 위치 잡기 편함 */
 }
 
-.nav a {
+/* ⭐ 1차 내비게이션 아이템 컨테이너 ⭐ */
+.nav-item {
+    position: relative; /* 2차 메뉴의 absolute 기준점 */
+    display: flex;
+    align-items: center;
+    height: 100%; /* 부모와 동일한 높이 */
+}
+
+.nav-item > a { /* 1차 메뉴 링크 */
     text-decoration: none;
     color: inherit;
     font-weight: 600;
     font-size: 16px;
     transition: color 0.2s ease;
+    display: flex;
+    align-items: center;
+    height: 100%;
 }
 
-.nav a:hover {
+.nav-item > a:hover {
     color: #555;
+}
 
+/* ⭐ 2차 내비게이션 메뉴 (드롭다운) ⭐ */
+.sub-menu {
+    position: absolute;
+    top: 100%; /* 1차 메뉴 바로 아래 */
+    left: 50%; /* 중앙 정렬을 위해 */
+    transform: translateX(-50%); /* 중앙 정렬 */
+    background-color: white; /* 헤더 호버 색상과 동일 */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    min-width: 160px; /* 최소 너비 */
+    padding: 10px 0;
+    display: flex;
+    flex-direction: column;
+    z-index: 100; /* 헤더 위로 */
+    opacity: 0; /* 초기 숨김 */
+    visibility: hidden; /* 초기 숨김 */
+    transform: translateX(-50%) translateY(10px); /* 드롭다운 애니메이션 초기 위치 */
+    transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
+}
+
+.nav-item:hover .sub-menu {
+    opacity: 1; /* 호버 시 보임 */
+    visibility: visible; /* 호버 시 보임 */
+    transform: translateX(-50%) translateY(0); /* 제자리로 이동 */
+}
+
+/* ⭐ 2차 메뉴 아이템 ⭐ */
+.sub-menu-item {
+    position: relative; /* 3차 메뉴의 absolute 기준점 */
+}
+
+.sub-menu-item a {
+    padding: 8px 20px;
+    color: black; /* 텍스트 색상 */
+    text-decoration: none;
+    display: block; /* 전체 영역 클릭 가능 */
+    white-space: nowrap; /* 줄 바꿈 방지 */
+    font-size: 15px;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sub-menu-item a:hover {
+    background-color: #f0f0f0; /* 호버 배경색 */
+    color: #005f73; /* 호버 시 강조 색상 */
+}
+
+/* ⭐ 3차 내비게이션 메뉴 (서브-서브 메뉴) ⭐ */
+.sub-sub-menu {
+    position: absolute;
+    top: 0; /* 2차 메뉴 아이템과 같은 높이 */
+    left: 100%; /* 2차 메뉴 아이템 바로 옆 */
+    background-color: white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    min-width: 160px;
+    padding: 10px 0;
+    display: flex;
+    flex-direction: column;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(10px); /* 슬라이드 애니메이션 초기 위치 */
+    transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
+}
+
+.sub-menu-item:hover .sub-sub-menu {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(0); /* 제자리로 이동 */
+}
+
+/* ⭐ 3차 메뉴 아이템 ⭐ */
+.sub-sub-menu a {
+    padding: 8px 20px;
+    color: black;
+    text-decoration: none;
+    display: block;
+    white-space: nowrap;
+    font-size: 14px; /* 폰트 사이즈 살짝 작게 */
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sub-sub-menu a:hover {
+    background-color: #f0f0f0;
+    color: #ff7f50;
 }

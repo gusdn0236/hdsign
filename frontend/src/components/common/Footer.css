@@ -1,0 +1,122 @@
+/* Footer.css */
+
+.footer {
+    background-color: #222;
+    color: #fff;
+    text-align: left;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    position: relative;
+    z-index: 10;
+}
+
+.company-name {
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.footer-content-wrapper {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1.5rem 5vw;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.footer-left-content {
+    flex: 1;
+    min-width: 280px;
+    text-align: left;
+}
+
+.contact-info,
+.address-info,
+.address-detail {
+    margin-bottom: 0.2rem;
+    color: #bbb;
+}
+
+.footer-right-content {
+    flex: 0 1 auto;
+    text-align: right;
+    min-width: 200px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+.footer-slogan {
+    font-size: 1.2rem;
+    font-weight: 500;
+    color: #a0a0a0;
+    line-height: 1.6;
+    margin-bottom: 1rem;
+}
+
+.copyright {
+    font-size: 0.7rem;
+    color: #bbb;
+    margin-top: 0.5rem;
+}
+
+.back-to-top-button {
+    padding: 8px 20px;
+    border: 2px solid white;
+    border-radius: 999px;
+    background-color: transparent;
+    color: white;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: center;
+    opacity: 1;
+    visibility: visible;
+
+    /* ⭐ 이 부분을 수정합니다: transition 속성을 하나로 합칩니다. ⭐ */
+    transition: background-color 0.3s ease, transform 0.3s ease, opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.back-to-top-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    transform: scale(1.05);
+}
+
+@media (max-width: 768px) {
+    .footer-content-wrapper {
+        flex-direction: column;
+        align-items: center;
+        padding: 1.5rem 1rem;
+    }
+
+    .footer-left-content,
+    .footer-right-content {
+        width: 100%;
+        min-width: unset;
+        margin-bottom: 1rem;
+        text-align: center;
+    }
+
+    .footer-right-content {
+        margin-top: 0.5rem;
+        align-items: center;
+    }
+
+    .footer-slogan {
+        font-size: 1rem;
+    }
+
+    .address-detail {
+        padding-left: 0;
+        text-indent: 0;
+    }
+
+    .back-to-top-button {
+        padding: 6px 16px;
+        font-size: 0.75rem;
+    }
+}

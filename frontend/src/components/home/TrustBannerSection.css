@@ -1,8 +1,9 @@
 .trust-banner-section {
-    position: relative;
+    position: relative; /* ✅ 가능하면 이걸로 */
+    z-index: auto; /* 또는 명시 안 해도 됨 */
     width: 100%;
     height: 100vh;
-    overflow: hidden;
+    /*overflow: hidden;*/
 }
 
 .trust-bg {
