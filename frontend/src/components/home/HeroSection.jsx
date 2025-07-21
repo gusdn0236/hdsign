@@ -1,6 +1,8 @@
 import React, {useRef, useState} from "react";
 import './HeroSection.css'
 import {useGsapFadeUp} from "../../hooks/useGsapFadeUp.js";
+import {homeVideo} from "../../assets/video/index.js";
+import {pauseIcon, playIcon} from "../../assets/img/index.js"
 
 const HeroSection = () => {
 
@@ -36,7 +38,7 @@ const HeroSection = () => {
                 muted
                 playsInline
             >
-                <source src={import.meta.env.BASE_URL + "video/homeSampleVideo.mp4"} type="video/mp4"/>
+                <source src={homeVideo} type="video/mp4"/>
             </video>
 
             <div className="overlay-text">
@@ -48,7 +50,7 @@ const HeroSection = () => {
 
             <button className="video-toggle-btn" onClick={toggleVideo} ref={buttonRef}>
                 <img
-                    src={isPlaying ? import.meta.env.BASE_URL + "img/pause.png" : import.meta.env.BASE_URL + "img/play.png"}
+                    src={isPlaying ? pauseIcon : playIcon}
                     alt={isPlaying ? '일시정지' : '재생'}
                     className="video-toggle-icon"
                 />

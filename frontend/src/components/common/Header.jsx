@@ -49,7 +49,7 @@ function Header() {
         },
         {
             name: '회사 소개',
-            path: '/About',
+            path: '/About/Greeting',
             subMenu: [
                 {name: '인사말', path: '/About/Greeting'},
                 {name: '인증서', path: '/About/Certification'},
@@ -60,7 +60,7 @@ function Header() {
         },
         {
             name: '제품 사진',
-            path: '/Gallery',
+            path: '/Gallery/Galva',
             subMenu: [
                 {
                     name: '갈바 간판류', path: '/Gallery/Galva',
@@ -100,7 +100,7 @@ function Header() {
         },
         {
             name: '고객 지원',
-            path: '/Support',
+            path: '/Support/Notice',
             subMenu: [
                 {name: '공지사항', path: '/Support/Notice'},
                 {name: '견적/제작문의', path: '/Support/Contact'},
@@ -158,14 +158,26 @@ function Header() {
                                         className="sub-menu-item"
                                         onMouseEnter={() => setActiveSubMenu(item.name)} // 2차 메뉴에서도 부모 1차 메뉴 유지
                                     >
-                                        <Link to={subItem.path} onClick={() => setActiveSubMenu(null)}>
+                                        <Link
+                                            to={subItem.path}
+                                            onClick={() => {
+                                                setActiveSubMenu(null);
+                                                setHovered(false);  // <-- 여기에 추가 (기존에는 없었음)
+                                            }}
+                                        >
                                             {subItem.name}
                                         </Link>
                                         {subItem.subSubMenu && ( // ⭐ 3차 메뉴 렌더링 조건 ⭐
                                             <div className="sub-sub-menu">
                                                 {subItem.subSubMenu.map((subSubItem) => (
-                                                    <Link key={subSubItem.name} to={subSubItem.path}
-                                                          onClick={() => setActiveSubMenu(null)}>
+                                                    <Link
+                                                        key={subSubItem.name}
+                                                        to={subSubItem.path}
+                                                        onClick={() => {
+                                                            setActiveSubMenu(null);
+                                                            setHovered(false);  // <-- 여기에도 추가
+                                                        }}
+                                                    >
                                                         {subSubItem.name}
                                                     </Link>
                                                 ))}

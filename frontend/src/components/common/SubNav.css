@@ -1,0 +1,54 @@
+/* SubNav.css */
+.sub-nav {
+    background-color: #fff;
+    border-bottom: 1px solid #e5e5e5;
+    padding: 1rem 0;
+    display: flex;
+    justify-content: center;
+}
+
+.sub-nav ul {
+    display: flex;
+    gap: 2.5rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.sub-nav li a {
+    text-decoration: none;
+    color: #555;
+    font-size: 1rem;
+    font-weight: 500;
+    padding: 0.3rem 0;
+    position: relative;
+    transition: color 0.3s ease;
+}
+
+.sub-nav li a::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -4px;
+    width: 0%;
+    height: 2px;
+    background-color: #005f73;
+    transition: width 0.3s ease;
+}
+
+.sub-nav li a:hover {
+    color: #005f73;
+}
+
+.sub-nav li a:hover::after {
+    width: 100%;
+}
+
+.sub-nav li a.active {
+    color: #005f73;
+    font-weight: 600;
+}
+
+.sub-nav li a.active::after {
+    width: 100%;
+}
