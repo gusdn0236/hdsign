@@ -13,7 +13,7 @@ const ContactBannerSection = () => {
 
     return (
         <div className="contact-banner-section">
-            <img src={import.meta.env.BASE_URL + "img/1contactSample.jpg"} alt="견적" className="contact-bg"/>
+            <img src={import.meta.env.BASE_URL + "img/1contactSample.webp"} alt="견적" className="contact-bg"/>
             <div className="contact-text">
                 <h2 className={'title'} ref={titleRef}>지금, 디자인을 현실로</h2>
                 <p className={'subtitle'} ref={subtitleRef}>지금 바로 간편하게 견적 받아보세요.</p>

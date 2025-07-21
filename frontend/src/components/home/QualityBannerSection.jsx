@@ -13,7 +13,7 @@ const QualityBannerSection = () => {
 
     return (
         <div className="quality-banner-section">
-            <img src={import.meta.env.BASE_URL + "img/qualitySample.jpg"} alt="품질" className="quality-bg"/>
+            <img src={import.meta.env.BASE_URL + "img/qualitySample.webp"} alt="품질" className="quality-bg"/>
             <div className="quality-text">
                 <h2 className={'title'} ref={titleRef}>품질, 선택이 아닌 필수입니다</h2>
                 <p className={'subtitle'} ref={subtitleRef}>우리는 매 순간 최고의 품질을 고민합니다.</p>
