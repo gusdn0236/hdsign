@@ -8,6 +8,7 @@ import Home from './pages/Home.jsx'
 import Gallery from './pages/Gallery.jsx'
 import Support from './pages/Support.jsx'
 
+
 // About 관련
 import AboutLayout from './pages/about/AboutLayout.jsx'
 import Greeting from './pages/about/Greeting.jsx'
@@ -27,13 +28,18 @@ import Special from './pages/gallery/Special.jsx';
 import SupportLayout from "./pages/support/SupportLayout.jsx";
 import Notice from "./pages/support/Notice.jsx";
 import Contact from "./pages/support/Contact.jsx";
+import ScrollToTop from "./components/common/ScrollToTop.jsx";
 
 
 function App() {
+
+
     return (
         <div className="app-wrapper">
             <Header/>
             <main className="content">
+
+                <ScrollToTop/>
                 <Routes>
                     <Route path="/" element={<Home/>}/>
                     <Route path="/support" element={<Support/>}/>
@@ -61,6 +67,7 @@ function App() {
 
                     </Route>
                 </Routes>
+
             </main>
             <Footer/>
         </div>

@@ -5,6 +5,75 @@ const Certification = () => {
     return (
         <div>
             인증서입니다
+
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/> <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/><br/>
+            <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/> <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/><br/>
+            <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/> <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/><br/>
+            <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/> <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/><br/>
+            <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/> <br/><br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/><br/>
+            <br/><br/>
+            <br/>
+            인증서입니다
+
+
             {/* 본문 내용 */}
         </div>
     );

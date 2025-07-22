@@ -1,7 +1,7 @@
 .greeting-page {
-    max-width: 900px;
+    max-width: 1336px;
     margin: 0 auto;
-    padding: 3rem 1rem;
+    padding: 7rem 1rem;
     font-family: 'Noto Sans KR', sans-serif;
     color: #333;
     text-align: center;
@@ -12,36 +12,31 @@
 .greeting-large {
     font-size: 2.8rem;
     font-weight: 700;
-    margin-bottom: 0.3rem;
-    color: #0066cc;
+    margin-bottom: 3rem;
+    color: #000000;
 }
 
 /* 중간 글씨 */
 .greeting-medium {
-    font-size: 1.6rem;
+    font-size: 1.5rem;
     font-weight: 500;
-    margin-bottom: 2rem;
-    color: #004999;
+    margin-bottom: 4rem;
+    color: #005f73;
 }
 
 /* 작은 글씨 여러 줄 */
-.greeting-small-text p {
-    font-size: 1rem;
+.greeting-small-text p, .greeting-footer-text {
+    font-size: 1.05rem;
     margin: 0.3rem 0;
-    max-width: 600px;
+    max-width: 800px;
     margin-left: auto;
     margin-right: auto;
+
     color: #555;
 }
 
-/* 제품 사진 흐르는 영역 */
-.greeting-product-marquee {
-    overflow: hidden;
-    margin: 3rem 0;
-    border-top: 1px solid #ddd;
-    border-bottom: 1px solid #ddd;
-    padding: 1rem 0;
-    background: #fafafa;
+.greeting-footer-text {
+    margin-top: 4rem;
 }
 
 .marquee-content {
@@ -56,6 +51,7 @@
     object-fit: contain;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
     border-radius: 8px;
+
 }
 
 /* marquee 애니메이션 */
@@ -68,18 +64,59 @@
     }
 }
 
+
 /* 밑에 작은 글씨 + 대표이사 */
-.greeting-footer-text {
-    font-size: 0.9rem;
-    color: #666;
-    max-width: 600px;
-    margin: 0 auto;
-    margin-bottom: 3rem;
+.greeting-sign {
+    margin-top: 6rem;
+    font-weight: 700;
+
+    color: #000000;
 }
 
-.greeting-sign {
-    margin-top: 1.5rem;
-    font-weight: 700;
-    font-style: italic;
-    color: #004999;
+.ceo-name {
+    font-size: 1.8rem;
+    padding: 0px 10px;
 }
+
+.greeting-slider {
+    margin: 2rem 0;
+}
+
+
+.greeting-slider img {
+    
+    width: 100%;
+    height: 400px; /* 고정 높이 설정 */
+    object-fit: cover; /* 자르더라도 꽉 채우기 */
+    border-radius: 5px;
+}
+
+/* 버튼 자체는 투명하게 (배경 없음) */
+.slick-prev,
+.slick-next {
+    z-index: 2;
+    width: 40px;
+    height: 40px;
+    background: none;
+    border: none;
+    box-shadow: none;
+}
+
+/* 화살표 아이콘만 검정색으로 */
+.slick-prev:before,
+.slick-next:before {
+    font-size: 24px;
+    color: black;
+    opacity: 1;
+}
+
+/* 위치 조정 */
+.slick-prev {
+    left: -35px;
+}
+
+.slick-next {
+    right: -35px;
+}
+
+

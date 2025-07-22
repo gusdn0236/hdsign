@@ -13,6 +13,7 @@
     z-index: 1000; /* ⭐ z-index를 높여 다른 콘텐츠 위에 표시되도록 함 ⭐ */
 }
 
+
 .header.hidden {
     transform: translateY(-100%);
     opacity: 0;
