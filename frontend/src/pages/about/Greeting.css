@@ -1,0 +1,85 @@
+.greeting-page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 3rem 1rem;
+    font-family: 'Noto Sans KR', sans-serif;
+    color: #333;
+    text-align: center;
+    line-height: 1.5;
+}
+
+/* 큰 글씨 */
+.greeting-large {
+    font-size: 2.8rem;
+    font-weight: 700;
+    margin-bottom: 0.3rem;
+    color: #0066cc;
+}
+
+/* 중간 글씨 */
+.greeting-medium {
+    font-size: 1.6rem;
+    font-weight: 500;
+    margin-bottom: 2rem;
+    color: #004999;
+}
+
+/* 작은 글씨 여러 줄 */
+.greeting-small-text p {
+    font-size: 1rem;
+    margin: 0.3rem 0;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+    color: #555;
+}
+
+/* 제품 사진 흐르는 영역 */
+.greeting-product-marquee {
+    overflow: hidden;
+    margin: 3rem 0;
+    border-top: 1px solid #ddd;
+    border-bottom: 1px solid #ddd;
+    padding: 1rem 0;
+    background: #fafafa;
+}
+
+.marquee-content {
+    display: flex;
+    gap: 2rem;
+    animation: marquee 20s linear infinite;
+}
+
+.marquee-content img {
+    width: 140px;
+    height: auto;
+    object-fit: contain;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+    border-radius: 8px;
+}
+
+/* marquee 애니메이션 */
+@keyframes marquee {
+    0% {
+        transform: translateX(0%);
+    }
+    100% {
+        transform: translateX(-50%);
+    }
+}
+
+/* 밑에 작은 글씨 + 대표이사 */
+.greeting-footer-text {
+    font-size: 0.9rem;
+    color: #666;
+    max-width: 600px;
+    margin: 0 auto;
+    margin-bottom: 3rem;
+}
+
+.greeting-sign {
+    margin-top: 1.5rem;
+    font-weight: 700;
+    font-style: italic;
+    color: #004999;
+}
