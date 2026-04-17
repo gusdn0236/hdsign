@@ -149,7 +149,7 @@ export default function GalleryUpload() {
         <h1>갤러리 이미지 관리</h1>
         <div className="header-actions">
           <Link to="/admin/notices" className="site-link">공지사항 관리</Link>
-          <Link to="/" className="site-link">사이트 보기</Link>
+          <Link to="/Gallery/Galva" className="site-link">갤러리 보러가기</Link>
           <button className="logout-btn" onClick={logout}>로그아웃</button>
         </div>
       </div>

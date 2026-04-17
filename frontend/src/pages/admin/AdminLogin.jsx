@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Navigate } from "react-router-dom";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { loginApi } from "../../api/auth";
@@ -9,7 +10,10 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, isAdmin } = useAuth();
+  if (isAdmin) {
+    return <Navigate to="/admin/gallery-upload" replace />;
+  }
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
