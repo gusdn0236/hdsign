@@ -53,7 +53,8 @@ public class SecurityConfig {
         config.setAllowedOrigins(List.of(
             "http://localhost:5173",
             "http://localhost:3000",
-            "https://gusdn0236.github.io"
+            "https://gusdn0236.github.io",
+            "https://hdsign-production.up.railway.app"
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
