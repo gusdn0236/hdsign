@@ -99,17 +99,36 @@ export default function GalleryUpload() {
     }
   };
 
-  const handleFileChange = (e) => {
-    const files = Array.from(e.target.files);
+  const [dragOver, setDragOver] = useState(false);
+
+  const processFiles = (files) => {
     const newPreviews = files.map((file) => ({
       file,
       previewUrl: URL.createObjectURL(file),
       category: activeCategory,
       subCategory: currentCat.subCategories[0],
     }));
-    setPreviews(newPreviews);
+    setPreviews((prev) => [...prev, ...newPreviews]);
     setFeedback(null);
   };
+
+  const handleFileChange = (e) => {
+    processFiles(Array.from(e.target.files));
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+    if (files.length) processFiles(files);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => setDragOver(false);
 
   const handleSubCategoryChange = (index, subCategory) => {
     setPreviews((prev) => prev.map((p, i) => (i === index ? { ...p, subCategory } : p)));
@@ -208,11 +227,19 @@ export default function GalleryUpload() {
 
       <div className="upload-panel">
         <h2>이미지 업로드</h2>
+        <div
+          className={"drop-zone" + (dragOver ? " drag-over" : "")}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onClick={() => fileInputRef.current && fileInputRef.current.click()}
+        >
+          <span className="drop-icon">🖼️</span>
+          <p>사진을 여기에 끌어다 놓거나 클릭해서 선택하세요</p>
+          <p className="drop-sub">여러 장 동시 선택 가능</p>
+          <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={handleFileChange} style={{display: "none"}} />
+        </div>
         <div className="upload-controls">
-          <label className="file-input-label">
-            <span>파일 선택 (여러 장 가능)</span>
-            <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={handleFileChange} />
-          </label>
           {previews.length > 0 && (
             <button className="upload-submit-btn" onClick={handleUpload} disabled={uploading}>
               {uploading ? "업로드 중..." : `${previews.length}장 업로드`}

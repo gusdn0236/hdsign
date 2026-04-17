@@ -237,3 +237,42 @@
 
 .modal-nav-small:hover { background: #ddd; }
 .modal-nav-small:disabled { opacity: 0.3; cursor: default; }
+.drop-zone {
+    border: 2px dashed #ccc;
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #fafafa;
+    margin-bottom: 16px;
+}
+
+.drop-zone:hover {
+    border-color: #222;
+    background: #f0f0f0;
+}
+
+.drop-zone.drag-over {
+    border-color: #222;
+    background: #f0f0f0;
+    transform: scale(1.01);
+}
+
+.drop-icon {
+    font-size: 36px;
+    display: block;
+    margin-bottom: 12px;
+}
+
+.drop-zone p {
+    font-size: 15px;
+    color: #444;
+    margin: 0;
+}
+
+.drop-sub {
+    font-size: 13px !important;
+    color: #aaa !important;
+    margin-top: 6px !important;
+}
