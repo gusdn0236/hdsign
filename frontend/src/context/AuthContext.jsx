@@ -8,7 +8,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const stored = localStorage.getItem("adminToken");
+    const stored = sessionStorage.getItem("adminToken");
     if (stored) {
       setToken(stored);
       setIsAdmin(true);
@@ -17,13 +17,13 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = (jwt) => {
-    localStorage.setItem("adminToken", jwt);
+    sessionStorage.setItem("adminToken", jwt);
     setToken(jwt);
     setIsAdmin(true);
   };
 
   const logout = () => {
-    localStorage.removeItem("adminToken");
+    sessionStorage.removeItem("adminToken");
     setToken(null);
     setIsAdmin(false);
   };
