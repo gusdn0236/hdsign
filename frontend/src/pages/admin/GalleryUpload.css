@@ -1,0 +1,37 @@
+.gallery-upload-page { min-height: 100vh; background: #f5f5f5; padding: 32px 24px; }
+.upload-header { display: flex; align-items: center; justify-content: space-between; max-width: 1100px; margin: 0 auto 32px; flex-wrap: wrap; gap: 12px; }
+.upload-header h1 { font-size: 22px; font-weight: 700; color: #1a1a2e; margin: 0; }
+.header-actions { display: flex; gap: 12px; align-items: center; }
+.logout-btn { padding: 8px 18px; background: transparent; border: 1.5px solid #ccc; border-radius: 8px; font-size: 14px; color: #666; cursor: pointer; transition: all 0.2s; }
+.logout-btn:hover { border-color: #c0392b; color: #c0392b; }
+.site-link { padding: 8px 18px; background: #1a1a2e; color: #fff; border-radius: 8px; font-size: 14px; text-decoration: none; transition: background 0.2s; }
+.site-link:hover { background: #2d2d4e; }
+.category-tabs { display: flex; gap: 8px; max-width: 1100px; margin: 0 auto 24px; flex-wrap: wrap; }
+.category-tab { padding: 9px 20px; border: 1.5px solid #ddd; border-radius: 8px; background: #fff; font-size: 14px; font-weight: 500; color: #555; cursor: pointer; transition: all 0.2s; }
+.category-tab:hover { border-color: #1a1a2e; color: #1a1a2e; }
+.category-tab.active { background: #1a1a2e; border-color: #1a1a2e; color: #fff; }
+.upload-panel { max-width: 1100px; margin: 0 auto 32px; background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); }
+.upload-panel h2 { font-size: 16px; font-weight: 600; color: #1a1a2e; margin: 0 0 16px; }
+.upload-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.upload-controls select { padding: 9px 12px; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: 14px; outline: none; background: #fff; color: #333; min-width: 140px; }
+.file-input-label { display: inline-flex; align-items: center; gap: 8px; padding: 9px 18px; background: #f0f4ff; border: 1.5px dashed #4a6fa5; border-radius: 8px; font-size: 14px; color: #4a6fa5; cursor: pointer; transition: all 0.2s; }
+.file-input-label input { display: none; }
+.upload-submit-btn { padding: 9px 22px; background: #2ecc71; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+.upload-submit-btn:hover:not(:disabled) { background: #27ae60; }
+.upload-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.selected-files { margin-top: 12px; font-size: 13px; color: #555; }
+.upload-feedback { margin-top: 10px; font-size: 13px; padding: 8px 12px; border-radius: 6px; }
+.upload-feedback.success { background: #eaffea; color: #27ae60; }
+.upload-feedback.error { background: #fff0f0; color: #c0392b; }
+.image-grid-section { max-width: 1100px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); }
+.image-grid-section h2 { font-size: 16px; font-weight: 600; color: #1a1a2e; margin: 0 0 20px; }
+.image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.image-item { position: relative; border-radius: 8px; overflow: hidden; background: #f0f0f0; aspect-ratio: 1; }
+.image-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.image-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.5); display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.2s; gap: 8px; }
+.image-item:hover .image-overlay { opacity: 1; }
+.image-name { font-size: 12px; color: #fff; text-align: center; padding: 0 8px; word-break: break-all; }
+.delete-btn { padding: 6px 14px; background: #c0392b; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.delete-btn:hover { background: #a93226; }
+.empty-message { color: #aaa; font-size: 14px; text-align: center; padding: 40px 0; }
+.loading-message { color: #aaa; font-size: 14px; text-align: center; padding: 40px 0; }

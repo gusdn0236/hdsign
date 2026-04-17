@@ -22,14 +22,14 @@
 }
 
 .gallery-tab:hover {
-    border-color: #005f73;
-    color: #005f73;
-    background-color: #edf6f9;
+    border-color: #2d3748;
+    color: #2d3748;
+    background-color: #f0f2f4;
 }
 
 .gallery-tab.active {
-    background-color: #005f73;
-    border-color: #005f73;
+    background-color: #2d3748;
+    border-color: #2d3748;
     color: #fff;
     font-weight: 600;
 }
@@ -189,3 +189,4 @@
 .modal-nav:disabled { opacity: 0.25; cursor: default; }
 .modal-prev { left: 24px; }
 .modal-next { right: 24px; }
+

@@ -1,0 +1,30 @@
+.admin-login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f5f5;
+  padding: 24px;
+}
+.admin-login-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+  padding: 48px 40px 40px;
+  width: 100%;
+  max-width: 400px;
+}
+.admin-login-logo { text-align: center; margin-bottom: 32px; }
+.admin-login-logo h1 { font-size: 22px; font-weight: 700; color: #1a1a2e; margin: 0 0 6px; }
+.admin-login-logo p { font-size: 13px; color: #888; margin: 0; }
+.admin-login-form { display: flex; flex-direction: column; gap: 16px; }
+.form-group { display: flex; flex-direction: column; gap: 6px; }
+.form-group label { font-size: 13px; font-weight: 600; color: #444; }
+.form-group input { padding: 11px 14px; border: 1.5px solid #e0e0e0; border-radius: 8px; font-size: 15px; outline: none; transition: border-color 0.2s; color: #222; }
+.form-group input:focus { border-color: #4a6fa5; }
+.login-error { background: #fff0f0; border: 1px solid #ffd0d0; color: #c0392b; border-radius: 8px; padding: 10px 14px; font-size: 13px; text-align: center; }
+.login-btn { margin-top: 8px; padding: 13px; background: #1a1a2e; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+.login-btn:hover:not(:disabled) { background: #2d2d4e; }
+.login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.back-link { display: block; text-align: center; margin-top: 20px; font-size: 13px; color: #888; text-decoration: none; transition: color 0.2s; }
+.back-link:hover { color: #1a1a2e; }
