@@ -1,25 +1,27 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { fetchGalleryImages, uploadImages, deleteImage } from "../../api/gallery";
+import { fetchGalleryImages, deleteImage } from "../../api/gallery";
 import "./GalleryUpload.css";
+
+const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 const CATEGORIES = {
   galva: {
     label: "갈바 간판류",
-    subCategories: ["전체", "갈바 후광", "갈바 오사이", "갈바 캡", "일체형"],
+    subCategories: ["갈바 후광", "갈바 오사이", "갈바 캡", "일체형"],
   },
   stainless: {
     label: "스텐 간판류",
-    subCategories: ["전체", "스텐 캡", "스텐 오사이", "스텐 후광", "골드 스텐"],
+    subCategories: ["스텐 캡", "스텐 오사이", "스텐 후광", "골드 스텐"],
   },
   epoxy: {
     label: "에폭시 간판류",
-    subCategories: ["전체", "갈바 에폭시", "스텐 에폭시"],
+    subCategories: ["갈바 에폭시", "스텐 에폭시"],
   },
   special: {
     label: "특수/기타 가공물",
-    subCategories: ["전체", "아크릴", "포맥스", "고무 스카시", "시트 커팅"],
+    subCategories: ["아크릴", "포맥스", "고무 스카시", "시트 커팅"],
   },
 };
 
@@ -43,10 +45,7 @@ const compressImage = (file) => {
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, width, height);
         canvas.toBlob(
-          (blob) => {
-            const compressed = new File([blob], file.name, { type: "image/jpeg" });
-            resolve(compressed);
-          },
+          (blob) => resolve(new File([blob], file.name, { type: "image/jpeg" })),
           "image/jpeg",
           QUALITY
         );
@@ -60,26 +59,38 @@ const compressImage = (file) => {
 export default function GalleryUpload() {
   const { token, logout } = useAuth();
   const [activeCategory, setActiveCategory] = useState("galva");
-  const [subCategory, setSubCategory] = useState("전체");
+  const [viewSubCategory, setViewSubCategory] = useState("전체");
   const [images, setImages] = useState([]);
   const [loadingImages, setLoadingImages] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [previews, setPreviews] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [feedback, setFeedback] = useState(null);
-  const [compressing, setCompressing] = useState(false);
+  const [modalIndex, setModalIndex] = useState(null);
   const fileInputRef = useRef();
   const currentCat = CATEGORIES[activeCategory];
-  const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
   useEffect(() => {
     loadImages();
-    setSubCategory("전체");
+    setViewSubCategory("전체");
+    setPreviews([]);
   }, [activeCategory]);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (modalIndex === null) return;
+      if (e.key === "ArrowLeft") setModalIndex((i) => Math.max(0, i - 1));
+      if (e.key === "ArrowRight") setModalIndex((i) => Math.min(previews.length - 1, i + 1));
+      if (e.key === "Escape") setModalIndex(null);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [modalIndex, previews.length]);
 
   const loadImages = async () => {
     setLoadingImages(true);
     try {
-      const data = await fetchGalleryImages(activeCategory);
+      const res = await fetch(BASE_URL + "/api/gallery?category=" + activeCategory);
+      const data = await res.json();
       setImages(data);
     } catch (e) {
       console.error(e);
@@ -89,37 +100,66 @@ export default function GalleryUpload() {
   };
 
   const handleFileChange = (e) => {
-    setSelectedFiles(Array.from(e.target.files));
+    const files = Array.from(e.target.files);
+    const newPreviews = files.map((file) => ({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      category: activeCategory,
+      subCategory: currentCat.subCategories[0],
+    }));
+    setPreviews(newPreviews);
     setFeedback(null);
   };
 
+  const handleSubCategoryChange = (index, subCategory) => {
+    setPreviews((prev) => prev.map((p, i) => (i === index ? { ...p, subCategory } : p)));
+  };
+
+  const handleCategoryChange = (index, category) => {
+    setPreviews((prev) =>
+      prev.map((p, i) =>
+        i === index ? { ...p, category, subCategory: CATEGORIES[category].subCategories[0] } : p
+      )
+    );
+  };
+
+  const handleRemovePreview = (index) => {
+    setPreviews((prev) => prev.filter((_, i) => i !== index));
+    if (modalIndex === index) setModalIndex(null);
+    else if (modalIndex > index) setModalIndex((i) => i - 1);
+  };
+
   const handleUpload = async () => {
-    if (!selectedFiles.length) {
+    if (!previews.length) {
       setFeedback({ type: "error", msg: "업로드할 파일을 선택해주세요." });
       return;
     }
-    if (subCategory === "전체") {
-      setFeedback({ type: "error", msg: "업로드할 세부 카테고리를 선택해주세요." });
-      return;
-    }
-    setCompressing(true);
-    setFeedback({ type: "success", msg: "이미지 압축 중..." });
-    const compressed = await Promise.all(selectedFiles.map(compressImage));
-    setCompressing(false);
-    selectedFiles.forEach((f, i) => {
-      console.log(`[${f.name}] 원본: ${(f.size / 1024).toFixed(1)}KB → 압축후: ${(compressed[i].size / 1024).toFixed(1)}KB`);
-    });
-
-    const formData = new FormData();
-    formData.append("category", activeCategory);
-    formData.append("subCategory", subCategory);
-    compressed.forEach((file) => formData.append("files", file));
     setUploading(true);
-    setFeedback({ type: "success", msg: "업로드 중..." });
+    setFeedback({ type: "success", msg: "압축 및 업로드 중..." });
     try {
-      await uploadImages(token, formData);
-      setFeedback({ type: "success", msg: `${selectedFiles.length}장의 이미지가 업로드됐습니다.` });
-      setSelectedFiles([]);
+      const groups = {};
+      for (const p of previews) {
+        const key = p.category + "||" + p.subCategory;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(p.file);
+      }
+      for (const key of Object.keys(groups)) {
+        const [category, subCategory] = key.split("||");
+        const compressed = await Promise.all(groups[key].map(compressImage));
+        const formData = new FormData();
+        formData.append("category", category);
+        formData.append("subCategory", subCategory);
+        compressed.forEach((f) => formData.append("files", f));
+        const res = await fetch(BASE_URL + "/api/gallery/upload", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token },
+          body: formData,
+        });
+        if (!res.ok) throw new Error("업로드 실패");
+      }
+      setFeedback({ type: "success", msg: `${previews.length}장 업로드 완료!` });
+      setPreviews([]);
+      setModalIndex(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       await loadImages();
     } catch (err) {
@@ -139,9 +179,11 @@ export default function GalleryUpload() {
     }
   };
 
-  const filteredImages = subCategory === "전체"
+  const filteredImages = viewSubCategory === "전체"
     ? images
-    : images.filter((img) => img.subCategory === subCategory);
+    : images.filter((img) => img.subCategory === viewSubCategory);
+
+  const modalItem = modalIndex !== null ? previews[modalIndex] : null;
 
   return (
     <div className="gallery-upload-page">
@@ -165,34 +207,93 @@ export default function GalleryUpload() {
       </div>
 
       <div className="upload-panel">
-        <h2>이미지 업로드 — {currentCat.label}</h2>
+        <h2>이미지 업로드</h2>
         <div className="upload-controls">
-          <select value={subCategory} onChange={(e) => setSubCategory(e.target.value)}>
-            {currentCat.subCategories.filter(s => s !== "전체").map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
           <label className="file-input-label">
-            <span>파일 선택</span>
+            <span>파일 선택 (여러 장 가능)</span>
             <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={handleFileChange} />
           </label>
-          <button className="upload-submit-btn" onClick={handleUpload} disabled={uploading || compressing}>
-            {compressing ? "압축 중..." : uploading ? "업로드 중..." : "업로드"}
-          </button>
+          {previews.length > 0 && (
+            <button className="upload-submit-btn" onClick={handleUpload} disabled={uploading}>
+              {uploading ? "업로드 중..." : `${previews.length}장 업로드`}
+            </button>
+          )}
         </div>
-        {selectedFiles.length > 0 && (
-          <p className="selected-files">선택된 파일: {selectedFiles.map((f) => f.name).join(", ")}</p>
-        )}
-        {feedback && (
-          <div className={`upload-feedback ${feedback.type}`}>{feedback.msg}</div>
+
+        {feedback && <div className={`upload-feedback ${feedback.type}`}>{feedback.msg}</div>}
+
+        {previews.length > 0 && (
+          <div className="preview-grid">
+            {previews.map((p, i) => (
+              <div key={i} className="preview-item">
+                <img src={p.previewUrl} alt={p.file.name} onClick={() => setModalIndex(i)} />
+                <button className="preview-remove" onClick={() => handleRemovePreview(i)}>✕</button>
+                <div className="preview-selects">
+                  <select value={p.category} onChange={(e) => handleCategoryChange(i, e.target.value)}>
+                    {Object.entries(CATEGORIES).map(([key, val]) => (
+                      <option key={key} value={key}>{val.label}</option>
+                    ))}
+                  </select>
+                  <select value={p.subCategory} onChange={(e) => handleSubCategoryChange(i, e.target.value)}>
+                    {CATEGORIES[p.category].subCategories.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="preview-filename">{p.file.name}</p>
+              </div>
+            ))}
+          </div>
         )}
       </div>
+
+      {modalItem && (
+        <div className="preview-modal" onClick={() => setModalIndex(null)}>
+          <div className="preview-modal-content" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setModalIndex(null)}>✕</button>
+            <button className="modal-nav modal-prev" onClick={() => setModalIndex((i) => Math.max(0, i - 1))} disabled={modalIndex === 0}>‹</button>
+            <div className="preview-modal-body">
+              <img src={modalItem.previewUrl} alt={modalItem.file.name} />
+              <div className="preview-modal-info">
+                <p className="modal-filename">{modalItem.file.name}</p>
+                <p className="modal-counter">{modalIndex + 1} / {previews.length}</p>
+                <div className="modal-selects">
+                  <label>카테고리</label>
+                  <select value={modalItem.category} onChange={(e) => handleCategoryChange(modalIndex, e.target.value)}>
+                    {Object.entries(CATEGORIES).map(([key, val]) => (
+                      <option key={key} value={key}>{val.label}</option>
+                    ))}
+                  </select>
+                  <label>세부 분류</label>
+                  <select value={modalItem.subCategory} onChange={(e) => handleSubCategoryChange(modalIndex, e.target.value)}>
+                    {CATEGORIES[modalItem.category].subCategories.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="modal-nav-btns">
+                  <button onClick={() => setModalIndex((i) => Math.max(0, i - 1))} disabled={modalIndex === 0} className="modal-nav-small">‹ 이전</button>
+                  <button onClick={() => setModalIndex((i) => Math.min(previews.length - 1, i + 1))} disabled={modalIndex === previews.length - 1} className="modal-nav-small">다음 ›</button>
+                </div>
+                <div className="modal-actions">
+                  <button className="preview-remove-btn" onClick={() => handleRemovePreview(modalIndex)}>이 사진 제거</button>
+                  <button className="upload-submit-btn" onClick={handleUpload} disabled={uploading} style={{marginTop: 8, width: "100%"}}>
+                    {uploading ? "업로드 중..." : `전체 ${previews.length}장 업로드`}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button className="modal-nav modal-next" onClick={() => setModalIndex((i) => Math.min(previews.length - 1, i + 1))} disabled={modalIndex === previews.length - 1}>›</button>
+          </div>
+        </div>
+      )}
 
       <div className="image-grid-section">
         <h2>
           등록된 이미지
-          <select value={subCategory} onChange={(e) => setSubCategory(e.target.value)}
+          <select value={viewSubCategory} onChange={(e) => setViewSubCategory(e.target.value)}
             style={{ fontSize: 13, padding: "4px 8px", borderRadius: 6, border: "1px solid #ddd", marginLeft: 8 }}>
+            <option value="전체">전체</option>
             {currentCat.subCategories.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
@@ -208,7 +309,7 @@ export default function GalleryUpload() {
               <div key={img.id} className="image-item">
                 <img src={img.imageUrl} alt={img.originalName} />
                 <div className="image-overlay">
-                  <span className="image-name">{img.originalName}</span>
+                  <span className="image-name">{img.subCategory}</span>
                   <button className="delete-btn" onClick={() => handleDelete(img.id)}>삭제</button>
                 </div>
               </div>
