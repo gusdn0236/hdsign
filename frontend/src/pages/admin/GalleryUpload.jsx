@@ -23,6 +23,40 @@ const CATEGORIES = {
   },
 };
 
+const compressImage = (file) => {
+  return new Promise((resolve) => {
+    const MAX_WIDTH = 1920;
+    const QUALITY = 0.8;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        if (width > MAX_WIDTH) {
+          height = Math.round((height * MAX_WIDTH) / width);
+          width = MAX_WIDTH;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            const compressed = new File([blob], file.name, { type: "image/jpeg" });
+            resolve(compressed);
+          },
+          "image/jpeg",
+          QUALITY
+        );
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
 export default function GalleryUpload() {
   const { token, logout } = useAuth();
   const [activeCategory, setActiveCategory] = useState("galva");
@@ -32,6 +66,7 @@ export default function GalleryUpload() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  const [compressing, setCompressing] = useState(false);
   const fileInputRef = useRef();
   const currentCat = CATEGORIES[activeCategory];
   const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -67,12 +102,20 @@ export default function GalleryUpload() {
       setFeedback({ type: "error", msg: "업로드할 세부 카테고리를 선택해주세요." });
       return;
     }
+    setCompressing(true);
+    setFeedback({ type: "success", msg: "이미지 압축 중..." });
+    const compressed = await Promise.all(selectedFiles.map(compressImage));
+    setCompressing(false);
+    selectedFiles.forEach((f, i) => {
+      console.log(`[${f.name}] 원본: ${(f.size / 1024).toFixed(1)}KB → 압축후: ${(compressed[i].size / 1024).toFixed(1)}KB`);
+    });
+
     const formData = new FormData();
     formData.append("category", activeCategory);
     formData.append("subCategory", subCategory);
-    selectedFiles.forEach((file) => formData.append("files", file));
+    compressed.forEach((file) => formData.append("files", file));
     setUploading(true);
-    setFeedback(null);
+    setFeedback({ type: "success", msg: "업로드 중..." });
     try {
       await uploadImages(token, formData);
       setFeedback({ type: "success", msg: `${selectedFiles.length}장의 이미지가 업로드됐습니다.` });
@@ -133,8 +176,8 @@ export default function GalleryUpload() {
             <span>파일 선택</span>
             <input type="file" accept="image/*" multiple ref={fileInputRef} onChange={handleFileChange} />
           </label>
-          <button className="upload-submit-btn" onClick={handleUpload} disabled={uploading}>
-            {uploading ? "업로드 중..." : "업로드"}
+          <button className="upload-submit-btn" onClick={handleUpload} disabled={uploading || compressing}>
+            {compressing ? "압축 중..." : uploading ? "업로드 중..." : "업로드"}
           </button>
         </div>
         {selectedFiles.length > 0 && (
