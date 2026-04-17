@@ -21,16 +21,19 @@ import SupportLayout from "./pages/support/SupportLayout.jsx"
 import Notice from "./pages/support/Notice.jsx"
 import Contact from "./pages/support/Contact.jsx"
 import ScrollToTop from "./components/common/ScrollToTop.jsx"
+import { useLocation } from 'react-router-dom'
 import { AuthProvider } from "./context/AuthContext"
 import PrivateRoute from "./components/common/PrivateRoute.jsx"
 import AdminLogin from "./pages/admin/AdminLogin.jsx"
 import GalleryUpload from "./pages/admin/GalleryUpload.jsx"
 
 function App() {
+    const location = useLocation()
+    const isAdmin = location.pathname.startsWith('/admin')
     return (
         <AuthProvider>
         <div className="app-wrapper">
-            <Header/>
+            {!isAdmin && <Header/>}
             <main className="content">
                 <ScrollToTop/>
                 <Routes>
@@ -59,7 +62,7 @@ function App() {
                     }/>
                 </Routes>
             </main>
-            <Footer/>
+            {!isAdmin && <Footer/>}
         </div>
         </AuthProvider>
     )
