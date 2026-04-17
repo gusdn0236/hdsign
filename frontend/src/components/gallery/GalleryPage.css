@@ -1,4 +1,4 @@
-﻿.gallery-tabs {
+.gallery-tabs {
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
@@ -190,3 +190,5 @@
 .modal-prev { left: 24px; }
 .modal-next { right: 24px; }
 
+
+.gallery-page { min-height: 80vh; }

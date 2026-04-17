@@ -4,8 +4,6 @@ import {Routes, Route} from 'react-router-dom'
 import Header from './components/common/Header.jsx'
 import Footer from './components/common/Footer.jsx'
 import Home from './pages/Home.jsx'
-import Gallery from './pages/Gallery.jsx'
-import Support from './pages/Support.jsx'
 import AboutLayout from './pages/about/AboutLayout.jsx'
 import Greeting from './pages/about/Greeting.jsx'
 import Certification from './pages/about/Certification.jsx'
@@ -26,6 +24,7 @@ import { AuthProvider } from "./context/AuthContext"
 import PrivateRoute from "./components/common/PrivateRoute.jsx"
 import AdminLogin from "./pages/admin/AdminLogin.jsx"
 import GalleryUpload from "./pages/admin/GalleryUpload.jsx"
+import NoticeAdmin from "./pages/admin/NoticeAdmin.jsx"
 
 function App() {
     const location = useLocation()
@@ -38,7 +37,6 @@ function App() {
                 <ScrollToTop/>
                 <Routes>
                     <Route path="/" element={<Home/>}/>
-                    <Route path="/support" element={<Support/>}/>
                     <Route path="/about" element={<AboutLayout/>}>
                         <Route path="greeting" element={<Greeting/>}/>
                         <Route path="certification" element={<Certification/>}/>
@@ -59,6 +57,9 @@ function App() {
                     <Route path="/admin/login" element={<AdminLogin/>}/>
                     <Route path="/admin/gallery-upload" element={
                         <PrivateRoute><GalleryUpload/></PrivateRoute>
+                    }/>
+                    <Route path="/admin/notices" element={
+                        <PrivateRoute><NoticeAdmin/></PrivateRoute>
                     }/>
                 </Routes>
             </main>
