@@ -1,4 +1,3 @@
-import homeVideo from './homeSampleVideo.mp4'
+import homeVideo from './homeSampleVideo.mp4';
 
-
-export {homeVideo}
+export { homeVideo };
