@@ -1,12 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html>
 <head>
-    <script>
-        // URL 끝이 '/'가 아니면 '/' 붙이고 새로고침
-        if (!location.pathname.endsWith('/')) {
-            location.replace(location.pathname + '/' + location.search + location.hash);
-        }
-    </script>
+  <meta charset="UTF-8"/>
+  <script>
+    sessionStorage.redirect = location.href;
+    window.location.href = '/hdsign/';
+  </script>
 </head>
 <body></body>
 </html>
