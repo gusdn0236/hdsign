@@ -27,7 +27,6 @@ const HeroSection = () => {
 
     useGsapFadeUp([titleRef, subtitleRef, buttonRef]);
 
-
     return (
         <div className="hero-section">
             <video
@@ -40,6 +39,8 @@ const HeroSection = () => {
             >
                 <source src={homeVideo} type="video/mp4"/>
             </video>
+
+            <div className="video-overlay" />
 
             <div className="overlay-text">
                 <h1 className="title" ref={titleRef}>

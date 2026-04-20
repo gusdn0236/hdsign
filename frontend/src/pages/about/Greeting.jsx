@@ -1,10 +1,11 @@
-// Greeting.jsx
+﻿// Greeting.jsx
 import React from 'react';
 import Slider from "react-slick"; // 추가
 import "slick-carousel/slick/slick.css";
 import "slick-carousel/slick/slick-theme.css";
 import './Greeting.css';
 import {
+    aboutBannerImg,
     aboutGreetingImg1,
     aboutGreetingImg2,
     aboutGreetingImg3,
@@ -34,6 +35,8 @@ const Greeting = () => {
 
             {/* 중간글씨 한 줄 */}
             <h2 className="greeting-medium">최고의 품질과 내구성을 위해 끊임없이 연구하도록 노력하겠습니다.</h2>
+
+            <img src={aboutBannerImg} alt="회사 사진" className="greeting-company-img" />
 
             {/* 작은 글씨 여러 줄 */}
             <div className="greeting-small-text">
