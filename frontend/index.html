@@ -2,9 +2,17 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8"/>
-
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>HD Sign</title>
+    <script>
+        (function() {
+            var redirect = sessionStorage.redirect;
+            delete sessionStorage.redirect;
+            if (redirect && redirect !== location.href) {
+                history.replaceState(null, null, redirect);
+            }
+        })();
+    </script>
     <script src="https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=tJhy9OC93A7TbwHIpW4DN9ACAP0Jaw9T55zZtBv3"></script>
 </head>
 <body>
@@ -12,4 +20,3 @@
 <script src="/src/main.jsx" type="module"></script>
 </body>
 </html>
-
