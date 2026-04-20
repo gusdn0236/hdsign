@@ -1,4 +1,4 @@
-/* 전체를 100% 높이로 설정 */
+﻿/* 전체를 100% 높이로 설정 */
 html, body, #root {
     height: 100%;
     margin: 0;
@@ -14,4 +14,15 @@ html, body, #root {
 /* 콘텐츠는 늘어나고, footer는 아래로 밀려남 */
 .content {
     flex: 1;
+}
+* {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+    display: none;
+}
+html {
+    scroll-behavior: smooth;
 }

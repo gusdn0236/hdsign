@@ -1,4 +1,4 @@
-import React, {useRef, useState} from "react";
+﻿import React, {useRef, useState} from "react";
 import './HeroSection.css'
 import {useGsapFadeUp} from "../../hooks/useGsapFadeUp.js";
 import {homeVideo} from "../../assets/video/index.js";
@@ -40,7 +40,8 @@ const HeroSection = () => {
                 <source src={homeVideo} type="video/mp4"/>
             </video>
 
-            <div className="video-overlay" />
+            <div className="video-overlay-blur" />
+            <div className="video-overlay-gradient" />
 
             <div className="overlay-text">
                 <h1 className="title" ref={titleRef}>
