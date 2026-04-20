@@ -1,6 +1,6 @@
-import './App.css'
+﻿import './App.css'
 import React from 'react'
-import {Routes, Route} from 'react-router-dom'
+import {Routes, Route, Navigate} from 'react-router-dom'
 import Header from './components/common/Header.jsx'
 import Footer from './components/common/Footer.jsx'
 import Home from './pages/Home.jsx'
@@ -61,6 +61,7 @@ function App() {
                     <Route path="/admin/notices" element={
                         <PrivateRoute><NoticeAdmin/></PrivateRoute>
                     }/>
+                    <Route path="*" element={<Navigate to="/" replace />}/>
                 </Routes>
             </main>
             {!isAdmin && <Footer/>}
