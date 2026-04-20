@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import './Notice.css';
-
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-
 const Notice = () => {
     const [notices, setNotices] = useState([]);
     const [selected, setSelected] = useState(null);
     const [loading, setLoading] = useState(false);
+    const { isAdmin } = useAuth();
+    const navigate = useNavigate();
 
     useEffect(() => {
         setLoading(true);
@@ -21,6 +23,14 @@ const Notice = () => {
         return str.slice(0, 10);
     };
 
+    const handleEdit = () => {
+        if (isAdmin) {
+            navigate('/admin/notices', { state: { editNotice: selected } });
+        } else {
+            navigate('/admin/login');
+        }
+    };
+
     if (selected) {
         return (
             <div className="notice-page">
@@ -33,7 +43,10 @@ const Notice = () => {
                         <span className="notice-detail-date">{formatDate(selected.createdAt)}</span>
                     </div>
                     <div className="notice-detail-content">{selected.content}</div>
-                    <button className="notice-back-btn" onClick={() => setSelected(null)}>목록으로</button>
+                    <div className="notice-detail-actions">
+                        <button className="notice-back-btn" onClick={() => setSelected(null)}>목록으로</button>
+                        <button className="notice-edit-btn" onClick={handleEdit}>수정하기</button>
+                    </div>
                 </div>
             </div>
         );
@@ -73,5 +86,4 @@ const Notice = () => {
         </div>
     );
 };
-
 export default Notice;

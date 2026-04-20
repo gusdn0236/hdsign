@@ -1,4 +1,4 @@
-.notice-page {
+﻿.notice-page {
     max-width: 900px;
     margin: 40px auto;
     padding: 0 20px;
@@ -110,4 +110,23 @@
 
 .notice-back-btn:hover {
     background: #444;
+}
+.notice-detail-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 32px;
+}
+
+.notice-edit-btn {
+    padding: 10px 24px;
+    background: #005f73;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.notice-edit-btn:hover {
+    background: #004a5a;
 }

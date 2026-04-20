@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import "./NoticeAdmin.css";
@@ -7,6 +8,16 @@ const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 export default function NoticeAdmin() {
     const { token, logout } = useAuth();
+    const location = useLocation();
+
+    useEffect(() => {
+        if (location.state?.editNotice) {
+            const n = location.state.editNotice;
+            setSelected(n);
+            setForm({ title: n.title, content: n.content, isPinned: n.isPinned });
+            setMode("edit");
+        }
+    }, [location.state]);
     const [notices, setNotices] = useState([]);
     const [mode, setMode] = useState("list");
     const [selected, setSelected] = useState(null);
