@@ -1,3 +1,2 @@
-import homeVideo from './homeSampleVideo.mp4';
-
-export { homeVideo };
+﻿import homeVideo from './homeSampleVideo.webm'
+export {homeVideo}
