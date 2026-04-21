@@ -55,12 +55,9 @@ const HeroSection = React.memo(() => {
                 muted
                 playsInline
                 preload="none"
-                poster="/hdsign/thumb.jpg"
             >
                 <source src={homeVideo} type="video/mp4"/>
             </video>
-
-            <div className="video-overlay-blur" />
             <div className="video-overlay-gradient" />
 
             <div className="overlay-text">
