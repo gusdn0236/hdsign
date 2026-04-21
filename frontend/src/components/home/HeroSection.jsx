@@ -7,14 +7,17 @@ import { pauseIcon, playIcon } from "../../assets/img/index.js"
 const HeroSection = React.memo(() => {
     const videoRef = useRef(null);
     const [isPlaying, setIsPlaying] = useState(false);
+    const userPaused = useRef(false);
 
     useEffect(() => {
         const observer = new IntersectionObserver(([entry]) => {
             if (entry.isIntersecting) {
-                videoRef.current?.play().then(() => setIsPlaying(true)).catch(() => {});
+                if (!userPaused.current) {
+                    videoRef.current?.play().then(() => setIsPlaying(true)).catch(() => {});
+                }
             } else {
                 videoRef.current?.pause();
-                setIsPlaying(false);
+                if (!userPaused.current) setIsPlaying(false);
             }
         }, { threshold: 0.3 });
 
@@ -28,9 +31,11 @@ const HeroSection = React.memo(() => {
             if (video.paused) {
                 video.play();
                 setIsPlaying(true);
+                userPaused.current = false;
             } else {
                 video.pause();
                 setIsPlaying(false);
+                userPaused.current = true;
             }
         }
     };
