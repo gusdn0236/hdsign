@@ -1,13 +1,26 @@
-﻿import React, {useRef, useState} from "react";
+﻿import React, { useRef, useState, useEffect } from "react";
 import './HeroSection.css'
-import {useGsapFadeUp} from "../../hooks/useGsapFadeUp.js";
-import {homeVideo} from "../../assets/video/index.js";
-import {pauseIcon, playIcon} from "../../assets/img/index.js"
+import { useGsapFadeUp } from "../../hooks/useGsapFadeUp.js";
+import { homeVideo } from "../../assets/video/index.js";
+import { pauseIcon, playIcon } from "../../assets/img/index.js"
 
-const HeroSection = () => {
-
+const HeroSection = React.memo(() => {
     const videoRef = useRef(null);
-    const [isPlaying, setIsPlaying] = useState(true);
+    const [isPlaying, setIsPlaying] = useState(false);
+
+    useEffect(() => {
+        const observer = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting) {
+                videoRef.current?.play().then(() => setIsPlaying(true)).catch(() => {});
+            } else {
+                videoRef.current?.pause();
+                setIsPlaying(false);
+            }
+        }, { threshold: 0.3 });
+
+        if (videoRef.current) observer.observe(videoRef.current);
+        return () => observer.disconnect();
+    }, []);
 
     const toggleVideo = () => {
         const video = videoRef.current;
@@ -20,7 +33,8 @@ const HeroSection = () => {
                 setIsPlaying(false);
             }
         }
-    }
+    };
+
     const titleRef = useRef(null);
     const subtitleRef = useRef(null);
     const buttonRef = useRef(null);
@@ -32,10 +46,11 @@ const HeroSection = () => {
             <video
                 ref={videoRef}
                 className="background-video"
-                autoPlay
                 loop
                 muted
                 playsInline
+                preload="none"
+                poster="/hdsign/thumb.jpg"
             >
                 <source src={homeVideo} type="video/mp4"/>
             </video>
@@ -59,5 +74,5 @@ const HeroSection = () => {
             </button>
         </div>
     )
-}
+});
 export default HeroSection;
