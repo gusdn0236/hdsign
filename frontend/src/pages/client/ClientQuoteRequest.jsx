@@ -181,7 +181,7 @@ export default function ClientQuoteRequest() {
                             className="req-input"
                             value={title}
                             onChange={(e) => setTitle(e.target.value)}
-                            placeholder="예: 목포 채널간판 견적 문의"
+                            placeholder="예) 푸드케어 내부 아크릴, 행복치과의원 외부사인"
                             maxLength={100}
                         />
                     </Section>
