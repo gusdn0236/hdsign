@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+﻿import React, { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { submitQuoteApi } from '../../api/client';
@@ -151,8 +151,8 @@ export default function ClientQuoteRequest() {
                 </div>
                 <div className="submitted-wrap">
                     <span className="submitted-icon">완료</span>
-                    <h2 className="submitted-title">견적 요청이 접수되었습니다</h2>
-                    <p className="submitted-desc">담당자가 확인 후 회신드리겠습니다.</p>
+                    <h2 className="submitted-title">견적 요청이 접수되었습니다.</h2>
+                    <p className="submitted-desc">담당자가 확인 후 빠르게 회신드리겠습니다.</p>
                     <button className="req-submit-btn" onClick={reset}>새 견적 요청 작성하기</button>
                 </div>
             </div>
@@ -166,10 +166,10 @@ export default function ClientQuoteRequest() {
             </div>
 
             <div className="request-notice">
-                <span className="request-notice-icon">안내</span>
+                <span className="request-notice-icon">✉</span>
                 <div className="request-notice-text">
-                    <p>접수하기 버튼을 누르면 입력하신 내용과 첨부 파일이 <strong>HD Sign 담당자에게 자동 전달</strong>됩니다.</p>
-                    <p>도면, 사진, 사이즈, 수량 같은 정보를 함께 올려주시면 견적 회신이 더 빨라집니다.</p>
+                    <p>접수하기 버튼을 누르면 입력하신 내용과 첨부 파일이 <strong>HD Sign 담당자에게 자동으로 전달됩니다.</strong></p>
+                    <p>담당자 확인 후 빠르게 연락드리겠습니다. <strong>작업 현황</strong> 메뉴에서 진행 상황을 실시간으로 확인하실 수 있습니다.</p>
                 </div>
             </div>
 
@@ -181,7 +181,7 @@ export default function ClientQuoteRequest() {
                             className="req-input"
                             value={title}
                             onChange={(e) => setTitle(e.target.value)}
-                            placeholder="예: 목포 외부 채널간판 견적 문의"
+                            placeholder="예: 목포 채널간판 견적 문의"
                             maxLength={100}
                         />
                     </Section>
@@ -195,7 +195,7 @@ export default function ClientQuoteRequest() {
                             className="req-textarea"
                             value={note}
                             onChange={(e) => setNote(e.target.value)}
-                            placeholder="사이즈, 수량, 설치 위치, 희망 일정, 문의 내용을 적어 주세요."
+                            placeholder="사이즈, 수량, 설치 위치, 납기 일정, 문의 내용을 적어 주세요."
                             rows={6}
                         />
                         <p className="char-count">{note.length}자</p>

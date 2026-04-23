@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { submitOrderApi } from '../../api/client';
@@ -29,11 +29,6 @@ const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 const LARGE_LINK_THRESHOLD_MB = 25;
 const MAX_TOTAL_FILE_SIZE_MB = 300;
 const MAX_TOTAL_FILE_SIZE_BYTES = MAX_TOTAL_FILE_SIZE_MB * 1024 * 1024;
-const NOTICE_LINES = [
-    '접수하기 버튼을 누르면 입력하신 내용과 첨부 파일이 HD Sign 담당자에게 자동으로 전달됩니다.',
-    '담당자 확인 후 빠르게 연락드리겠습니다. 작업 현황 메뉴에서 진행 상황을 실시간으로 확인하실 수 있습니다.',
-];
-
 function DatePicker({ value, onChange }) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -112,7 +107,7 @@ function FileDropZone({ files, onFilesChange }) {
                 onDrop={handleDrop}
                 onClick={() => inputRef.current?.click()}
             >
-                <span className="drop-zone-icon">업로드</span>
+                <span className="drop-zone-icon">📁</span>
                 <p className="drop-zone-text">파일을 드래그하거나 클릭하여 업로드</p>
                 <p className="drop-zone-sub">
                     AI, PDF, JPG, PNG, ZIP 등 모든 형식 가능 ({LARGE_LINK_THRESHOLD_MB}MB 초과분은 자동 대용량 링크 전환, 총 {MAX_TOTAL_FILE_SIZE_MB}MB)
@@ -479,9 +474,8 @@ export default function ClientRequest() {
             <div className="request-notice">
                 <span className="request-notice-icon">✉</span>
                 <div className="request-notice-text">
-                    {NOTICE_LINES.map((line) => (
-                        <p key={line}>{line}</p>
-                    ))}
+                    <p>접수하기 버튼을 누르면 입력하신 내용과 첨부 파일이 <strong>HD Sign 담당자에게 자동으로 전달됩니다.</strong></p>
+                    <p>담당자 확인 후 빠르게 연락드리겠습니다. <strong>작업 현황</strong> 메뉴에서 진행 상황을 실시간으로 확인하실 수 있습니다.</p>
                 </div>
             </div>
 
@@ -494,7 +488,7 @@ export default function ClientRequest() {
                                 className="req-input"
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
-                                placeholder="예: 목포 북항 크림색 후면채널간판"
+                                placeholder="예) 푸드케어 내부 아크릴, 행복치과의원 외부사인"
                                 maxLength={100}
                             />
                         </Section>
