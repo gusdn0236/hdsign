@@ -47,12 +47,9 @@ R2_SECRET_KEY=
 R2_ENDPOINT=
 R2_BUCKET=
 R2_PUBLIC_URL=
-SMTP_HOST=smtp.naver.com
-SMTP_PORT=587
-SMTP_USERNAME=
-SMTP_APP_PASSWORD=
-SMTP_SSL_ENABLE=false
-SMTP_STARTTLS_ENABLE=true
+RESEND_API_KEY=
+RESEND_API_BASE_URL=https://api.resend.com
+MAIL_FROM=HD Sign <onboarding@resend.dev>
 ORDER_MAIL_TO=hdno0236@naver.com
 MAGIC_LINK_BASE_URL=https://gusdn0236.github.io/hdsign
 ```
@@ -73,5 +70,6 @@ Reference example file:
 ## Notes
 
 - Backend secrets must stay in Railway environment variables only.
+- Resend free plan still requires a valid API key, and production sending should use a verified domain in `MAIL_FROM`.
 - `MAGIC_LINK_BASE_URL` should match the deployed frontend URL.
 - If Railway is connected to GitHub auto-deploy, pushing `master` redeploys the backend.

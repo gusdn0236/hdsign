@@ -1,22 +1,27 @@
 package com.example.backend.service;
 
-import com.example.backend.entity.Order;
-import com.example.backend.entity.OrderFile;
-import jakarta.mail.internet.MimeMessage;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -24,63 +29,109 @@ import java.util.stream.Collectors;
 public class MailService {
 
     private static final long ATTACH_LIMIT = 10L * 1024 * 1024;
+    private static final long ATTACH_TOTAL_LIMIT = ATTACH_LIMIT * 2;
 
-    private final JavaMailSender mailSender;
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
 
     @Value("${order.mail.to}")
     private String mailTo;
 
-    @Value("${spring.mail.username}")
+    @Value("${mail.from}")
     private String mailFrom;
 
-    @Value("${spring.mail.host}")
-    private String mailHost;
+    @Value("${resend.api-key:}")
+    private String resendApiKey;
+
+    @Value("${resend.api-base-url:https://api.resend.com}")
+    private String resendApiBaseUrl;
 
     @Async
-    public void sendOrderNotification(Order order, List<MultipartFile> files) {
+    public void sendOrderNotification(OrderNotification order, List<MultipartFile> files) {
+        if (resendApiKey == null || resendApiKey.isBlank()) {
+            log.error("Resend API key is missing. Skipping order notification mail: {}", order.orderNumber());
+            return;
+        }
+
         try {
+            FileBundle fileBundle = buildFileBundle(files, order.storedFiles());
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("from", mailFrom);
+            payload.put("to", List.of(mailTo));
+            payload.put("subject", buildSubject(order));
+            payload.put("html", buildHtml(order, fileBundle.htmlSection()));
+            payload.put("tags", List.of(
+                    tag("email_type", "order_notification"),
+                    tag("order_number", sanitizeTagValue(order.orderNumber()))
+            ));
+            if (!fileBundle.attachments().isEmpty()) {
+                payload.put("attachments", fileBundle.attachments());
+            }
+
+            String requestBody = objectMapper.writeValueAsString(payload);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(resendApiBaseUrl + "/emails"))
+                    .timeout(Duration.ofSeconds(20))
+                    .header("Authorization", "Bearer " + resendApiKey)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
             log.info(
-                    "Preparing order notification mail: orderNumber={}, to={}, from={}, host={}, fileCount={}",
-                    order.getOrderNumber(),
+                    "Preparing order notification mail via Resend: orderNumber={}, to={}, from={}, fileCount={}",
+                    order.orderNumber(),
                     mailTo,
                     mailFrom,
-                    mailHost,
                     files == null ? 0 : files.size()
             );
 
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom(mailFrom);
-            helper.setTo(mailTo);
-            helper.setSubject(buildSubject(order));
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException(
+                        "Resend responded with status " + response.statusCode() + ": " + response.body()
+                );
+            }
 
-            Map<String, String> r2Links = order.getFiles().stream()
-                    .collect(Collectors.toMap(OrderFile::getOriginalName, OrderFile::getFileUrl, (a, b) -> a));
-
-            String fileSection = buildFileSection(files, r2Links, helper);
-            helper.setText(buildHtml(order, fileSection), true);
-            mailSender.send(message);
-
-            log.info("Order notification mail sent successfully: {}", order.getOrderNumber());
+            JsonNode body = objectMapper.readTree(response.body());
+            log.info(
+                    "Order notification mail sent successfully: orderNumber={}, emailId={}",
+                    order.orderNumber(),
+                    body.path("id").asText("-")
+            );
         } catch (Exception e) {
-            log.error("Order notification mail failed: {}", order.getOrderNumber(), e);
+            log.error("Order notification mail failed: {}", order.orderNumber(), e);
         }
     }
 
-    private String buildSubject(Order order) {
-        return "[HD Sign] 새 작업 요청 - " + blankOr(order.getTitle(), "제목 없음")
-                + " (" + order.getOrderNumber() + ")";
+    private Map<String, String> tag(String name, String value) {
+        return Map.of("name", name, "value", value);
     }
 
-    private String buildFileSection(
-            List<MultipartFile> files,
-            Map<String, String> r2Links,
-            MimeMessageHelper helper
-    ) throws Exception {
+    private String sanitizeTagValue(String value) {
+        if (value == null || value.isBlank()) {
+            return "unknown";
+        }
+        return value.replaceAll("[^A-Za-z0-9_-]", "_");
+    }
+
+    private String buildSubject(OrderNotification order) {
+        return "[HD Sign] 작업 요청 접수 - " + blankOr(order.title(), "제목 없음")
+                + " (" + order.orderNumber() + ")";
+    }
+
+    private FileBundle buildFileBundle(List<MultipartFile> files, List<StoredFileLink> storedFiles) throws Exception {
         if (files == null || files.isEmpty()) {
-            return "";
+            return new FileBundle("", List.of());
         }
 
+        Map<String, String> linkByName = new LinkedHashMap<>();
+        for (StoredFileLink storedFile : storedFiles) {
+            linkByName.putIfAbsent(storedFile.originalName(), storedFile.fileUrl());
+        }
+
+        List<Map<String, String>> attachments = new ArrayList<>();
         StringBuilder rows = new StringBuilder();
         long totalAttached = 0;
 
@@ -89,25 +140,28 @@ public class MailService {
                 continue;
             }
 
-            String name = file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown";
+            String name = blankOr(file.getOriginalFilename(), "unknown");
             long size = file.getSize();
             String sizeText = formatSize(size);
-            boolean attach = size <= ATTACH_LIMIT && totalAttached + size <= ATTACH_LIMIT * 2;
+            boolean attach = size <= ATTACH_LIMIT && totalAttached + size <= ATTACH_TOTAL_LIMIT;
 
             if (attach) {
-                helper.addAttachment(name, new ByteArrayResource(file.getBytes()));
+                attachments.add(Map.of(
+                        "filename", name,
+                        "content", Base64.getEncoder().encodeToString(file.getBytes())
+                ));
                 totalAttached += size;
                 rows.append(fileRow(name, sizeText, "첨부", "#16a34a", null));
             } else {
-                rows.append(fileRow(name, sizeText, "링크", "#d97706", r2Links.get(name)));
+                rows.append(fileRow(name, sizeText, "링크", "#d97706", linkByName.get(name)));
             }
         }
 
         if (rows.isEmpty()) {
-            return "";
+            return new FileBundle("", attachments);
         }
 
-        return """
+        String htmlSection = """
                 <section style="margin-top:28px">
                   <h3 style="margin:0 0 12px;font-size:15px;color:#0f172a">첨부 파일</h3>
                   <table style="width:100%%;border-collapse:collapse;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
@@ -115,6 +169,8 @@ public class MailService {
                   </table>
                 </section>
                 """.formatted(rows);
+
+        return new FileBundle(htmlSection, attachments);
     }
 
     private String fileRow(String name, String size, String tag, String tagColor, String link) {
@@ -135,21 +191,18 @@ public class MailService {
                 """.formatted(esc(name), tagColor, tag, button, size);
     }
 
-    private String buildHtml(Order order, String fileSection) {
-        String company = order.getClient() != null ? blankOr(order.getClient().getCompanyName(), "-") : "-";
-        String contact = order.getClient() != null ? blankOr(order.getClient().getContactName(), "-") : "-";
-        String phone = order.getClient() != null ? blankOr(order.getClient().getPhone(), "-") : "-";
-        String title = blankOr(order.getTitle(), "제목 없음");
-        String items = blankOr(order.getAdditionalItems(), "없음");
-        String note = blankOr(order.getNote(), "");
-        String deliveryAddress = blankOr(order.getDeliveryAddress(), "-");
-        String createdAt = order.getCreatedAt() == null
+    private String buildHtml(OrderNotification order, String fileSection) {
+        String title = blankOr(order.title(), "제목 없음");
+        String items = blankOr(order.additionalItems(), "없음");
+        String note = blankOr(order.note(), "");
+        String deliveryAddress = blankOr(order.deliveryAddress(), "-");
+        String createdAt = order.createdAt() == null
                 ? "-"
-                : order.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
-        String dueDate = order.getDueDate() == null
+                : order.createdAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+        String dueDate = order.dueDate() == null
                 ? "-"
-                : order.getDueDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        String dueTime = blankOr(order.getDueTime(), "시간 미정");
+                : order.dueDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        String dueTime = blankOr(order.dueTime(), "시간 미정");
 
         String noteSection = note.isBlank()
                 ? ""
@@ -171,7 +224,7 @@ public class MailService {
                   <div style="max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #dbe3ec;border-radius:16px;overflow:hidden">
                     <div style="padding:28px 32px;background:linear-gradient(135deg,#0f172a,#1e3a5f);color:#fff">
                       <div style="font-size:13px;letter-spacing:.08em;opacity:.8">HD SIGN</div>
-                      <h1 style="margin:10px 0 8px;font-size:24px;line-height:1.3">새 작업 요청이 접수되었습니다</h1>
+                      <h1 style="margin:10px 0 8px;font-size:24px;line-height:1.3">작업 요청이 접수되었습니다</h1>
                       <div style="font-size:14px;opacity:.9">%s</div>
                     </div>
 
@@ -201,16 +254,16 @@ public class MailService {
                 </body>
                 </html>
                 """.formatted(
-                order.getOrderNumber(),
-                infoRow("주문번호", order.getOrderNumber()),
+                order.orderNumber(),
+                infoRow("주문번호", order.orderNumber()),
                 infoRow("접수시각", createdAt),
-                infoRow("거래처", company),
-                infoRow("담당자", contact),
-                infoRow("연락처", phone),
+                infoRow("거래처", order.companyName()),
+                infoRow("담당자", order.contactName()),
+                infoRow("연락처", order.phone()),
                 infoRow("작업 제목", title),
                 infoRow("추가 물품", items),
                 infoRow("납기", dueDate + " / " + dueTime),
-                infoRow("배송 정보", order.getDeliveryMethod().name() + " / " + deliveryAddress),
+                infoRow("배송 정보", order.deliveryMethodLabel() + " / " + deliveryAddress),
                 noteSection,
                 fileSection
         );
@@ -248,4 +301,24 @@ public class MailService {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;");
     }
+
+    public record OrderNotification(
+            String orderNumber,
+            LocalDateTime createdAt,
+            String companyName,
+            String contactName,
+            String phone,
+            String title,
+            String additionalItems,
+            String note,
+            LocalDate dueDate,
+            String dueTime,
+            String deliveryMethodLabel,
+            String deliveryAddress,
+            List<StoredFileLink> storedFiles
+    ) {}
+
+    public record StoredFileLink(String originalName, String fileUrl) {}
+
+    private record FileBundle(String htmlSection, List<Map<String, String>> attachments) {}
 }

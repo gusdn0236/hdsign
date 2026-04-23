@@ -35,31 +35,38 @@ import java.util.UUID;
 public class ClientService {
 
     private final ClientUserRepository clientUserRepository;
-    private final OrderRepository       orderRepository;
-    private final OrderFileRepository   orderFileRepository;
-    private final JwtUtil               jwtUtil;
-    private final PasswordEncoder       passwordEncoder;
-    private final S3Client              s3Client;
-    private final MailService           mailService;
+    private final OrderRepository orderRepository;
+    private final OrderFileRepository orderFileRepository;
+    private final JwtUtil jwtUtil;
+    private final PasswordEncoder passwordEncoder;
+    private final S3Client s3Client;
+    private final MailService mailService;
 
-    @Value("${r2.bucket}")      private String bucket;
-    @Value("${r2.public-url}") private String publicUrl;
+    @Value("${r2.bucket}")
+    private String bucket;
 
-    // ── 로그인 ────────────────────────────────────────────────────────
+    @Value("${r2.public-url}")
+    private String publicUrl;
+
     public ClientAuthDto.LoginResponse login(String username, String password) {
         ClientUser user = clientUserRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("아이디 또는 비밀번호가 올바르지 않습니다."));
-        if (!user.getIsActive())
+
+        if (!user.getIsActive()) {
             throw new RuntimeException("비활성화된 계정입니다. 담당자에게 문의해주세요.");
-        if (!passwordEncoder.matches(password, user.getPassword()))
+        }
+        if (!passwordEncoder.matches(password, user.getPassword())) {
             throw new RuntimeException("아이디 또는 비밀번호가 올바르지 않습니다.");
+        }
 
         return new ClientAuthDto.LoginResponse(
                 jwtUtil.generateClientToken(username),
-                user.getCompanyName(), user.getContactName(), username);
+                user.getCompanyName(),
+                user.getContactName(),
+                username
+        );
     }
 
-    // ── 작업 요청 접수 ────────────────────────────────────────────────
     @Transactional
     public OrderDto.Response submitOrder(
             String username,
@@ -81,7 +88,7 @@ public class ClientService {
                 .orderNumber(orderNumber)
                 .client(client)
                 .title(title)
-                .hasSMPS(additionalItems != null && additionalItems.contains("파워기(SMPS)"))
+                .hasSMPS(additionalItems != null && additionalItems.contains("파워기 SMPS"))
                 .additionalItems(additionalItems)
                 .note(note)
                 .dueDate(LocalDate.parse(dueDate))
@@ -93,48 +100,55 @@ public class ClientService {
 
         Order saved = orderRepository.save(order);
 
-        // ── 파일 R2 업로드 & OrderFile 저장 ──
         List<MultipartFile> uploadedFiles = new ArrayList<>();
         if (files != null) {
             for (MultipartFile file : files) {
-                if (file == null || file.isEmpty()) continue;
+                if (file == null || file.isEmpty()) {
+                    continue;
+                }
+
                 try {
-                    String fname = file.getOriginalFilename() != null
-                            ? file.getOriginalFilename() : "unknown";
-                    String ext = fname.contains(".")
-                            ? fname.substring(fname.lastIndexOf(".")) : "";
-                    String key = "orders/" + orderNumber + "/" + UUID.randomUUID() + ext;
+                    String originalName = file.getOriginalFilename() != null
+                            ? file.getOriginalFilename()
+                            : "unknown";
+                    String extension = originalName.contains(".")
+                            ? originalName.substring(originalName.lastIndexOf("."))
+                            : "";
+                    String key = "orders/" + orderNumber + "/" + UUID.randomUUID() + extension;
 
                     s3Client.putObject(
                             PutObjectRequest.builder()
-                                    .bucket(bucket).key(key)
+                                    .bucket(bucket)
+                                    .key(key)
                                     .contentType(file.getContentType())
                                     .build(),
-                            RequestBody.fromBytes(file.getBytes()));
+                            RequestBody.fromBytes(file.getBytes())
+                    );
 
-                    String fileUrl = (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/") + key;
-                    OrderFile of = OrderFile.builder()
+                    String normalizedPublicUrl = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
+                    String fileUrl = normalizedPublicUrl + key;
+
+                    OrderFile orderFile = OrderFile.builder()
                             .order(saved)
-                            .originalName(fname)
+                            .originalName(originalName)
                             .storedName(key)
                             .fileUrl(fileUrl)
                             .fileSize(file.getSize())
                             .contentType(file.getContentType())
                             .build();
-                    orderFileRepository.save(of);
-                    saved.getFiles().add(of);
-                    uploadedFiles.add(file);
 
+                    orderFileRepository.save(orderFile);
+                    saved.getFiles().add(orderFile);
+                    uploadedFiles.add(file);
                 } catch (Exception e) {
                     log.warn("R2 파일 업로드 실패 [{}]: {}", file.getOriginalFilename(), e.getMessage());
-                    uploadedFiles.add(file); // 실패해도 메일에는 포함
+                    uploadedFiles.add(file);
                 }
             }
         }
 
-        // ── 알림 메일 발송 (실패해도 주문 처리에 영향 없음) ──
         try {
-            mailService.sendOrderNotification(saved, uploadedFiles);
+            mailService.sendOrderNotification(buildOrderNotification(saved, client), uploadedFiles);
         } catch (Exception e) {
             log.error("메일 발송 호출 실패: {}", e.getMessage());
         }
@@ -142,20 +156,52 @@ public class ClientService {
         return OrderDto.toResponse(saved);
     }
 
-    // ── 내 주문 목록 ──────────────────────────────────────────────────
     @Transactional(readOnly = true)
     public List<OrderDto.Response> getMyOrders(String username) {
         ClientUser client = clientUserRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("거래처 정보를 찾을 수 없습니다."));
+
         return orderRepository.findByClientOrderByCreatedAtDesc(client)
-                .stream().map(OrderDto::toResponse).toList();
+                .stream()
+                .map(OrderDto::toResponse)
+                .toList();
     }
 
-    // ── 주문번호 생성 ──────────────────────────────────────────────────
     private String generateOrderNumber() {
         String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         String prefix = "ORD-" + date + "-";
         long count = orderRepository.countByOrderNumberStartingWith(prefix) + 1;
         return String.format("ORD-%s-%03d", date, count);
+    }
+
+    private MailService.OrderNotification buildOrderNotification(Order order, ClientUser client) {
+        List<MailService.StoredFileLink> storedFiles = order.getFiles().stream()
+                .map(file -> new MailService.StoredFileLink(file.getOriginalName(), file.getFileUrl()))
+                .toList();
+
+        return new MailService.OrderNotification(
+                order.getOrderNumber(),
+                order.getCreatedAt(),
+                client.getCompanyName(),
+                client.getContactName(),
+                client.getPhone(),
+                order.getTitle(),
+                order.getAdditionalItems(),
+                order.getNote(),
+                order.getDueDate(),
+                order.getDueTime(),
+                deliveryMethodLabel(order.getDeliveryMethod()),
+                order.getDeliveryAddress(),
+                storedFiles
+        );
+    }
+
+    private String deliveryMethodLabel(DeliveryMethod deliveryMethod) {
+        return switch (deliveryMethod) {
+            case CARGO -> "화물 발송";
+            case QUICK -> "퀵 발송";
+            case DIRECT -> "직접 배송";
+            case PICKUP -> "직접 수령";
+        };
     }
 }
