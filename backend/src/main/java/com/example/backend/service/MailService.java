@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -22,265 +23,229 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MailService {
 
+    private static final long ATTACH_LIMIT = 10L * 1024 * 1024;
+
     private final JavaMailSender mailSender;
 
-    @Value("${order.mail.to}")         private String mailTo;
-    @Value("${spring.mail.username}")  private String mailFrom;
+    @Value("${order.mail.to}")
+    private String mailTo;
 
-    private static final long ATTACH_LIMIT = 10L * 1024 * 1024; // 10 MB
+    @Value("${spring.mail.username}")
+    private String mailFrom;
 
+    @Value("${spring.mail.host}")
+    private String mailHost;
+
+    @Async
     public void sendOrderNotification(Order order, List<MultipartFile> files) {
         try {
-            MimeMessage msg = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(msg, true, "UTF-8");
+            log.info(
+                    "Preparing order notification mail: orderNumber={}, to={}, from={}, host={}, fileCount={}",
+                    order.getOrderNumber(),
+                    mailTo,
+                    mailFrom,
+                    mailHost,
+                    files == null ? 0 : files.size()
+            );
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(mailFrom);
             helper.setTo(mailTo);
-            helper.setSubject(subject(order));
+            helper.setSubject(buildSubject(order));
 
             Map<String, String> r2Links = order.getFiles().stream()
                     .collect(Collectors.toMap(OrderFile::getOriginalName, OrderFile::getFileUrl, (a, b) -> a));
 
-            String fileHtml = buildFileRows(files, r2Links, helper);
-            helper.setText(buildHtml(order, fileHtml), true);
-            mailSender.send(msg);
-            log.info("알림 메일 발송 완료: {}", order.getOrderNumber());
+            String fileSection = buildFileSection(files, r2Links, helper);
+            helper.setText(buildHtml(order, fileSection), true);
+            mailSender.send(message);
+
+            log.info("Order notification mail sent successfully: {}", order.getOrderNumber());
         } catch (Exception e) {
-            log.error("알림 메일 발송 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
+            log.error("Order notification mail failed: {}", order.getOrderNumber(), e);
         }
     }
 
-    // ────────────────────────────────────────────────────────────────
-    private String subject(Order order) {
-        String t = blankOr(order.getTitle(), "제목 없음");
-        return "[HD Sign] 새 작업 요청 — " + t + " (" + order.getOrderNumber() + ")";
+    private String buildSubject(Order order) {
+        return "[HD Sign] 새 작업 요청 - " + blankOr(order.getTitle(), "제목 없음")
+                + " (" + order.getOrderNumber() + ")";
     }
 
-    // ── 파일 행 HTML (소용량 첨부 / 대용량 링크) ──────────────────────
-    private String buildFileRows(
+    private String buildFileSection(
             List<MultipartFile> files,
             Map<String, String> r2Links,
             MimeMessageHelper helper
     ) throws Exception {
-        if (files == null || files.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
+        if (files == null || files.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder rows = new StringBuilder();
         long totalAttached = 0;
-        for (MultipartFile f : files) {
-            if (f == null || f.isEmpty()) continue;
-            String name = f.getOriginalFilename() != null ? f.getOriginalFilename() : "unknown";
-            long   size = f.getSize();
-            String sz   = fmtSize(size);
+
+        for (MultipartFile file : files) {
+            if (file == null || file.isEmpty()) {
+                continue;
+            }
+
+            String name = file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown";
+            long size = file.getSize();
+            String sizeText = formatSize(size);
             boolean attach = size <= ATTACH_LIMIT && totalAttached + size <= ATTACH_LIMIT * 2;
+
             if (attach) {
-                helper.addAttachment(name, new ByteArrayResource(f.getBytes()));
+                helper.addAttachment(name, new ByteArrayResource(file.getBytes()));
                 totalAttached += size;
-                sb.append(fileRow(name, sz, "첨부됨", "#22C55E", null));
+                rows.append(fileRow(name, sizeText, "첨부", "#16a34a", null));
             } else {
-                String link = r2Links.get(name);
-                sb.append(fileRow(name, sz, "대용량", "#F59E0B", link));
+                rows.append(fileRow(name, sizeText, "링크", "#d97706", r2Links.get(name)));
             }
         }
-        return sb.toString();
+
+        if (rows.isEmpty()) {
+            return "";
+        }
+
+        return """
+                <section style="margin-top:28px">
+                  <h3 style="margin:0 0 12px;font-size:15px;color:#0f172a">첨부 파일</h3>
+                  <table style="width:100%%;border-collapse:collapse;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
+                    %s
+                  </table>
+                </section>
+                """.formatted(rows);
     }
 
     private String fileRow(String name, String size, String tag, String tagColor, String link) {
-        String badge = "<span style=\"display:inline-block;background:" + tagColor
-                + ";color:#fff;font-size:10px;font-weight:700;padding:2px 7px;"
-                + "border-radius:3px;margin-left:8px;vertical-align:middle\">" + tag + "</span>";
-        String dl = link != null
-                ? " &nbsp;<a href=\"" + link + "\" style=\"display:inline-block;color:#fff;"
-                  + "background:#3B82F6;text-decoration:none;font-size:11px;font-weight:700;"
-                  + "padding:3px 10px;border-radius:4px\">다운로드</a>"
-                : "";
-        return "<tr>"
-                + "<td style=\"padding:9px 14px;border-bottom:1px solid #F1F5F9;"
-                + "font-size:13px;color:#1E293B;word-break:break-all\">"
-                + esc(name) + badge + dl + "</td>"
-                + "<td style=\"padding:9px 14px;border-bottom:1px solid #F1F5F9;"
-                + "font-size:12px;color:#94A3B8;white-space:nowrap;text-align:right\">"
-                + size + "</td>"
-                + "</tr>";
+        String button = link == null || link.isBlank()
+                ? ""
+                : "<a href=\"" + esc(link) + "\" "
+                + "style=\"display:inline-block;margin-left:10px;padding:4px 10px;background:#2563eb;color:#fff;text-decoration:none;border-radius:999px;font-size:11px;font-weight:700\">다운로드</a>";
+
+        return """
+                <tr>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;word-break:break-all">
+                    %s
+                    <span style="display:inline-block;margin-left:8px;padding:2px 8px;border-radius:999px;background:%s;color:#fff;font-size:11px;font-weight:700">%s</span>
+                    %s
+                  </td>
+                  <td style="padding:12px 16px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:12px;text-align:right;white-space:nowrap">%s</td>
+                </tr>
+                """.formatted(esc(name), tagColor, tag, button, size);
     }
 
-    // ── 메인 HTML 템플릿 ──────────────────────────────────────────────
-    private String buildHtml(Order order, String fileRows) {
-
-        String delivery = switch (order.getDeliveryMethod()) {
-            case CARGO  -> "🚛 화물 발송";
-            case QUICK  -> "⚡ 퀵 발송";
-            case DIRECT -> "🚗 직접 배송";
-            case PICKUP -> "🏭 직접 픽업";
-        };
-        String addr = blankOr(order.getDeliveryAddress(), "");
-        String addrHtml = addr.isBlank() ? ""
-                : "<br/><span style=\"font-size:12px;color:#64748B\">▸ " + esc(addr) + "</span>";
-
-        String dueDate = order.getDueDate() != null
-                ? order.getDueDate().format(DateTimeFormatter.ofPattern("yyyy년 M월 d일")) : "-";
-        String dueTime = blankOr(order.getDueTime(), "");
-        String dueHtml = dueTime.isBlank() ? dueDate
-                : dueDate + " &nbsp;<span style=\"color:#3B82F6;font-weight:600\">" + esc(dueTime) + "</span>";
-
-        String company = order.getClient() != null ? esc(order.getClient().getCompanyName()) : "-";
-        String contact = (order.getClient() != null
-                && !blankOr(order.getClient().getContactName(), "").isBlank())
-                ? "<br/><span style=\"font-size:12px;color:#64748B\">▸ "
-                  + esc(order.getClient().getContactName()) + " 담당자</span>"
-                : "";
+    private String buildHtml(Order order, String fileSection) {
+        String company = order.getClient() != null ? blankOr(order.getClient().getCompanyName(), "-") : "-";
+        String contact = order.getClient() != null ? blankOr(order.getClient().getContactName(), "-") : "-";
+        String phone = order.getClient() != null ? blankOr(order.getClient().getPhone(), "-") : "-";
+        String title = blankOr(order.getTitle(), "제목 없음");
         String items = blankOr(order.getAdditionalItems(), "없음");
-        String note  = blankOr(order.getNote(), "");
-        String createdAt = order.getCreatedAt() != null
-                ? order.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : "-";
+        String note = blankOr(order.getNote(), "");
+        String deliveryAddress = blankOr(order.getDeliveryAddress(), "-");
+        String createdAt = order.getCreatedAt() == null
+                ? "-"
+                : order.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+        String dueDate = order.getDueDate() == null
+                ? "-"
+                : order.getDueDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        String dueTime = blankOr(order.getDueTime(), "시간 미정");
 
-        String noteSection = note.isBlank() ? "" : """
-                <tr>
-                  <td colspan="2" style="padding:0">
-                    <div style="margin-top:24px">
-                      <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#0B1120;
-                                padding-bottom:6px;border-bottom:2px solid #3B82F6">추가 요청사항</p>
-                      <div style="background:#F8FAFC;border-left:3px solid #3B82F6;padding:12px 16px;
-                                  font-size:13px;line-height:1.8;color:#334155;border-radius:0 6px 6px 0">
-                        %s
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-                """.formatted(esc(note).replace("\n", "<br/>"));
-
-        String fileSection = fileRows.isBlank() ? "" : """
-                <tr>
-                  <td colspan="2" style="padding:0">
-                    <div style="margin-top:24px">
-                      <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#0B1120;
-                                padding-bottom:6px;border-bottom:2px solid #3B82F6">첨부 파일</p>
-                      <table style="width:100%%;border-collapse:collapse;
-                                    background:#F8FAFC;border-radius:6px;overflow:hidden">
-                        %s
-                      </table>
-                    </div>
-                  </td>
-                </tr>
-                """.formatted(fileRows);
+        String noteSection = note.isBlank()
+                ? ""
+                : """
+                  <section style="margin-top:28px">
+                    <h3 style="margin:0 0 12px;font-size:15px;color:#0f172a">추가 요청사항</h3>
+                    <div style="padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;color:#334155;font-size:13px;line-height:1.8">%s</div>
+                  </section>
+                  """.formatted(esc(note).replace("\n", "<br>"));
 
         return """
                 <!DOCTYPE html>
                 <html lang="ko">
-                <head><meta charset="UTF-8"/></head>
-                <body style="margin:0;padding:24px;background:#EEF2F7;
-                             font-family:'Malgun Gothic',Apple SD Gothic Neo,Arial,sans-serif">
-                <table width="100%%" cellpadding="0" cellspacing="0"
-                       style="max-width:620px;margin:0 auto">
+                <head>
+                  <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                </head>
+                <body style="margin:0;padding:24px;background:#eef2f7;font-family:'Malgun Gothic',Arial,sans-serif;color:#0f172a">
+                  <div style="max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #dbe3ec;border-radius:16px;overflow:hidden">
+                    <div style="padding:28px 32px;background:linear-gradient(135deg,#0f172a,#1e3a5f);color:#fff">
+                      <div style="font-size:13px;letter-spacing:.08em;opacity:.8">HD SIGN</div>
+                      <h1 style="margin:10px 0 8px;font-size:24px;line-height:1.3">새 작업 요청이 접수되었습니다</h1>
+                      <div style="font-size:14px;opacity:.9">%s</div>
+                    </div>
 
-                  <!-- 헤더 -->
-                  <tr>
-                    <td style="background:#0B1120;padding:24px 32px;border-radius:10px 10px 0 0">
-                      <table width="100%%">
-                        <tr>
-                          <td>
-                            <span style="color:#fff;font-size:20px;font-weight:900;
-                                         letter-spacing:1px">HD SIGN</span><br/>
-                            <span style="color:rgba(255,255,255,.40);font-size:12px">
-                              새 작업 요청이 접수되었습니다
-                            </span>
-                          </td>
-                          <td align="right">
-                            <span style="background:#22C55E;color:#fff;font-size:11px;
-                                         font-weight:700;padding:5px 12px;border-radius:20px">
-                              ● 접수완료
-                            </span>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
+                    <div style="padding:28px 32px">
+                      <section>
+                        <table style="width:100%%;border-collapse:collapse">
+                          %s
+                          %s
+                          %s
+                          %s
+                          %s
+                          %s
+                          %s
+                          %s
+                          %s
+                        </table>
+                      </section>
 
-                  <!-- 주문번호 바 -->
-                  <tr>
-                    <td style="background:#1E3A5F;padding:10px 32px">
-                      <span style="color:#93C5FD;font-size:12px;font-weight:600">주문번호</span>
-                      &nbsp;
-                      <span style="color:#fff;font-size:14px;font-weight:800;
-                                   letter-spacing:0.5px">%s</span>
-                      <span style="float:right;color:rgba(255,255,255,.40);font-size:11px">%s</span>
-                    </td>
-                  </tr>
+                      %s
+                      %s
+                    </div>
+                  </div>
 
-                  <!-- 본문 -->
-                  <tr>
-                    <td style="background:#fff;padding:28px 32px;border-radius:0 0 10px 10px">
-                      <table width="100%%" cellpadding="0" cellspacing="0">
-
-                        <!-- 정보 테이블 -->
-                        <tr>
-                          <td colspan="2">
-                            <table width="100%%" cellpadding="0" cellspacing="0"
-                                   style="border-collapse:collapse;border-radius:8px;
-                                          overflow:hidden;border:1px solid #E8EEF4">
-                              %s
-                              %s
-                              %s
-                              %s
-                              %s
-                            </table>
-                          </td>
-                        </tr>
-
-                        <!-- 추가 요청사항 -->
-                        %s
-
-                        <!-- 파일 섹션 -->
-                        %s
-
-                      </table>
-                    </td>
-                  </tr>
-
-                  <!-- 푸터 -->
-                  <tr>
-                    <td style="padding:16px 0;text-align:center;
-                               color:#94A3B8;font-size:11px">
-                      HD Sign &nbsp;·&nbsp; 이 메일은 자동으로 발송된 알림입니다
-                    </td>
-                  </tr>
-
-                </table>
+                  <div style="max-width:760px;margin:14px auto 0;color:#94a3b8;font-size:11px;text-align:center">
+                    이 메일은 시스템에서 자동 발송되었습니다.
+                  </div>
                 </body>
                 </html>
                 """.formatted(
-                order.getOrderNumber(), createdAt,
-                infoRow("거래처",    company + contact),
-                infoRow("작업 제목", esc(blankOr(order.getTitle(), "제목 없음"))),
-                infoRow("납품 희망일", dueHtml),
-                infoRow("납품 방법",  delivery + addrHtml),
-                infoRow("추가 물품",  esc(items)),
+                order.getOrderNumber(),
+                infoRow("주문번호", order.getOrderNumber()),
+                infoRow("접수시각", createdAt),
+                infoRow("거래처", company),
+                infoRow("담당자", contact),
+                infoRow("연락처", phone),
+                infoRow("작업 제목", title),
+                infoRow("추가 물품", items),
+                infoRow("납기", dueDate + " / " + dueTime),
+                infoRow("배송 정보", order.getDeliveryMethod().name() + " / " + deliveryAddress),
                 noteSection,
                 fileSection
         );
     }
 
     private String infoRow(String label, String value) {
-        return "<tr>"
-                + "<th style=\"background:#F8FAFC;color:#64748B;font-size:12px;font-weight:600;"
-                + "padding:10px 14px;border-bottom:1px solid #E8EEF4;text-align:left;"
-                + "width:100px;white-space:nowrap\">" + label + "</th>"
-                + "<td style=\"color:#1E293B;font-size:13px;padding:10px 14px;"
-                + "border-bottom:1px solid #E8EEF4;line-height:1.6\">" + value + "</td>"
-                + "</tr>";
+        return """
+                <tr>
+                  <th style="width:110px;padding:12px 0;border-bottom:1px solid #e2e8f0;text-align:left;color:#64748b;font-size:12px;font-weight:700">%s</th>
+                  <td style="padding:12px 0;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;line-height:1.6">%s</td>
+                </tr>
+                """.formatted(esc(label), esc(blankOr(value, "-")));
     }
 
-    // ── 유틸 ────────────────────────────────────────────────────────
-    private String fmtSize(long b) {
-        if (b < 1024)        return b + " B";
-        if (b < 1024 * 1024) return String.format("%.1f KB", b / 1024.0);
-        return String.format("%.1f MB", b / (1024.0 * 1024));
+    private String formatSize(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        if (bytes < 1024 * 1024) {
+            return String.format("%.1f KB", bytes / 1024.0);
+        }
+        return String.format("%.1f MB", bytes / (1024.0 * 1024));
     }
 
-    private String blankOr(String s, String fallback) {
-        return (s != null && !s.isBlank()) ? s : fallback;
+    private String blankOr(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
-    private String esc(String s) {
-        if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;")
-                .replace(">", "&gt;").replace("\"", "&quot;");
+    private String esc(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 }
