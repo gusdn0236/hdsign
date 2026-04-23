@@ -170,3 +170,14 @@
 
 
 .admin-link { font-size: 11px; color: inherit; text-decoration: none; margin-left: 24px; opacity: 0.6; } .admin-link:hover { opacity: 1; }
+
+/* 거래처 로그인 상태 표시 */
+.client-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: #005f73;
+    border-radius: 50%;
+    margin-left: 5px;
+    vertical-align: middle;
+    margin-bottom: 2px;
+}

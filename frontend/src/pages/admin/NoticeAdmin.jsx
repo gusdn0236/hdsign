@@ -1,13 +1,12 @@
 ﻿import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import "./NoticeAdmin.css";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 export default function NoticeAdmin() {
-    const { token, logout } = useAuth();
+    const { token } = useAuth();
     const location = useLocation();
 
     useEffect(() => {
@@ -84,15 +83,6 @@ export default function NoticeAdmin() {
 
     return (
         <div className="notice-admin-page">
-            <div className="upload-header">
-                <h1>공지사항 관리</h1>
-                <div className="header-actions">
-                    <Link to="/admin/gallery-upload" className="site-link">이미지 관리</Link>
-                    <Link to="/Support/Notice" className="site-link">공지사항 보러가기</Link>
-                    <button className="logout-btn" onClick={logout}>로그아웃</button>
-                </div>
-            </div>
-
             {mode === "list" ? (
                 <div className="notice-admin-list">
                     <div className="notice-admin-toolbar">
@@ -167,3 +157,4 @@ export default function NoticeAdmin() {
         </div>
     );
 }
+

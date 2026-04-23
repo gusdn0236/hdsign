@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { Navigate } from "react-router-dom";
-import { useNavigate, Link } from "react-router-dom";
+import { Navigate, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { loginApi } from "../../api/auth";
 import "./AdminLogin.css";
@@ -11,10 +10,11 @@ export default function AdminLogin() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { login, isAdmin } = useAuth();
-  if (isAdmin) {
-    return <Navigate to="/admin/gallery-upload" replace />;
-  }
   const navigate = useNavigate();
+
+  if (isAdmin) {
+    return <Navigate to="/admin/orders" replace />;
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -23,7 +23,7 @@ export default function AdminLogin() {
     try {
       const { token } = await loginApi(username, password);
       login(token);
-      navigate("/admin/gallery-upload");
+      navigate("/admin/orders");
     } catch (err) {
       setError(err.message || "로그인에 실패했습니다.");
     } finally {
@@ -42,27 +42,15 @@ export default function AdminLogin() {
           {error && <div className="login-error">{error}</div>}
           <div className="form-group">
             <label htmlFor="username">아이디</label>
-            <input
-              id="username"
-              type="text"
-              value={username}
+            <input id="username" type="text" value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="관리자 아이디"
-              autoComplete="username"
-              required
-            />
+              placeholder="관리자 아이디" autoComplete="username" required />
           </div>
           <div className="form-group">
             <label htmlFor="password">비밀번호</label>
-            <input
-              id="password"
-              type="password"
-              value={password}
+            <input id="password" type="password" value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="비밀번호"
-              autoComplete="current-password"
-              required
-            />
+              placeholder="비밀번호" autoComplete="current-password" required />
           </div>
           <button type="submit" className="login-btn" disabled={loading}>
             {loading ? "로그인 중..." : "로그인"}

@@ -1,11 +1,15 @@
 import React from 'react';
-import './Banner.css'; // 스타일 따로 관리 (아래 참고)
+import './Banner.css';
 
-const Banner = ({image, title}) => {
+const Banner = ({ image, title, subtitle, action }) => {
     return (
-        <div className="banner-container" style={{backgroundImage: `url(${image})`}}>
+        <div className="banner-container" style={{ backgroundImage: `url(${image})` }}>
             <div className="banner-overlay">
-                <h1 className="banner-title">{title}</h1>
+                <div className="banner-text-wrap">
+                    <h1 className="banner-title">{title}</h1>
+                    {subtitle && <p className="banner-subtitle">{subtitle}</p>}
+                    {action && <div className="banner-action">{action}</div>}
+                </div>
             </div>
         </div>
     );

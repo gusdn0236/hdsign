@@ -1,4 +1,5 @@
 package com.example.backend.security;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,6 +22,7 @@ import java.util.List;
 @EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
+
     private final JwtFilter jwtFilter;
 
     @Bean
@@ -30,12 +32,24 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // 공개 엔드포인트 (구체적인 경로 먼저!)
                 .requestMatchers("/api/auth/login").permitAll()
+                .requestMatchers("/api/client/auth/login").permitAll()
+                .requestMatchers("/api/client/auth/register").permitAll()
+                .requestMatchers("/api/client/auth/magic-link/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/gallery/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/notices/**").permitAll()
                 .requestMatchers("/uploads/**").permitAll()
+
+                // 관리자 전용
                 .requestMatchers("/api/gallery/**").hasRole("ADMIN")
                 .requestMatchers("/api/notices/**").hasRole("ADMIN")
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+
+                // 거래처 전용 (로그인 제외한 나머지)
+                .requestMatchers("/api/client/orders/**").hasRole("CLIENT")
+                .requestMatchers("/api/client/**").hasRole("CLIENT")
+
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
