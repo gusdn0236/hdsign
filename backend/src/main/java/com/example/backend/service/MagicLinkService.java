@@ -133,7 +133,11 @@ public class MagicLinkService {
 
         Optional<ClientUser> existingUser = clientUserRepository.findByEmail(normalizedEmail);
         if (existingUser.isPresent()) {
-            sendMagicLink(normalizedEmail, frontendBaseUrl);
+            try {
+                sendMagicLink(normalizedEmail, frontendBaseUrl);
+            } catch (Exception e) {
+                log.warn("Failed to send magic link for existing user {}: {}", normalizedEmail, e.getMessage());
+            }
             return RegistrationRequestResult.ALREADY_REGISTERED;
         }
 
