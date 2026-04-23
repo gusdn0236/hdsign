@@ -199,7 +199,7 @@ export default function ClientAdmin() {
 
             {/* 추가 모달 */}
             {modalMode === 'create' && (
-                <div className="ca-overlay" onClick={closeModal}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
                     <div className="ca-modal" onClick={(e) => e.stopPropagation()}>
                         <h3>거래처 추가</h3>
                         <form className="ca-form" onSubmit={handleCreate}>
@@ -228,7 +228,7 @@ export default function ClientAdmin() {
                                 <input {...field('email')} type="email" placeholder="담당자 이메일 (선택)" />
                             </div>
                             <div className="ca-modal-actions">
-                                <button type="button" className="ca-cancel-btn" onClick={closeModal}>취소</button>
+                                <button type="button" className="ca-cancel-btn" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>취소</button>
                                 <button type="submit" className="ca-save-btn" disabled={saving}>{saving ? '추가 중...' : '추가'}</button>
                             </div>
                         </form>
@@ -238,7 +238,7 @@ export default function ClientAdmin() {
 
             {/* 수정 모달 */}
             {modalMode === 'edit' && (
-                <div className="ca-overlay" onClick={closeModal}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
                     <div className="ca-modal" onClick={(e) => e.stopPropagation()}>
                         <h3>거래처 수정</h3>
                         <form className="ca-form" onSubmit={handleEdit}>
@@ -271,7 +271,7 @@ export default function ClientAdmin() {
                                 </label>
                             </div>
                             <div className="ca-modal-actions">
-                                <button type="button" className="ca-cancel-btn" onClick={closeModal}>취소</button>
+                                <button type="button" className="ca-cancel-btn" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>취소</button>
                                 <button type="submit" className="ca-save-btn" disabled={saving}>{saving ? '저장 중...' : '저장'}</button>
                             </div>
                         </form>
@@ -281,7 +281,7 @@ export default function ClientAdmin() {
 
             {/* 비밀번호 초기화 모달 */}
             {modalMode === 'reset' && (
-                <div className="ca-overlay" onClick={closeModal}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
                     <div className="ca-modal ca-modal-sm" onClick={(e) => e.stopPropagation()}>
                         <h3>비밀번호 변경</h3>
                         <p className="ca-confirm-text"><strong>{editTarget?.companyName}</strong> 계정의 비밀번호를 변경합니다.</p>
@@ -291,7 +291,7 @@ export default function ClientAdmin() {
                                 <input {...field('password')} type="password" placeholder="4자 이상" required />
                             </div>
                             <div className="ca-modal-actions">
-                                <button type="button" className="ca-cancel-btn" onClick={closeModal}>취소</button>
+                                <button type="button" className="ca-cancel-btn" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>취소</button>
                                 <button type="submit" className="ca-save-btn" disabled={saving}>{saving ? '변경 중...' : '변경'}</button>
                             </div>
                         </form>
@@ -301,7 +301,7 @@ export default function ClientAdmin() {
 
             {/* 삭제 확인 모달 */}
             {deleteTarget && (
-                <div className="ca-overlay" onClick={() => setDeleteTarget(null)}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setDeleteTarget(null); }}>
                     <div className="ca-modal ca-modal-sm" onClick={(e) => e.stopPropagation()}>
                         <h3>거래처 삭제</h3>
                         <p className="ca-confirm-text">
