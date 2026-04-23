@@ -154,7 +154,8 @@ public class ClientService {
     // ── 주문번호 생성 ──────────────────────────────────────────────────
     private String generateOrderNumber() {
         String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        long count = orderRepository.count() + 1;
+        String prefix = "ORD-" + date + "-";
+        long count = orderRepository.countByOrderNumberStartingWith(prefix) + 1;
         return String.format("ORD-%s-%03d", date, count);
     }
 }

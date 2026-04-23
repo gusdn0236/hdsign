@@ -10,4 +10,5 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     List<Order> findByClientOrderByCreatedAtDesc(ClientUser client);
     Optional<Order> findByOrderNumber(String orderNumber);
     List<Order> findAllByOrderByCreatedAtDesc();
+    long countByOrderNumberStartingWith(String prefix);
 }
