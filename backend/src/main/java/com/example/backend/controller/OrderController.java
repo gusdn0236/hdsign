@@ -4,8 +4,13 @@ import com.example.backend.dto.OrderDto;
 import com.example.backend.service.ClientService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+
 import java.security.Principal;
 import java.util.List;
 
@@ -16,9 +21,8 @@ public class OrderController {
 
     private final ClientService clientService;
 
-    // 작업 요청 접수
     @PostMapping
-    public ResponseEntity<OrderDto.Response> submit(
+    public ResponseEntity<OrderDto.Response> submitOrder(
             Principal principal,
             @RequestParam(required = false) String title,
             @RequestParam(required = false) String additionalItems,
@@ -29,14 +33,38 @@ public class OrderController {
             @RequestParam(required = false) String deliveryAddress,
             @RequestParam(required = false) List<MultipartFile> files
     ) {
-        OrderDto.Response res = clientService.submitOrder(
-                principal.getName(), title, additionalItems, note,
-                dueDate, dueTime, deliveryMethod, deliveryAddress, files
+        return ResponseEntity.ok(
+                clientService.submitOrder(
+                        principal.getName(),
+                        title,
+                        additionalItems,
+                        note,
+                        dueDate,
+                        dueTime,
+                        deliveryMethod,
+                        deliveryAddress,
+                        files
+                )
         );
-        return ResponseEntity.ok(res);
     }
 
-    // 내 작업 목록 조회
+    @PostMapping("/quote")
+    public ResponseEntity<OrderDto.Response> submitQuoteRequest(
+            Principal principal,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String note,
+            @RequestParam(required = false) List<MultipartFile> files
+    ) {
+        return ResponseEntity.ok(
+                clientService.submitQuoteRequest(
+                        principal.getName(),
+                        title,
+                        note,
+                        files
+                )
+        );
+    }
+
     @GetMapping
     public ResponseEntity<List<OrderDto.Response>> getMyOrders(Principal principal) {
         return ResponseEntity.ok(clientService.getMyOrders(principal.getName()));

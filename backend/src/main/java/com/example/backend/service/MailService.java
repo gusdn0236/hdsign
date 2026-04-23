@@ -63,7 +63,7 @@ public class MailService {
             payload.put("subject", buildSubject(order));
             payload.put("html", buildHtml(order, fileBundle.htmlSection()));
             payload.put("tags", List.of(
-                    tag("email_type", "order_notification"),
+                    tag("email_type", sanitizeTagValue(order.requestType())),
                     tag("order_number", sanitizeTagValue(order.orderNumber()))
             ));
             if (!fileBundle.attachments().isEmpty()) {
@@ -80,8 +80,9 @@ public class MailService {
                     .build();
 
             log.info(
-                    "Preparing order notification mail via Resend: orderNumber={}, to={}, from={}, fileCount={}",
+                    "Preparing order notification mail via Resend: orderNumber={}, type={}, to={}, from={}, fileCount={}",
                     order.orderNumber(),
+                    order.requestType(),
                     mailTo,
                     mailFrom,
                     files == null ? 0 : files.size()
@@ -117,8 +118,12 @@ public class MailService {
     }
 
     private String buildSubject(OrderNotification order) {
-        return "[HD Sign] 작업 요청 접수 - " + blankOr(order.title(), "제목 없음")
-                + " (" + order.orderNumber() + ")";
+        return blankOr(order.companyName(), "거래처 미지정")
+                + " - "
+                + blankOr(order.title(), "제목 없음")
+                + " ("
+                + (isQuote(order) ? "견적요청접수" : "작업요청접수")
+                + ")";
     }
 
     private FileBundle buildFileBundle(List<MultipartFile> files, List<StoredFileLink> storedFiles) throws Exception {
@@ -192,18 +197,10 @@ public class MailService {
     }
 
     private String buildHtml(OrderNotification order, String fileSection) {
-        String title = blankOr(order.title(), "제목 없음");
-        String items = blankOr(order.additionalItems(), "없음");
-        String note = blankOr(order.note(), "");
-        String deliveryAddress = blankOr(order.deliveryAddress(), "-");
         String createdAt = order.createdAt() == null
                 ? "-"
                 : order.createdAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
-        String dueDate = order.dueDate() == null
-                ? "-"
-                : order.dueDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        String dueTime = blankOr(order.dueTime(), "시간 미정");
-
+        String note = blankOr(order.note(), "");
         String noteSection = note.isBlank()
                 ? ""
                 : """
@@ -212,6 +209,10 @@ public class MailService {
                     <div style="padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;color:#334155;font-size:13px;line-height:1.8">%s</div>
                   </section>
                   """.formatted(esc(note).replace("\n", "<br>"));
+
+        String detailRows = isQuote(order)
+                ? quoteDetailRows(order, createdAt)
+                : orderDetailRows(order, createdAt);
 
         return """
                 <!DOCTYPE html>
@@ -224,21 +225,13 @@ public class MailService {
                   <div style="max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #dbe3ec;border-radius:16px;overflow:hidden">
                     <div style="padding:28px 32px;background:linear-gradient(135deg,#0f172a,#1e3a5f);color:#fff">
                       <div style="font-size:13px;letter-spacing:.08em;opacity:.8">HD SIGN</div>
-                      <h1 style="margin:10px 0 8px;font-size:24px;line-height:1.3">작업 요청이 접수되었습니다</h1>
-                      <div style="font-size:14px;opacity:.9">%s</div>
+                      <h1 style="margin:10px 0 8px;font-size:24px;line-height:1.3">%s</h1>
+                      <div style="font-size:14px;opacity:.9">%s이 접수되었습니다</div>
                     </div>
 
                     <div style="padding:28px 32px">
                       <section>
                         <table style="width:100%%;border-collapse:collapse">
-                          %s
-                          %s
-                          %s
-                          %s
-                          %s
-                          %s
-                          %s
-                          %s
                           %s
                         </table>
                       </section>
@@ -254,19 +247,42 @@ public class MailService {
                 </body>
                 </html>
                 """.formatted(
-                order.orderNumber(),
-                infoRow("주문번호", order.orderNumber()),
-                infoRow("접수시각", createdAt),
-                infoRow("거래처", order.companyName()),
-                infoRow("담당자", order.contactName()),
-                infoRow("연락처", order.phone()),
-                infoRow("작업 제목", title),
-                infoRow("추가 물품", items),
-                infoRow("납기", dueDate + " / " + dueTime),
-                infoRow("배송 정보", order.deliveryMethodLabel() + " / " + deliveryAddress),
+                esc(blankOr(order.companyName(), "거래처")),
+                esc(order.requestTypeLabel()),
+                detailRows,
                 noteSection,
                 fileSection
         );
+    }
+
+    private String quoteDetailRows(OrderNotification order, String createdAt) {
+        return infoRow("요청번호", order.orderNumber())
+                + infoRow("접수시각", createdAt)
+                + infoRow("거래처", order.companyName())
+                + infoRow("담당자", order.contactName())
+                + infoRow("연락처", order.phone())
+                + infoRow("견적 제목", blankOr(order.title(), "제목 없음"));
+    }
+
+    private String orderDetailRows(OrderNotification order, String createdAt) {
+        String dueDate = order.dueDate() == null
+                ? "-"
+                : order.dueDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        String dueTime = blankOr(order.dueTime(), "시간 미정");
+
+        return infoRow("주문번호", order.orderNumber())
+                + infoRow("접수시각", createdAt)
+                + infoRow("거래처", order.companyName())
+                + infoRow("담당자", order.contactName())
+                + infoRow("연락처", order.phone())
+                + infoRow("작업 제목", blankOr(order.title(), "제목 없음"))
+                + infoRow("추가 물품", blankOr(order.additionalItems(), "없음"))
+                + infoRow("납기", dueDate + " / " + dueTime)
+                + infoRow("배송 정보", blankOr(order.deliveryMethodLabel(), "-") + " / " + blankOr(order.deliveryAddress(), "-"));
+    }
+
+    private boolean isQuote(OrderNotification order) {
+        return "QUOTE".equals(order.requestType());
     }
 
     private String infoRow(String label, String value) {
@@ -304,6 +320,8 @@ public class MailService {
 
     public record OrderNotification(
             String orderNumber,
+            String requestType,
+            String requestTypeLabel,
             LocalDateTime createdAt,
             String companyName,
             String contactName,

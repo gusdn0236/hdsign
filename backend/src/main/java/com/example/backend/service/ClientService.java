@@ -6,6 +6,7 @@ import com.example.backend.entity.ClientUser;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.Order.DeliveryMethod;
 import com.example.backend.entity.Order.OrderStatus;
+import com.example.backend.entity.Order.RequestType;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.ClientUserRepository;
 import com.example.backend.repository.OrderFileRepository;
@@ -79,16 +80,15 @@ public class ClientService {
             String deliveryAddress,
             List<MultipartFile> files
     ) {
-        ClientUser client = clientUserRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("거래처 정보를 찾을 수 없습니다."));
-
-        String orderNumber = generateOrderNumber();
+        ClientUser client = findClient(username);
+        String orderNumber = generateOrderNumber(RequestType.ORDER);
 
         Order order = Order.builder()
                 .orderNumber(orderNumber)
+                .requestType(RequestType.ORDER)
                 .client(client)
                 .title(title)
-                .hasSMPS(additionalItems != null && additionalItems.contains("파워기 SMPS"))
+                .hasSMPS(additionalItems != null && additionalItems.contains("SMPS"))
                 .additionalItems(additionalItems)
                 .note(note)
                 .dueDate(LocalDate.parse(dueDate))
@@ -98,54 +98,54 @@ public class ClientService {
                 .status(OrderStatus.RECEIVED)
                 .build();
 
+        return saveRequest(order, client, files);
+    }
+
+    @Transactional
+    public OrderDto.Response submitQuoteRequest(
+            String username,
+            String title,
+            String note,
+            List<MultipartFile> files
+    ) {
+        ClientUser client = findClient(username);
+        String orderNumber = generateOrderNumber(RequestType.QUOTE);
+
+        Order order = Order.builder()
+                .orderNumber(orderNumber)
+                .requestType(RequestType.QUOTE)
+                .client(client)
+                .title(title)
+                .hasSMPS(false)
+                .additionalItems(null)
+                .note(note)
+                .dueDate(null)
+                .dueTime(null)
+                .deliveryMethod(null)
+                .deliveryAddress(null)
+                .status(OrderStatus.RECEIVED)
+                .build();
+
+        return saveRequest(order, client, files);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderDto.Response> getMyOrders(String username) {
+        ClientUser client = findClient(username);
+        return orderRepository.findByClientOrderByCreatedAtDesc(client)
+                .stream()
+                .map(OrderDto::toResponse)
+                .toList();
+    }
+
+    private ClientUser findClient(String username) {
+        return clientUserRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("거래처 정보를 찾을 수 없습니다."));
+    }
+
+    private OrderDto.Response saveRequest(Order order, ClientUser client, List<MultipartFile> files) {
         Order saved = orderRepository.save(order);
-
-        List<MultipartFile> uploadedFiles = new ArrayList<>();
-        if (files != null) {
-            for (MultipartFile file : files) {
-                if (file == null || file.isEmpty()) {
-                    continue;
-                }
-
-                try {
-                    String originalName = file.getOriginalFilename() != null
-                            ? file.getOriginalFilename()
-                            : "unknown";
-                    String extension = originalName.contains(".")
-                            ? originalName.substring(originalName.lastIndexOf("."))
-                            : "";
-                    String key = "orders/" + orderNumber + "/" + UUID.randomUUID() + extension;
-
-                    s3Client.putObject(
-                            PutObjectRequest.builder()
-                                    .bucket(bucket)
-                                    .key(key)
-                                    .contentType(file.getContentType())
-                                    .build(),
-                            RequestBody.fromBytes(file.getBytes())
-                    );
-
-                    String normalizedPublicUrl = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
-                    String fileUrl = normalizedPublicUrl + key;
-
-                    OrderFile orderFile = OrderFile.builder()
-                            .order(saved)
-                            .originalName(originalName)
-                            .storedName(key)
-                            .fileUrl(fileUrl)
-                            .fileSize(file.getSize())
-                            .contentType(file.getContentType())
-                            .build();
-
-                    orderFileRepository.save(orderFile);
-                    saved.getFiles().add(orderFile);
-                    uploadedFiles.add(file);
-                } catch (Exception e) {
-                    log.warn("R2 파일 업로드 실패 [{}]: {}", file.getOriginalFilename(), e.getMessage());
-                    uploadedFiles.add(file);
-                }
-            }
-        }
+        List<MultipartFile> uploadedFiles = uploadFiles(saved, files);
 
         try {
             mailService.sendOrderNotification(buildOrderNotification(saved, client), uploadedFiles);
@@ -156,22 +156,62 @@ public class ClientService {
         return OrderDto.toResponse(saved);
     }
 
-    @Transactional(readOnly = true)
-    public List<OrderDto.Response> getMyOrders(String username) {
-        ClientUser client = clientUserRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("거래처 정보를 찾을 수 없습니다."));
+    private List<MultipartFile> uploadFiles(Order saved, List<MultipartFile> files) {
+        List<MultipartFile> uploadedFiles = new ArrayList<>();
+        if (files == null) {
+            return uploadedFiles;
+        }
 
-        return orderRepository.findByClientOrderByCreatedAtDesc(client)
-                .stream()
-                .map(OrderDto::toResponse)
-                .toList();
+        for (MultipartFile file : files) {
+            if (file == null || file.isEmpty()) {
+                continue;
+            }
+
+            try {
+                String originalName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown";
+                String extension = originalName.contains(".")
+                        ? originalName.substring(originalName.lastIndexOf("."))
+                        : "";
+                String key = "orders/" + saved.getOrderNumber() + "/" + UUID.randomUUID() + extension;
+
+                s3Client.putObject(
+                        PutObjectRequest.builder()
+                                .bucket(bucket)
+                                .key(key)
+                                .contentType(file.getContentType())
+                                .build(),
+                        RequestBody.fromBytes(file.getBytes())
+                );
+
+                String normalizedPublicUrl = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
+                String fileUrl = normalizedPublicUrl + key;
+
+                OrderFile orderFile = OrderFile.builder()
+                        .order(saved)
+                        .originalName(originalName)
+                        .storedName(key)
+                        .fileUrl(fileUrl)
+                        .fileSize(file.getSize())
+                        .contentType(file.getContentType())
+                        .build();
+
+                orderFileRepository.save(orderFile);
+                saved.getFiles().add(orderFile);
+                uploadedFiles.add(file);
+            } catch (Exception e) {
+                log.warn("R2 파일 업로드 실패 [{}]: {}", file.getOriginalFilename(), e.getMessage());
+                uploadedFiles.add(file);
+            }
+        }
+
+        return uploadedFiles;
     }
 
-    private String generateOrderNumber() {
+    private String generateOrderNumber(RequestType requestType) {
         String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        String prefix = "ORD-" + date + "-";
+        String prefix = (requestType == RequestType.QUOTE ? "QTE-" : "ORD-") + date + "-";
         long count = orderRepository.countByOrderNumberStartingWith(prefix) + 1;
-        return String.format("ORD-%s-%03d", date, count);
+        return String.format("%s%03d", prefix, count);
     }
 
     private MailService.OrderNotification buildOrderNotification(Order order, ClientUser client) {
@@ -181,6 +221,8 @@ public class ClientService {
 
         return new MailService.OrderNotification(
                 order.getOrderNumber(),
+                order.getRequestType().name(),
+                requestTypeLabel(order.getRequestType()),
                 order.getCreatedAt(),
                 client.getCompanyName(),
                 client.getContactName(),
@@ -196,7 +238,14 @@ public class ClientService {
         );
     }
 
+    private String requestTypeLabel(RequestType requestType) {
+        return requestType == RequestType.QUOTE ? "견적 요청" : "작업 요청";
+    }
+
     private String deliveryMethodLabel(DeliveryMethod deliveryMethod) {
+        if (deliveryMethod == null) {
+            return null;
+        }
         return switch (deliveryMethod) {
             case CARGO -> "화물 발송";
             case QUICK -> "퀵 발송";

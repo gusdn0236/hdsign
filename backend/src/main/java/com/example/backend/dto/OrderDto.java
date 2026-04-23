@@ -5,17 +5,22 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
 public class OrderDto {
 
-    @Getter @Builder @NoArgsConstructor @AllArgsConstructor
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class Response {
         private Long id;
         private String orderNumber;
-        private String clientCompanyName;   // 거래처 업체명 (관리자 페이지용)
+        private String requestType;
+        private String clientCompanyName;
         private String title;
         private Boolean hasSMPS;
         private String additionalItems;
@@ -30,7 +35,10 @@ public class OrderDto {
         private LocalDateTime updatedAt;
     }
 
-    @Getter @Builder @NoArgsConstructor @AllArgsConstructor
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class FileInfo {
         private Long id;
         private String originalName;
@@ -40,37 +48,37 @@ public class OrderDto {
         private String contentType;
     }
 
-    @Getter @NoArgsConstructor @AllArgsConstructor
+    @Getter
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class StatusUpdateRequest {
         private String status;
     }
 
-    // Entity → DTO 변환
     public static Response toResponse(Order order) {
         List<FileInfo> files = order.getFiles().stream()
-                .map(f -> FileInfo.builder()
-                        .id(f.getId())
-                        .originalName(f.getOriginalName())
-                        .fileUrl(f.getFileUrl())
-                        .previewUrl(f.getPreviewUrl())
-                        .fileSize(f.getFileSize())
-                        .contentType(f.getContentType())
+                .map(file -> FileInfo.builder()
+                        .id(file.getId())
+                        .originalName(file.getOriginalName())
+                        .fileUrl(file.getFileUrl())
+                        .previewUrl(file.getPreviewUrl())
+                        .fileSize(file.getFileSize())
+                        .contentType(file.getContentType())
                         .build())
                 .toList();
 
         return Response.builder()
                 .id(order.getId())
                 .orderNumber(order.getOrderNumber())
-                .clientCompanyName(
-                    order.getClient() != null ? order.getClient().getCompanyName() : null
-                )
+                .requestType(order.getRequestType().name())
+                .clientCompanyName(order.getClient() != null ? order.getClient().getCompanyName() : null)
                 .title(order.getTitle())
                 .hasSMPS(order.getHasSMPS())
                 .additionalItems(order.getAdditionalItems())
                 .note(order.getNote())
                 .dueDate(order.getDueDate())
                 .dueTime(order.getDueTime())
-                .deliveryMethod(order.getDeliveryMethod().name())
+                .deliveryMethod(order.getDeliveryMethod() != null ? order.getDeliveryMethod().name() : null)
                 .deliveryAddress(order.getDeliveryAddress())
                 .status(order.getStatus().name())
                 .files(files)

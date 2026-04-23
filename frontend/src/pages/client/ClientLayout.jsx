@@ -8,19 +8,21 @@ import './ClientLayout.css';
 
 const ClientLayout = () => {
     const { clientUser, clientToken, clientLoading } = useAuth();
+
     if (clientLoading) return null;
     if (!clientUser || !clientToken) return <Navigate to="/client/login" replace />;
 
     const companyName = typeof clientUser === 'object' ? clientUser.companyName?.trim() : '';
     const contactName = typeof clientUser === 'object' ? clientUser.contactName?.trim() : '';
     const welcomeMessage = companyName
-        ? `${companyName}님, 환영합니다`
+        ? `${companyName}님 환영합니다`
         : contactName
-            ? `${contactName}님, 환영합니다`
-            : 'HD Sign 거래처 포털 방문을 환영합니다';
+            ? `${contactName}님 환영합니다`
+            : 'HD Sign 거래처 포털에 오신 것을 환영합니다';
 
     const clientMenu = [
         { name: '작업 요청', path: '/client/request' },
+        { name: '견적 요청', path: '/client/quote' },
         { name: '작업 현황', path: '/client/status' },
     ];
 
@@ -32,7 +34,7 @@ const ClientLayout = () => {
                 subtitle={welcomeMessage}
                 action={(
                     <Link to="/" className="client-banner-home-link">
-                        홈페이지로 돌아가기
+                        메인 사이트로 돌아가기
                     </Link>
                 )}
             />

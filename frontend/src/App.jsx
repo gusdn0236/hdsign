@@ -31,6 +31,7 @@ import AdminLayout from './pages/admin/AdminLayout.jsx'
 import ClientLogin from './pages/client/ClientLogin.jsx'
 import ClientLayout from './pages/client/ClientLayout.jsx'
 import ClientRequest from './pages/client/ClientRequest.jsx'
+import ClientQuoteRequest from './pages/client/ClientQuoteRequest.jsx'
 import ClientStatus from './pages/client/ClientStatus.jsx'
 
 function App() {
@@ -84,6 +85,7 @@ function App() {
                         <Route path="/client" element={<ClientLayout />}>
                             <Route index         element={<Navigate to="request" replace />} />
                             <Route path="request" element={<ClientRequest />} />
+                            <Route path="quote" element={<ClientQuoteRequest />} />
                             <Route path="status"  element={<ClientStatus />} />
                         </Route>
 
