@@ -9,6 +9,7 @@ public class ClientUserDto {
     @Getter @NoArgsConstructor @AllArgsConstructor
     public static class CreateRequest {
         private String username;
+        private String password;
         private String companyName;
         private String contactName;
         private String phone;
@@ -22,6 +23,11 @@ public class ClientUserDto {
         private String phone;
         private String email;
         private Boolean isActive;
+    }
+
+    @Getter @NoArgsConstructor @AllArgsConstructor
+    public static class ResetPasswordRequest {
+        private String newPassword;
     }
 
     @Getter @AllArgsConstructor

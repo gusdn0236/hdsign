@@ -29,7 +29,6 @@ import OrderAdmin from './pages/admin/OrderAdmin.jsx'
 import ClientAdmin from './pages/admin/ClientAdmin.jsx'
 import AdminLayout from './pages/admin/AdminLayout.jsx'
 import ClientLogin from './pages/client/ClientLogin.jsx'
-import ClientVerify from './pages/client/ClientVerify.jsx'
 import ClientLayout from './pages/client/ClientLayout.jsx'
 import ClientRequest from './pages/client/ClientRequest.jsx'
 import ClientStatus from './pages/client/ClientStatus.jsx'
@@ -82,7 +81,6 @@ function App() {
                         </Route>
 
                         <Route path="/client/login" element={<ClientLogin />} />
-                        <Route path="/client/verify" element={<ClientVerify />} />
                         <Route path="/client" element={<ClientLayout />}>
                             <Route index         element={<Navigate to="request" replace />} />
                             <Route path="request" element={<ClientRequest />} />

@@ -128,6 +128,18 @@
     transition: background 0.15s;
 }
 .ca-edit-btn:hover { background: #dbeafe; }
+.ca-pw-btn {
+    padding: 5px 12px;
+    background: #f0fdf4;
+    color: #15803d;
+    border: 1px solid #86efac;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.ca-pw-btn:hover { background: #dcfce7; }
 .ca-del-btn {
     padding: 5px 12px;
     background: #fff1f2;

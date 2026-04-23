@@ -28,9 +28,7 @@ public class ClientService {
     private final OrderRepository orderRepository;
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
-    private final OrderMailService orderMailService;
 
-    // ── 로그인 ──
     public ClientAuthDto.LoginResponse login(String username, String password) {
         ClientUser user = clientUserRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("아이디 또는 비밀번호가 올바르지 않습니다."));
@@ -45,7 +43,6 @@ public class ClientService {
         return new ClientAuthDto.LoginResponse(token, user.getCompanyName(), user.getContactName(), username);
     }
 
-    // ── 작업 요청 접수 ──
     @Transactional
     public OrderDto.Response submitOrder(
             String username,
@@ -78,14 +75,9 @@ public class ClientService {
                 .status(OrderStatus.RECEIVED)
                 .build();
 
-        Order saved = orderRepository.save(order);
-        orderMailService.sendOrderMail(saved, client, files);
-
-        return OrderDto.toResponse(saved);
+        return OrderDto.toResponse(orderRepository.save(order));
     }
 
-
-    // ── 내 작업 목록 조회 ──
     @Transactional(readOnly = true)
     public List<OrderDto.Response> getMyOrders(String username) {
         ClientUser client = clientUserRepository.findByUsername(username)
@@ -94,7 +86,6 @@ public class ClientService {
                 .stream().map(OrderDto::toResponse).toList();
     }
 
-    // ── 주문번호 생성 (ORD-20250422-001) ──
     private String generateOrderNumber() {
         String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         long count = orderRepository.count() + 1;

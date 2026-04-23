@@ -1,18 +1,13 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.ClientUserDto;
-import com.example.backend.dto.RegistrationRequestDto;
 import com.example.backend.entity.ClientUser;
 import com.example.backend.repository.ClientUserRepository;
-import com.example.backend.service.MagicLinkService;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
@@ -22,7 +17,7 @@ import java.util.Map;
 public class AdminClientController {
 
     private final ClientUserRepository clientUserRepository;
-    private final MagicLinkService magicLinkService;
+    private final PasswordEncoder passwordEncoder;
 
     @GetMapping
     public ResponseEntity<List<ClientUserDto.Response>> listClients() {
@@ -36,10 +31,27 @@ public class AdminClientController {
 
     @PostMapping
     public ResponseEntity<ClientUserDto.Response> createClient(@RequestBody ClientUserDto.CreateRequest req) {
-        throw new ResponseStatusException(
-                HttpStatus.METHOD_NOT_ALLOWED,
-                "거래처는 가입 신청 승인으로만 등록할 수 있습니다."
-        );
+        if (req.getUsername() == null || req.getUsername().isBlank())
+            throw new IllegalArgumentException("아이디를 입력해주세요.");
+        if (req.getPassword() == null || req.getPassword().length() < 4)
+            throw new IllegalArgumentException("비밀번호는 4자 이상이어야 합니다.");
+        if (req.getCompanyName() == null || req.getCompanyName().isBlank())
+            throw new IllegalArgumentException("업체명을 입력해주세요.");
+
+        if (clientUserRepository.existsByUsername(req.getUsername().trim()))
+            throw new IllegalArgumentException("이미 사용 중인 아이디입니다.");
+
+        ClientUser user = clientUserRepository.save(ClientUser.builder()
+                .username(req.getUsername().trim())
+                .password(passwordEncoder.encode(req.getPassword()))
+                .companyName(req.getCompanyName().trim())
+                .contactName(req.getContactName() != null ? req.getContactName().trim() : "")
+                .phone(req.getPhone() != null ? req.getPhone().trim() : "")
+                .email(req.getEmail() != null ? req.getEmail().trim().toLowerCase() : "")
+                .isActive(true)
+                .build());
+
+        return ResponseEntity.ok(toResponse(user));
     }
 
     @PutMapping("/{id}")
@@ -50,24 +62,19 @@ public class AdminClientController {
         ClientUser user = clientUserRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("계정을 찾을 수 없습니다."));
 
-        if (req.getCompanyName() != null && !req.getCompanyName().isBlank()) {
+        if (req.getCompanyName() != null && !req.getCompanyName().isBlank())
             user.setCompanyName(req.getCompanyName().trim());
-        }
-        if (req.getContactName() != null) {
+        if (req.getContactName() != null)
             user.setContactName(req.getContactName().trim());
-        }
-        if (req.getPhone() != null) {
+        if (req.getPhone() != null)
             user.setPhone(req.getPhone().trim());
-        }
-        if (req.getIsActive() != null) {
+        if (req.getIsActive() != null)
             user.setIsActive(req.getIsActive());
-        }
         if (req.getEmail() != null && !req.getEmail().isBlank()) {
             String normalizedEmail = req.getEmail().trim().toLowerCase();
             clientUserRepository.findByEmail(normalizedEmail).ifPresent(existing -> {
-                if (!existing.getId().equals(id)) {
+                if (!existing.getId().equals(id))
                     throw new IllegalArgumentException("이미 등록된 이메일입니다.");
-                }
             });
             user.setEmail(normalizedEmail);
         }
@@ -75,32 +82,29 @@ public class AdminClientController {
         return ResponseEntity.ok(toResponse(clientUserRepository.save(user)));
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteClient(@PathVariable Long id) {
+    @PostMapping("/{id}/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(
+            @PathVariable Long id,
+            @RequestBody ClientUserDto.ResetPasswordRequest req
+    ) {
+        if (req.getNewPassword() == null || req.getNewPassword().length() < 4)
+            throw new IllegalArgumentException("비밀번호는 4자 이상이어야 합니다.");
+
         ClientUser user = clientUserRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("계정을 찾을 수 없습니다."));
-        clientUserRepository.delete(user);
+
+        user.setPassword(passwordEncoder.encode(req.getNewPassword()));
+        clientUserRepository.save(user);
+        return ResponseEntity.ok(Map.of("message", "비밀번호가 변경되었습니다."));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteClient(@PathVariable Long id) {
+        clientUserRepository.delete(
+                clientUserRepository.findById(id)
+                        .orElseThrow(() -> new RuntimeException("계정을 찾을 수 없습니다."))
+        );
         return ResponseEntity.noContent().build();
-    }
-
-    @GetMapping("/registrations")
-    public ResponseEntity<List<RegistrationRequestDto.Response>> listRegistrations() {
-        return ResponseEntity.ok(magicLinkService.getPendingRegistrations());
-    }
-
-    @PostMapping("/registrations/{id}/approve")
-    public ResponseEntity<Map<String, String>> approve(
-            @PathVariable Long id,
-            HttpServletRequest request
-    ) {
-        magicLinkService.approveRegistration(id, extractFrontendBaseUrl(request));
-        return ResponseEntity.ok(Map.of("message", "승인되었습니다. 로그인 링크가 발송되었습니다."));
-    }
-
-    @PostMapping("/registrations/{id}/reject")
-    public ResponseEntity<Map<String, String>> reject(@PathVariable Long id) {
-        magicLinkService.rejectRegistration(id);
-        return ResponseEntity.ok(Map.of("message", "거절되었습니다."));
     }
 
     private ClientUserDto.Response toResponse(ClientUser user) {
@@ -114,24 +118,5 @@ public class AdminClientController {
                 user.getIsActive(),
                 user.getCreatedAt() != null ? user.getCreatedAt().toString() : null
         );
-    }
-
-    private String extractFrontendBaseUrl(HttpServletRequest request) {
-        String origin = request.getHeader("Origin");
-        if (origin != null && !origin.isBlank()) {
-            return origin.trim();
-        }
-
-        String referer = request.getHeader("Referer");
-        if (referer == null || referer.isBlank()) {
-            return "";
-        }
-
-        try {
-            URI uri = URI.create(referer.trim());
-            return uri.getScheme() + "://" + uri.getAuthority();
-        } catch (Exception ignored) {
-            return "";
-        }
     }
 }

@@ -1,39 +1,4 @@
-﻿const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-
-export async function sendMagicLinkApi(email) {
-    const res = await fetch(`${BASE_URL}/api/client/auth/magic-link/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-    });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || '오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
-    }
-    return res.json();
-}
-
-export async function verifyMagicLinkApi(token) {
-    const res = await fetch(`${BASE_URL}/api/client/auth/magic-link/verify?token=${encodeURIComponent(token)}`);
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || '링크 인증에 실패했습니다.');
-    }
-    return res.json();
-}
-
-export async function registerClientApi(email, companyName, contactName, phone) {
-    const res = await fetch(`${BASE_URL}/api/client/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, companyName, contactName, phone }),
-    });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || '가입 신청에 실패했습니다.');
-    }
-    return res.json();
-}
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 export async function clientLoginApi(username, password) {
     const res = await fetch(`${BASE_URL}/api/client/auth/login`, {
