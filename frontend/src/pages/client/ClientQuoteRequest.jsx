@@ -1,9 +1,10 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { submitQuoteApi } from '../../api/client';
 import './ClientRequest.css';
 
+const LARGE_LINK_THRESHOLD_MB = 25;
 const MAX_TOTAL_FILE_SIZE_MB = 300;
 const MAX_TOTAL_FILE_SIZE_BYTES = MAX_TOTAL_FILE_SIZE_MB * 1024 * 1024;
 
@@ -11,9 +12,11 @@ function FileDropZone({ files, onFilesChange }) {
     const [dragging, setDragging] = useState(false);
     const inputRef = useRef(null);
 
-    const appendFiles = (nextFiles) => {
-        onFilesChange([...files, ...Array.from(nextFiles || [])]);
-    };
+    const handleDrop = useCallback((e) => {
+        e.preventDefault();
+        setDragging(false);
+        onFilesChange([...files, ...Array.from(e.dataTransfer.files || [])]);
+    }, [files, onFilesChange]);
 
     const removeFile = (index) => onFilesChange(files.filter((_, idx) => idx !== index));
 
@@ -22,34 +25,42 @@ function FileDropZone({ files, onFilesChange }) {
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
+    const getIcon = (name) => {
+        const ext = name.split('.').pop().toLowerCase();
+        if (ext === 'ai') return '벡터';
+        if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return '이미지';
+        if (ext === 'pdf') return 'PDF';
+        if (['zip', 'rar'].includes(ext)) return '압축';
+        return '파일';
+    };
+
     return (
         <div>
             <div
                 className={`drop-zone ${dragging ? 'dragging' : ''}`}
                 onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                 onDragLeave={() => setDragging(false)}
-                onDrop={(e) => {
-                    e.preventDefault();
-                    setDragging(false);
-                    appendFiles(e.dataTransfer.files);
-                }}
+                onDrop={handleDrop}
                 onClick={() => inputRef.current?.click()}
             >
-                <span className="drop-zone-icon">파일</span>
-                <p className="drop-zone-text">파일을 드래그하거나 클릭해서 업로드</p>
-                <p className="drop-zone-sub">AI, PDF, JPG, PNG, ZIP 등 모든 형식 가능 / 총 {MAX_TOTAL_FILE_SIZE_MB}MB 이하</p>
+                <span className="drop-zone-icon">📁</span>
+                <p className="drop-zone-text">파일을 드래그하거나 클릭하여 업로드</p>
+                <p className="drop-zone-sub">
+                    AI, PDF, JPG, PNG, ZIP 등 모든 형식 가능 ({LARGE_LINK_THRESHOLD_MB}MB 초과분은 자동 대용량 링크 전환, 총 {MAX_TOTAL_FILE_SIZE_MB}MB)
+                </p>
                 <input
                     ref={inputRef}
                     type="file"
                     multiple
                     style={{ display: 'none' }}
-                    onChange={(e) => appendFiles(e.target.files)}
+                    onChange={(e) => onFilesChange([...files, ...Array.from(e.target.files || [])])}
                 />
             </div>
             {files.length > 0 && (
                 <ul className="file-list">
                     {files.map((file, index) => (
                         <li key={`${file.name}-${index}`} className="file-item">
+                            <span className="file-icon">{getIcon(file.name)}</span>
                             <div className="file-info">
                                 <span className="file-name">{file.name}</span>
                                 <span className="file-size">{formatSize(file.size)}</span>
@@ -102,7 +113,7 @@ export default function ClientQuoteRequest() {
             return;
         }
         if (!files.length) {
-            setError('견적에 필요한 파일을 1개 이상 업로드해 주세요.');
+            setError('관련 파일을 1개 이상 업로드해 주세요.');
             return;
         }
 
@@ -142,7 +153,7 @@ export default function ClientQuoteRequest() {
                     <span className="submitted-icon">완료</span>
                     <h2 className="submitted-title">견적 요청이 접수되었습니다</h2>
                     <p className="submitted-desc">담당자가 확인 후 회신드리겠습니다.</p>
-                    <button className="req-submit-btn" onClick={reset}>새 견적 요청 작성</button>
+                    <button className="req-submit-btn" onClick={reset}>새 견적 요청 작성하기</button>
                 </div>
             </div>
         );
@@ -157,8 +168,8 @@ export default function ClientQuoteRequest() {
             <div className="request-notice">
                 <span className="request-notice-icon">안내</span>
                 <div className="request-notice-text">
-                    <p>견적 요청을 접수하면 담당자에게 메일이 자동 발송됩니다.</p>
-                    <p>파일과 요청 내용을 최대한 구체적으로 적어 주시면 견적 회신이 빨라집니다.</p>
+                    <p>접수하기 버튼을 누르면 입력하신 내용과 첨부 파일이 <strong>HD Sign 담당자에게 자동 전달</strong>됩니다.</p>
+                    <p>도면, 사진, 사이즈, 수량 같은 정보를 함께 올려주시면 견적 회신이 더 빨라집니다.</p>
                 </div>
             </div>
 
