@@ -168,7 +168,7 @@ export default function ClientQuoteRequest() {
             <div className="request-notice">
                 <span className="request-notice-icon">✉</span>
                 <div className="request-notice-text">
-                    <p>접수하기 버튼을 누르면 입력하신 내용과 첨부 파일이 <strong>HD Sign 담당자에게 자동으로 전달됩니다.</strong></p>
+                    <p>접수하기 버튼을 누르면 입력하신 내용과 첨부 파일이 <strong>HD Sign 담당자(hdno88@daum.net)에게 자동으로 전달됩니다.</strong></p>
                     <p>담당자 확인 후 빠르게 연락드리겠습니다. <strong>작업 현황</strong> 메뉴에서 진행 상황을 실시간으로 확인하실 수 있습니다.</p>
                 </div>
             </div>
