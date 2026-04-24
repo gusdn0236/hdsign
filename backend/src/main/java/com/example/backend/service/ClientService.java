@@ -208,10 +208,10 @@ public class ClientService {
     }
 
     private String generateOrderNumber(RequestType requestType) {
-        String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        String prefix = (requestType == RequestType.QUOTE ? "QTE-" : "ORD-") + date + "-";
+        String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        String prefix = (requestType == RequestType.QUOTE ? "견적-" : "주문-") + date + "-";
         long count = orderRepository.countByOrderNumberStartingWith(prefix) + 1;
-        return String.format("%s%03d", prefix, count);
+        return String.format("%s%02d", prefix, count);
     }
 
     private MailService.OrderNotification buildOrderNotification(Order order, ClientUser client) {
