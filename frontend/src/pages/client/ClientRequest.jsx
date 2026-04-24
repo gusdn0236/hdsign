@@ -220,7 +220,7 @@ function RequestSidebar({
                                         onClick={(e) => e.stopPropagation()}
                                     />
                                     <span className="sidebar-item-text">{item.label}</span>
-                                    {checked && <QtyCtrl label={item.label} />}
+                                    {checked && item.label === '파워기(SMPS)' && <QtyCtrl label={item.label} />}
                                 </div>
                                 {item.label === '파워기(SMPS)' && checked && (
                                     <div className="smps-watt-selector">
@@ -254,7 +254,6 @@ function RequestSidebar({
                                         onClick={(e) => e.stopPropagation()}
                                     />
                                     <span className="sidebar-item-text">{label}</span>
-                                    {checked && <QtyCtrl label={label} />}
                                     <button
                                         type="button"
                                         className="sidebar-item-remove"
