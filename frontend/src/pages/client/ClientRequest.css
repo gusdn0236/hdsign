@@ -4,6 +4,23 @@
     padding: 0 20px 80px;
 }
 
+/* ── Page-level drop overlay ── */
+.page-drop-overlay {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0, 95, 115, 0.12);
+    backdrop-filter: blur(2px);
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+    border: 3px dashed #005f73;
+}
+.page-drop-overlay-box {
+    background: #fff; border-radius: 20px; padding: 32px 56px;
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+}
+.page-drop-overlay-icon { font-size: 48px; line-height: 1; }
+.page-drop-overlay-box p { margin: 0; font-size: 18px; font-weight: 700; color: #005f73; }
+
 .request-page-header {
     display: flex;
     align-items: center;

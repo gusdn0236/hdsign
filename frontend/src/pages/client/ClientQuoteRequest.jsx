@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { submitQuoteApi } from '../../api/client';
@@ -95,6 +95,40 @@ export default function ClientQuoteRequest() {
     const [loading, setLoading] = useState(false);
     const [submitted, setSubmitted] = useState(false);
     const [error, setError] = useState('');
+    const [pageDragging, setPageDragging] = useState(false);
+    const dragCounter = useRef(0);
+    const filesRef = useRef(files);
+    filesRef.current = files;
+
+    useEffect(() => {
+        const onDragEnter = (e) => {
+            if (!e.dataTransfer.types.includes('Files')) return;
+            dragCounter.current++;
+            setPageDragging(true);
+        };
+        const onDragLeave = () => {
+            dragCounter.current--;
+            if (dragCounter.current === 0) setPageDragging(false);
+        };
+        const onDragOver = (e) => e.preventDefault();
+        const onDrop = (e) => {
+            e.preventDefault();
+            dragCounter.current = 0;
+            setPageDragging(false);
+            const dropped = Array.from(e.dataTransfer.files || []);
+            if (dropped.length > 0) setFiles([...filesRef.current, ...dropped]);
+        };
+        window.addEventListener('dragenter', onDragEnter);
+        window.addEventListener('dragleave', onDragLeave);
+        window.addEventListener('dragover', onDragOver);
+        window.addEventListener('drop', onDrop);
+        return () => {
+            window.removeEventListener('dragenter', onDragEnter);
+            window.removeEventListener('dragleave', onDragLeave);
+            window.removeEventListener('dragover', onDragOver);
+            window.removeEventListener('drop', onDrop);
+        };
+    }, []);
 
     const reset = () => {
         setTitle('');
@@ -161,6 +195,14 @@ export default function ClientQuoteRequest() {
 
     return (
         <div className="request-page">
+            {pageDragging && (
+                <div className="page-drop-overlay">
+                    <div className="page-drop-overlay-box">
+                        <span className="page-drop-overlay-icon">📁</span>
+                        <p>여기에 파일을 놓으세요</p>
+                    </div>
+                </div>
+            )}
             <div className="request-page-header">
                 <h1 className="request-page-title">견적 요청 접수</h1>
             </div>
