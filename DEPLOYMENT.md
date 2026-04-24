@@ -10,6 +10,9 @@ Current production value:
 
 ```env
 VITE_API_URL=https://hdsign-production.up.railway.app
+VITE_GA_MEASUREMENT_ID=
+VITE_GOOGLE_SITE_VERIFICATION=
+VITE_NAVER_SITE_VERIFICATION=
 ```
 
 Deploy command:
@@ -73,3 +76,6 @@ Reference example file:
 - Resend free plan still requires a valid API key, and production sending should use a verified domain in `MAIL_FROM`.
 - `MAGIC_LINK_BASE_URL` should match the deployed frontend URL.
 - If Railway is connected to GitHub auto-deploy, pushing `master` redeploys the backend.
+- Search Console verification token should be set in `VITE_GOOGLE_SITE_VERIFICATION`.
+- Naver verification token should be set in `VITE_NAVER_SITE_VERIFICATION`.
+- Google Analytics GA4 Measurement ID (for example `G-XXXXXXXXXX`) should be set in `VITE_GA_MEASUREMENT_ID`.

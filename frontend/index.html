@@ -17,6 +17,8 @@
     <meta property="og:image:height" content="630"/>
     <meta property="og:image:alt"   content="HD Sign 간판 전문기업"/>
     <meta property="og:locale"      content="ko_KR"/>
+    <meta name="google-site-verification" content="%VITE_GOOGLE_SITE_VERIFICATION%"/>
+    <meta name="naver-site-verification" content="%VITE_NAVER_SITE_VERIFICATION%"/>
 
     <!-- Favicon -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"/>
@@ -28,6 +30,24 @@
     <meta name="twitter:title"       content="HD Sign | 간판 전문기업"/>
     <meta name="twitter:description" content="갈바, 스테인리스, 에폭시, 특수 간판 전문 제작업체."/>
     <meta name="twitter:image"       content="https://hdsigncraft.com/og-image-v2.png"/>
+    <script>
+        (function () {
+            var gaId = "%VITE_GA_MEASUREMENT_ID%";
+            if (!gaId || gaId.indexOf("VITE_GA_MEASUREMENT_ID") !== -1) {
+                return;
+            }
+            var script = document.createElement("script");
+            script.async = true;
+            script.src = "https://www.googletagmanager.com/gtag/js?id=" + encodeURIComponent(gaId);
+            document.head.appendChild(script);
+
+            window.dataLayer = window.dataLayer || [];
+            function gtag() { window.dataLayer.push(arguments); }
+            window.gtag = gtag;
+            gtag("js", new Date());
+            gtag("config", gaId);
+        })();
+    </script>
     <script>
         (function() {
             var redirect = sessionStorage.redirect;
