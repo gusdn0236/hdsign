@@ -33,6 +33,7 @@ public class OrderDto {
         private List<FileInfo> files;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
+        private LocalDateTime deletedAt;
     }
 
     @Getter
@@ -84,6 +85,7 @@ public class OrderDto {
                 .files(files)
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
+                .deletedAt(order.getDeletedAt())
                 .build();
     }
 }

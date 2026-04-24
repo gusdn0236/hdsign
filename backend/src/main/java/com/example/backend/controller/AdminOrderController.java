@@ -18,6 +18,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,10 +40,20 @@ public class AdminOrderController {
     @Value("${r2.public-url}")
     private String publicUrl;
 
-    // 전체 작업 목록 조회 (최신순)
+    // 전체 작업 목록 조회 (휴지통 제외, 최신순)
     @GetMapping
     public ResponseEntity<List<OrderDto.Response>> getAllOrders() {
-        List<OrderDto.Response> orders = orderRepository.findAllByOrderByCreatedAtDesc()
+        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNullOrderByCreatedAtDesc()
+                .stream()
+                .map(OrderDto::toResponse)
+                .toList();
+        return ResponseEntity.ok(orders);
+    }
+
+    // 휴지통 목록 (삭제된 지 최근순)
+    @GetMapping("/trash")
+    public ResponseEntity<List<OrderDto.Response>> getTrash() {
+        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()
                 .stream()
                 .map(OrderDto::toResponse)
                 .toList();
@@ -62,17 +73,59 @@ public class AdminOrderController {
         return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
     }
 
-    // 완료 주문 삭제 (R2 파일/미리보기 포함)
+    // 완료 주문을 휴지통으로 이동 (soft delete)
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> deleteOrder(@PathVariable Long id) {
+    public ResponseEntity<?> moveToTrash(@PathVariable Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
 
+        if (order.getDeletedAt() != null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("message", "이미 휴지통에 있는 작업입니다."));
+        }
         if (order.getStatus() != Order.OrderStatus.COMPLETED) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("message", "완료된 작업만 삭제할 수 있습니다."));
+                    .body(Map.of("message", "완료된 작업만 휴지통으로 이동할 수 있습니다."));
         }
 
+        order.setDeletedAt(LocalDateTime.now());
+        orderRepository.save(order);
+        return ResponseEntity.noContent().build();
+    }
+
+    // 휴지통에서 복원
+    @PostMapping("/{id}/restore")
+    public ResponseEntity<?> restoreFromTrash(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+
+        if (order.getDeletedAt() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("message", "휴지통에 없는 작업입니다."));
+        }
+
+        order.setDeletedAt(null);
+        Order saved = orderRepository.save(order);
+        return ResponseEntity.ok(OrderDto.toResponse(saved));
+    }
+
+    // 휴지통에서 영구 삭제 (R2 파일/미리보기 포함)
+    @DeleteMapping("/{id}/permanent")
+    public ResponseEntity<?> deletePermanently(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+
+        if (order.getDeletedAt() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("message", "휴지통에 있는 작업만 영구 삭제할 수 있습니다."));
+        }
+
+        purgeR2Files(order);
+        orderRepository.delete(order);
+        return ResponseEntity.noContent().build();
+    }
+
+    private void purgeR2Files(Order order) {
         List<String> keysToDelete = new ArrayList<>();
         for (OrderFile file : order.getFiles()) {
             if (file.getStoredName() != null && !file.getStoredName().isBlank()) {
@@ -91,12 +144,9 @@ public class AdminOrderController {
                         .key(key)
                         .build());
             } catch (Exception ignored) {
-                // 파일 삭제는 best-effort 처리: DB 삭제는 계속 진행
+                // best-effort
             }
         }
-
-        orderRepository.delete(order);
-        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/{id}/worksheet-package")

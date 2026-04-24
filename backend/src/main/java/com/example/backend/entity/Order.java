@@ -92,6 +92,9 @@ public class Order {
     @UpdateTimestamp
     private LocalDateTime updatedAt;
 
+    @Column
+    private LocalDateTime deletedAt;
+
     public enum RequestType {
         ORDER,
         QUOTE

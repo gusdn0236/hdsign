@@ -80,6 +80,30 @@
   gap: 8px;
   margin-bottom: 16px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.bulk-delete-btn {
+  margin-left: auto;
+  border: 1px solid #dc2626;
+  background: #fff;
+  color: #dc2626;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.bulk-delete-btn:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+
+.bulk-delete-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .filter-tab {
@@ -195,6 +219,11 @@
   background: #d1fae5;
 }
 
+.status-trash {
+  color: #52525b;
+  background: #e4e4e7;
+}
+
 .next-status-btn {
   border: none;
   background: #18181b;
@@ -249,6 +278,42 @@
 
 .next-status-btn.action-worksheet:hover:not(:disabled) {
   background: #6d28d9;
+}
+
+.next-status-btn.action-trash {
+  background: #64748b;
+}
+
+.next-status-btn.action-trash:hover:not(:disabled) {
+  background: #475569;
+}
+
+.next-status-btn.action-restore {
+  background: #0ea5e9;
+}
+
+.next-status-btn.action-restore:hover:not(:disabled) {
+  background: #0284c7;
+}
+
+.trash-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.trash-row td {
+  color: #4b5563;
+}
+
+.filter-tab.trash-tab {
+  margin-left: auto;
+}
+
+.trash-hint {
+  margin: -4px 0 14px;
+  font-size: 12px;
+  color: #6b7280;
 }
 
 .next-status-btn:disabled {

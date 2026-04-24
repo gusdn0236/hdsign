@@ -3,12 +3,16 @@ package com.example.backend.repository;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.ClientUser;
 import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 public interface OrderRepository extends JpaRepository<Order, Long> {
-    List<Order> findByClientOrderByCreatedAtDesc(ClientUser client);
+    List<Order> findByClientAndDeletedAtIsNullOrderByCreatedAtDesc(ClientUser client);
     Optional<Order> findByOrderNumber(String orderNumber);
-    List<Order> findAllByOrderByCreatedAtDesc();
+    List<Order> findByDeletedAtIsNullOrderByCreatedAtDesc();
+    List<Order> findByDeletedAtIsNotNullOrderByDeletedAtDesc();
+    List<Order> findByDeletedAtBefore(LocalDateTime cutoff);
     long countByOrderNumberStartingWith(String prefix);
 }

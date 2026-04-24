@@ -132,7 +132,7 @@ public class ClientService {
     @Transactional(readOnly = true)
     public List<OrderDto.Response> getMyOrders(String username) {
         ClientUser client = findClient(username);
-        return orderRepository.findByClientOrderByCreatedAtDesc(client)
+        return orderRepository.findByClientAndDeletedAtIsNullOrderByCreatedAtDesc(client)
                 .stream()
                 .map(OrderDto::toResponse)
                 .toList();
