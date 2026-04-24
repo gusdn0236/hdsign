@@ -517,35 +517,14 @@ export default function ClientRequest() {
         setError('');
     };
 
-    const divider = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
-
-    const itemsBlock = useMemo(() => {
-        if (!selectedItems.length) return '';
-        const lines = selectedItems.map((item) => {
+    const itemsPreviewLines = useMemo(() => {
+        if (!selectedItems.length) return [];
+        return selectedItems.map((item) => {
             const label = item === '파워기(SMPS)' && smpsWatt ? `파워기(SMPS) ${smpsWatt}W` : item;
             const qty = quantities[item] || 1;
             return `• ${label}: ${qty}개`;
         });
-        return `[추가 물품]\n${lines.join('\n')}\n${divider}\n`;
     }, [selectedItems, quantities, smpsWatt]);
-
-    const textareaValue = itemsBlock + note;
-
-    const handleNoteChange = (e) => {
-        const value = e.target.value;
-        if (itemsBlock && value.startsWith(itemsBlock)) {
-            setNote(value.slice(itemsBlock.length));
-            return;
-        }
-        if (!itemsBlock) {
-            setNote(value);
-            return;
-        }
-        const dividerIndex = value.indexOf(divider);
-        if (dividerIndex >= 0) {
-            setNote(value.slice(dividerIndex + divider.length).replace(/^\n/, ''));
-        }
-    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -660,14 +639,24 @@ export default function ClientRequest() {
                         </Section>
 
                         <Section number="02" title="추가 요청사항">
+                            {itemsPreviewLines.length > 0 && (
+                                <div className="req-items-preview">
+                                    <div className="req-items-preview-title">추가 물품</div>
+                                    <ul className="req-items-preview-list">
+                                        {itemsPreviewLines.map((line, idx) => (
+                                            <li key={idx}>{line}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                             <textarea
                                 className="req-textarea"
-                                value={textareaValue}
-                                onChange={handleNoteChange}
+                                value={note}
+                                onChange={(e) => setNote(e.target.value)}
                                 placeholder="색상, 자재, 크기, 수량, 특이사항 등을 자유롭게 적어 주세요."
                                 rows={5}
                             />
-                            <p className="char-count">{textareaValue.length}자</p>
+                            <p className="char-count">{note.length}자</p>
                         </Section>
 
                         <Section number="03" title="납기 및 납품">
