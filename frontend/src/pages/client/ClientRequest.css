@@ -430,6 +430,34 @@
 }
 
 .request-page .delivery-input-wrap { display: flex; flex-direction: column; gap: 8px; animation: fadeIn 0.2s ease; }
+
+/* ── Address Input ── */
+.request-page .address-input-wrap { display: flex; flex-direction: column; gap: 8px; }
+.request-page .address-input-row { display: flex; gap: 8px; }
+.request-page .address-input-row .req-input { flex: 1; }
+.request-page .addr-search-btn {
+    flex-shrink: 0; padding: 0 16px; background: #005f73; color: #fff;
+    border: none; border-radius: 8px; font-size: 13px; font-weight: 600;
+    cursor: pointer; white-space: nowrap; transition: background 0.2s;
+}
+.request-page .addr-search-btn:hover { background: #004f60; }
+.request-page .addr-save-btn {
+    align-self: flex-start; background: none; border: 1px dashed #aaa;
+    border-radius: 6px; padding: 5px 12px; font-size: 12px; color: #666;
+    cursor: pointer; transition: all 0.2s;
+}
+.request-page .addr-save-btn:hover { border-color: #005f73; color: #005f73; }
+.request-page .saved-addresses { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.request-page .saved-addr-label { font-size: 11px; color: #999; white-space: nowrap; }
+.request-page .saved-addr-chip { display: inline-flex; align-items: center; background: #f0f9fb; border: 1px solid #b2dfdb; border-radius: 20px; overflow: hidden; }
+.request-page .saved-addr-select {
+    background: none; border: none; padding: 4px 10px 4px 12px;
+    font-size: 12px; color: #005f73; cursor: pointer; font-weight: 500;
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.request-page .saved-addr-select:hover { text-decoration: underline; }
+.request-page .saved-addr-remove { background: none; border: none; border-left: 1px solid #b2dfdb; padding: 4px 8px; color: #999; cursor: pointer; font-size: 14px; line-height: 1; }
+.request-page .saved-addr-remove:hover { color: #e53935; }
 .request-page .req-label { font-size: 13px; font-weight: 600; color: #444; }
 .request-page .req-input {
     width: 100%; padding: 12px 16px; border: 1px solid #ddd; border-radius: 8px;

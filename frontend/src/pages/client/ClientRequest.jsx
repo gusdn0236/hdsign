@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useCallback, useMemo } from 'react';
+﻿import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { submitOrderApi } from '../../api/client';
@@ -171,6 +171,80 @@ function ImagePreview({ files }) {
     );
 }
 
+function AddressInput({ value, onChange, placeholder, savedKey, withSearch }) {
+    const [saved, setSaved] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(savedKey) || '[]'); }
+        catch { return []; }
+    });
+
+    useEffect(() => {
+        if (!withSearch || window.daum?.Postcode) return;
+        const script = document.createElement('script');
+        script.src = 'https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
+        document.head.appendChild(script);
+    }, [withSearch]);
+
+    const openKakao = () => {
+        new window.daum.Postcode({
+            oncomplete: (data) => onChange(data.roadAddress || data.jibunAddress),
+        }).open();
+    };
+
+    const saveAddress = () => {
+        const trimmed = value.trim();
+        if (!trimmed || saved.includes(trimmed)) return;
+        const next = [trimmed, ...saved].slice(0, 5);
+        setSaved(next);
+        localStorage.setItem(savedKey, JSON.stringify(next));
+    };
+
+    const removeAddress = (addr) => {
+        const next = saved.filter((a) => a !== addr);
+        setSaved(next);
+        localStorage.setItem(savedKey, JSON.stringify(next));
+    };
+
+    const canSave = value.trim() && !saved.includes(value.trim());
+
+    return (
+        <div className="address-input-wrap">
+            {saved.length > 0 && (
+                <div className="saved-addresses">
+                    <span className="saved-addr-label">저장된 주소</span>
+                    {saved.map((addr) => (
+                        <span key={addr} className="saved-addr-chip">
+                            <button type="button" className="saved-addr-select" onClick={() => onChange(addr)}>{addr}</button>
+                            <button type="button" className="saved-addr-remove" onClick={() => removeAddress(addr)}>×</button>
+                        </span>
+                    ))}
+                </div>
+            )}
+            <div className="address-input-row">
+                <input
+                    type="text"
+                    className="req-input"
+                    value={value}
+                    onChange={(e) => onChange(e.target.value)}
+                    placeholder={placeholder}
+                    readOnly={withSearch}
+                    style={withSearch ? { cursor: 'pointer' } : {}}
+                    onClick={withSearch ? openKakao : undefined}
+                />
+                {withSearch && (
+                    <button type="button" className="addr-search-btn" onClick={openKakao}>
+                        🔍 검색
+                    </button>
+                )}
+            </div>
+            {canSave && (
+                <button type="button" className="addr-save-btn" onClick={saveAddress}>
+                    + 자주 쓰는 주소로 저장
+                </button>
+            )}
+        </div>
+    );
+}
+
 function Section({ number, title, children }) {
     return (
         <div className="req-section">
@@ -308,7 +382,8 @@ function RequestSidebar({
 }
 
 export default function ClientRequest() {
-    const { clientToken, clientLogout } = useAuth();
+    const { clientToken, clientLogout, clientUser } = useAuth();
+    const username = clientUser?.username || 'guest';
     const navigate = useNavigate();
     const [title, setTitle] = useState('');
     const [titleAutoFilled, setTitleAutoFilled] = useState(false);
@@ -587,12 +662,12 @@ export default function ClientRequest() {
                             {delivery === 'CARGO' && (
                                 <div className="delivery-input-wrap">
                                     <label className="req-label">화물 지점 입력</label>
-                                    <input
-                                        type="text"
-                                        className="req-input"
+                                    <AddressInput
                                         value={cargoPoint}
-                                        onChange={(e) => setCargoPoint(e.target.value)}
+                                        onChange={setCargoPoint}
                                         placeholder="예: CJ대한통운 구포대리점, 서진항공 안양점"
+                                        savedKey={`hd_cargo_${username}`}
+                                        withSearch={false}
                                     />
                                 </div>
                             )}
@@ -600,12 +675,12 @@ export default function ClientRequest() {
                             {(delivery === 'QUICK' || delivery === 'DIRECT') && (
                                 <div className="delivery-input-wrap">
                                     <label className="req-label">{delivery === 'QUICK' ? '퀵 수령 주소' : '배송 주소'}</label>
-                                    <input
-                                        type="text"
-                                        className="req-input"
+                                    <AddressInput
                                         value={address}
-                                        onChange={(e) => setAddress(e.target.value)}
-                                        placeholder="도로명 주소를 입력해 주세요."
+                                        onChange={setAddress}
+                                        placeholder="클릭하여 주소 검색"
+                                        savedKey={`hd_addr_${username}`}
+                                        withSearch={true}
                                     />
                                 </div>
                             )}
