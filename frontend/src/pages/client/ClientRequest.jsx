@@ -89,13 +89,27 @@ function FileDropZone({ files, onFilesChange }) {
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
+    const FILE_BADGES = {
+        ai:    { label: 'Ai',   color: '#e07000', bg: '#fff3e0' },
+        pdf:   { label: 'PDF',  color: '#c62828', bg: '#ffebee' },
+        image: { label: 'IMG',  color: '#0277bd', bg: '#e1f5fe' },
+        zip:   { label: 'ZIP',  color: '#6a1fa2', bg: '#f3e5f5' },
+        file:  { label: 'FILE', color: '#546e7a', bg: '#eceff1' },
+    };
+
     const getIcon = (name) => {
         const ext = name.split('.').pop().toLowerCase();
-        if (ext === 'ai') return '벡터';
-        if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return '이미지';
-        if (ext === 'pdf') return 'PDF';
-        if (['zip', 'rar'].includes(ext)) return '압축';
-        return '파일';
+        const key = ext === 'ai' ? 'ai'
+            : ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext) ? 'image'
+            : ext === 'pdf' ? 'pdf'
+            : ['zip', 'rar'].includes(ext) ? 'zip'
+            : 'file';
+        const { label, color, bg } = FILE_BADGES[key];
+        return (
+            <span className="file-type-badge" style={{ color, background: bg }}>
+                {label}
+            </span>
+        );
     };
 
     return (
@@ -124,7 +138,7 @@ function FileDropZone({ files, onFilesChange }) {
                 <ul className="file-list">
                     {files.map((file, index) => (
                         <li key={`${file.name}-${index}`} className="file-item">
-                            <span className="file-icon">{getIcon(file.name)}</span>
+                            {getIcon(file.name)}
                             <div className="file-info">
                                 <span className="file-name">{file.name}</span>
                                 <span className="file-size">{formatSize(file.size)}</span>
@@ -502,6 +516,10 @@ export default function ClientRequest() {
                             <FileDropZone files={files} onFilesChange={handleFilesChange} />
                             <ImagePreview files={files} />
                             <div className="title-input-wrap">
+                                <label className="req-label">
+                                    작업 요청 제목
+                                    <span className="title-label-sub">담당자에게 전달되는 메일 제목입니다</span>
+                                </label>
                                 <input
                                     type="text"
                                     className={`req-input${titleAutoFilled ? ' req-input--suggested' : ''}`}
