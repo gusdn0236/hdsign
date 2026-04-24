@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import './ClientAdmin.css';
 
@@ -23,6 +23,7 @@ export default function ClientAdmin() {
     const [form, setForm] = useState(EMPTY_FORM);
     const [saving, setSaving] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState(null);
+    const overlayDownRef = useRef(false);
 
     const field = (key) => ({
         value: form[key] ?? '',
@@ -199,7 +200,7 @@ export default function ClientAdmin() {
 
             {/* 추가 모달 */}
             {modalMode === 'create' && (
-                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) overlayDownRef.current = true; }} onMouseUp={(e) => { if (e.target === e.currentTarget && overlayDownRef.current) closeModal(); overlayDownRef.current = false; }}>
                     <div className="ca-modal" onClick={(e) => e.stopPropagation()}>
                         <h3>거래처 추가</h3>
                         <form className="ca-form" onSubmit={handleCreate}>
@@ -238,7 +239,7 @@ export default function ClientAdmin() {
 
             {/* 수정 모달 */}
             {modalMode === 'edit' && (
-                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) overlayDownRef.current = true; }} onMouseUp={(e) => { if (e.target === e.currentTarget && overlayDownRef.current) closeModal(); overlayDownRef.current = false; }}>
                     <div className="ca-modal" onClick={(e) => e.stopPropagation()}>
                         <h3>거래처 수정</h3>
                         <form className="ca-form" onSubmit={handleEdit}>
@@ -281,7 +282,7 @@ export default function ClientAdmin() {
 
             {/* 비밀번호 초기화 모달 */}
             {modalMode === 'reset' && (
-                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) overlayDownRef.current = true; }} onMouseUp={(e) => { if (e.target === e.currentTarget && overlayDownRef.current) closeModal(); overlayDownRef.current = false; }}>
                     <div className="ca-modal ca-modal-sm" onClick={(e) => e.stopPropagation()}>
                         <h3>비밀번호 변경</h3>
                         <p className="ca-confirm-text"><strong>{editTarget?.companyName}</strong> 계정의 비밀번호를 변경합니다.</p>
@@ -301,7 +302,7 @@ export default function ClientAdmin() {
 
             {/* 삭제 확인 모달 */}
             {deleteTarget && (
-                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setDeleteTarget(null); }}>
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) overlayDownRef.current = true; }} onMouseUp={(e) => { if (e.target === e.currentTarget && overlayDownRef.current) setDeleteTarget(null); overlayDownRef.current = false; }}>
                     <div className="ca-modal ca-modal-sm" onClick={(e) => e.stopPropagation()}>
                         <h3>거래처 삭제</h3>
                         <p className="ca-confirm-text">

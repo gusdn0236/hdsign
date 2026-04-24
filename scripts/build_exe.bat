@@ -1,13 +1,11 @@
 @echo off
-echo HD Sign 지시서 감시 프로그램 - EXE 빌드
-echo =========================================
-echo PyInstaller 설치 확인 중...
-pip install pyinstaller
-
+set PYTHON=C:\Users\USER\AppData\Local\Programs\Python\Python39\python.exe
+if exist "%~dp0hdsign_worksheet.spec" del "%~dp0hdsign_worksheet.spec"
+if exist "%~dp0hdsign_watcher.spec" del "%~dp0hdsign_watcher.spec"
+if exist "%~dp0build" rmdir /s /q "%~dp0build"
+if exist "%~dp0dist" rmdir /s /q "%~dp0dist"
+"%PYTHON%" -m pip install pyinstaller
+"%PYTHON%" -m PyInstaller --clean -y --onefile --windowed --name hdsign_worksheet "%~dp0hdsign_watcher.py"
 echo.
-echo EXE 빌드 중...
-pyinstaller --onefile --console --name hdsign_watcher "%~dp0hdsign_watcher.py"
-
-echo.
-echo 완료! dist\hdsign_watcher.exe 파일을 사무용 PC에 복사하여 실행하세요.
+echo Done. Output: dist\hdsign_worksheet.exe
 pause

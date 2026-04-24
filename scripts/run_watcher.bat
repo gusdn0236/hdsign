@@ -1,4 +1,3 @@
 @echo off
-echo HD Sign 지시서 감시 프로그램 시작 중...
-python "%~dp0hdsign_watcher.py"
-pause
+set PYTHONW=C:\Users\USER\AppData\Local\Programs\Python\Python39\pythonw.exe
+start "" "%PYTHONW%" "%~dp0hdsign_watcher.py"
