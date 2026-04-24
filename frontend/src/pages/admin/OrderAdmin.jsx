@@ -47,6 +47,7 @@ export default function OrderAdmin() {
   const [pendingStatus, setPendingStatus] = useState("");
   const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
 
   const loadOrders = async () => {
     setLoading(true);
@@ -166,6 +167,31 @@ export default function OrderAdmin() {
     }
   };
 
+  const downloadWorksheet = async (e, order) => {
+    e.stopPropagation();
+    setDownloadingId(order.id);
+    try {
+      const res = await fetch(`${BASE_URL}/api/admin/orders/${order.id}/worksheet-package`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("다운로드 실패");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${order.orderNumber}_지시서.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      await updateOrderStatus(order.id, "IN_PROGRESS");
+    } catch (err) {
+      setFeedback({ type: "error", msg: err.message || "다운로드 중 오류가 발생했습니다." });
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
   const requestLabel = (requestType) => REQUEST_TYPE_LABELS[requestType] || "요청";
 
   return (
@@ -255,17 +281,28 @@ export default function OrderAdmin() {
                   <td>{formatDate(order.createdAt)}</td>
                   <td>
                     {nextStatus ? (
-                      <button
-                        type="button"
-                        className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          updateOrderStatus(order.id, nextStatus);
-                        }}
-                        disabled={updating || deleting}
-                      >
-                        {updating ? "변경 중..." : "다음 단계"}
-                      </button>
+                      order.status === "RECEIVED" && order.requestType === "ORDER" ? (
+                        <button
+                          type="button"
+                          className="next-status-btn action-worksheet"
+                          onClick={(e) => downloadWorksheet(e, order)}
+                          disabled={downloadingId === order.id || deleting}
+                        >
+                          {downloadingId === order.id ? "준비 중..." : "지시서 작성하기"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateOrderStatus(order.id, nextStatus);
+                          }}
+                          disabled={updating || deleting}
+                        >
+                          {updating ? "변경 중..." : "다음 단계"}
+                        </button>
+                      )
                     ) : (
                       <button
                         type="button"
@@ -342,6 +379,16 @@ export default function OrderAdmin() {
                   {(STATUS_META[selectedOrder.status] || STATUS_META.RECEIVED).label}
                 </span>
                 <div className="modal-status-actions">
+                  {selectedOrder.status === "RECEIVED" && selectedOrder.requestType === "ORDER" && (
+                    <button
+                      type="button"
+                      className="next-status-btn action-worksheet"
+                      disabled={downloadingId === selectedOrder.id}
+                      onClick={(e) => downloadWorksheet(e, selectedOrder)}
+                    >
+                      {downloadingId === selectedOrder.id ? "준비 중..." : "지시서 작성하기"}
+                    </button>
+                  )}
                   <select
                     value={pendingStatus || selectedOrder.status}
                     onChange={(e) => setPendingStatus(e.target.value)}

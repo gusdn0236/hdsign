@@ -4,17 +4,26 @@ import com.example.backend.dto.OrderDto;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @RestController
 @RequestMapping("/api/admin/orders")
@@ -88,6 +97,69 @@ public class AdminOrderController {
 
         orderRepository.delete(order);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/worksheet-package")
+    public ResponseEntity<byte[]> downloadWorksheetPackage(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ZipOutputStream zos = new ZipOutputStream(baos, StandardCharsets.UTF_8);
+
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("orderNumber", order.getOrderNumber());
+            info.put("companyName", order.getClient().getCompanyName());
+            info.put("contactName", order.getClient().getContactName());
+            info.put("title", order.getTitle());
+            info.put("requestType", order.getRequestType().name());
+            info.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);
+            info.put("dueTime", order.getDueTime());
+            info.put("deliveryMethod", order.getDeliveryMethod() != null ? deliveryLabel(order.getDeliveryMethod()) : null);
+            info.put("deliveryAddress", order.getDeliveryAddress());
+            info.put("additionalItems", order.getAdditionalItems());
+            info.put("note", order.getNote());
+            info.put("createdAt", order.getCreatedAt().toString());
+
+            byte[] jsonBytes = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(info);
+            zos.putNextEntry(new ZipEntry(order.getOrderNumber() + ".json"));
+            zos.write(jsonBytes);
+            zos.closeEntry();
+
+            for (OrderFile file : order.getFiles()) {
+                if (file.getStoredName() == null || file.getStoredName().isBlank()) continue;
+                try {
+                    byte[] fileBytes = s3Client.getObjectAsBytes(
+                            GetObjectRequest.builder().bucket(bucket).key(file.getStoredName()).build()
+                    ).asByteArray();
+                    String name = file.getOriginalName() != null ? file.getOriginalName() : file.getStoredName();
+                    zos.putNextEntry(new ZipEntry(name));
+                    zos.write(fileBytes);
+                    zos.closeEntry();
+                } catch (Exception ignored) {}
+            }
+
+            zos.finish();
+            zos.close();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.set("Content-Disposition",
+                    "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(order.getOrderNumber() + "_지시서.zip", "UTF-8").replace("+", "%20"));
+            return ResponseEntity.ok().headers(headers).body(baos.toByteArray());
+
+        } catch (Exception e) {
+            throw new RuntimeException("지시서 패키지 생성 실패: " + e.getMessage());
+        }
+    }
+
+    private String deliveryLabel(Order.DeliveryMethod method) {
+        return switch (method) {
+            case CARGO -> "화물 발송";
+            case QUICK -> "퀵 발송";
+            case DIRECT -> "직접 배송";
+            case PICKUP -> "직접 수령";
+        };
     }
 
     private String extractKeyFromPublicUrl(String url) {
