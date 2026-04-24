@@ -433,6 +433,9 @@
     transition: border-color 0.2s; box-sizing: border-box;
 }
 .request-page .req-input:focus { border-color: #005f73; }
+.request-page .req-input--suggested { border-color: #005f73; background: #f0f9fb; }
+.request-page .title-input-wrap { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.request-page .title-auto-hint { font-size: 12px; color: #005f73; }
 
 /* ── Error & Submit ── */
 .request-page .req-error {

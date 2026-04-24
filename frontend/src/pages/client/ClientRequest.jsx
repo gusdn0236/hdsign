@@ -298,6 +298,7 @@ export default function ClientRequest() {
     const { clientToken, clientLogout } = useAuth();
     const navigate = useNavigate();
     const [title, setTitle] = useState('');
+    const [titleAutoFilled, setTitleAutoFilled] = useState(false);
     const [files, setFiles] = useState([]);
     const [selectedItems, setSelectedItems] = useState([]);
     const [customItems, setCustomItems] = useState([]);
@@ -352,8 +353,24 @@ export default function ClientRequest() {
         });
     };
 
+    const handleFilesChange = useCallback((newFiles) => {
+        setFiles(newFiles);
+        if (!title.trim() && newFiles.length > 0) {
+            const suggested = newFiles[0].name.replace(/\.[^/.]+$/, '');
+            setTitle(suggested);
+            setTitleAutoFilled(true);
+        }
+        if (newFiles.length === 0) setTitleAutoFilled(false);
+    }, [title]);
+
+    const handleTitleChange = (e) => {
+        setTitle(e.target.value);
+        setTitleAutoFilled(false);
+    };
+
     const reset = () => {
         setTitle('');
+        setTitleAutoFilled(false);
         setFiles([]);
         setSelectedItems([]);
         setCustomItems([]);
@@ -482,23 +499,25 @@ export default function ClientRequest() {
             <form className="request-form" onSubmit={handleSubmit}>
                 <div className="request-layout">
                     <div className="request-sections">
-                        <Section number="01" title="작업 요청 제목">
-                            <input
-                                type="text"
-                                className="req-input"
-                                value={title}
-                                onChange={(e) => setTitle(e.target.value)}
-                                placeholder="예) 푸드케어 내부 아크릴, 행복치과의원 외부사인"
-                                maxLength={100}
-                            />
-                        </Section>
-
-                        <Section number="02" title="작업 파일 업로드">
-                            <FileDropZone files={files} onFilesChange={setFiles} />
+                        <Section number="01" title="작업 정보">
+                            <FileDropZone files={files} onFilesChange={handleFilesChange} />
                             <ImagePreview files={files} />
+                            <div className="title-input-wrap">
+                                <input
+                                    type="text"
+                                    className={`req-input${titleAutoFilled ? ' req-input--suggested' : ''}`}
+                                    value={title}
+                                    onChange={handleTitleChange}
+                                    placeholder="예) 푸드케어 내부 아크릴, 행복치과의원 외부사인"
+                                    maxLength={100}
+                                />
+                                {titleAutoFilled && (
+                                    <span className="title-auto-hint">파일명으로 자동 입력됐어요 — 수정 가능합니다</span>
+                                )}
+                            </div>
                         </Section>
 
-                        <Section number="03" title="추가 요청사항">
+                        <Section number="02" title="추가 요청사항">
                             <textarea
                                 className="req-textarea"
                                 value={textareaValue}
@@ -509,7 +528,8 @@ export default function ClientRequest() {
                             <p className="char-count">{textareaValue.length}자</p>
                         </Section>
 
-                        <Section number="04" title="마감 및 납품 희망일">
+                        <Section number="03" title="납기 및 납품">
+                            <label className="req-label">납기 희망일</label>
                             <DatePicker
                                 value={dueDate}
                                 onChange={(date) => {
@@ -532,9 +552,7 @@ export default function ClientRequest() {
                                     ))}
                                 </div>
                             )}
-                        </Section>
-
-                        <Section number="05" title="납품 방법">
+                            <label className="req-label" style={{ marginTop: '20px' }}>납품 방법</label>
                             <div className="delivery-options">
                                 {DELIVERY_OPTIONS.map((option) => (
                                     <button
