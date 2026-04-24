@@ -3,7 +3,7 @@
 ## Frontend
 
 - Deploy target: GitHub Pages
-- Live URL: `https://gusdn0236.github.io/hdsign`
+- Live URL: `https://hdsigncraft.com`
 - API base URL is set in [frontend/.env.production](/C:/Users/USER/Desktop/hdsign/frontend/.env.production)
 
 Current production value:
@@ -51,7 +51,7 @@ RESEND_API_KEY=
 RESEND_API_BASE_URL=https://api.resend.com
 MAIL_FROM=HD Sign <onboarding@resend.dev>
 ORDER_MAIL_TO=hdno0236@naver.com
-MAGIC_LINK_BASE_URL=https://gusdn0236.github.io/hdsign
+MAGIC_LINK_BASE_URL=https://hdsigncraft.com
 ```
 
 Reference example file:
@@ -61,10 +61,10 @@ Reference example file:
 ## Post-Deploy Check
 
 1. Open `https://hdsign-production.up.railway.app/api/gallery`
-2. Open `https://gusdn0236.github.io/hdsign`
+2. Open `https://hdsigncraft.com`
 3. Submit a client registration request
 4. Approve it in `/admin/clients`
-5. Confirm the email link opens `https://gusdn0236.github.io/hdsign/client/verify?...`
+5. Confirm the email link opens `https://hdsigncraft.com/client/verify?...`
 6. Confirm login succeeds and the client request page opens
 
 ## Notes
