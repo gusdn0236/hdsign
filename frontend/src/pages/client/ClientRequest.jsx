@@ -13,7 +13,7 @@ const DELIVERY_OPTIONS = [
 
 const ADDITIONAL_ITEMS = [
     { id: 'smps', label: '파워기(SMPS)' },
-    { id: 'paper_draft', label: '종이 시안' },
+    { id: 'paper_draft', label: '종이도안' },
     { id: 'sheet_template', label: '시트 현도' },
     { id: 'bolts_nuts', label: '볼트&너트' },
     { id: 'extra_paint', label: '여분 페인트' },
@@ -456,7 +456,7 @@ export default function ClientRequest() {
                     <h1 className="request-page-title">작업 요청 접수</h1>
                 </div>
                 <div className="submitted-wrap">
-                    <span className="submitted-icon">완료</span>
+                    <span className="submitted-icon">✅</span>
                     <h2 className="submitted-title">작업 요청이 접수되었습니다</h2>
                     <p className="submitted-desc">담당자가 확인 후 빠르게 연락드리겠습니다.</p>
                     <button className="req-submit-btn" onClick={reset}>새 요청 작성하기</button>
