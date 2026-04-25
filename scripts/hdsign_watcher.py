@@ -210,10 +210,11 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  if (qrSize > 240) qrSize = 240;"
         "  var sc = qrSize / 90.0;"
         "  var margin = 18 * sc;"
-        "  var bigFont = 14 * sc;"
-        "  var noteFont = 9 * sc;"
-        "  var boxW = 240 * sc;"
-        "  var boxH = 36 * sc;"
+        "  var bigFont = 26 * sc;"
+        "  var noteFont = 13 * sc;"
+        # 박스 높이는 폰트에 맞춰 꽉 차게(1.25배), 너비는 텍스트가 가운데 들어갈 정도
+        "  var boxH = bigFont * 1.25;"
+        "  var boxW = bigFont * 14;"
         "  var lineGap = 6 * sc;"
         # 색상 정의
         "  var blk = new RGBColor(); blk.red = 0; blk.green = 0; blk.blue = 0;"
@@ -318,7 +319,10 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str,
 
         out_dir = WATCH_DIR / "converted"
         out_dir.mkdir(exist_ok=True)
-        out_path = out_dir / ai_path.name
+        # FlexSign이 같은 파일명을 캐시해서 이전 버전을 다시 띄우는 일을 막기 위해
+        # 변환 파일명에 타임스탬프를 붙여 매번 새 경로로 만든다.
+        ts = time.strftime("%y%m%d_%H%M%S")
+        out_path = out_dir / f"{ai_path.stem}_{ts}{ai_path.suffix}"
 
         if not process_ai_to_v8(ai_app, ai_path, out_path, qr_js_matrix,
                                 header_text, left_text, note_text):
