@@ -240,21 +240,21 @@ def _js_escape(s: str) -> str:
              .replace("\n", "\\n"))
 
 
-def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
+def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
                      qr_js_matrix: str,
                      header_text: str, left_text: str, note_text: str) -> bool:
     """
     JSX 한 번의 트랜잭션으로 open → worksheet 레이어 추가(QR + 주문정보 박스)
-    → v8 SaveAs → close까지 전부 수행.
-    크기는 첫 번째 대지(artboard) 폭에 비례해 자동 스케일링.
-    Python/COM이 Open·SaveAs·Close를 나눠 호출하면 doc 참조가 엉켜서 수정 안 된
-    사본이 저장되는 케이스가 발생 — 그걸 피하기 위해 전체 파이프라인을 JSX로 통합.
+    → 같은 도큐먼트로 PDF + v8 SaveAs → close까지 전부 수행.
+    PDF 는 거래처 모바일 화면에서 무한 확대해도 깨지지 않게 보여주기 위함이고,
+    v8 는 FlexSign 전달용. 한 트랜잭션 안에서 둘 다 만들어야 doc 참조 꼬임이 없다.
     """
     header_js = _js_escape(header_text)
     left_js = _js_escape(left_text)
     note_js = _js_escape(note_text)
     src_js = str(src_path).replace("\\", "/")
     dst_js = str(dst_path).replace("\\", "/")
+    pdf_js = str(pdf_path).replace("\\", "/")
 
     fr, fg, fb = HEADER_BOX_FILL
     sr, sg, sb = HEADER_BOX_STROKE
@@ -263,8 +263,10 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "try {"
         f"  var srcPath = \"{src_js}\";"
         f"  var dstPath = \"{dst_js}\";"
+        f"  var pdfPath = \"{pdf_js}\";"
         "  var srcFile = new File(srcPath);"
         "  var dstFile = new File(dstPath);"
+        "  var pdfFile = new File(pdfPath);"
         "  function k(p) { return p.toLowerCase().replace(/\\\\/g, '/'); }"
         # 같은 경로의 잔여 문서가 열려 있으면 먼저 닫는다
         "  for (var z = app.documents.length - 1; z >= 0; z--) {"
@@ -284,56 +286,107 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  }"
         "  var layer = doc.layers.add();"
         "  layer.name = 'worksheet';"
-        # 대지(첫 번째 artboard) 기준으로 비율 계산
+        # 대지(첫 번째 artboard) 기준 위치, 도면(geometricBounds) 기준 크기 — 분리.
+        # 이유: 거래처가 같은 템플릿 대지에 작은/큰 간판을 그려 보내기 때문에
+        # 대지 폭으로 스케일하면 작은 간판에서 글씨가 너무 크고, 큰 간판에선 너무 작게 보였다.
         "  var ab = doc.artboards[0].artboardRect;"
         "  var abLeft = ab[0], abTop = ab[1], abRight = ab[2];"
         "  var abWidth = abRight - abLeft;"
-        # QR은 대지 폭의 8% (50~240pt 사이로 클램프)
-        "  var qrSize = abWidth * 0.08;"
+        # 실제 도면 영역(있으면)을 측정해 사이즈 기준과 충돌 검사 둘 다에 사용.
+        "  var hasArt = doc.pageItems.length > 0;"
+        "  var artLeft = abLeft, artTop = abTop, artRight = abRight, artBottom = ab[3], artWidth = abWidth;"
+        "  if (hasArt) {"
+        "    try {"
+        "      var dbnd = doc.geometricBounds;"  # [left, top, right, bottom]
+        "      artLeft = dbnd[0]; artTop = dbnd[1]; artRight = dbnd[2]; artBottom = dbnd[3];"
+        "      artWidth = artRight - artLeft;"
+        "      if (artWidth <= 0) artWidth = abWidth;"
+        "    } catch (e) { hasArt = false; }"
+        "  }"
+        # QR은 도면 폭의 8% (50~1000pt 사이) — 도면이 크면 QR/글씨/박스도 같이 커진다.
+        "  var qrSize = artWidth * 0.08;"
         "  if (qrSize < 50) qrSize = 50;"
-        "  if (qrSize > 240) qrSize = 240;"
+        "  if (qrSize > 1000) qrSize = 1000;"
         "  var sc = qrSize / 90.0;"
         "  var margin = 18 * sc;"
         "  var bigFont = 26 * sc;"
         "  var noteFont = 13 * sc;"
-        # 박스 높이는 폰트에 맞춰 꽉 차게(1.25배), 너비는 텍스트가 가운데 들어갈 정도
+        # 박스 높이는 폰트에 맞춰 꽉 차게(1.25배). 너비는 대지의 약 45% — 시각적으로
+        # 가운데를 확실히 점유하도록. 단, 텍스트가 들어갈 최소폭은 보장.
         "  var boxH = bigFont * 1.25;"
-        "  var boxW = bigFont * 14;"
+        "  var boxW = abWidth * 0.45;"
+        "  var minBoxW = bigFont * 12;"
+        "  if (boxW < minBoxW) boxW = minBoxW;"
         "  var lineGap = 6 * sc;"
-        # 기존 일러스트 콘텐츠가 대지 위쪽 영역까지 차 있으면 오버레이가 겹치므로,
-        # 충돌이 감지되면 topY 를 콘텐츠 위로 끌어올려 안전하게 띄운다.
-        # doc.geometricBounds 는 워크시트 레이어를 비운 시점의 값이라 우리가 추가한 것은 빠진다.
-        "  var overlayHeight = (qrSize > boxH ? qrSize : boxH) + margin * 2;"
-        "  var topY = abTop;"
-        "  try {"
-        "    if (doc.pageItems.length > 0) {"
-        "      var dbnd = doc.geometricBounds;"  # [left, top, right, bottom]
-        "      var existingTop = dbnd[1];"
-        "      if (existingTop > abTop - overlayHeight) {"
-        "        topY = existingTop + overlayHeight + margin;"
-        "      }"
-        "    }"
-        "  } catch (e) {}"
-        # 오버레이가 원래 대지보다 위로 밀려났으면 대지 상단을 그만큼 확장해서
-        # 잘리지 않게 한다. 좌/우/하 변은 그대로 둔다.
-        "  if (topY > abTop) {"
-        "    try {"
-        "      var newTop = topY + margin;"
-        "      doc.artboards[0].artboardRect = [abLeft, newTop, abRight, ab[3]];"
-        "    } catch (e) {}"
-        "  }"
-        # 색상 정의
+        # 색상 / 폰트 — 노트 사전 측정 단계에서도 동일 폰트를 적용해야 정확한 줄높이가 나온다.
         "  var blk = new RGBColor(); blk.red = 0; blk.green = 0; blk.blue = 0;"
         "  var boxFill = new RGBColor();"
         f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
         "  var boxStroke = new RGBColor();"
         f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
-        # 맑은 고딕 (없으면 기본 폰트 유지). 어차피 저장 직전에 outline 변환되므로
-        # FlexSign 단계에서의 폰트 메트릭 차이 문제는 발생하지 않는다.
         "  var malgun = null;"
         "  var malgunNames = ['MalgunGothic','MalgunGothicRegular','MalgunGothic-Regular','Malgun Gothic','맑은 고딕','맑은고딕'];"
         "  for (var mi = 0; mi < malgunNames.length && malgun == null; mi++) {"
         "    try { malgun = app.textFonts.getByName(malgunNames[mi]); } catch(e) { malgun = null; }"
+        "  }"
+        # ── 노트 박스의 가로 위치 / 너비를 미리 결정해 두고, 텍스트 컨텐츠 높이도 사전 측정.
+        # 이 값을 워크시트 전체 깊이 계산에 포함해야, 노트가 길어 도면을 침범할 때
+        # 워크시트 폼을 충분히 위로 올릴 수 있다.
+        f'  var noteTextStr = "{note_js}";'
+        "  var pad = 6 * sc;"
+        "  var qrOriginX = abRight - margin - qrSize;"
+        "  var noteW = qrSize * 1.9;"
+        "  var noteRight = qrOriginX + qrSize;"
+        "  var noteLeft = noteRight - noteW;"
+        "  if (noteLeft < abLeft + margin + boxW / 2) {"
+        "    noteLeft = qrOriginX;"
+        "    noteW = qrSize;"
+        "  }"
+        "  var noteTextW = noteW - pad * 2;"
+        "  var noteTextLeft = noteLeft + pad;"
+        "  var noteH = 0;"
+        "  if (noteTextStr.length > 0) {"
+        "    var tmpY = abTop;"
+        "    var tmpPath = layer.pathItems.add();"
+        "    tmpPath.filled = false; tmpPath.stroked = false;"
+        "    tmpPath.setEntirePath(["
+        "      [noteTextLeft, tmpY],"
+        "      [noteTextLeft + noteTextW, tmpY],"
+        "      [noteTextLeft + noteTextW, tmpY - 5000],"
+        "      [noteTextLeft, tmpY - 5000]"
+        "    ]);"
+        "    tmpPath.closed = true;"
+        "    var tmpTf = layer.textFrames.areaText(tmpPath);"
+        "    tmpTf.contents = noteTextStr;"
+        "    tmpTf.textRange.characterAttributes.size = noteFont;"
+        "    if (malgun) tmpTf.textRange.characterAttributes.textFont = malgun;"
+        "    var contentH = noteFont * 1.4;"
+        "    try {"
+        "      var tfLines = tmpTf.lines;"
+        "      if (tfLines.length > 0) {"
+        "        contentH = tfLines[0].geometricBounds[1] - tfLines[tfLines.length - 1].geometricBounds[3];"
+        "      }"
+        "    } catch (e) {}"
+        "    noteH = contentH + pad * 2;"
+        "    try { tmpTf.remove(); } catch (e) {}"
+        "    try { tmpPath.remove(); } catch (e) {}"
+        "  }"
+        # 워크시트 전체 깊이 = max(우측 컬럼: QR + 노트, 중앙 컬럼: 헤더박스). 이 깊이만큼
+        # 도면 위쪽으로 띄워야 한다. 폼 자체는 항상 우측·중앙 상단에 고정.
+        "  var rightDepth = qrSize;"
+        "  if (noteH > 0) rightDepth += lineGap + noteH;"
+        "  var overlayDepth = (rightDepth > boxH) ? rightDepth : boxH;"
+        "  var overlayHeight = overlayDepth + margin * 2;"
+        "  var topY = abTop;"
+        "  if (hasArt && artTop > abTop - overlayHeight) {"
+        "    topY = artTop + overlayHeight + margin;"
+        "  }"
+        "  var needAbTop = (topY > abTop) ? (topY + margin) : abTop;"
+        "  var needAbBottom = ab[3];"
+        # 노트가 너무 길어 대지 하단을 넘어가면 그만큼 대지를 키운다.
+        "  if (noteH > 0) {"
+        "    var preNoteBot = topY - margin - qrSize - lineGap - noteH;"
+        "    if (preNoteBot - margin < needAbBottom) needAbBottom = preNoteBot - margin;"
         "  }"
         # ── 좌측 상단: 싸인월드 + 거래처 전화번호 ──
         # 폰트마다 ascender/descender 가 달라 position만으로는 위치가 흔들리므로,
@@ -367,8 +420,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  var glyphCy = (hb[1] + hb[3]) / 2;"
         "  var boxCenterY = boxTop - boxH / 2;"
         "  headerTf.position = [centerX - glyphCx, boxCenterY - glyphCy];"
-        # ── 우측 상단: QR ──
-        "  var qrOriginX = abRight - margin - qrSize;"
+        # ── 우측 상단: QR ── (qrOriginX는 사전에 정의됨)
         "  var qrOriginY = topY - margin;"
         f"  var m = {qr_js_matrix};"
         "  var N = m.length;"
@@ -385,34 +437,18 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "      }"
         "    }"
         "  }"
-        # ── QR 아래: 추가물품 + 추가요청사항을 묶은 외곽선 폼 박스 ──
-        f'  var noteTextStr = "{note_js}";'
+        # ── QR 아래: 추가물품/추가요청사항 폼 박스 (항상 우측 상단 고정) ──
+        # 충돌은 위에서 topY 를 올려 처리했으므로 여기선 단순히 측정한 높이로 배치만 한다.
         "  var noteTfRef = null;"
-        "  if (noteTextStr.length > 0) {"
-        "    var noteW = qrSize * 1.9;"
-        "    var noteH = 200 * sc;"
-        "    var noteRight = qrOriginX + qrSize;"
-        "    var noteLeft = noteRight - noteW;"
-        "    if (noteLeft < abLeft + margin + boxW / 2) {"
-        "      noteLeft = qrOriginX;"
-        "      noteW = qrSize;"
-        "    }"
+        "  if (noteH > 0) {"
         "    var noteTop = qrOriginY - qrSize - lineGap;"
-        # 외곽선만 있는 폼 박스 (채우기 없음)
-        "    var noteBox = layer.pathItems.rectangle(noteTop, noteLeft, noteW, noteH);"
-        "    noteBox.filled = false;"
-        "    noteBox.stroked = true;"
-        "    noteBox.strokeColor = boxStroke;"
-        "    noteBox.strokeWidth = 0.5 * sc;"
-        # 박스 안쪽 패딩만큼 작게 area text 경로
-        "    var pad = 6 * sc;"
         "    var notePath = layer.pathItems.add();"
         "    notePath.filled = false; notePath.stroked = false;"
         "    notePath.setEntirePath(["
-        "      [noteLeft + pad, noteTop - pad],"
-        "      [noteLeft + noteW - pad, noteTop - pad],"
-        "      [noteLeft + noteW - pad, noteTop - noteH + pad],"
-        "      [noteLeft + pad, noteTop - noteH + pad]"
+        "      [noteTextLeft, noteTop - pad],"
+        "      [noteTextLeft + noteTextW, noteTop - pad],"
+        "      [noteTextLeft + noteTextW, noteTop - noteH + pad],"
+        "      [noteTextLeft, noteTop - noteH + pad]"
         "    ]);"
         "    notePath.closed = true;"
         "    var noteTf = layer.textFrames.areaText(notePath);"
@@ -420,6 +456,16 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "    noteTf.textRange.characterAttributes.size = noteFont;"
         "    if (malgun) noteTf.textRange.characterAttributes.textFont = malgun;"
         "    noteTfRef = noteTf;"
+        "    var noteBox = layer.pathItems.rectangle(noteTop, noteLeft, noteW, noteH);"
+        "    noteBox.filled = false;"
+        "    noteBox.stroked = true;"
+        "    noteBox.strokeColor = boxStroke;"
+        "    noteBox.strokeWidth = 0.5 * sc;"
+        "  }"
+        # 워크시트 요소들이 원래 대지 밖으로 밀려난 경우 대지를 그만큼 확장.
+        # 위/아래 양쪽 변동을 한 번에 반영한다.
+        "  if (needAbTop > abTop || needAbBottom < ab[3]) {"
+        "    try { doc.artboards[0].artboardRect = [abLeft, needAbTop, abRight, needAbBottom]; } catch (e) {}"
         "  }"
         # FlexSign 가 v8 AI 의 글자 메트릭을 다르게 해석해서 자모 사이가 벌어지는
         # 문제를 막으려면, 저장 전에 모든 텍스트를 윤곽선(아웃라인)으로 변환해야
@@ -428,7 +474,16 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  try { leftTf.createOutline(); } catch (e) {}"
         "  try { headerTf.createOutline(); } catch (e) {}"
         "  if (noteTfRef) { try { noteTfRef.createOutline(); } catch (e) {} }"
-        # v8로 저장 후 close
+        # PDF 먼저 저장 — 모바일 거래처 페이지에서 무한 확대해도 깨지지 않는 벡터 PDF.
+        # preserveEditability=false 로 print-ready 사이즈로 압축한다.
+        "  try {"
+        "    var pdfOpts = new PDFSaveOptions();"
+        "    pdfOpts.compatibility = PDFCompatibility.ACROBAT7;"
+        "    pdfOpts.preserveEditability = false;"
+        "    pdfOpts.viewAfterSaving = false;"
+        "    doc.saveAs(pdfFile, pdfOpts);"
+        "  } catch (e) {}"
+        # 그 다음 v8 — 이 호출 후엔 doc 의 정체성이 .ai 로 바뀌므로 PDF 가 먼저여야 한다.
         "  var opts = new IllustratorSaveOptions();"
         "  opts.compatibility = Compatibility.ILLUSTRATOR8;"
         "  opts.saveMultipleArtboards = false;"
@@ -450,7 +505,9 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
 
 
 def convert_ai_file(ai_path: Path, qr_js_matrix: str,
-                    header_text: str, left_text: str, note_text: str) -> Path | None:
+                    header_text: str, left_text: str, note_text: str
+                    ) -> tuple[Path, Path] | None:
+    """변환 성공 시 (AI v8 경로, PDF 경로) 튜플을 반환. 실패 시 None."""
     if not is_running("Illustrator.exe"):
         ui_alert("Illustrator 필요", "Adobe Illustrator가 실행 중이 아닙니다.\n먼저 Illustrator를 열어 주세요.")
         return None
@@ -468,17 +525,54 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str,
         # 변환 파일명에 타임스탬프를 붙여 매번 새 경로로 만든다.
         ts = time.strftime("%y%m%d_%H%M%S")
         out_path = out_dir / f"{ai_path.stem}_{ts}{ai_path.suffix}"
+        pdf_path = out_dir / f"{ai_path.stem}_{ts}.pdf"
 
-        if not process_ai_to_v8(ai_app, ai_path, out_path, qr_js_matrix,
+        if not process_ai_to_v8(ai_app, ai_path, out_path, pdf_path, qr_js_matrix,
                                 header_text, left_text, note_text):
             return None
 
-        ui_log(f"{ai_path.name} v8 저장 완료")
-        return out_path
+        ui_log(f"{ai_path.name} v8/PDF 저장 완료")
+        return out_path, pdf_path
 
     except Exception as e:
         ui_log(f"변환 실패: {e}")
         return None
+
+
+def upload_worksheet_pdf(order_number: str, pdf_path: Path) -> bool:
+    """변환된 PDF를 백엔드에 업로드. 거래처 카드에 노출되는 단일 PDF로 덮어씀.
+    multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음)."""
+    if not order_number or not pdf_path.exists():
+        return False
+    url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/worksheet-pdf"
+    boundary = f"----hdsign{int(time.time()*1000)}"
+    try:
+        pdf_bytes = pdf_path.read_bytes()
+    except Exception as e:
+        ui_log(f"PDF 읽기 실패: {e}")
+        return False
+
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{pdf_path.name}"\r\n'
+        "Content-Type: application/pdf\r\n\r\n"
+    ).encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    body = head + pdf_bytes + tail
+
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Content-Length", str(len(body)))
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp.read()
+        ui_log(f"{order_number} PDF 업로드 완료")
+        return True
+    except urllib.error.HTTPError as e:
+        ui_log(f"PDF 업로드 실패 ({e.code}): {order_number}")
+    except Exception as e:
+        ui_log(f"PDF 업로드 호출 실패: {e}")
+    return False
 
 
 def _find_flexsign_hwnd() -> int:
@@ -640,6 +734,7 @@ def process_zip(zip_path: Path):
     # Windows는 대소문자 구분 안 하므로 "*.ai" 하나로 .AI / .ai 모두 매칭 — dedupe
     ai_files = sorted({p.resolve() for p in extract_dir.glob("*.ai")})
     any_converted = False
+    pdf_to_upload: Path | None = None
     if not ai_files:
         ui_log(f"{order_number}: AI 파일 없음 — 확인 필요")
     else:
@@ -647,11 +742,16 @@ def process_zip(zip_path: Path):
             converted = convert_ai_file(Path(ai_file), qr_js,
                                         header_text, left_text, note_text)
             if converted:
-                launch_flexsign(converted)
+                ai_out, pdf_out = converted
+                launch_flexsign(ai_out)
+                # 한 주문에 AI가 여러 개여도 PDF 는 마지막 것 1개만 거래처에 노출.
+                pdf_to_upload = pdf_out
                 any_converted = True
 
     if any_converted:
         notify_worksheet_acknowledged(order_number)
+        if pdf_to_upload is not None:
+            upload_worksheet_pdf(order_number, pdf_to_upload)
 
     DONE_DIR.mkdir(exist_ok=True)
     dest = DONE_DIR / zip_path.name

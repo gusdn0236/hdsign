@@ -86,6 +86,9 @@ public class Order {
     @Builder.Default
     private List<OrderFile> files = new ArrayList<>();
 
+    @Column(length = 500)
+    private String worksheetPdfUrl;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 

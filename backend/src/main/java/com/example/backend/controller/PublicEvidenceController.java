@@ -148,6 +148,53 @@ public class PublicEvidenceController {
     }
 
     /**
+     * 워처가 변환 직후 같이 만들어 보내는 지시서 PDF.
+     * 주문 1건당 항상 최신 1개만 유지(덮어쓰기). 거래처 작업현황 화면 맨 위에 노출된다.
+     */
+    @PostMapping("/{orderNumber}/worksheet-pdf")
+    public ResponseEntity<?> uploadWorksheetPdf(
+            @PathVariable String orderNumber,
+            @RequestParam("file") MultipartFile file
+    ) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
+        }
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "PDF 파일이 비어 있습니다."));
+        }
+
+        String key = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
+        try {
+            s3Client.putObject(
+                    PutObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(key)
+                            .contentType("application/pdf")
+                            .build(),
+                    RequestBody.fromBytes(file.getBytes())
+            );
+        } catch (Exception e) {
+            log.warn("지시서 PDF 업로드 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("message", "PDF 업로드에 실패했습니다."));
+        }
+
+        String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
+                ? ""
+                : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
+        String url = normalizedPublicUrl + key;
+        order.setWorksheetPdfUrl(url);
+        orderRepository.save(order);
+
+        return ResponseEntity.ok(Map.of(
+                "orderNumber", order.getOrderNumber(),
+                "worksheetPdfUrl", url
+        ));
+    }
+
+    /**
      * 워처(hdsign_worksheet.exe)가 ZIP을 받아 AI에 QR을 박고 v8 저장한 뒤 호출.
      * RECEIVED 상태인 주문만 IN_PROGRESS로 전환한다(이미 작업중/완료면 무시).
      * 워처가 안 켜져 있으면 이 호출 자체가 일어나지 않으므로, 상태는 그대로 RECEIVED 유지된다.

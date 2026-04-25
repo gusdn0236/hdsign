@@ -31,6 +31,7 @@ public class OrderDto {
         private String deliveryAddress;
         private String status;
         private List<FileInfo> files;
+        private String worksheetPdfUrl;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
@@ -89,6 +90,7 @@ public class OrderDto {
                 .deliveryAddress(order.getDeliveryAddress())
                 .status(order.getStatus().name())
                 .files(files)
+                .worksheetPdfUrl(order.getWorksheetPdfUrl())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .deletedAt(order.getDeletedAt())
