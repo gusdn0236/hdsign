@@ -294,17 +294,31 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  var boxH = bigFont * 1.25;"
         "  var boxW = bigFont * 14;"
         "  var lineGap = 6 * sc;"
+        # 기존 일러스트 콘텐츠가 대지 위쪽 영역까지 차 있으면 오버레이가 겹치므로,
+        # 충돌이 감지되면 topY 를 콘텐츠 위로 끌어올려 안전하게 띄운다.
+        # doc.geometricBounds 는 워크시트 레이어를 비운 시점의 값이라 우리가 추가한 것은 빠진다.
+        "  var overlayHeight = (qrSize > boxH ? qrSize : boxH) + margin * 2;"
+        "  var topY = abTop;"
+        "  try {"
+        "    if (doc.pageItems.length > 0) {"
+        "      var dbnd = doc.geometricBounds;"  # [left, top, right, bottom]
+        "      var existingTop = dbnd[1];"
+        "      if (existingTop > abTop - overlayHeight) {"
+        "        topY = existingTop + overlayHeight + margin;"
+        "      }"
+        "    }"
+        "  } catch (e) {}"
         # 색상 정의
         "  var blk = new RGBColor(); blk.red = 0; blk.green = 0; blk.blue = 0;"
         "  var boxFill = new RGBColor();"
         f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
         "  var boxStroke = new RGBColor();"
         f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
-        # 맑은 고딕 폰트 (시스템에 없으면 기본 폰트 유지)
-        "  var malgun = null;"
-        "  var malgunNames = ['MalgunGothic','MalgunGothicRegular','MalgunGothic-Regular','Malgun Gothic'];"
-        "  for (var mi = 0; mi < malgunNames.length && malgun == null; mi++) {"
-        "    try { malgun = app.textFonts.getByName(malgunNames[mi]); } catch(e) { malgun = null; }"
+        # 굴림체 폰트 (시스템에 없으면 기본 폰트 유지). FlexSign 변환에서 가장 안정적.
+        "  var gulim = null;"
+        "  var gulimNames = ['Gulim','GulimChe','Gulim-Regular','GulimRegular','굴림','굴림체'];"
+        "  for (var gi = 0; gi < gulimNames.length && gulim == null; gi++) {"
+        "    try { gulim = app.textFonts.getByName(gulimNames[gi]); } catch(e) { gulim = null; }"
         "  }"
         # ── 좌측 상단: 싸인월드 + 거래처 전화번호 ──
         # 폰트마다 ascender/descender 가 달라 position만으로는 위치가 흔들리므로,
@@ -312,16 +326,16 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  var leftTf = layer.textFrames.add();"
         f'  leftTf.contents = "{left_js}";'
         "  leftTf.textRange.characterAttributes.size = bigFont;"
-        "  if (malgun) leftTf.textRange.characterAttributes.textFont = malgun;"
+        "  if (gulim) leftTf.textRange.characterAttributes.textFont = gulim;"
         "  leftTf.position = [0, 0];"
         "  var lb = leftTf.geometricBounds;"  # [left, top, right, bottom]
         "  var leftTargetX = abLeft + margin;"
-        "  var leftTargetTop = abTop - margin;"
+        "  var leftTargetTop = topY - margin;"
         "  leftTf.position = [leftTargetX - lb[0], leftTargetTop - lb[1]];"
         # ── 중앙 상단: 박스 + 발주/배송 텍스트 ──
         "  var centerX = (abLeft + abRight) / 2;"
         "  var boxLeft = centerX - boxW / 2;"
-        "  var boxTop = abTop - margin;"
+        "  var boxTop = topY - margin;"
         "  var box = layer.pathItems.rectangle(boxTop, boxLeft, boxW, boxH);"
         "  box.filled = true; box.fillColor = boxFill;"
         "  box.stroked = true; box.strokeColor = boxStroke;"
@@ -331,7 +345,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  var headerTf = layer.textFrames.add();"
         f'  headerTf.contents = "{header_js}";'
         "  headerTf.textRange.characterAttributes.size = bigFont;"
-        "  if (malgun) headerTf.textRange.characterAttributes.textFont = malgun;"
+        "  if (gulim) headerTf.textRange.characterAttributes.textFont = gulim;"
         "  headerTf.position = [0, 0];"
         "  var hb = headerTf.geometricBounds;"  # [left, top, right, bottom]
         "  var glyphCx = (hb[0] + hb[2]) / 2;"
@@ -340,7 +354,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  headerTf.position = [centerX - glyphCx, boxCenterY - glyphCy];"
         # ── 우측 상단: QR ──
         "  var qrOriginX = abRight - margin - qrSize;"
-        "  var qrOriginY = abTop - margin;"
+        "  var qrOriginY = topY - margin;"
         f"  var m = {qr_js_matrix};"
         "  var N = m.length;"
         "  var cell = qrSize / N;"
@@ -388,7 +402,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "    var noteTf = layer.textFrames.areaText(notePath);"
         "    noteTf.contents = noteTextStr;"
         "    noteTf.textRange.characterAttributes.size = noteFont;"
-        "    if (malgun) noteTf.textRange.characterAttributes.textFont = malgun;"
+        "    if (gulim) noteTf.textRange.characterAttributes.textFont = gulim;"
         "  }"
         # v8로 저장 후 close
         "  var opts = new IllustratorSaveOptions();"
