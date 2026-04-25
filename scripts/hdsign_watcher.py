@@ -314,6 +314,14 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "      }"
         "    }"
         "  } catch (e) {}"
+        # 오버레이가 원래 대지보다 위로 밀려났으면 대지 상단을 그만큼 확장해서
+        # 잘리지 않게 한다. 좌/우/하 변은 그대로 둔다.
+        "  if (topY > abTop) {"
+        "    try {"
+        "      var newTop = topY + margin;"
+        "      doc.artboards[0].artboardRect = [abLeft, newTop, abRight, ab[3]];"
+        "    } catch (e) {}"
+        "  }"
         # 색상 정의
         "  var blk = new RGBColor(); blk.red = 0; blk.green = 0; blk.blue = 0;"
         "  var boxFill = new RGBColor();"
