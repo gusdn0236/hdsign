@@ -161,6 +161,7 @@ public class AdminOrderController {
             info.put("orderNumber", order.getOrderNumber());
             info.put("companyName", order.getClient().getCompanyName());
             info.put("contactName", order.getClient().getContactName());
+            info.put("phone", order.getClient().getPhone());
             info.put("title", order.getTitle());
             info.put("requestType", order.getRequestType().name());
             info.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);

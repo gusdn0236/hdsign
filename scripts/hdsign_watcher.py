@@ -29,6 +29,10 @@ DONE_DIR = WATCH_DIR / "done"
 FLEXSIGN_EXE = r"C:\Users\USER\Desktop\FlexiSIGN 6.6\Program\App.exe"
 EVIDENCE_URL_BASE = "https://hdsigncraft.com/p/"
 
+# 작업지시서 상단 박스 색상 (RGB 0~255). 작성자별로 색을 바꿔쓰려면 여기만 수정.
+HEADER_BOX_FILL = (220, 220, 220)     # 연한 회색
+HEADER_BOX_STROKE = (130, 130, 130)   # 박스 테두리
+
 _seen_zips: set[str] = set()
 _seen_lock = threading.Lock()
 _ui_queue: queue.Queue = queue.Queue()
@@ -100,24 +104,46 @@ def qr_matrix_js(url: str) -> str:
     return "[" + ",".join(rows) + "]"
 
 
-def format_order_info(meta: dict) -> str:
-    lines = [
-        f"No: {meta.get('orderNumber', '-')}",
-        f"거래처: {meta.get('companyName', '-')} ({meta.get('contactName', '-')})",
-        f"제목: {meta.get('title', '-')}",
-        f"납기: {meta.get('dueDate', '-')} {(meta.get('dueTime') or '').strip()}".strip(),
-    ]
-    delivery = meta.get("deliveryMethod") or ""
-    address = meta.get("deliveryAddress") or ""
-    if delivery:
-        lines.append(f"배송: {delivery}" + (f"  {address}" if address else ""))
-    items = meta.get("additionalItems") or ""
-    if items:
-        lines.append(f"추가물품: {items}")
-    note = meta.get("note") or ""
-    if note:
-        lines.append(f"요청사항: {note}")
-    return "\n".join(lines)
+DELIVERY_SHORT = {
+    "화물 발송": "화물",
+    "퀵 발송": "퀵발송",
+    "직접 배송": "직접배송",
+    "직접 수령": "직접수령",
+}
+
+
+def _format_md(value) -> str:
+    """ISO 날짜 또는 yyyy-MM-dd 문자열에서 MM-dd 만 추출."""
+    if not value:
+        return ""
+    s = str(value).split("T")[0]
+    parts = s.split("-")
+    return f"{parts[1]}-{parts[2]}" if len(parts) >= 3 else s
+
+
+def format_header_text(meta: dict) -> str:
+    """중앙 박스용 한 줄 텍스트. 예: '04-24발주 04-25화물'."""
+    parts = []
+    order_md = _format_md(meta.get("createdAt"))
+    if order_md:
+        parts.append(f"{order_md}발주")
+    due_md = _format_md(meta.get("dueDate"))
+    delivery = DELIVERY_SHORT.get((meta.get("deliveryMethod") or "").strip(), "")
+    if due_md:
+        parts.append(f"{due_md}{delivery}" if delivery else due_md)
+    return " ".join(parts) if parts else "-"
+
+
+def format_left_text(meta: dict) -> str:
+    """좌측 상단: 싸인월드 + 거래처 전화번호."""
+    phone = (meta.get("phone") or "").strip()
+    return "싸인월드\n" + phone if phone else "싸인월드"
+
+
+def format_note_text(meta: dict) -> str:
+    """우측 QR 아래: 추가요청사항 (있을 때만)."""
+    note = (meta.get("note") or "").strip()
+    return f"[추가요청사항]\n{note}" if note else ""
 
 
 # ── Illustrator & FlexSign ────────────────────────────────────────────────────
@@ -130,16 +156,23 @@ def _js_escape(s: str) -> str:
 
 
 def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
-                     qr_js_matrix: str, info_text: str) -> bool:
+                     qr_js_matrix: str,
+                     header_text: str, left_text: str, note_text: str) -> bool:
     """
-    JSX 한 번의 트랜잭션으로 open → worksheet 레이어 추가(QR 벡터 + 주문정보)
+    JSX 한 번의 트랜잭션으로 open → worksheet 레이어 추가(QR + 주문정보 박스)
     → v8 SaveAs → close까지 전부 수행.
+    크기는 첫 번째 대지(artboard) 폭에 비례해 자동 스케일링.
     Python/COM이 Open·SaveAs·Close를 나눠 호출하면 doc 참조가 엉켜서 수정 안 된
     사본이 저장되는 케이스가 발생 — 그걸 피하기 위해 전체 파이프라인을 JSX로 통합.
     """
-    info_js = _js_escape(info_text)
+    header_js = _js_escape(header_text)
+    left_js = _js_escape(left_text)
+    note_js = _js_escape(note_text)
     src_js = str(src_path).replace("\\", "/")
     dst_js = str(dst_path).replace("\\", "/")
+
+    fr, fg, fb = HEADER_BOX_FILL
+    sr, sg, sb = HEADER_BOX_STROKE
 
     script = (
         "try {"
@@ -166,38 +199,88 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  }"
         "  var layer = doc.layers.add();"
         "  layer.name = 'worksheet';"
-        "  var b = doc.geometricBounds;"
-        "  var right = b[2];"
-        "  var top = b[1];"
-        "  var qrSize = 72;"
-        "  var margin = 10;"
-        # QR (벡터 path 집합)
+        # 대지(첫 번째 artboard) 기준으로 비율 계산
+        "  var ab = doc.artboards[0].artboardRect;"
+        "  var abLeft = ab[0], abTop = ab[1], abRight = ab[2];"
+        "  var abWidth = abRight - abLeft;"
+        # QR은 대지 폭의 8% (50~240pt 사이로 클램프)
+        "  var qrSize = abWidth * 0.08;"
+        "  if (qrSize < 50) qrSize = 50;"
+        "  if (qrSize > 240) qrSize = 240;"
+        "  var sc = qrSize / 90.0;"
+        "  var margin = 18 * sc;"
+        "  var bigFont = 14 * sc;"
+        "  var noteFont = 9 * sc;"
+        "  var boxW = 240 * sc;"
+        "  var boxH = 36 * sc;"
+        "  var lineGap = 6 * sc;"
+        # 색상 정의
+        "  var blk = new RGBColor(); blk.red = 0; blk.green = 0; blk.blue = 0;"
+        "  var boxFill = new RGBColor();"
+        f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
+        "  var boxStroke = new RGBColor();"
+        f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
+        # ── 좌측 상단: 싸인월드 + 거래처 전화번호 ──
+        "  var leftTf = layer.textFrames.add();"
+        f'  leftTf.contents = "{left_js}";'
+        "  leftTf.position = [abLeft + margin, abTop - margin];"
+        "  leftTf.textRange.characterAttributes.size = bigFont;"
+        # ── 중앙 상단: 박스 + 발주/배송 텍스트 ──
+        "  var centerX = (abLeft + abRight) / 2;"
+        "  var boxLeft = centerX - boxW / 2;"
+        "  var boxTop = abTop - margin;"
+        "  var box = layer.pathItems.rectangle(boxTop, boxLeft, boxW, boxH);"
+        "  box.filled = true; box.fillColor = boxFill;"
+        "  box.stroked = true; box.strokeColor = boxStroke;"
+        "  box.strokeWidth = 0.5 * sc;"
+        "  var headerTf = layer.textFrames.add();"
+        f'  headerTf.contents = "{header_js}";'
+        "  headerTf.textRange.characterAttributes.size = bigFont;"
+        "  try { headerTf.paragraphs[0].justification = Justification.CENTER; } catch(e) {}"
+        "  headerTf.position = [centerX, boxTop - boxH / 2 - bigFont * 0.3];"
+        # ── 우측 상단: QR ──
+        "  var qrOriginX = abRight - margin - qrSize;"
+        "  var qrOriginY = abTop - margin;"
         f"  var m = {qr_js_matrix};"
         "  var N = m.length;"
         "  var cell = qrSize / N;"
-        "  var originX = right - qrSize - margin;"
-        "  var originY = top - margin;"
         "  var grp = layer.groupItems.add();"
         "  grp.name = 'qr';"
-        "  var blk = new RGBColor();"
-        "  blk.red = 0; blk.green = 0; blk.blue = 0;"
         "  for (var y = 0; y < N; y++) {"
         "    for (var x = 0; x < N; x++) {"
         "      if (m[y][x]) {"
         "        var r = grp.pathItems.rectangle("
-        "          originY - y * cell, originX + x * cell, cell, cell"
+        "          qrOriginY - y * cell, qrOriginX + x * cell, cell, cell"
         "        );"
-        "        r.filled = true;"
-        "        r.stroked = false;"
-        "        r.fillColor = blk;"
+        "        r.filled = true; r.stroked = false; r.fillColor = blk;"
         "      }"
         "    }"
         "  }"
-        # 주문정보 텍스트
-        "  var tf = layer.textFrames.add();"
-        f'  tf.contents = "{info_js}";'
-        "  tf.position = [right - qrSize - margin - 230, top - margin];"
-        "  tf.textRange.characterAttributes.size = 6.5;"
+        # ── QR 아래: 추가요청사항 (있을 때만, area text) ──
+        f'  var noteTextStr = "{note_js}";'
+        "  if (noteTextStr.length > 0) {"
+        "    var noteW = qrSize * 1.7;"
+        "    var noteH = 140 * sc;"
+        "    var noteRight = qrOriginX + qrSize;"
+        "    var noteLeft = noteRight - noteW;"
+        "    if (noteLeft < abLeft + margin + boxW / 2) {"
+        "      noteLeft = qrOriginX;"
+        "      noteW = qrSize;"
+        "    }"
+        "    var noteTop = qrOriginY - qrSize - lineGap;"
+        "    var notePath = layer.pathItems.add();"
+        "    notePath.filled = false; notePath.stroked = false;"
+        "    notePath.setEntirePath(["
+        "      [noteLeft, noteTop],"
+        "      [noteLeft + noteW, noteTop],"
+        "      [noteLeft + noteW, noteTop - noteH],"
+        "      [noteLeft, noteTop - noteH]"
+        "    ]);"
+        "    notePath.closed = true;"
+        "    var noteTf = layer.textFrames.areaText(notePath);"
+        "    noteTf.contents = noteTextStr;"
+        "    noteTf.textRange.characterAttributes.size = noteFont;"
+        "  }"
         # v8로 저장 후 close
         "  var opts = new IllustratorSaveOptions();"
         "  opts.compatibility = Compatibility.ILLUSTRATOR8;"
@@ -219,7 +302,8 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         return False
 
 
-def convert_ai_file(ai_path: Path, qr_js_matrix: str, info_text: str) -> Path | None:
+def convert_ai_file(ai_path: Path, qr_js_matrix: str,
+                    header_text: str, left_text: str, note_text: str) -> Path | None:
     if not is_running("Illustrator.exe"):
         ui_alert("Illustrator 필요", "Adobe Illustrator가 실행 중이 아닙니다.\n먼저 Illustrator를 열어 주세요.")
         return None
@@ -235,7 +319,8 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str, info_text: str) -> Path | 
         out_dir.mkdir(exist_ok=True)
         out_path = out_dir / ai_path.name
 
-        if not process_ai_to_v8(ai_app, ai_path, out_path, qr_js_matrix, info_text):
+        if not process_ai_to_v8(ai_app, ai_path, out_path, qr_js_matrix,
+                                header_text, left_text, note_text):
             return None
 
         ui_log(f"{ai_path.name} v8 저장 완료")
@@ -386,7 +471,9 @@ def process_zip(zip_path: Path):
     order_number = meta.get("orderNumber", "order")
     company = meta.get("companyName", "")
     title = meta.get("title", "")
-    info_text = format_order_info(meta)
+    header_text = format_header_text(meta)
+    left_text = format_left_text(meta)
+    note_text = format_note_text(meta)
 
     ui_status("processing", f"{order_number} 파일을 준비하고 있습니다")
     ui_log(f"{company}  {title}")
@@ -406,7 +493,8 @@ def process_zip(zip_path: Path):
         ui_log(f"{order_number}: AI 파일 없음 — 확인 필요")
     else:
         for ai_file in ai_files:
-            converted = convert_ai_file(Path(ai_file), qr_js, info_text)
+            converted = convert_ai_file(Path(ai_file), qr_js,
+                                        header_text, left_text, note_text)
             if converted:
                 launch_flexsign(converted)
 
