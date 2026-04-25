@@ -562,9 +562,12 @@ export default function ClientRequest() {
     const itemsPreviewLines = useMemo(() => {
         if (!selectedItems.length) return [];
         return selectedItems.map((item) => {
-            const label = item === '파워기(SMPS)' && smpsWatt ? `파워기(SMPS) ${smpsWatt}W` : item;
-            const qty = quantities[item] || 1;
-            return `• ${label}: ${qty}개`;
+            if (item === '파워기(SMPS)') {
+                const label = smpsWatt ? `파워기(SMPS) ${smpsWatt}W` : '파워기(SMPS)';
+                const qty = quantities[item] || 1;
+                return `• ${label}: ${qty}개`;
+            }
+            return `• ${item}`;
         });
     }, [selectedItems, quantities, smpsWatt]);
 
@@ -591,9 +594,12 @@ export default function ClientRequest() {
             formData.append('title', title.trim());
 
             const itemsWithDetail = selectedItems.map((item) => {
-                const label = item === '파워기(SMPS)' && smpsWatt ? `파워기(SMPS) ${smpsWatt}W` : item;
-                const qty = quantities[item] || 1;
-                return `${label} ${qty}개`;
+                if (item === '파워기(SMPS)') {
+                    const label = smpsWatt ? `파워기(SMPS) ${smpsWatt}W` : '파워기(SMPS)';
+                    const qty = quantities[item] || 1;
+                    return `${label} ${qty}개`;
+                }
+                return item;
             });
 
             formData.append('additionalItems', itemsWithDetail.join(', '));
