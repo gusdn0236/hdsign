@@ -395,6 +395,7 @@ export default function ClientRequest() {
     const [smpsWatt, setSmpsWatt] = useState('');
     const [quantities, setQuantities] = useState({});
     const [note, setNote] = useState('');
+    const [noteTemplates, setNoteTemplates] = useState([]);
     const [dueDate, setDueDate] = useState('');
     const [dueTime, setDueTime] = useState('');
     const [delivery, setDelivery] = useState('CARGO');
@@ -409,6 +410,43 @@ export default function ClientRequest() {
     filesRef.current = files;
     const titleRef = useRef(title);
     titleRef.current = title;
+
+    const noteTplKey = `hd_note_templates_${username}`;
+
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(noteTplKey);
+            setNoteTemplates(raw ? JSON.parse(raw) || [] : []);
+        } catch {
+            setNoteTemplates([]);
+        }
+    }, [noteTplKey]);
+
+    const persistNoteTemplates = (next) => {
+        setNoteTemplates(next);
+        try {
+            localStorage.setItem(noteTplKey, JSON.stringify(next));
+        } catch {
+            /* ignore quota errors */
+        }
+    };
+
+    const saveNoteTemplate = () => {
+        const v = note.trim();
+        if (!v) return;
+        if (noteTemplates.includes(v)) return;
+        persistNoteTemplates([v, ...noteTemplates].slice(0, 8));
+    };
+
+    const removeNoteTemplate = (text) => {
+        persistNoteTemplates(noteTemplates.filter((t) => t !== text));
+    };
+
+    const insertNoteTemplate = (text) => {
+        const cur = note;
+        if (cur.includes(text)) return;
+        setNote(cur.trim() ? `${cur.replace(/\s+$/, '')}\n${text}` : text);
+    };
 
     useEffect(() => {
         const onDragEnter = (e) => {
@@ -653,6 +691,37 @@ export default function ClientRequest() {
                                     </ul>
                                 </div>
                             )}
+                            {noteTemplates.length > 0 && (
+                                <div className="note-templates">
+                                    <div className="note-templates-label">자주 쓰는 문구 — 클릭해서 추가</div>
+                                    <div className="note-template-chips">
+                                        {noteTemplates.map((tpl) => (
+                                            <span
+                                                key={tpl}
+                                                className={`note-template-chip ${note.includes(tpl) ? 'used' : ''}`}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    className="note-template-text"
+                                                    onClick={() => insertNoteTemplate(tpl)}
+                                                    title="추가"
+                                                >
+                                                    {tpl}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="note-template-remove"
+                                                    onClick={() => removeNoteTemplate(tpl)}
+                                                    aria-label="삭제"
+                                                    title="목록에서 삭제"
+                                                >
+                                                    ×
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <textarea
                                 className="req-textarea"
                                 value={note}
@@ -660,7 +729,18 @@ export default function ClientRequest() {
                                 placeholder="색상, 자재, 크기, 수량, 특이사항 등을 자유롭게 적어 주세요."
                                 rows={5}
                             />
-                            <p className="char-count">{note.length}자</p>
+                            <div className="note-actions">
+                                <p className="char-count">{note.length}자</p>
+                                <button
+                                    type="button"
+                                    className="note-save-btn"
+                                    onClick={saveNoteTemplate}
+                                    disabled={!note.trim() || noteTemplates.includes(note.trim())}
+                                    title="이 문구를 다음 요청에서도 한 번에 불러올 수 있게 저장합니다"
+                                >
+                                    + 다음에도 사용
+                                </button>
+                            </div>
                         </Section>
 
                         <Section number="03" title="납기 및 납품">

@@ -328,7 +328,43 @@
     outline: none; box-sizing: border-box; line-height: 1.6; transition: border-color 0.2s;
 }
 .request-page .req-textarea:focus { border-color: #005f73; }
-.request-page .char-count { margin: 6px 0 0; font-size: 12px; color: #aaa; text-align: right; }
+.request-page .char-count { margin: 0; font-size: 12px; color: #aaa; }
+
+.request-page .note-actions {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 6px;
+}
+.request-page .note-save-btn {
+    border: 1px solid #005f73; background: #fff; color: #005f73;
+    border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: background 0.15s, color 0.15s; font-family: inherit;
+}
+.request-page .note-save-btn:hover:not(:disabled) { background: #005f73; color: #fff; }
+.request-page .note-save-btn:disabled { border-color: #ddd; color: #bbb; cursor: not-allowed; }
+
+.request-page .note-templates { margin-bottom: 10px; }
+.request-page .note-templates-label {
+    font-size: 12px; font-weight: 600; color: #888; margin-bottom: 6px;
+}
+.request-page .note-template-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.request-page .note-template-chip {
+    display: inline-flex; align-items: stretch; border: 1px solid #d6e2e6;
+    background: #f5f9fa; border-radius: 999px; overflow: hidden;
+    transition: background 0.15s, border-color 0.15s;
+}
+.request-page .note-template-chip:hover { border-color: #005f73; }
+.request-page .note-template-chip.used { background: #e0efe9; border-color: #16a34a; }
+.request-page .note-template-text {
+    border: none; background: transparent; color: #005f73;
+    padding: 5px 4px 5px 12px; font-size: 12.5px; font-weight: 500;
+    cursor: pointer; font-family: inherit; text-align: left; max-width: 280px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.request-page .note-template-chip.used .note-template-text { color: #166534; }
+.request-page .note-template-remove {
+    border: none; background: transparent; color: #999;
+    padding: 0 10px 0 6px; font-size: 14px; line-height: 1; cursor: pointer; font-family: inherit;
+}
+.request-page .note-template-remove:hover { color: #dc2626; }
 
 .request-page .req-items-preview {
     margin-bottom: 10px; padding: 12px 14px; background: #f5f7f8;
