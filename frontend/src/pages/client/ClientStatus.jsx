@@ -146,12 +146,6 @@ function OrderCard({ order }) {
                         </div>
                         {!isQuote && (
                             <div className="detail-item">
-                                <span className="detail-label">SMPS 포함</span>
-                                <span className="detail-value">{order.hasSMPS ? '포함' : '미포함'}</span>
-                            </div>
-                        )}
-                        {!isQuote && (
-                            <div className="detail-item">
                                 <span className="detail-label">배송 방법</span>
                                 <span className="detail-value">{DELIVERY_LABELS[order.deliveryMethod] || '-'}</span>
                             </div>
