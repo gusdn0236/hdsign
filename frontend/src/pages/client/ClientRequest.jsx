@@ -421,9 +421,12 @@ export default function ClientRequest() {
         };
         const onDragOver = (e) => e.preventDefault();
         const onDrop = (e) => {
+            // 로컬 FileDropZone에서 이미 preventDefault() 했으면 중복 처리 방지
+            const alreadyHandled = e.defaultPrevented;
             e.preventDefault();
             dragCounter.current = 0;
             setPageDragging(false);
+            if (alreadyHandled) return;
             const dropped = Array.from(e.dataTransfer.files || []);
             if (!dropped.length) return;
             const newFiles = [...filesRef.current, ...dropped];
