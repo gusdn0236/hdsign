@@ -365,10 +365,33 @@ export default function OrderAdmin() {
     }
   };
 
+  const isWatcherRunning = async () => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1500);
+      const res = await fetch("http://127.0.0.1:5577/ping", {
+        signal: ctrl.signal,
+        cache: "no-store",
+      });
+      clearTimeout(timer);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
   const downloadWorksheet = async (e, order) => {
     e.stopPropagation();
     setDownloadingId(order.id);
     try {
+      const watcherUp = await isWatcherRunning();
+      if (!watcherUp) {
+        setFeedback({
+          type: "error",
+          msg: "지시서 프로그램이 실행 중이지 않습니다. 프로그램을 켠 뒤 다시 시도해 주세요.",
+        });
+        return;
+      }
       const res = await fetch(`${BASE_URL}/api/admin/orders/${order.id}/worksheet-package`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -382,34 +405,12 @@ export default function OrderAdmin() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      // 상태 전환은 워처가 ZIP을 받아 QR을 박은 뒤 백엔드를 호출할 때 일어난다.
-      // 워처가 꺼져 있으면 RECEIVED 상태가 그대로 유지된다.
+      // 워처가 ZIP을 받아 QR을 박은 뒤 /worksheet-acknowledged 를 호출하면 IN_PROGRESS 로 전환된다.
       setFeedback({
         type: "success",
         msg: "ZIP을 다운받았습니다. 워처가 처리되면 자동으로 작업중으로 전환됩니다.",
       });
-      // 8초 뒤에도 RECEIVED라면 워처가 꺼져 있다고 보고 알린다.
-      setTimeout(async () => {
-        try {
-          const res = await fetch(`${BASE_URL}/api/admin/orders`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!res.ok) return;
-          const fresh = await res.json();
-          if (Array.isArray(fresh)) {
-            setOrders(fresh);
-            const updated = fresh.find((o) => o.id === order.id);
-            if (updated && updated.status === "RECEIVED") {
-              setFeedback({
-                type: "error",
-                msg: "지시서 프로그램이 켜져있지 않은 것 같습니다. 프로그램을 실행한 뒤 다시 시도해 주세요.",
-              });
-            }
-          }
-        } catch {
-          /* 네트워크 오류는 무시 */
-        }
-      }, 8000);
+      setTimeout(loadOrders, 5000);
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "다운로드 중 오류가 발생했습니다." });
     } finally {

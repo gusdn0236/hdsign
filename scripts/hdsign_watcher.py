@@ -17,6 +17,7 @@ from tkinter import messagebox
 import urllib.error
 import urllib.request
 import zipfile
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from urllib.parse import quote
@@ -31,6 +32,10 @@ DONE_DIR = WATCH_DIR / "done"
 FLEXSIGN_EXE = r"C:\Users\USER\Desktop\FlexiSIGN 6.6\Program\App.exe"
 EVIDENCE_URL_BASE = "https://hdsigncraft.com/p/"
 API_BASE = "https://hdsign-production.up.railway.app"
+
+# 관리자 페이지가 "이 워처가 켜져 있는지"만 확인하는 ping 엔드포인트.
+# 127.0.0.1에만 바인딩되므로 외부에서 접근 불가.
+PING_PORT = 5577
 
 # 작업지시서 상단 박스 색상 (RGB 0~255). 작성자별로 색을 바꿔쓰려면 여기만 수정.
 HEADER_BOX_FILL = (220, 220, 220)     # 연한 회색
@@ -143,6 +148,49 @@ def format_left_text(meta: dict) -> str:
     phone_raw = meta.get("phone") or ""
     phone = "".join(phone_raw.split())
     return "싸인월드\n" + phone if phone else "싸인월드"
+
+
+class _PingHandler(BaseHTTPRequestHandler):
+    """관리자 페이지가 fetch 한 번 보내서 워처 실행 여부를 확인하기 위한 핸들러."""
+
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Cache-Control", "no-store")
+
+    def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler 규약)
+        if self.path == "/ping":
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true,"app":"hdsign_worksheet"}')
+        else:
+            self.send_response(404)
+            self._cors()
+            self.end_headers()
+
+    def do_OPTIONS(self):  # noqa: N802
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def log_message(self, *args, **kwargs):
+        # 기본 로깅 비활성화 — UI 로그를 어지럽히지 않는다.
+        pass
+
+
+def start_ping_server():
+    def _run():
+        try:
+            srv = HTTPServer(("127.0.0.1", PING_PORT), _PingHandler)
+            srv.serve_forever()
+        except OSError as e:
+            ui_log(f"ping 서버 시작 실패(포트 {PING_PORT} 사용 중?): {e}")
+        except Exception as e:
+            ui_log(f"ping 서버 오류: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def notify_worksheet_acknowledged(order_number: str):
@@ -778,6 +826,8 @@ class App(tk.Tk):
             self._observer.schedule(ZipHandler(WATCH_DIR), str(WATCH_DIR), recursive=False)
             self._observer.schedule(ZipHandler(DOWNLOADS_DIR), str(DOWNLOADS_DIR), recursive=False)
             self._observer.start()
+
+            start_ping_server()
 
             ui_status("watching", "지시서가 도착하면 자동으로 열어드립니다")
 
