@@ -7,6 +7,49 @@ const DEPT_KEY = 'hdsign_uploader_department';
 const QUICK_DEPTS = ['제작실', '시공팀', '도장실', '사무실'];
 const MAX_DEPT_LEN = 100;
 
+// 카메라 원본은 보통 3~5MB+. 한 변 1600px / JPEG 0.82로 압축하면 200~500KB로 떨어진다.
+const COMPRESS_MAX_DIM = 1600;
+const COMPRESS_QUALITY = 0.82;
+
+async function compressImage(file) {
+    if (!file || !file.type || !file.type.startsWith('image/')) return file;
+
+    let bitmap;
+    try {
+        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch {
+        return file; // HEIC 등 디코드 실패 시 원본 그대로
+    }
+
+    const { width, height } = bitmap;
+    const longest = Math.max(width, height);
+    const scale = longest > COMPRESS_MAX_DIM ? COMPRESS_MAX_DIM / longest : 1;
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+        bitmap.close?.();
+        return file;
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+
+    const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, 'image/jpeg', COMPRESS_QUALITY)
+    );
+    if (!blob || blob.size >= file.size) return file;
+
+    const baseName = (file.name || 'photo').replace(/\.[^/.]+$/, '') || 'photo';
+    return new File([blob], baseName + '.jpg', {
+        type: 'image/jpeg',
+        lastModified: Date.now(),
+    });
+}
+
 function getStoredDept() {
     try {
         const v = localStorage.getItem(DEPT_KEY);
@@ -38,6 +81,7 @@ export default function EvidenceCapture() {
     const [deptDraft, setDeptDraft] = useState('');
 
     const [queued, setQueued] = useState([]); // { file, previewUrl }
+    const [compressing, setCompressing] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadResult, setUploadResult] = useState(null); // { count } | null
     const [uploadError, setUploadError] = useState('');
@@ -89,16 +133,30 @@ export default function EvidenceCapture() {
         [queued]
     );
 
-    const handlePickFiles = (e) => {
+    const handlePickFiles = async (e) => {
         const files = Array.from(e.target.files || []);
         if (!files.length) return;
-        const next = files.map((file) => ({
-            file,
-            previewUrl: URL.createObjectURL(file),
-        }));
-        setQueued((prev) => [...prev, ...next]);
+
+        setCompressing(true);
         setUploadResult(null);
         setUploadError('');
+
+        const processed = [];
+        for (const file of files) {
+            let finalFile = file;
+            try {
+                finalFile = await compressImage(file);
+            } catch {
+                finalFile = file;
+            }
+            processed.push({
+                file: finalFile,
+                previewUrl: URL.createObjectURL(finalFile),
+            });
+        }
+
+        setQueued((prev) => [...prev, ...processed]);
+        setCompressing(false);
         // 같은 파일 재선택 가능하게 input value 초기화
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
@@ -113,6 +171,7 @@ export default function EvidenceCapture() {
     };
 
     const triggerCamera = () => {
+        if (compressing || uploading) return;
         if (!department) {
             setDeptDraft('');
             setShowDeptModal(true);
@@ -203,10 +262,10 @@ export default function EvidenceCapture() {
                         type="button"
                         className="evidence-camera-btn"
                         onClick={triggerCamera}
-                        disabled={uploading}
+                        disabled={uploading || compressing}
                     >
                         <span className="evidence-camera-icon" aria-hidden="true">📷</span>
-                        <span>사진 찍기 / 선택하기</span>
+                        <span>{compressing ? '사진 처리 중…' : '사진 찍기 / 선택하기'}</span>
                     </button>
                     <input
                         ref={fileInputRef}
