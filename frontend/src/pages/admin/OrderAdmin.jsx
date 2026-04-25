@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
+import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import "./OrderAdmin.css";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -72,6 +73,7 @@ export default function OrderAdmin() {
   const [downloadingId, setDownloadingId] = useState(null);
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
 
   const loadOrders = async () => {
     setLoading(true);
@@ -139,6 +141,21 @@ export default function OrderAdmin() {
     }
     setPendingStatus(selectedOrder.status);
   }, [selectedOrder]);
+
+  useEffect(() => {
+    setLightboxIndex(null);
+  }, [selectedOrderId]);
+
+  const evidencePhotos = useMemo(
+    () =>
+      selectedFiles.evidence.map((file) => ({
+        src: file.fileUrl,
+        alt: file.originalName,
+        dept: file.uploadedDepartment || "부서 미상",
+        time: formatDateTime(file.createdAt),
+      })),
+    [selectedFiles.evidence]
+  );
 
   const statusCounts = useMemo(() => {
     const counts = { RECEIVED: 0, IN_PROGRESS: 0, COMPLETED: 0 };
@@ -566,6 +583,13 @@ export default function OrderAdmin() {
         </tbody>
       </table>
 
+      <PhotoLightbox
+        photos={evidencePhotos}
+        index={lightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+        onIndexChange={setLightboxIndex}
+      />
+
       {selectedOrder && (
         <div className="order-preview-modal" onClick={() => setSelectedOrderId(null)}>
           <div className="order-preview-content" onClick={(e) => e.stopPropagation()}>
@@ -607,17 +631,16 @@ export default function OrderAdmin() {
               {selectedFiles.evidence.length > 0 && (
                 <div className="evidence-section">
                   <div className="evidence-section-head">
-                    <span className="evidence-section-title">증거 사진</span>
+                    <span className="evidence-section-title">작업 사진</span>
                     <span className="evidence-section-count">{selectedFiles.evidence.length}장</span>
                   </div>
                   <div className="evidence-section-grid">
                     {selectedFiles.evidence.map((file, index) => (
-                      <a
+                      <button
+                        type="button"
                         key={file.id || `${file.originalName}-evidence-${index}`}
-                        href={file.fileUrl}
-                        target="_blank"
-                        rel="noreferrer"
                         className="evidence-section-item"
+                        onClick={() => setLightboxIndex(index)}
                       >
                         <img src={file.fileUrl} alt={file.originalName} loading="lazy" />
                         <div className="evidence-section-meta">
@@ -628,7 +651,7 @@ export default function OrderAdmin() {
                             {formatDateTime(file.createdAt)}
                           </span>
                         </div>
-                      </a>
+                      </button>
                     ))}
                   </div>
                 </div>

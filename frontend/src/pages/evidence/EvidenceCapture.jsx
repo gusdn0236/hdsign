@@ -232,7 +232,7 @@ export default function EvidenceCapture() {
     return (
         <div className="evidence-page">
             <header className="evidence-header">
-                <h1 className="evidence-title">증거 사진 업로드</h1>
+                <h1 className="evidence-title">작업 사진 업로드</h1>
                 <p className="evidence-order">{orderNumber}</p>
                 {loadingSummary ? (
                     <p className="evidence-meta">작업지시서 정보를 불러오는 중…</p>

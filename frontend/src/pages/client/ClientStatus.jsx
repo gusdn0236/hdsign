@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { getOrdersApi } from '../../api/client';
+import PhotoLightbox from '../../components/common/PhotoLightbox.jsx';
 import './ClientStatus.css';
 
 const STATUS_MAP = {
@@ -25,6 +26,14 @@ const TYPE_LABELS = {
 function formatDate(value) {
     if (!value) return '-';
     return String(value).split('T')[0];
+}
+
+function formatDateTime(value) {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function StatusBadge({ status }) {
@@ -65,8 +74,35 @@ function StepTracker({ status }) {
 
 function OrderCard({ order }) {
     const [open, setOpen] = useState(false);
+    const [lightboxIndex, setLightboxIndex] = useState(null);
     const isQuote = order.requestType === 'QUOTE';
     const detailTitle = isQuote ? '견적 요청' : '작업 요청';
+
+    const { workFiles, photoFiles } = useMemo(() => {
+        const work = [];
+        const photos = [];
+        (order.files || []).forEach((file) => {
+            if (file.isEvidence) photos.push(file);
+            else work.push(file);
+        });
+        photos.sort((a, b) => {
+            const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return tb - ta;
+        });
+        return { workFiles: work, photoFiles: photos };
+    }, [order.files]);
+
+    const lightboxPhotos = useMemo(
+        () =>
+            photoFiles.map((file) => ({
+                src: file.fileUrl,
+                alt: file.originalName,
+                dept: file.uploadedDepartment || '부서 미상',
+                time: formatDateTime(file.createdAt),
+            })),
+        [photoFiles]
+    );
 
     return (
         <div className={`order-card ${open ? 'expanded' : ''}`}>
@@ -131,11 +167,11 @@ function OrderCard({ order }) {
                         )}
                     </div>
 
-                    {order.files && order.files.length > 0 && (
+                    {workFiles.length > 0 && (
                         <div className="detail-files">
                             <span className="detail-label">첨부 파일</span>
                             <div className="file-chips">
-                                {order.files.map((file, index) => (
+                                {workFiles.map((file, index) => (
                                     <a
                                         key={`${file.originalName}-${index}`}
                                         className="file-chip"
@@ -149,8 +185,43 @@ function OrderCard({ order }) {
                             </div>
                         </div>
                     )}
+
+                    {photoFiles.length > 0 && (
+                        <div className="work-photos">
+                            <div className="work-photos-head">
+                                <span className="detail-label">작업 사진</span>
+                                <span className="work-photos-count">{photoFiles.length}장</span>
+                            </div>
+                            <div className="work-photos-grid">
+                                {photoFiles.map((file, index) => (
+                                    <button
+                                        type="button"
+                                        key={file.id || `${file.originalName}-photo-${index}`}
+                                        className="work-photo-item"
+                                        onClick={() => setLightboxIndex(index)}
+                                    >
+                                        <img src={file.fileUrl} alt={file.originalName} loading="lazy" />
+                                        <div className="work-photo-meta">
+                                            <span className="work-photo-dept">
+                                                {file.uploadedDepartment || '부서 미상'}
+                                            </span>
+                                            <span className="work-photo-time">
+                                                {formatDateTime(file.createdAt)}
+                                            </span>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
+            <PhotoLightbox
+                photos={lightboxPhotos}
+                index={lightboxIndex}
+                onClose={() => setLightboxIndex(null)}
+                onIndexChange={setLightboxIndex}
+            />
         </div>
     );
 }

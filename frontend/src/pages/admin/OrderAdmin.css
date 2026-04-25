@@ -666,6 +666,10 @@
   border: 1px solid #ebebeb;
   background: #fafafa;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
 }
 
 .evidence-section-item:hover {
