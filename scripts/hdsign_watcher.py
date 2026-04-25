@@ -307,11 +307,17 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "    try { malgun = app.textFonts.getByName(malgunNames[mi]); } catch(e) { malgun = null; }"
         "  }"
         # ── 좌측 상단: 싸인월드 + 거래처 전화번호 ──
+        # 폰트마다 ascender/descender 가 달라 position만으로는 위치가 흔들리므로,
+        # 폰트 적용 후 geometricBounds 로 실제 좌상단을 재기준 잡는다.
         "  var leftTf = layer.textFrames.add();"
         f'  leftTf.contents = "{left_js}";'
-        "  leftTf.position = [abLeft + margin, abTop - margin];"
         "  leftTf.textRange.characterAttributes.size = bigFont;"
         "  if (malgun) leftTf.textRange.characterAttributes.textFont = malgun;"
+        "  leftTf.position = [0, 0];"
+        "  var lb = leftTf.geometricBounds;"  # [left, top, right, bottom]
+        "  var leftTargetX = abLeft + margin;"
+        "  var leftTargetTop = abTop - margin;"
+        "  leftTf.position = [leftTargetX - lb[0], leftTargetTop - lb[1]];"
         # ── 중앙 상단: 박스 + 발주/배송 텍스트 ──
         "  var centerX = (abLeft + abRight) / 2;"
         "  var boxLeft = centerX - boxW / 2;"
