@@ -388,7 +388,28 @@ export default function OrderAdmin() {
         type: "success",
         msg: "ZIP을 다운받았습니다. 워처가 처리되면 자동으로 작업중으로 전환됩니다.",
       });
-      setTimeout(loadOrders, 5000);
+      // 8초 뒤에도 RECEIVED라면 워처가 꺼져 있다고 보고 알린다.
+      setTimeout(async () => {
+        try {
+          const res = await fetch(`${BASE_URL}/api/admin/orders`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) return;
+          const fresh = await res.json();
+          if (Array.isArray(fresh)) {
+            setOrders(fresh);
+            const updated = fresh.find((o) => o.id === order.id);
+            if (updated && updated.status === "RECEIVED") {
+              setFeedback({
+                type: "error",
+                msg: "지시서 프로그램이 켜져있지 않은 것 같습니다. 프로그램을 실행한 뒤 다시 시도해 주세요.",
+              });
+            }
+          }
+        } catch {
+          /* 네트워크 오류는 무시 */
+        }
+      }, 8000);
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "다운로드 중 오류가 발생했습니다." });
     } finally {
