@@ -111,7 +111,15 @@ function OrderCard({ order }) {
                     <div className="order-top-row">
                         <span className="order-id">{order.orderNumber}</span>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <span className="file-chip">{TYPE_LABELS[order.requestType] || detailTitle}</span>
+                            {photoFiles.length > 0 && (
+                                <span
+                                    className="photo-indicator"
+                                    title={`작업 사진 ${photoFiles.length}장`}
+                                >
+                                    <span className="photo-indicator-icon" aria-hidden="true">📷</span>
+                                    {photoFiles.length}
+                                </span>
+                            )}
                             <StatusBadge status={order.status} />
                         </div>
                     </div>
