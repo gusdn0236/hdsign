@@ -83,22 +83,37 @@
   align-items: center;
 }
 
+.bulk-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+}
+.bulk-action-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #991b1b;
+}
+
 .bulk-delete-btn {
-  margin-left: auto;
   border: 1px solid #dc2626;
-  background: #fff;
-  color: #dc2626;
-  padding: 8px 14px;
+  background: #dc2626;
+  color: #fff;
+  padding: 8px 16px;
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: filter 0.2s ease;
 }
 
 .bulk-delete-btn:hover:not(:disabled) {
-  background: #dc2626;
-  color: #fff;
+  filter: brightness(0.92);
 }
 
 .bulk-delete-btn:disabled {

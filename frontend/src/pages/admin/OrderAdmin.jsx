@@ -451,27 +451,34 @@ export default function OrderAdmin() {
             <span className="tab-count">{tab.count}</span>
           </button>
         ))}
-        {activeFilter === "COMPLETED" && statusCounts.COMPLETED > 0 && (
+      </div>
+
+      {activeFilter === "COMPLETED" && statusCounts.COMPLETED > 0 && (
+        <div className="bulk-action-row">
+          <span className="bulk-action-text">완료 요청 {statusCounts.COMPLETED}건</span>
           <button
             type="button"
             className="bulk-delete-btn"
             onClick={bulkMoveCompletedToTrash}
             disabled={bulkTrashing}
           >
-            {bulkTrashing ? "이동 중..." : `완료 ${statusCounts.COMPLETED}건 휴지통으로`}
+            {bulkTrashing ? "이동 중..." : "전부 휴지통으로 보내기"}
           </button>
-        )}
-        {activeFilter === "TRASH" && trashOrders.length > 0 && (
+        </div>
+      )}
+      {activeFilter === "TRASH" && trashOrders.length > 0 && (
+        <div className="bulk-action-row">
+          <span className="bulk-action-text">휴지통 {trashOrders.length}건</span>
           <button
             type="button"
             className="bulk-delete-btn"
             onClick={bulkPurgeTrash}
             disabled={bulkPurging}
           >
-            {bulkPurging ? "삭제 중..." : `휴지통 ${trashOrders.length}건 일괄 영구삭제`}
+            {bulkPurging ? "삭제 중..." : "전부 영구삭제"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {activeFilter === "TRASH" && (
         <p className="trash-hint">
           휴지통의 항목은 삭제일로부터 {TRASH_RETENTION_DAYS}일 후 자동으로 영구 삭제됩니다.
