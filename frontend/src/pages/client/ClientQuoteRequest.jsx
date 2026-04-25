@@ -74,6 +74,23 @@ function FileDropZone({ files, onFilesChange }) {
     );
 }
 
+function ImagePreview({ files }) {
+    const images = files.filter((file) =>
+        ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(file.name.split('.').pop().toLowerCase())
+    );
+    if (!images.length) return null;
+    return (
+        <div className="preview-wrap">
+            <p className="preview-label">이미지 미리보기</p>
+            <div className="preview-grid">
+                {images.map((file, index) => (
+                    <img key={`${file.name}-${index}`} src={URL.createObjectURL(file)} alt={file.name} className="preview-img" />
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function Section({ number, title, children }) {
     return (
         <div className="req-section">
@@ -90,6 +107,7 @@ export default function ClientQuoteRequest() {
     const { clientToken, clientLogout } = useAuth();
     const navigate = useNavigate();
     const [title, setTitle] = useState('');
+    const [titleAutoFilled, setTitleAutoFilled] = useState(false);
     const [files, setFiles] = useState([]);
     const [note, setNote] = useState('');
     const [loading, setLoading] = useState(false);
@@ -130,8 +148,24 @@ export default function ClientQuoteRequest() {
         };
     }, []);
 
+    const handleFilesChange = useCallback((newFiles) => {
+        setFiles(newFiles);
+        if (!title.trim() && newFiles.length > 0) {
+            const suggested = newFiles[0].name.replace(/\.[^/.]+$/, '');
+            setTitle(suggested);
+            setTitleAutoFilled(true);
+        }
+        if (newFiles.length === 0) setTitleAutoFilled(false);
+    }, [title]);
+
+    const handleTitleChange = (e) => {
+        setTitle(e.target.value);
+        setTitleAutoFilled(false);
+    };
+
     const reset = () => {
         setTitle('');
+        setTitleAutoFilled(false);
         setFiles([]);
         setNote('');
         setSubmitted(false);
@@ -217,22 +251,29 @@ export default function ClientQuoteRequest() {
 
             <form className="request-form" onSubmit={handleSubmit}>
                 <div className="request-sections">
-                    <Section number="01" title="견적 요청 제목">
-                        <input
-                            type="text"
-                            className="req-input"
-                            value={title}
-                            onChange={(e) => setTitle(e.target.value)}
-                            placeholder="예) 푸드케어 내부 아크릴, 행복치과의원 외부사인"
-                            maxLength={100}
-                        />
+                    <Section number="01" title="견적 정보">
+                        <FileDropZone files={files} onFilesChange={handleFilesChange} />
+                        <ImagePreview files={files} />
+                        <div className="title-input-wrap">
+                            <label className="req-label">
+                                견적 요청 제목
+                                <span className="title-label-sub">담당자에게 전달되는 메일 제목입니다</span>
+                            </label>
+                            <input
+                                type="text"
+                                className={`req-input${titleAutoFilled ? ' req-input--suggested' : ''}`}
+                                value={title}
+                                onChange={handleTitleChange}
+                                placeholder="예) 푸드케어 내부 아크릴, 행복치과의원 외부사인"
+                                maxLength={100}
+                            />
+                            {titleAutoFilled && (
+                                <span className="title-auto-hint">파일명으로 자동 입력됐어요 — 수정 가능합니다</span>
+                            )}
+                        </div>
                     </Section>
 
-                    <Section number="02" title="관련 파일 업로드">
-                        <FileDropZone files={files} onFilesChange={setFiles} />
-                    </Section>
-
-                    <Section number="03" title="추가 문의사항">
+                    <Section number="02" title="추가 문의사항">
                         <textarea
                             className="req-textarea"
                             value={note}
