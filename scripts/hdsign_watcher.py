@@ -374,6 +374,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  }"
         # ── QR 아래: 추가물품 + 추가요청사항을 묶은 외곽선 폼 박스 ──
         f'  var noteTextStr = "{note_js}";'
+        "  var noteTfRef = null;"
         "  if (noteTextStr.length > 0) {"
         "    var noteW = qrSize * 1.9;"
         "    var noteH = 200 * sc;"
@@ -405,7 +406,15 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "    noteTf.contents = noteTextStr;"
         "    noteTf.textRange.characterAttributes.size = noteFont;"
         "    if (gulim) noteTf.textRange.characterAttributes.textFont = gulim;"
+        "    noteTfRef = noteTf;"
         "  }"
+        # FlexSign 가 v8 AI 의 글자 메트릭을 다르게 해석해서 자모 사이가 벌어지는
+        # 문제를 막으려면, 저장 전에 모든 텍스트를 윤곽선(아웃라인)으로 변환해야
+        # 한다. 변환 후엔 폰트 의존이 사라져 어떤 프로그램에서 열어도 모양이
+        # 그대로 유지된다.
+        "  try { leftTf.createOutline(); } catch (e) {}"
+        "  try { headerTf.createOutline(); } catch (e) {}"
+        "  if (noteTfRef) { try { noteTfRef.createOutline(); } catch (e) {} }"
         # v8로 저장 후 close
         "  var opts = new IllustratorSaveOptions();"
         "  opts.compatibility = Compatibility.ILLUSTRATOR8;"
