@@ -136,8 +136,9 @@ def format_header_text(meta: dict) -> str:
 
 
 def format_left_text(meta: dict) -> str:
-    """좌측 상단: 싸인월드 + 거래처 전화번호."""
-    phone = (meta.get("phone") or "").strip()
+    """좌측 상단: 싸인월드 + 거래처 전화번호. 전화번호의 모든 공백은 제거한다."""
+    phone_raw = meta.get("phone") or ""
+    phone = "".join(phone_raw.split())
     return "싸인월드\n" + phone if phone else "싸인월드"
 
 
@@ -231,18 +232,18 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
         "  var boxStroke = new RGBColor();"
         f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
-        # 나눔고딕 폰트 (시스템에 없으면 기본 폰트 유지)
-        "  var nanum = null;"
-        "  var nanumNames = ['NanumGothic','NanumGothicOTF','NanumGothic-Regular','Nanum Gothic'];"
-        "  for (var ni = 0; ni < nanumNames.length && nanum == null; ni++) {"
-        "    try { nanum = app.textFonts.getByName(nanumNames[ni]); } catch(e) { nanum = null; }"
+        # 맑은 고딕 폰트 (시스템에 없으면 기본 폰트 유지)
+        "  var malgun = null;"
+        "  var malgunNames = ['MalgunGothic','MalgunGothicRegular','MalgunGothic-Regular','Malgun Gothic'];"
+        "  for (var mi = 0; mi < malgunNames.length && malgun == null; mi++) {"
+        "    try { malgun = app.textFonts.getByName(malgunNames[mi]); } catch(e) { malgun = null; }"
         "  }"
         # ── 좌측 상단: 싸인월드 + 거래처 전화번호 ──
         "  var leftTf = layer.textFrames.add();"
         f'  leftTf.contents = "{left_js}";'
         "  leftTf.position = [abLeft + margin, abTop - margin];"
         "  leftTf.textRange.characterAttributes.size = bigFont;"
-        "  if (nanum) leftTf.textRange.characterAttributes.textFont = nanum;"
+        "  if (malgun) leftTf.textRange.characterAttributes.textFont = malgun;"
         # ── 중앙 상단: 박스 + 발주/배송 텍스트 ──
         "  var centerX = (abLeft + abRight) / 2;"
         "  var boxLeft = centerX - boxW / 2;"
@@ -256,7 +257,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  var headerTf = layer.textFrames.add();"
         f'  headerTf.contents = "{header_js}";'
         "  headerTf.textRange.characterAttributes.size = bigFont;"
-        "  if (nanum) headerTf.textRange.characterAttributes.textFont = nanum;"
+        "  if (malgun) headerTf.textRange.characterAttributes.textFont = malgun;"
         "  headerTf.position = [0, 0];"
         "  var hb = headerTf.geometricBounds;"  # [left, top, right, bottom]
         "  var glyphCx = (hb[0] + hb[2]) / 2;"
@@ -313,7 +314,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "    var noteTf = layer.textFrames.areaText(notePath);"
         "    noteTf.contents = noteTextStr;"
         "    noteTf.textRange.characterAttributes.size = noteFont;"
-        "    if (nanum) noteTf.textRange.characterAttributes.textFont = nanum;"
+        "    if (malgun) noteTf.textRange.characterAttributes.textFont = malgun;"
         "  }"
         # v8로 저장 후 close
         "  var opts = new IllustratorSaveOptions();"
