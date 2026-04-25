@@ -382,7 +382,13 @@ export default function OrderAdmin() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      await updateOrderStatus(order.id, "IN_PROGRESS");
+      // 상태 전환은 워처가 ZIP을 받아 QR을 박은 뒤 백엔드를 호출할 때 일어난다.
+      // 워처가 꺼져 있으면 RECEIVED 상태가 그대로 유지된다.
+      setFeedback({
+        type: "success",
+        msg: "ZIP을 다운받았습니다. 워처가 처리되면 자동으로 작업중으로 전환됩니다.",
+      });
+      setTimeout(loadOrders, 5000);
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "다운로드 중 오류가 발생했습니다." });
     } finally {

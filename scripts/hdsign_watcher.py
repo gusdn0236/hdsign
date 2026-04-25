@@ -14,6 +14,8 @@ import threading
 import time
 import tkinter as tk
 from tkinter import messagebox
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -28,6 +30,7 @@ DOWNLOADS_DIR = Path.home() / "Downloads"
 DONE_DIR = WATCH_DIR / "done"
 FLEXSIGN_EXE = r"C:\Users\USER\Desktop\FlexiSIGN 6.6\Program\App.exe"
 EVIDENCE_URL_BASE = "https://hdsigncraft.com/p/"
+API_BASE = "https://hdsign-production.up.railway.app"
 
 # 작업지시서 상단 박스 색상 (RGB 0~255). 작성자별로 색을 바꿔쓰려면 여기만 수정.
 HEADER_BOX_FILL = (220, 220, 220)     # 연한 회색
@@ -140,6 +143,23 @@ def format_left_text(meta: dict) -> str:
     phone_raw = meta.get("phone") or ""
     phone = "".join(phone_raw.split())
     return "싸인월드\n" + phone if phone else "싸인월드"
+
+
+def notify_worksheet_acknowledged(order_number: str):
+    """변환 성공 후 백엔드에 알려 주문을 RECEIVED → IN_PROGRESS로 전환시킨다.
+    워처가 켜져 있을 때만 이 호출이 일어나므로, 곧 그것이 'QR이 실제로 박혔다'는 신호다."""
+    if not order_number:
+        return
+    url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/worksheet-acknowledged"
+    try:
+        req = urllib.request.Request(url, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        ui_log(f"{order_number} 작업중으로 전환 알림 완료")
+    except urllib.error.HTTPError as e:
+        ui_log(f"작업중 전환 실패 ({e.code}): {order_number}")
+    except Exception as e:
+        ui_log(f"작업중 전환 호출 실패: {e}")
 
 
 def format_note_text(meta: dict) -> str:
@@ -527,6 +547,7 @@ def process_zip(zip_path: Path):
 
     # Windows는 대소문자 구분 안 하므로 "*.ai" 하나로 .AI / .ai 모두 매칭 — dedupe
     ai_files = sorted({p.resolve() for p in extract_dir.glob("*.ai")})
+    any_converted = False
     if not ai_files:
         ui_log(f"{order_number}: AI 파일 없음 — 확인 필요")
     else:
@@ -535,6 +556,10 @@ def process_zip(zip_path: Path):
                                         header_text, left_text, note_text)
             if converted:
                 launch_flexsign(converted)
+                any_converted = True
+
+    if any_converted:
+        notify_worksheet_acknowledged(order_number)
 
     DONE_DIR.mkdir(exist_ok=True)
     dest = DONE_DIR / zip_path.name

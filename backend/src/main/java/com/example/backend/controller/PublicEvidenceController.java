@@ -146,4 +146,26 @@ public class PublicEvidenceController {
         body.put("count", uploaded.size());
         return ResponseEntity.ok(body);
     }
+
+    /**
+     * 워처(hdsign_worksheet.exe)가 ZIP을 받아 AI에 QR을 박고 v8 저장한 뒤 호출.
+     * RECEIVED 상태인 주문만 IN_PROGRESS로 전환한다(이미 작업중/완료면 무시).
+     * 워처가 안 켜져 있으면 이 호출 자체가 일어나지 않으므로, 상태는 그대로 RECEIVED 유지된다.
+     */
+    @PostMapping("/{orderNumber}/worksheet-acknowledged")
+    public ResponseEntity<?> acknowledgeWorksheet(@PathVariable String orderNumber) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
+        }
+        if (order.getStatus() == Order.OrderStatus.RECEIVED) {
+            order.setStatus(Order.OrderStatus.IN_PROGRESS);
+            orderRepository.save(order);
+        }
+        return ResponseEntity.ok(Map.of(
+                "orderNumber", order.getOrderNumber(),
+                "status", order.getStatus().name()
+        ));
+    }
 }
