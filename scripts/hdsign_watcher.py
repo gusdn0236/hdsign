@@ -316,11 +316,12 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
         "  var boxStroke = new RGBColor();"
         f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
-        # 굴림체 폰트 (시스템에 없으면 기본 폰트 유지). FlexSign 변환에서 가장 안정적.
-        "  var gulim = null;"
-        "  var gulimNames = ['Gulim','GulimChe','Gulim-Regular','GulimRegular','굴림','굴림체'];"
-        "  for (var gi = 0; gi < gulimNames.length && gulim == null; gi++) {"
-        "    try { gulim = app.textFonts.getByName(gulimNames[gi]); } catch(e) { gulim = null; }"
+        # 맑은 고딕 (없으면 기본 폰트 유지). 어차피 저장 직전에 outline 변환되므로
+        # FlexSign 단계에서의 폰트 메트릭 차이 문제는 발생하지 않는다.
+        "  var malgun = null;"
+        "  var malgunNames = ['MalgunGothic','MalgunGothicRegular','MalgunGothic-Regular','Malgun Gothic','맑은 고딕','맑은고딕'];"
+        "  for (var mi = 0; mi < malgunNames.length && malgun == null; mi++) {"
+        "    try { malgun = app.textFonts.getByName(malgunNames[mi]); } catch(e) { malgun = null; }"
         "  }"
         # ── 좌측 상단: 싸인월드 + 거래처 전화번호 ──
         # 폰트마다 ascender/descender 가 달라 position만으로는 위치가 흔들리므로,
@@ -328,7 +329,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  var leftTf = layer.textFrames.add();"
         f'  leftTf.contents = "{left_js}";'
         "  leftTf.textRange.characterAttributes.size = bigFont;"
-        "  if (gulim) leftTf.textRange.characterAttributes.textFont = gulim;"
+        "  if (malgun) leftTf.textRange.characterAttributes.textFont = malgun;"
         "  leftTf.position = [0, 0];"
         "  var lb = leftTf.geometricBounds;"  # [left, top, right, bottom]
         "  var leftTargetX = abLeft + margin;"
@@ -347,7 +348,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  var headerTf = layer.textFrames.add();"
         f'  headerTf.contents = "{header_js}";'
         "  headerTf.textRange.characterAttributes.size = bigFont;"
-        "  if (gulim) headerTf.textRange.characterAttributes.textFont = gulim;"
+        "  if (malgun) headerTf.textRange.characterAttributes.textFont = malgun;"
         "  headerTf.position = [0, 0];"
         "  var hb = headerTf.geometricBounds;"  # [left, top, right, bottom]
         "  var glyphCx = (hb[0] + hb[2]) / 2;"
@@ -405,7 +406,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "    var noteTf = layer.textFrames.areaText(notePath);"
         "    noteTf.contents = noteTextStr;"
         "    noteTf.textRange.characterAttributes.size = noteFont;"
-        "    if (gulim) noteTf.textRange.characterAttributes.textFont = gulim;"
+        "    if (malgun) noteTf.textRange.characterAttributes.textFont = malgun;"
         "    noteTfRef = noteTf;"
         "  }"
         # FlexSign 가 v8 AI 의 글자 메트릭을 다르게 해석해서 자모 사이가 벌어지는
