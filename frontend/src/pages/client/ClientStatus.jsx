@@ -16,6 +16,7 @@ const DELIVERY_LABELS = {
     QUICK: '퀵 발송',
     DIRECT: '직접 배송',
     PICKUP: '직접 수령',
+    LOCAL_CARGO: '지방화물차 배송',
 };
 
 const TYPE_LABELS = {

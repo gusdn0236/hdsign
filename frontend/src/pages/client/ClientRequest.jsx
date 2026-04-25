@@ -8,6 +8,7 @@ const DELIVERY_OPTIONS = [
     { value: 'CARGO', label: '화물 발송', desc: '지정한 화물 지점으로 납품합니다.' },
     { value: 'QUICK', label: '퀵 발송', desc: '퀵서비스를 통해 지정 주소로 발송합니다.' },
     { value: 'DIRECT', label: '직접 배송', desc: 'HD Sign이 지정 주소로 직접 배송합니다.' },
+    { value: 'LOCAL_CARGO', label: '지방화물차 배송', desc: '전날 상차하여 지정 시간에 지방으로 합차/단독 하차합니다.' },
     { value: 'PICKUP', label: '직접 수령', desc: '고객사가 직접 방문하여 수령합니다.' },
 ];
 
@@ -543,7 +544,7 @@ export default function ClientRequest() {
         if (!dueDate) return setError('납기 희망일을 선택해 주세요.');
         if (!dueTime) return setError('납기 시간을 선택해 주세요.');
         if (delivery === 'CARGO' && !cargoPoint.trim()) return setError('화물 지점을 입력해 주세요.');
-        if ((delivery === 'QUICK' || delivery === 'DIRECT') && !address.trim()) return setError('주소를 입력해 주세요.');
+        if ((delivery === 'QUICK' || delivery === 'DIRECT' || delivery === 'LOCAL_CARGO') && !address.trim()) return setError('주소를 입력해 주세요.');
 
         setLoading(true);
         try {
@@ -714,9 +715,15 @@ export default function ClientRequest() {
                                 </div>
                             )}
 
-                            {(delivery === 'QUICK' || delivery === 'DIRECT') && (
+                            {(delivery === 'QUICK' || delivery === 'DIRECT' || delivery === 'LOCAL_CARGO') && (
                                 <div className="delivery-input-wrap">
-                                    <label className="req-label">{delivery === 'QUICK' ? '퀵 수령 주소' : '배송 주소'}</label>
+                                    <label className="req-label">
+                                        {delivery === 'QUICK'
+                                            ? '퀵 수령 주소'
+                                            : delivery === 'LOCAL_CARGO'
+                                                ? '하차 주소'
+                                                : '배송 주소'}
+                                    </label>
                                     <AddressInput
                                         value={address}
                                         onChange={setAddress}

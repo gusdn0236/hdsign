@@ -1,0 +1,1 @@
+ALTER TABLE orders MODIFY COLUMN delivery_method VARCHAR(20) NULL;

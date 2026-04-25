@@ -71,7 +71,7 @@ public class Order {
     private String dueTime;
 
     @Enumerated(EnumType.STRING)
-    @Column(length = 10)
+    @Column(length = 20)
     private DeliveryMethod deliveryMethod;
 
     @Column(length = 255)
@@ -110,6 +110,7 @@ public class Order {
         CARGO,
         QUICK,
         DIRECT,
-        PICKUP
+        PICKUP,
+        LOCAL_CARGO
     }
 }
