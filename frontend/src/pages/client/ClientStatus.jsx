@@ -299,7 +299,22 @@ export default function ClientStatus() {
 
             {filtered.length === 0 ? (
                 <div className="status-empty">
-                    <span className="status-empty-icon">문서</span>
+                    <svg
+                        className="status-empty-icon"
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 3v5h5" />
+                        <path d="M9 13h6" />
+                        <path d="M9 17h4" />
+                    </svg>
                     <p>표시할 요청 이력이 없습니다.</p>
                 </div>
             ) : (
