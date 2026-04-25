@@ -189,6 +189,22 @@ function OrderCard({ order }) {
                         </div>
                     )}
 
+                    {order.worksheetPdfUrl && (
+                        <a
+                            className="worksheet-pdf-card"
+                            href={order.worksheetPdfUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            <span className="worksheet-pdf-icon" aria-hidden="true">PDF</span>
+                            <div className="worksheet-pdf-text">
+                                <span className="worksheet-pdf-title">작업지시서 PDF</span>
+                                <span className="worksheet-pdf-sub">탭하여 전체 화면으로 보기 · 무한 확대 가능</span>
+                            </div>
+                            <span className="worksheet-pdf-arrow" aria-hidden="true">›</span>
+                        </a>
+                    )}
+
                     {photoFiles.length > 0 && (
                         <div className="work-photos">
                             <div className="work-photos-head">
