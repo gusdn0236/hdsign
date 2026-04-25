@@ -142,9 +142,15 @@ def format_left_text(meta: dict) -> str:
 
 
 def format_note_text(meta: dict) -> str:
-    """우측 QR 아래: 추가요청사항 (있을 때만)."""
+    """우측 QR 아래: 추가물품 + 추가요청사항 (둘 다 비어있으면 빈 문자열)."""
+    sections = []
+    items = (meta.get("additionalItems") or "").strip()
+    if items:
+        sections.append(f"■ 추가물품\n{items}")
     note = (meta.get("note") or "").strip()
-    return f"[추가요청사항]\n{note}" if note else ""
+    if note:
+        sections.append(f"■ 추가요청사항\n{note}")
+    return "\n\n".join(sections)
 
 
 # ── Illustrator & FlexSign ────────────────────────────────────────────────────
@@ -235,11 +241,17 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  box.filled = true; box.fillColor = boxFill;"
         "  box.stroked = true; box.strokeColor = boxStroke;"
         "  box.strokeWidth = 0.5 * sc;"
+        # 박스 텍스트는 실제 glyph bounds 중심을 측정한 뒤
+        # 박스 정중앙으로 옮겨야 정확히 가운데 들어간다.
         "  var headerTf = layer.textFrames.add();"
         f'  headerTf.contents = "{header_js}";'
         "  headerTf.textRange.characterAttributes.size = bigFont;"
-        "  try { headerTf.paragraphs[0].justification = Justification.CENTER; } catch(e) {}"
-        "  headerTf.position = [centerX, boxTop - boxH / 2 - bigFont * 0.3];"
+        "  headerTf.position = [0, 0];"
+        "  var hb = headerTf.geometricBounds;"  # [left, top, right, bottom]
+        "  var glyphCx = (hb[0] + hb[2]) / 2;"
+        "  var glyphCy = (hb[1] + hb[3]) / 2;"
+        "  var boxCenterY = boxTop - boxH / 2;"
+        "  headerTf.position = [centerX - glyphCx, boxCenterY - glyphCy];"
         # ── 우측 상단: QR ──
         "  var qrOriginX = abRight - margin - qrSize;"
         "  var qrOriginY = abTop - margin;"
@@ -258,11 +270,11 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "      }"
         "    }"
         "  }"
-        # ── QR 아래: 추가요청사항 (있을 때만, area text) ──
+        # ── QR 아래: 추가물품 + 추가요청사항을 묶은 외곽선 폼 박스 ──
         f'  var noteTextStr = "{note_js}";'
         "  if (noteTextStr.length > 0) {"
-        "    var noteW = qrSize * 1.7;"
-        "    var noteH = 140 * sc;"
+        "    var noteW = qrSize * 1.9;"
+        "    var noteH = 200 * sc;"
         "    var noteRight = qrOriginX + qrSize;"
         "    var noteLeft = noteRight - noteW;"
         "    if (noteLeft < abLeft + margin + boxW / 2) {"
@@ -270,13 +282,21 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "      noteW = qrSize;"
         "    }"
         "    var noteTop = qrOriginY - qrSize - lineGap;"
+        # 외곽선만 있는 폼 박스 (채우기 없음)
+        "    var noteBox = layer.pathItems.rectangle(noteTop, noteLeft, noteW, noteH);"
+        "    noteBox.filled = false;"
+        "    noteBox.stroked = true;"
+        "    noteBox.strokeColor = boxStroke;"
+        "    noteBox.strokeWidth = 0.5 * sc;"
+        # 박스 안쪽 패딩만큼 작게 area text 경로
+        "    var pad = 6 * sc;"
         "    var notePath = layer.pathItems.add();"
         "    notePath.filled = false; notePath.stroked = false;"
         "    notePath.setEntirePath(["
-        "      [noteLeft, noteTop],"
-        "      [noteLeft + noteW, noteTop],"
-        "      [noteLeft + noteW, noteTop - noteH],"
-        "      [noteLeft, noteTop - noteH]"
+        "      [noteLeft + pad, noteTop - pad],"
+        "      [noteLeft + noteW - pad, noteTop - pad],"
+        "      [noteLeft + noteW - pad, noteTop - noteH + pad],"
+        "      [noteLeft + pad, noteTop - noteH + pad]"
         "    ]);"
         "    notePath.closed = true;"
         "    var noteTf = layer.textFrames.areaText(notePath);"
