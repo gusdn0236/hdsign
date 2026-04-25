@@ -144,9 +144,12 @@ def format_left_text(meta: dict) -> str:
 def format_note_text(meta: dict) -> str:
     """우측 QR 아래: 추가물품 + 추가요청사항 (둘 다 비어있으면 빈 문자열)."""
     sections = []
-    items = (meta.get("additionalItems") or "").strip()
-    if items:
-        sections.append(f"■ 추가물품\n{items}")
+    items_raw = (meta.get("additionalItems") or "").strip()
+    if items_raw:
+        # 프론트에서 ", " 로 join 해서 보내므로 다시 풀어 한 줄씩 표시한다.
+        items_lines = [s.strip() for s in items_raw.split(",") if s.strip()]
+        items_block = "\n".join(f"· {line}" for line in items_lines)
+        sections.append(f"■ 추가물품\n{items_block}")
     note = (meta.get("note") or "").strip()
     if note:
         sections.append(f"■ 추가요청사항\n{note}")
@@ -228,11 +231,18 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
         "  var boxStroke = new RGBColor();"
         f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
+        # 나눔고딕 폰트 (시스템에 없으면 기본 폰트 유지)
+        "  var nanum = null;"
+        "  var nanumNames = ['NanumGothic','NanumGothicOTF','NanumGothic-Regular','Nanum Gothic'];"
+        "  for (var ni = 0; ni < nanumNames.length && nanum == null; ni++) {"
+        "    try { nanum = app.textFonts.getByName(nanumNames[ni]); } catch(e) { nanum = null; }"
+        "  }"
         # ── 좌측 상단: 싸인월드 + 거래처 전화번호 ──
         "  var leftTf = layer.textFrames.add();"
         f'  leftTf.contents = "{left_js}";'
         "  leftTf.position = [abLeft + margin, abTop - margin];"
         "  leftTf.textRange.characterAttributes.size = bigFont;"
+        "  if (nanum) leftTf.textRange.characterAttributes.textFont = nanum;"
         # ── 중앙 상단: 박스 + 발주/배송 텍스트 ──
         "  var centerX = (abLeft + abRight) / 2;"
         "  var boxLeft = centerX - boxW / 2;"
@@ -242,10 +252,11 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "  box.stroked = true; box.strokeColor = boxStroke;"
         "  box.strokeWidth = 0.5 * sc;"
         # 박스 텍스트는 실제 glyph bounds 중심을 측정한 뒤
-        # 박스 정중앙으로 옮겨야 정확히 가운데 들어간다.
+        # 박스 정중앙으로 옮겨야 정확히 가운데 들어간다. 폰트는 측정 전에 설정.
         "  var headerTf = layer.textFrames.add();"
         f'  headerTf.contents = "{header_js}";'
         "  headerTf.textRange.characterAttributes.size = bigFont;"
+        "  if (nanum) headerTf.textRange.characterAttributes.textFont = nanum;"
         "  headerTf.position = [0, 0];"
         "  var hb = headerTf.geometricBounds;"  # [left, top, right, bottom]
         "  var glyphCx = (hb[0] + hb[2]) / 2;"
@@ -302,6 +313,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
         "    var noteTf = layer.textFrames.areaText(notePath);"
         "    noteTf.contents = noteTextStr;"
         "    noteTf.textRange.characterAttributes.size = noteFont;"
+        "    if (nanum) noteTf.textRange.characterAttributes.textFont = nanum;"
         "  }"
         # v8로 저장 후 close
         "  var opts = new IllustratorSaveOptions();"
