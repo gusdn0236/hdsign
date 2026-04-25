@@ -213,8 +213,12 @@ def notify_worksheet_acknowledged(order_number: str):
 
 
 def format_note_text(meta: dict) -> str:
-    """우측 QR 아래: 추가물품 + 추가요청사항 (둘 다 비어있으면 빈 문자열)."""
+    """우측 QR 아래: 주문번호 + 추가물품 + 추가요청사항.
+    매칭 혼선을 막기 위해 주문번호는 항상 맨 위에 출력한다."""
     sections = []
+    order_number = (meta.get("orderNumber") or "").strip()
+    if order_number:
+        sections.append(f"[주문번호] {order_number}")
     items_raw = (meta.get("additionalItems") or "").strip()
     if items_raw:
         # 프론트에서 ", " 로 join 해서 보내므로 다시 풀어 한 줄씩 표시한다.
