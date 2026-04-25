@@ -47,6 +47,9 @@ public class OrderDto {
         private String previewUrl;
         private Long fileSize;
         private String contentType;
+        private Boolean isEvidence;
+        private String uploadedDepartment;
+        private LocalDateTime createdAt;
     }
 
     @Getter
@@ -65,6 +68,9 @@ public class OrderDto {
                         .previewUrl(file.getPreviewUrl())
                         .fileSize(file.getFileSize())
                         .contentType(file.getContentType())
+                        .isEvidence(Boolean.TRUE.equals(file.getIsEvidence()))
+                        .uploadedDepartment(file.getUploadedDepartment())
+                        .createdAt(file.getCreatedAt())
                         .build())
                 .toList();
 

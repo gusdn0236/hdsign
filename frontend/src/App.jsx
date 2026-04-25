@@ -33,12 +33,14 @@ import ClientLayout from './pages/client/ClientLayout.jsx'
 import ClientRequest from './pages/client/ClientRequest.jsx'
 import ClientQuoteRequest from './pages/client/ClientQuoteRequest.jsx'
 import ClientStatus from './pages/client/ClientStatus.jsx'
+import EvidenceCapture from './pages/evidence/EvidenceCapture.jsx'
 
 function App() {
     const location = useLocation()
     const isAdmin  = location.pathname.startsWith('/admin')
     const isClient = location.pathname.startsWith('/client')
-    const hideHeaderFooter = isAdmin || isClient
+    const isEvidence = location.pathname.startsWith('/p/')
+    const hideHeaderFooter = isAdmin || isClient || isEvidence
 
     return (
         <AuthProvider>
@@ -80,6 +82,8 @@ function App() {
                             <Route path="clients" element={<ClientAdmin />} />
                             <Route path="notices" element={<NoticeAdmin />} />
                         </Route>
+
+                        <Route path="/p/:orderNumber" element={<EvidenceCapture />} />
 
                         <Route path="/client/login" element={<ClientLogin />} />
                         <Route path="/client" element={<ClientLayout />}>

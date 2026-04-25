@@ -31,6 +31,14 @@ function formatDate(value) {
   return String(value).split("T")[0];
 }
 
+function formatDateTime(value) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function daysLeftUntilPurge(deletedAt) {
   if (!deletedAt) return null;
   const deleted = new Date(deletedAt);
@@ -107,6 +115,22 @@ export default function OrderAdmin() {
       null,
     [orders, trashOrders, selectedOrderId]
   );
+
+  const selectedFiles = useMemo(() => {
+    const list = selectedOrder?.files || [];
+    const work = [];
+    const evidence = [];
+    list.forEach((file) => {
+      if (file.isEvidence) evidence.push(file);
+      else work.push(file);
+    });
+    evidence.sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+    return { work, evidence };
+  }, [selectedOrder]);
 
   useEffect(() => {
     if (!selectedOrder) {
@@ -551,7 +575,7 @@ export default function OrderAdmin() {
 
             <div className="order-preview-left">
               <div className="order-file-stage">
-                {selectedOrder.files?.length ? (
+                {selectedFiles.work.length ? (
                   <div className="order-preview-file-fallback">
                     <p className="fallback-title">첨부 파일</p>
                     <p className="fallback-desc">아래 링크로 파일을 확인할 수 있습니다.</p>
@@ -564,9 +588,9 @@ export default function OrderAdmin() {
                 )}
               </div>
 
-              {selectedOrder.files?.length > 0 && (
+              {selectedFiles.work.length > 0 && (
                 <div className="order-file-strip">
-                  {selectedOrder.files.map((file, index) => (
+                  {selectedFiles.work.map((file, index) => (
                     <a
                       key={file.id || `${file.originalName}-${index}`}
                       className="order-file-chip"
@@ -577,6 +601,36 @@ export default function OrderAdmin() {
                       {file.originalName}
                     </a>
                   ))}
+                </div>
+              )}
+
+              {selectedFiles.evidence.length > 0 && (
+                <div className="evidence-section">
+                  <div className="evidence-section-head">
+                    <span className="evidence-section-title">증거 사진</span>
+                    <span className="evidence-section-count">{selectedFiles.evidence.length}장</span>
+                  </div>
+                  <div className="evidence-section-grid">
+                    {selectedFiles.evidence.map((file, index) => (
+                      <a
+                        key={file.id || `${file.originalName}-evidence-${index}`}
+                        href={file.fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="evidence-section-item"
+                      >
+                        <img src={file.fileUrl} alt={file.originalName} loading="lazy" />
+                        <div className="evidence-section-meta">
+                          <span className="evidence-section-dept">
+                            {file.uploadedDepartment || "부서 미상"}
+                          </span>
+                          <span className="evidence-section-time">
+                            {formatDateTime(file.createdAt)}
+                          </span>
+                        </div>
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -713,8 +767,8 @@ export default function OrderAdmin() {
               <div className="modal-file-links">
                 <span className="detail-label">첨부 파일</span>
                 <div className="file-chips">
-                  {selectedOrder.files?.length ? (
-                    selectedOrder.files.map((file, index) => (
+                  {selectedFiles.work.length ? (
+                    selectedFiles.work.map((file, index) => (
                       <a
                         key={file.id || `${file.originalName}-link-${index}`}
                         href={file.fileUrl}

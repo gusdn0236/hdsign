@@ -8,6 +8,7 @@ import ctypes
 import json
 import queue
 import shutil
+import struct
 import subprocess
 import threading
 import time
@@ -15,6 +16,8 @@ import tkinter as tk
 from tkinter import messagebox
 import zipfile
 from pathlib import Path
+
+from urllib.parse import quote
 
 import qrcode
 from watchdog.events import FileSystemEventHandler
@@ -24,7 +27,7 @@ WATCH_DIR = Path(r"C:\Users\USER\Desktop\hdsign_orders")
 DOWNLOADS_DIR = Path.home() / "Downloads"
 DONE_DIR = WATCH_DIR / "done"
 FLEXSIGN_EXE = r"C:\Users\USER\Desktop\FlexiSIGN 6.6\Program\App.exe"
-ADMIN_URL = "https://hdsigncraft.com/admin"
+EVIDENCE_URL_BASE = "https://hdsigncraft.com/p/"
 
 _seen_zips: set[str] = set()
 _seen_lock = threading.Lock()
@@ -78,9 +81,23 @@ def check_prerequisites() -> bool:
 
 # ── QR & formatting ──────────────────────────────────────────────────────────
 
-def generate_qr(output_path: Path):
-    img = qrcode.make(ADMIN_URL)
-    img.save(str(output_path))
+def qr_matrix_js(url: str) -> str:
+    """
+    URL을 인코딩한 QR 매트릭스를 JS 2차원 배열 리터럴 문자열로 반환.
+    Illustrator ExtendScript에서 각 검은 모듈을 사각형 path로 그리는 데 사용.
+    """
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=1, border=2,
+    )
+    qr.add_data(url)
+    qr.make()
+    matrix = qr.get_matrix()
+    rows = [
+        "[" + ",".join("1" if cell else "0" for cell in row) + "]"
+        for row in matrix
+    ]
+    return "[" + ",".join(rows) + "]"
 
 
 def format_order_info(meta: dict) -> str:
@@ -105,43 +122,104 @@ def format_order_info(meta: dict) -> str:
 
 # ── Illustrator & FlexSign ────────────────────────────────────────────────────
 
-def add_worksheet_layer(doc, qr_path: Path, info_text: str):
+def _js_escape(s: str) -> str:
+    return (s.replace("\\", "\\\\")
+             .replace('"', '\\"')
+             .replace("\r", "")
+             .replace("\n", "\\n"))
+
+
+def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path,
+                     qr_js_matrix: str, info_text: str) -> bool:
+    """
+    JSX 한 번의 트랜잭션으로 open → worksheet 레이어 추가(QR 벡터 + 주문정보)
+    → v8 SaveAs → close까지 전부 수행.
+    Python/COM이 Open·SaveAs·Close를 나눠 호출하면 doc 참조가 엉켜서 수정 안 된
+    사본이 저장되는 케이스가 발생 — 그걸 피하기 위해 전체 파이프라인을 JSX로 통합.
+    """
+    info_js = _js_escape(info_text)
+    src_js = str(src_path).replace("\\", "/")
+    dst_js = str(dst_path).replace("\\", "/")
+
+    script = (
+        "try {"
+        f"  var srcPath = \"{src_js}\";"
+        f"  var dstPath = \"{dst_js}\";"
+        "  var srcFile = new File(srcPath);"
+        "  var dstFile = new File(dstPath);"
+        "  function k(p) { return p.toLowerCase().replace(/\\\\/g, '/'); }"
+        # 같은 경로의 잔여 문서가 열려 있으면 먼저 닫는다
+        "  for (var z = app.documents.length - 1; z >= 0; z--) {"
+        "    var fp = k(app.documents[z].fullName.fsName);"
+        "    if (fp == k(srcPath) || fp == k(dstPath)) {"
+        "      try { app.documents[z].close(SaveOptions.DONOTSAVECHANGES); } catch(e) {}"
+        "    }"
+        "  }"
+        "  var doc = app.open(srcFile);"
+        # 기존 worksheet 레이어 제거
+        "  for (var i = doc.layers.length - 1; i >= 0; i--) {"
+        "    if (doc.layers[i].name == 'worksheet') {"
+        "      doc.layers[i].locked = false;"
+        "      doc.layers[i].visible = true;"
+        "      doc.layers[i].remove();"
+        "    }"
+        "  }"
+        "  var layer = doc.layers.add();"
+        "  layer.name = 'worksheet';"
+        "  var b = doc.geometricBounds;"
+        "  var right = b[2];"
+        "  var top = b[1];"
+        "  var qrSize = 72;"
+        "  var margin = 10;"
+        # QR (벡터 path 집합)
+        f"  var m = {qr_js_matrix};"
+        "  var N = m.length;"
+        "  var cell = qrSize / N;"
+        "  var originX = right - qrSize - margin;"
+        "  var originY = top - margin;"
+        "  var grp = layer.groupItems.add();"
+        "  grp.name = 'qr';"
+        "  var blk = new RGBColor();"
+        "  blk.red = 0; blk.green = 0; blk.blue = 0;"
+        "  for (var y = 0; y < N; y++) {"
+        "    for (var x = 0; x < N; x++) {"
+        "      if (m[y][x]) {"
+        "        var r = grp.pathItems.rectangle("
+        "          originY - y * cell, originX + x * cell, cell, cell"
+        "        );"
+        "        r.filled = true;"
+        "        r.stroked = false;"
+        "        r.fillColor = blk;"
+        "      }"
+        "    }"
+        "  }"
+        # 주문정보 텍스트
+        "  var tf = layer.textFrames.add();"
+        f'  tf.contents = "{info_js}";'
+        "  tf.position = [right - qrSize - margin - 230, top - margin];"
+        "  tf.textRange.characterAttributes.size = 6.5;"
+        # v8로 저장 후 close
+        "  var opts = new IllustratorSaveOptions();"
+        "  opts.compatibility = Compatibility.ILLUSTRATOR8;"
+        "  opts.saveMultipleArtboards = false;"
+        "  doc.saveAs(dstFile, opts);"
+        "  doc.close(SaveOptions.DONOTSAVECHANGES);"
+        "  'OK';"
+        "} catch (e) { 'ERR: ' + e.toString(); }"
+    )
+
     try:
-        for i in range(doc.Layers.Count, 0, -1):
-            try:
-                if doc.Layers.Item(i).Name == "worksheet":
-                    doc.Layers.Item(i).Delete()
-            except Exception:
-                pass
-
-        layer = doc.Layers.Add()
-        layer.Name = "worksheet"
-
-        bounds = doc.GeometricBounds
-        right = bounds[2]
-        top = bounds[1]
-        qr_size, margin = 72, 10
-
-        placed = doc.PlacedItems.Add()
-        placed.File = str(qr_path)
-        placed.Layer = layer
-        placed.Position = [right - qr_size - margin, top - margin]
-        placed.Width = qr_size
-        placed.Height = qr_size
-
-        tf = doc.TextFrames.Add()
-        tf.Layer = layer
-        tf.Contents = info_text
-        tf.Position = [right - qr_size - margin - 230, top - margin]
-        tf.Width = 220
-        tf.Height = 300
-        tf.TextRange.CharacterAttributes.Size = 6.5
-
+        result = ai_app.DoJavaScript(script)
+        if result and str(result).startswith("ERR"):
+            ui_log(f"Illustrator 처리 실패: {result}")
+            return False
+        return True
     except Exception as e:
-        ui_log(f"레이어 추가 실패: {e}")
+        ui_log(f"DoJavaScript 호출 실패: {e}")
+        return False
 
 
-def convert_ai_file(ai_path: Path, qr_path: Path, info_text: str) -> Path | None:
+def convert_ai_file(ai_path: Path, qr_js_matrix: str, info_text: str) -> Path | None:
     if not is_running("Illustrator.exe"):
         ui_alert("Illustrator 필요", "Adobe Illustrator가 실행 중이 아닙니다.\n먼저 Illustrator를 열어 주세요.")
         return None
@@ -153,19 +231,14 @@ def convert_ai_file(ai_path: Path, qr_path: Path, info_text: str) -> Path | None
         ai_app = win32.GetActiveObject("Illustrator.Application")
         ai_app.UserInteractionLevel = -1
 
-        doc = ai_app.Open(str(ai_path))
-        add_worksheet_layer(doc, qr_path, info_text)
-
         out_dir = WATCH_DIR / "converted"
         out_dir.mkdir(exist_ok=True)
         out_path = out_dir / ai_path.name
 
-        opts = win32.Dispatch("Illustrator.IllustratorSaveOptions")
-        opts.Compatibility = 8
-        opts.SaveMultipleArtboards = False
-        doc.SaveAs(str(out_path), opts)
-        doc.Close(2)
+        if not process_ai_to_v8(ai_app, ai_path, out_path, qr_js_matrix, info_text):
+            return None
 
+        ui_log(f"{ai_path.name} v8 저장 완료")
         return out_path
 
     except Exception as e:
@@ -173,20 +246,109 @@ def convert_ai_file(ai_path: Path, qr_path: Path, info_text: str) -> Path | None
         return None
 
 
-def launch_flexsign(file_path: Path):
-    if is_running("App.exe"):
-        # FlexSign이 이미 실행 중이면 새 인스턴스 안 열고 탐색기에서 파일 위치만 보여줌
-        ui_log(f"파일 준비 완료 — FlexSign에서 열어주세요: {file_path.name}")
+def _find_flexsign_hwnd() -> int:
+    """실행 중인 FlexSign 메인 창의 HWND를 찾는다 (없으면 0)."""
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    user32 = ctypes.windll.user32
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.IsWindowVisible.restype = ctypes.c_bool
+    user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    result = [0]
+
+    def _cb(hwnd, _lparam):
         try:
-            subprocess.Popen(f'explorer /select,"{file_path}"')
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value.lower()
+            if "flexi" in title:
+                result[0] = hwnd
+                return False
         except Exception:
             pass
+        return True
+
+    cb = WNDENUMPROC(_cb)
+    user32.EnumWindows(cb, 0)
+    return result[0]
+
+
+def _post_drop_files(hwnd: int, file_path: str) -> bool:
+    """WM_DROPFILES로 해당 창에 파일을 드롭한다."""
+    WM_DROPFILES = 0x0233
+    GMEM_MOVEABLE = 0x0002
+    GMEM_ZEROINIT = 0x0040
+
+    file_list_bytes = (file_path + "\0\0").encode("utf-16-le")
+    header = struct.pack("=IIIII", 20, 0, 0, 0, 1)
+    payload = header + file_list_bytes
+
+    kernel32 = ctypes.windll.kernel32
+    user32 = ctypes.windll.user32
+    kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.restype = ctypes.c_bool
+    user32.PostMessageW.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p
+    ]
+    user32.PostMessageW.restype = ctypes.c_bool
+
+    hmem = kernel32.GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, len(payload))
+    if not hmem:
+        return False
+    ptr = kernel32.GlobalLock(hmem)
+    if not ptr:
+        return False
+    ctypes.memmove(ptr, payload, len(payload))
+    kernel32.GlobalUnlock(hmem)
+    return bool(user32.PostMessageW(hwnd, WM_DROPFILES, hmem, None))
+
+
+def launch_flexsign(file_path: Path):
+    ui_log(f"FlexSign 전달 시도: {file_path.name}")
+    hwnd = 0
+    try:
+        hwnd = _find_flexsign_hwnd()
+    except Exception as e:
+        ui_log(f"FlexSign 창 검색 실패: {e}")
+
+    if hwnd:
+        ui_log(f"FlexSign 창 발견(HWND={hwnd}) — 파일 드롭 중")
+        try:
+            ok = _post_drop_files(hwnd, str(file_path))
+        except Exception as e:
+            ui_log(f"드롭 메시지 실패: {e}")
+            ok = False
+        if ok:
+            try:
+                # 최소화 상태에서만 RESTORE — 최대화 상태면 그대로 유지
+                if ctypes.windll.user32.IsIconic(hwnd):
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            ui_log(f"FlexSign에 전달 완료: {file_path.name}")
+        else:
+            ui_log(f"드롭 실패 — 수동으로 파일을 열어주세요: {file_path}")
         return
+
+    # FlexSign 창을 못 찾음 — 새 인스턴스로 실행
     if not Path(FLEXSIGN_EXE).exists():
-        ui_log(f"파일 준비 완료: {file_path}")
+        ui_log(f"FlexSign 창도 실행파일도 찾을 수 없습니다: {FLEXSIGN_EXE}")
         return
     try:
         subprocess.Popen([FLEXSIGN_EXE, str(file_path)])
+        ui_log(f"FlexSign 창 미발견 — 새 인스턴스 실행: {file_path.name}")
     except Exception as e:
         ui_log(f"FlexSign 실행 실패: {e}")
 
@@ -234,17 +396,18 @@ def process_zip(zip_path: Path):
         shutil.rmtree(str(extract_dir))
     temp_dir.rename(extract_dir)
 
-    qr_path = WATCH_DIR / f"{order_number}_qr.png"
-    generate_qr(qr_path)
+    # 주문지마다 고유한 증거사진 업로드 URL — 휴대폰으로 QR을 찍으면 카메라가 열린다.
+    # 한글 주문번호("주문-yyMMdd-NN")가 들어가므로 ASCII URL로 percent-encode.
+    qr_js = qr_matrix_js(EVIDENCE_URL_BASE + quote(order_number, safe=""))
 
-    ai_files = list(extract_dir.glob("*.ai")) + list(extract_dir.glob("*.AI"))
+    # Windows는 대소문자 구분 안 하므로 "*.ai" 하나로 .AI / .ai 모두 매칭 — dedupe
+    ai_files = sorted({p.resolve() for p in extract_dir.glob("*.ai")})
     if not ai_files:
         ui_log(f"{order_number}: AI 파일 없음 — 확인 필요")
     else:
         for ai_file in ai_files:
-            converted = convert_ai_file(ai_file, qr_path, info_text)
+            converted = convert_ai_file(Path(ai_file), qr_js, info_text)
             if converted:
-                ui_log(f"{order_number}: FlexSign에서 열었습니다")
                 launch_flexsign(converted)
 
     DONE_DIR.mkdir(exist_ok=True)
@@ -290,7 +453,8 @@ class App(tk.Tk):
         self.resizable(False, False)
         self.configure(bg=self.BG)
         self._observer = None
-        self._log_rows: list[tk.Frame] = []
+        self._has_logs = False
+        self._log_count = 0
         self._build_ui()
         self.after(100, self._poll_queue)
 
@@ -343,15 +507,33 @@ class App(tk.Tk):
         tk.Label(self._card, text="최근 활동", bg=self.CARD, fg="#a1a1aa",
                  font=("맑은 고딕", 8, "bold")).pack(anchor="w", padx=24, pady=(14, 6))
 
-        # Log area
-        self._log_area = tk.Frame(self._card, bg=self.CARD)
-        self._log_area.pack(fill="both", expand=True, padx=24, pady=(0, 20))
-
-        self._placeholder = tk.Label(
-            self._log_area, text="지시서 파일을 다운받으시면 여기에 표시됩니다.",
-            bg=self.CARD, fg="#a1a1aa", font=("맑은 고딕", 9),
+        # Log area — Text widget so the user can drag-select and copy
+        self._log_text = tk.Text(
+            self._card, bg=self.CARD,
+            relief="flat", bd=0, highlightthickness=0,
+            wrap="word", cursor="arrow",
+            padx=0, pady=0, height=10,
         )
-        self._placeholder.pack(anchor="w", pady=2)
+        self._log_text.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+
+        self._log_text.tag_configure("check", foreground="#16a34a",
+                                     font=("맑은 고딕", 9, "bold"))
+        self._log_text.tag_configure("time", foreground="#a1a1aa",
+                                     font=("맑은 고딕", 8))
+        self._log_text.tag_configure("msg", foreground="#3f3f46",
+                                     font=("맑은 고딕", 9))
+        self._log_text.tag_configure("placeholder", foreground="#a1a1aa",
+                                     font=("맑은 고딕", 9))
+
+        self._log_text.insert("1.0",
+            "지시서 파일을 다운받으시면 여기에 표시됩니다.", "placeholder")
+        self._log_text.config(state="disabled")
+
+        # Right-click copy menu
+        self._log_menu = tk.Menu(self, tearoff=0)
+        self._log_menu.add_command(label="복사", command=self._copy_selection)
+        self._log_menu.add_command(label="전체 복사", command=self._copy_all)
+        self._log_text.bind("<Button-3>", self._show_log_menu)
 
     # ── state updates ──
 
@@ -368,23 +550,45 @@ class App(tk.Tk):
         self._detail_lbl.config(text=detail)
 
     def add_log(self, msg: str):
-        self._placeholder.pack_forget()
         ts = time.strftime("%H:%M")
+        self._log_text.config(state="normal")
+        if not self._has_logs:
+            self._log_text.delete("1.0", "end")
+            self._has_logs = True
+        self._log_text.insert("end", "✓  ", "check")
+        self._log_text.insert("end", f"{ts}  ", "time")
+        self._log_text.insert("end", f"{msg}\n", "msg")
+        self._log_count += 1
+        if self._log_count > 7:
+            self._log_text.delete("1.0", "2.0")
+            self._log_count = 7
+        self._log_text.see("end")
+        self._log_text.config(state="disabled")
 
-        row = tk.Frame(self._log_area, bg=self.CARD)
-        row.pack(fill="x", pady=3, anchor="w")
+    # ── copy helpers ──
 
-        tk.Label(row, text="✓", bg=self.CARD, fg="#16a34a",
-                 font=("맑은 고딕", 9, "bold"), width=2).pack(side="left")
-        tk.Label(row, text=f"{ts}", bg=self.CARD, fg="#a1a1aa",
-                 font=("맑은 고딕", 8), width=5).pack(side="left")
-        tk.Label(row, text=msg, bg=self.CARD, fg="#3f3f46",
-                 font=("맑은 고딕", 9), anchor="w", justify="left",
-                 wraplength=280).pack(side="left", fill="x")
+    def _copy_selection(self):
+        try:
+            text = self._log_text.get("sel.first", "sel.last")
+        except tk.TclError:
+            text = ""
+        if not text and self._has_logs:
+            text = self._log_text.get("1.0", "end-1c")
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
 
-        self._log_rows.append(row)
-        if len(self._log_rows) > 7:
-            self._log_rows.pop(0).destroy()
+    def _copy_all(self):
+        if not self._has_logs:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(self._log_text.get("1.0", "end-1c"))
+
+    def _show_log_menu(self, event):
+        try:
+            self._log_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._log_menu.grab_release()
 
     # ── queue polling ──
 

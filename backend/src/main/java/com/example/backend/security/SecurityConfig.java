@@ -35,6 +35,7 @@ public class SecurityConfig {
                 // 공개 엔드포인트 (구체적인 경로 먼저!)
                 .requestMatchers("/api/auth/login").permitAll()
                 .requestMatchers("/api/client/auth/login").permitAll()
+                .requestMatchers("/api/public/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/gallery/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/notices/**").permitAll()
                 .requestMatchers("/uploads/**").permitAll()

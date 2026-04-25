@@ -36,6 +36,13 @@ public class OrderFile {
     @Column(length = 100)
     private String contentType;   // image/jpeg, application/pdf 등
 
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean isEvidence = false;   // QR 카메라 업로드로 들어온 증거 사진
+
+    @Column(length = 100)
+    private String uploadedDepartment;    // 증거 사진을 올린 부서 (휴대폰 localStorage 기준)
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 }
