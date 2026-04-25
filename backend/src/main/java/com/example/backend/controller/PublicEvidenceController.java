@@ -21,6 +21,8 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -145,6 +147,38 @@ public class PublicEvidenceController {
         body.put("uploaded", uploaded);
         body.put("count", uploaded.size());
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * FlexSign 인쇄 시점에 작업자가 다이얼로그로 확정한 최종 납기 일자를 PATCH.
+     * 워처가 보내는 본문: { "dueDate": "yyyy-MM-dd" }. 잘못된 포맷이면 400.
+     */
+    @PostMapping("/{orderNumber}/due-date")
+    public ResponseEntity<?> updateDueDate(
+            @PathVariable String orderNumber,
+            @org.springframework.web.bind.annotation.RequestBody Map<String, String> body
+    ) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
+        }
+        String raw = body == null ? null : body.get("dueDate");
+        if (raw == null || raw.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "dueDate가 비어 있습니다."));
+        }
+        LocalDate parsed;
+        try {
+            parsed = LocalDate.parse(raw.trim());
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "dueDate 포맷은 yyyy-MM-dd 입니다."));
+        }
+        order.setDueDate(parsed);
+        orderRepository.save(order);
+        return ResponseEntity.ok(Map.of(
+                "orderNumber", order.getOrderNumber(),
+                "dueDate", order.getDueDate().toString()
+        ));
     }
 
     /**

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import collections
 import ctypes
 import json
 import queue
@@ -13,6 +14,7 @@ import subprocess
 import threading
 import time
 import tkinter as tk
+from datetime import date, timedelta
 from tkinter import messagebox
 import urllib.error
 import urllib.request
@@ -29,6 +31,9 @@ from watchdog.observers import Observer
 WATCH_DIR = Path(r"C:\Users\USER\Desktop\hdsign_orders")
 DOWNLOADS_DIR = Path.home() / "Downloads"
 DONE_DIR = WATCH_DIR / "done"
+# Bullzip(또는 다른 무인 PDF 프린터) 가 인쇄 PDF 를 떨어뜨리는 폴더.
+# Bullzip 설정에서 "Folder" 를 이 경로로 맞추고 "Show save as dialog" 끄기.
+PRINTED_PDF_DIR = WATCH_DIR / "printed"
 FLEXSIGN_EXE = r"C:\Users\USER\Desktop\FlexiSIGN 6.6\Program\App.exe"
 EVIDENCE_URL_BASE = "https://hdsigncraft.com/p/"
 API_BASE = "https://hdsign-production.up.railway.app"
@@ -44,6 +49,12 @@ HEADER_BOX_STROKE = (130, 130, 130)   # 박스 테두리
 _seen_zips: set[str] = set()
 _seen_lock = threading.Lock()
 _ui_queue: queue.Queue = queue.Queue()
+
+# FlexSign 으로 보낸 주문들의 메타. 인쇄 PDF 가 떨어졌을 때 가장 최근 항목과 매칭한다.
+# (deque 로 최대 20건만 유지 — 그 이상 한번에 처리할 일은 거의 없음)
+_recent_orders: collections.deque = collections.deque(maxlen=20)
+_recent_orders_lock = threading.Lock()
+_seen_printed: set[str] = set()
 
 
 # ── UI helpers (thread-safe) ────────────────────────────────────────────────
@@ -210,6 +221,221 @@ def notify_worksheet_acknowledged(order_number: str):
         ui_log(f"작업중 전환 실패 ({e.code}): {order_number}")
     except Exception as e:
         ui_log(f"작업중 전환 호출 실패: {e}")
+
+
+def patch_due_date(order_number: str, new_due: date) -> bool:
+    """다이얼로그에서 확정한 최종 납기 일자를 백엔드에 전달."""
+    if not order_number:
+        return False
+    url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/due-date"
+    body = json.dumps({"dueDate": new_due.isoformat()}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+        ui_log(f"{order_number} 납기 {new_due.isoformat()} 로 업데이트")
+        return True
+    except urllib.error.HTTPError as e:
+        ui_log(f"납기 업데이트 실패 ({e.code}): {order_number}")
+    except Exception as e:
+        ui_log(f"납기 업데이트 호출 실패: {e}")
+    return False
+
+
+def remember_order_for_print(order_number: str, company_name: str, due_date_iso: str | None):
+    """FlexSign에 보낸 주문을 인쇄 매칭용 큐에 기록.
+    인쇄 PDF가 떨어지면 가장 최근 항목을 꺼내 다이얼로그에 표시한다."""
+    with _recent_orders_lock:
+        # 같은 주문이 또 처리될 수 있으니 같은 번호는 앞 항목을 제거하고 맨 뒤에 다시 넣는다.
+        for existing in list(_recent_orders):
+            if existing.get("orderNumber") == order_number:
+                _recent_orders.remove(existing)
+                break
+        _recent_orders.append({
+            "orderNumber": order_number,
+            "companyName": company_name or "",
+            "dueDate": due_date_iso or "",
+            "ts": time.time(),
+        })
+
+
+def pop_recent_order() -> dict | None:
+    """가장 최근 FlexSign 에 보낸 주문을 꺼낸다 (있으면 큐에서 제거)."""
+    with _recent_orders_lock:
+        try:
+            return _recent_orders.pop()
+        except IndexError:
+            return None
+
+
+def resolve_new_due_date(current_iso: str, day_input: int) -> date:
+    """입력 일자를 기준 납기로부터 가장 자연스러운 날짜로 해석.
+    같은 달 day_input 이 기준일보다 앞이면(=과거) 다음 달로 넘긴다.
+    current_iso 가 비면 오늘을 기준으로 한다."""
+    base = date.today()
+    if current_iso:
+        try:
+            base = date.fromisoformat(current_iso)
+        except ValueError:
+            pass
+    year, month = base.year, base.month
+    if day_input < base.day:
+        # 다음 달로 롤오버
+        if month == 12:
+            year += 1
+            month = 1
+        else:
+            month += 1
+    # 해당 월의 마지막 날을 넘으면 클램프
+    try:
+        return date(year, month, day_input)
+    except ValueError:
+        # 예: 2월 30일 → 그 달 마지막 날
+        # 단순화: 다음 달 1일로 가서 1일 빼면 마지막 날
+        if month == 12:
+            next_first = date(year + 1, 1, 1)
+        else:
+            next_first = date(year, month + 1, 1)
+        return next_first - timedelta(days=1)
+
+
+def print_pdf_to_default_printer(pdf_path: Path) -> bool:
+    """ShellExecute "print" 동사로 PDF를 윈도우 기본 프린터에 보낸다.
+    기본 프린터는 [윈도우 설정 → 프린터 및 스캐너] 에서 삼성으로 지정해 두면 된다."""
+    try:
+        ctypes.windll.shell32.ShellExecuteW(0, "print", str(pdf_path), None, None, 0)
+        ui_log(f"종이 인쇄 전달: {pdf_path.name}")
+        return True
+    except Exception as e:
+        ui_log(f"종이 인쇄 실패: {e}")
+        return False
+
+
+# ── 인쇄 다이얼로그 ─────────────────────────────────────────────────────────
+
+def _ask_due_date_blocking(company_name: str, current_due_iso: str) -> int | None:
+    """모달 다이얼로그: 거래처명만 표시 + 일자 입력칸. Enter 확정, Esc 취소.
+    리턴값: 사용자가 입력한 day(int) 또는 None(취소)."""
+    # Tkinter 메인 루프 안에서만 안전하게 만들 수 있으므로, 이 함수는 UI 큐를 통해 호출됨.
+    result: dict = {"day": None}
+
+    base_day = ""
+    if current_due_iso:
+        try:
+            base_day = str(date.fromisoformat(current_due_iso).day)
+        except ValueError:
+            base_day = ""
+
+    dlg = tk.Toplevel()
+    dlg.title("최종 납기")
+    dlg.configure(bg="white")
+    dlg.resizable(False, False)
+    dlg.attributes("-topmost", True)
+    dlg.geometry("280x140")
+
+    tk.Label(
+        dlg, text=company_name or "주문 확인",
+        bg="white", fg="#18181b",
+        font=("맑은 고딕", 13, "bold"),
+    ).pack(pady=(18, 0))
+    tk.Label(
+        dlg, text="최종 납품날짜를 입력해주세요",
+        bg="white", fg="#71717a",
+        font=("맑은 고딕", 9),
+    ).pack(pady=(2, 6))
+
+    frame = tk.Frame(dlg, bg="white")
+    frame.pack()
+    var = tk.StringVar(value=base_day)
+    entry = tk.Entry(
+        frame, textvariable=var, width=4, justify="center",
+        font=("맑은 고딕", 18, "bold"), relief="solid", bd=1,
+    )
+    entry.pack(side="left", padx=(0, 4))
+    tk.Label(frame, text="일", bg="white", fg="#3f3f46",
+             font=("맑은 고딕", 13)).pack(side="left")
+
+    def confirm(_event=None):
+        s = var.get().strip()
+        if not s.isdigit():
+            return
+        d = int(s)
+        if d < 1 or d > 31:
+            return
+        result["day"] = d
+        dlg.destroy()
+
+    def cancel(_event=None):
+        result["day"] = None
+        dlg.destroy()
+
+    dlg.bind("<Return>", confirm)
+    dlg.bind("<Escape>", cancel)
+    dlg.protocol("WM_DELETE_WINDOW", cancel)
+
+    # 포커스 + 전체 선택 → 그대로 Enter 도, 숫자 타닥 입력도 모두 자연스럽게.
+    dlg.after(50, lambda: (entry.focus_set(), entry.select_range(0, "end"), entry.icursor("end")))
+    dlg.grab_set()
+    dlg.wait_window()
+    return result["day"]
+
+
+def _process_printed_pdf(pdf_path: Path):
+    """인쇄 폴더에 새 PDF 가 떨어졌을 때 호출.
+    가장 최근 주문과 매칭 → 다이얼로그 → 납기 PATCH + PDF 업로드(덮어쓰기) → 종이 인쇄."""
+    key = str(pdf_path.resolve())
+    if key in _seen_printed:
+        return
+    _seen_printed.add(key)
+    # 파일이 완전히 쓰여질 때까지 잠깐 대기 (Bullzip 이 청크 단위로 쓸 수 있음)
+    time.sleep(0.8)
+
+    order = pop_recent_order()
+    if not order:
+        ui_log("인쇄 PDF 감지 — 매칭할 주문이 없어 무시")
+        return
+    order_number = order["orderNumber"]
+    company = order.get("companyName", "")
+    current_due = order.get("dueDate", "")
+
+    # 다이얼로그는 메인 루프에서 모달로 띄워야 안전 — UI 큐로 전환.
+    holder: dict = {"day": None, "done": threading.Event()}
+
+    def _ask_on_ui():
+        try:
+            holder["day"] = _ask_due_date_blocking(company, current_due)
+        finally:
+            holder["done"].set()
+
+    _ui_queue.put(("run", _ask_on_ui))
+    holder["done"].wait()
+
+    if holder["day"] is None:
+        ui_log(f"{order_number} 인쇄 — 사용자가 일자 입력 취소(업로드/PATCH 생략)")
+    else:
+        new_due = resolve_new_due_date(current_due, holder["day"])
+        patch_due_date(order_number, new_due)
+        upload_worksheet_pdf(order_number, pdf_path)
+
+    # 무인 PDF 프린터 라우팅: 항상 종이 인쇄까지 자동 진행.
+    print_pdf_to_default_printer(pdf_path)
+
+
+class PrintedPdfHandler(FileSystemEventHandler):
+    def _handle(self, src: Path):
+        if src.suffix.lower() != ".pdf":
+            return
+        if src.parent != PRINTED_PDF_DIR:
+            return
+        threading.Thread(target=_process_printed_pdf, args=(src,), daemon=True).start()
+
+    def on_created(self, event):
+        if not event.is_directory:
+            self._handle(Path(event.src_path))
+
+    def on_moved(self, event):
+        self._handle(Path(event.dest_path))
 
 
 def format_note_text(meta: dict) -> str:
@@ -752,6 +978,12 @@ def process_zip(zip_path: Path):
         notify_worksheet_acknowledged(order_number)
         if pdf_to_upload is not None:
             upload_worksheet_pdf(order_number, pdf_to_upload)
+        # 인쇄 PDF 가 떨어지면 매칭할 수 있도록 큐에 등록.
+        remember_order_for_print(
+            order_number,
+            company,
+            (str(meta.get("dueDate")).split("T")[0] if meta.get("dueDate") else ""),
+        )
 
     DONE_DIR.mkdir(exist_ok=True)
     dest = DONE_DIR / zip_path.name
@@ -946,6 +1178,10 @@ class App(tk.Tk):
                 elif item[0] == "alert":
                     t, m = item[1], item[2]
                     self.after(0, lambda t=t, m=m: messagebox.showwarning(t, m))
+                elif item[0] == "run":
+                    # 워커 스레드가 모달 다이얼로그를 띄워야 할 때 사용.
+                    fn = item[1]
+                    self.after(0, fn)
         except Exception:
             pass
         self.after(100, self._poll_queue)
@@ -962,6 +1198,7 @@ class App(tk.Tk):
 
             WATCH_DIR.mkdir(parents=True, exist_ok=True)
             DONE_DIR.mkdir(parents=True, exist_ok=True)
+            PRINTED_PDF_DIR.mkdir(parents=True, exist_ok=True)
 
             for existing in WATCH_DIR.glob("*_지시서.zip"):
                 threading.Thread(target=process_zip, args=(existing,), daemon=True).start()
@@ -969,6 +1206,8 @@ class App(tk.Tk):
             self._observer = Observer()
             self._observer.schedule(ZipHandler(WATCH_DIR), str(WATCH_DIR), recursive=False)
             self._observer.schedule(ZipHandler(DOWNLOADS_DIR), str(DOWNLOADS_DIR), recursive=False)
+            # 무인 PDF 프린터(Bullzip 등)가 떨어뜨리는 인쇄 PDF 감시.
+            self._observer.schedule(PrintedPdfHandler(), str(PRINTED_PDF_DIR), recursive=False)
             self._observer.start()
 
             start_ping_server()
