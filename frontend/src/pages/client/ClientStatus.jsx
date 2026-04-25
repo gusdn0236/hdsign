@@ -189,29 +189,32 @@ function OrderCard({ order }) {
                         </div>
                     )}
 
-                    {order.worksheetPdfUrl && (
-                        <a
-                            className="worksheet-pdf-card"
-                            href={order.worksheetPdfUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                        >
-                            <span className="worksheet-pdf-icon" aria-hidden="true">PDF</span>
-                            <div className="worksheet-pdf-text">
-                                <span className="worksheet-pdf-title">작업지시서 PDF</span>
-                                <span className="worksheet-pdf-sub">탭하여 전체 화면으로 보기 · 무한 확대 가능</span>
-                            </div>
-                            <span className="worksheet-pdf-arrow" aria-hidden="true">›</span>
-                        </a>
-                    )}
-
-                    {photoFiles.length > 0 && (
+                    {(order.worksheetPdfUrl || photoFiles.length > 0) && (
                         <div className="work-photos">
                             <div className="work-photos-head">
-                                <span className="detail-label">작업 사진</span>
-                                <span className="work-photos-count">{photoFiles.length}장</span>
+                                <span className="detail-label">지시서 &amp; 작업사진</span>
+                                {photoFiles.length > 0 && (
+                                    <span className="work-photos-count">사진 {photoFiles.length}장</span>
+                                )}
                             </div>
                             <div className="work-photos-grid">
+                                {order.worksheetPdfUrl && (
+                                    <a
+                                        className="work-photo-item worksheet-pdf-item"
+                                        href={order.worksheetPdfUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        <div className="worksheet-pdf-thumb">
+                                            <span className="worksheet-pdf-thumb-label">PDF</span>
+                                            <span className="worksheet-pdf-thumb-sub">작업지시서</span>
+                                        </div>
+                                        <div className="work-photo-meta">
+                                            <span className="work-photo-dept">지시서</span>
+                                            <span className="work-photo-time">탭하여 확대</span>
+                                        </div>
+                                    </a>
+                                )}
                                 {photoFiles.map((file, index) => (
                                     <button
                                         type="button"
