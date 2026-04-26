@@ -2,7 +2,10 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8"/>
-    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <!-- viewport-fit=cover 로 PWA 풀스크린에서 safe-area 대응. user-scalable=no
+         로 더블탭 줌 지연(300ms) 제거해 버튼 탭 즉시 반응. 초기 HTML 에서 설정해
+         페이지 로드 직후 레이아웃이 흔들리지 않게. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"/>
 
     <!-- 배포 시 청크 해시가 바뀌므로 옛 index.html 이 캐시되면 옛 청크 404 발생.
          메타 태그는 HTTP 헤더만큼 강력하진 않지만 브라우저 디스크 캐시 동작에 힌트를 준다. -->
@@ -32,15 +35,12 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"/>
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
 
-    <!-- 홈 화면 아이콘 — 사파리 모드로 동작 -->
-    <!-- iOS PWA standalone 모드에서 click 이벤트 합성 누락/캐시 스냅샷 문제로 버튼이
-         먹통이 되는 케이스가 잦아 standalone 을 비활성화. 홈화면 아이콘 탭 시 일반
-         사파리에서 열림 — 동작은 사파리 직접 접속과 동일. 풀스크린 룩은 포기하지만
-         안정성/일관성 우선. -->
+    <!-- PWA (홈 화면 아이콘) -->
     <link rel="manifest" href="/manifest.webmanifest"/>
     <meta name="theme-color" content="#18181b"/>
-    <meta name="apple-mobile-web-app-capable" content="no"/>
-    <meta name="mobile-web-app-capable" content="no"/>
+    <meta name="apple-mobile-web-app-capable" content="yes"/>
+    <meta name="mobile-web-app-capable" content="yes"/>
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
     <meta name="apple-mobile-web-app-title" content="HD지시서"/>
 
     <!-- Twitter Card -->

@@ -13,12 +13,16 @@ body:has(.wsv-page) {
     -webkit-tap-highlight-color: transparent;
     overflow: hidden;
     overscroll-behavior: none;
+    /* 명시적 stacking context — 외부 요소가 z-index 로 위에 올라오지 못하게 */
+    isolation: isolate;
+    /* 부모에서 pointer-events 차단된 적 없는지 명시 */
+    pointer-events: auto;
 }
 
 .wsv-topbar {
     flex-shrink: 0;
     position: relative;
-    z-index: 100;  /* PDF 뷰어와 시트 위에 — 뒤로가기 항상 클릭 가능 */
+    z-index: 200;  /* actionbar 와 동일하게 — PDF stage 내부 어떤 오버레이도 못 가림 */
     background: #18181b;
     color: #fff;
     display: flex;
@@ -27,6 +31,7 @@ body:has(.wsv-page) {
     padding: 10px 12px;
     padding-top: max(10px, env(safe-area-inset-top));
     border-bottom: 1px solid #27272a;
+    pointer-events: auto;
 }
 .wsv-back {
     display: flex;
@@ -194,9 +199,10 @@ body:has(.wsv-page) {
     padding: 10px 14px max(10px, env(safe-area-inset-bottom));
     background: #18181b;
     border-top: 1px solid #27272a;
-    /* z-index 명시 — PWA 환경에서 다른 요소에 가려져 클릭이 안 먹는 케이스 방지 */
+    /* z-index 최상위 — PDF stage 내부의 어떤 절대위치 오버레이도 actionbar 위에
+       올라오지 못하게. PDF wrapper 의 absolute 자식들은 z-index 5~20 범위. */
     position: relative;
-    z-index: 50;
+    z-index: 200;
     pointer-events: auto;
 }
 .wsv-action-reset {
@@ -244,6 +250,11 @@ body:has(.wsv-page) {
 .wsv-action-camera:active {
     transform: translateY(1px);
     background: #1d4ed8;
+}
+.wsv-action-camera-emoji,
+.wsv-action-camera-text {
+    /* 자식 span 이 클릭 이벤트를 가로채지 않도록 — 탭은 항상 부모 button 으로 */
+    pointer-events: none;
 }
 .wsv-action-camera-emoji {
     font-size: 22px;

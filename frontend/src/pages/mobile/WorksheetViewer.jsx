@@ -381,9 +381,20 @@ export default function WorksheetViewer() {
                         maxScale={5}
                         centerOnInit
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
-                        wheel={{ step: 0.18 }}
+                        wheel={{
+                            step: 0.18,
+                            excluded: ['wsv-back', 'wsv-action-reset', 'wsv-action-camera'],
+                        }}
                         pinch={{ step: 5 }}
-                        panning={{ velocityDisabled: true }}
+                        panning={{
+                            velocityDisabled: true,
+                            // 라이브러리가 window mousedown 을 듣는데, 만에 하나 버튼 영역
+                            // 탭이 흘러들어가면 preventDefault 가 click 합성을 막을 수 있음.
+                            // 명시적으로 제외해 라이브러리가 절대 가로채지 못하게.
+                            excluded: ['wsv-back', 'wsv-action-reset', 'wsv-action-camera',
+                                       'wsv-action-camera-emoji', 'wsv-action-camera-text',
+                                       'wsv-pager-btn'],
+                        }}
                         onTransformed={handleTransformed}
                     >
                         <TransformComponent
