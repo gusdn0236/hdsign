@@ -99,6 +99,7 @@ export default function OrderAdmin() {
   const [restoringOrderId, setRestoringOrderId] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [regeneratingHeaderId, setRegeneratingHeaderId] = useState(null);
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null);
@@ -542,6 +543,46 @@ export default function OrderAdmin() {
     }
   };
 
+  // 자동지시서작성이 RPC 타임아웃 등으로 실패해 거래처 원본만 받아진 경우의 폴백.
+  // 헤더(QR + 박스 + 좌측텍스트 + 노트박스) 만 그린 작은 AI 를 워처가 만들어 FlexSign 에 띄움.
+  // 사용자는 그 헤더를 복사해 거래처 원본 캔버스에 붙여 인쇄 → PDF24 → 매칭 으로 동일 흐름 복귀.
+  // QR 은 같은 /p/{orderNumber} 를 가리키므로 재생성 후에도 작업 추적은 정상.
+  const regenerateHeader = async (e, order) => {
+    e.stopPropagation();
+    setRegeneratingHeaderId(order.id);
+    try {
+      const watcherUp = await isWatcherRunning();
+      if (!watcherUp) {
+        setFeedback({
+          type: "error",
+          msg: "지시서 프로그램이 실행 중이지 않습니다. 프로그램을 켠 뒤 다시 시도해 주세요.",
+        });
+        return;
+      }
+      const res = await fetch(`${BASE_URL}/api/admin/orders/${order.id}/worksheet-header-package`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("헤더 생성 실패");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${order.orderNumber}_지시서_헤더만.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setFeedback({
+        type: "success",
+        msg: "헤더 ZIP을 다운받았습니다. FlexSign에서 헤더를 복사해 거래처 원본에 붙여 인쇄해주세요.",
+      });
+    } catch (err) {
+      setFeedback({ type: "error", msg: err.message || "헤더 재생성 중 오류가 발생했습니다." });
+    } finally {
+      setRegeneratingHeaderId(null);
+    }
+  };
+
   const requestLabel = (requestType) => REQUEST_TYPE_LABELS[requestType] || "요청";
 
   return (
@@ -768,6 +809,29 @@ export default function OrderAdmin() {
                         >
                           {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
                         </button>
+                      ) : order.status === "IN_PROGRESS" && order.requestType === "ORDER" ? (
+                        <div className="next-status-stack">
+                          <button
+                            type="button"
+                            className="next-status-btn action-worksheet"
+                            onClick={(e) => regenerateHeader(e, order)}
+                            disabled={regeneratingHeaderId === order.id}
+                            title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, 헤더(QR+주문정보) 만 다시 생성"
+                          >
+                            {regeneratingHeaderId === order.id ? "준비 중..." : "헤더 재생성"}
+                          </button>
+                          <button
+                            type="button"
+                            className="next-status-btn action-complete"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateOrderStatus(order.id, nextStatus);
+                            }}
+                            disabled={updating}
+                          >
+                            {updating ? "변경 중..." : "작업완료처리"}
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"
@@ -932,6 +996,17 @@ export default function OrderAdmin() {
                           onClick={(e) => downloadWorksheet(e, selectedOrder)}
                         >
                           {downloadingId === selectedOrder.id ? "준비 중..." : "지시서 자동작성하기"}
+                        </button>
+                      )}
+                      {selectedOrder.status === "IN_PROGRESS" && selectedOrder.requestType === "ORDER" && (
+                        <button
+                          type="button"
+                          className="next-status-btn action-worksheet"
+                          disabled={regeneratingHeaderId === selectedOrder.id}
+                          onClick={(e) => regenerateHeader(e, selectedOrder)}
+                          title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, 헤더(QR+주문정보) 만 다시 생성"
+                        >
+                          {regeneratingHeaderId === selectedOrder.id ? "준비 중..." : "헤더 재생성"}
                         </button>
                       )}
                       <select

@@ -42,7 +42,9 @@
       "Bash(\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe\" -m py_compile \"C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\hdsign_watcher.py\")",
       "Bash(python -m py_compile \"C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\hdsign_watcher.py\")",
       "Bash(py -m py_compile \"C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\hdsign_watcher.py\")",
-      "Bash(./gradlew.bat compileJava)"
+      "Bash(./gradlew.bat compileJava)",
+      "PowerShell(python --version)",
+      "PowerShell(py *)"
     ]
   }
 }

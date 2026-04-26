@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.time.LocalDate;
@@ -217,6 +218,11 @@ public class PublicEvidenceController {
             return ResponseEntity.badRequest().body(Map.of("message", "PDF 파일이 비어 있습니다."));
         }
 
+        // 새 PDF 업로드 전에 이전 PDF 키를 미리 잡아둔다 — 업로드/저장 성공 후 best-effort 로 삭제.
+        // 실패해도 서비스 흐름엔 영향 없고 다음 영구삭제 시 정리되도록 keysToDelete 가 누적되지 않게
+        // 매번 즉시 시도. 새 업로드가 실패하면 옛 PDF 가 그대로 남아 fallback 으로 사용 가능.
+        String oldWorksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
+
         String key = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
         try {
             s3Client.putObject(
@@ -240,10 +246,29 @@ public class PublicEvidenceController {
         order.setWorksheetPdfUrl(url);
         orderRepository.save(order);
 
+        // DB 가 새 URL 로 바뀐 직후 옛 R2 객체 삭제(best-effort). 실패해도 다음 영구삭제 시 청소됨.
+        if (oldWorksheetKey != null && !oldWorksheetKey.equals(key)) {
+            try {
+                s3Client.deleteObject(DeleteObjectRequest.builder()
+                        .bucket(bucket).key(oldWorksheetKey).build());
+            } catch (Exception e) {
+                log.warn("이전 지시서 PDF 삭제 실패 [{}/{}]: {}",
+                        order.getOrderNumber(), oldWorksheetKey, e.getMessage());
+            }
+        }
+
         return ResponseEntity.ok(Map.of(
                 "orderNumber", order.getOrderNumber(),
                 "worksheetPdfUrl", url
         ));
+    }
+
+    private String extractKeyFromPublicUrl(String url) {
+        if (url == null || url.isBlank()) return null;
+        if (publicUrl == null || publicUrl.isBlank()) return null;
+        String base = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
+        if (!url.startsWith(base)) return null;
+        return url.substring(base.length());
     }
 
     /**

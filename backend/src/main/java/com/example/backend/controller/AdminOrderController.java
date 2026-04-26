@@ -136,6 +136,12 @@ public class AdminOrderController {
                 keysToDelete.add(previewKey);
             }
         }
+        // 지시서 PDF (worksheetPdfUrl) 도 함께 영구삭제. order_files 테이블엔 없는
+        // Order 자체의 컬럼이라 위 루프에서 누락되는 R2 누수 지점이었음.
+        String worksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
+        if (worksheetKey != null) {
+            keysToDelete.add(worksheetKey);
+        }
 
         for (String key : keysToDelete) {
             try {
@@ -157,20 +163,7 @@ public class AdminOrderController {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ZipOutputStream zos = new ZipOutputStream(baos, StandardCharsets.UTF_8);
 
-            Map<String, Object> info = new LinkedHashMap<>();
-            info.put("orderNumber", order.getOrderNumber());
-            info.put("companyName", order.getClient().getCompanyName());
-            info.put("contactName", order.getClient().getContactName());
-            info.put("phone", order.getClient().getPhone());
-            info.put("title", order.getTitle());
-            info.put("requestType", order.getRequestType().name());
-            info.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);
-            info.put("dueTime", order.getDueTime());
-            info.put("deliveryMethod", order.getDeliveryMethod() != null ? deliveryLabel(order.getDeliveryMethod()) : null);
-            info.put("deliveryAddress", order.getDeliveryAddress());
-            info.put("additionalItems", order.getAdditionalItems());
-            info.put("note", order.getNote());
-            info.put("createdAt", order.getCreatedAt().toString());
+            Map<String, Object> info = buildWorksheetInfo(order);
 
             byte[] jsonBytes = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(info);
             zos.putNextEntry(new ZipEntry(order.getOrderNumber() + ".json"));
@@ -202,6 +195,58 @@ public class AdminOrderController {
         } catch (Exception e) {
             throw new RuntimeException("지시서 패키지 생성 실패: " + e.getMessage());
         }
+    }
+
+    // 자동지시서작성이 실패해 거래처 원본만 받아진 경우의 폴백.
+    // 거래처 원본 AI 는 빼고 메타데이터만 ZIP 으로 내보낸다. 워처가 headerOnly 플래그를 보고
+    // 빈 캔버스에 헤더(QR + 박스 + 좌측텍스트 + 노트박스)만 그린 작은 AI 를 만들어 FlexSign 에 띄움.
+    // 사용자는 그 헤더를 복사해 거래처 원본 캔버스에 붙여 인쇄 → PDF24 → 매칭 으로 동일 흐름 복귀.
+    @GetMapping("/{id}/worksheet-header-package")
+    public ResponseEntity<byte[]> downloadWorksheetHeaderPackage(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ZipOutputStream zos = new ZipOutputStream(baos, StandardCharsets.UTF_8);
+
+            Map<String, Object> info = buildWorksheetInfo(order);
+            info.put("headerOnly", true);
+
+            byte[] jsonBytes = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(info);
+            zos.putNextEntry(new ZipEntry(order.getOrderNumber() + ".json"));
+            zos.write(jsonBytes);
+            zos.closeEntry();
+
+            zos.finish();
+            zos.close();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.set("Content-Disposition",
+                    "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(order.getOrderNumber() + "_지시서_헤더만.zip", "UTF-8").replace("+", "%20"));
+            return ResponseEntity.ok().headers(headers).body(baos.toByteArray());
+
+        } catch (Exception e) {
+            throw new RuntimeException("헤더 패키지 생성 실패: " + e.getMessage());
+        }
+    }
+
+    private Map<String, Object> buildWorksheetInfo(Order order) {
+        Map<String, Object> info = new LinkedHashMap<>();
+        info.put("orderNumber", order.getOrderNumber());
+        info.put("companyName", order.getClient().getCompanyName());
+        info.put("contactName", order.getClient().getContactName());
+        info.put("phone", order.getClient().getPhone());
+        info.put("title", order.getTitle());
+        info.put("requestType", order.getRequestType().name());
+        info.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);
+        info.put("dueTime", order.getDueTime());
+        info.put("deliveryMethod", order.getDeliveryMethod() != null ? deliveryLabel(order.getDeliveryMethod()) : null);
+        info.put("deliveryAddress", order.getDeliveryAddress());
+        info.put("additionalItems", order.getAdditionalItems());
+        info.put("note", order.getNote());
+        info.put("createdAt", order.getCreatedAt().toString());
+        return info;
     }
 
     private String deliveryLabel(Order.DeliveryMethod method) {

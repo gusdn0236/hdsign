@@ -60,6 +60,10 @@ public class OrderTrashPurgeScheduler {
             String previewKey = extractKeyFromPublicUrl(file.getPreviewUrl());
             if (previewKey != null) keys.add(previewKey);
         }
+        // 지시서 PDF 도 함께 정리 — Order 컬럼이라 위 file 루프에 안 들어와 누수되던 지점.
+        String worksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
+        if (worksheetKey != null) keys.add(worksheetKey);
+
         for (String key : keys) {
             try {
                 s3Client.deleteObject(DeleteObjectRequest.builder()

@@ -328,6 +328,13 @@
   transition: background 0.2s ease, opacity 0.2s ease;
 }
 
+.next-status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+}
+
 .next-status-btn:hover:not(:disabled) {
   background: #27272a;
 }

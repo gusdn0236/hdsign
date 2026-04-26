@@ -1108,6 +1108,247 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         return False
 
 
+def process_header_only_to_v8(ai_app, dst_path: Path,
+                              qr_js_matrix: str,
+                              header_text: str, left_text: str, note_text: str) -> bool:
+    """헤더(QR + 박스 + 좌측텍스트 + 노트박스)만 빈 캔버스에 그린 v8 AI 저장.
+    거래처 원본 AI 를 열지 않으므로 큰 파일에서 발생하는 Illustrator COM 타임아웃을 회피한다.
+    사용자는 FlexSign 에서 이 헤더를 복사해 거래처 원본 캔버스에 붙여 인쇄 → PDF24 흐름으로 진입."""
+    header_js = _js_escape(header_text)
+    left_js = _js_escape(left_text)
+    note_js = _js_escape(note_text)
+    dst_js = str(dst_path).replace("\\", "/")
+
+    fr, fg, fb = HEADER_BOX_FILL
+    sr, sg, sb = HEADER_BOX_STROKE
+
+    script = (
+        "try {"
+        f"  var dstPath = \"{dst_js}\";"
+        "  var dstFile = new File(dstPath);"
+        "  function k(p) { return p.toLowerCase().replace(/\\\\/g, '/'); }"
+        "  for (var z = app.documents.length - 1; z >= 0; z--) {"
+        "    var fp = k(app.documents[z].fullName.fsName);"
+        "    if (fp == k(dstPath)) {"
+        "      try { app.documents[z].close(SaveOptions.DONOTSAVECHANGES); } catch(e) {}"
+        "    }"
+        "  }"
+        # 빈 캔버스 — abWidth*0.10 = 100pt QR 이라 가독성 적당. 높이는 노트량에 맞춰 아래에서 자른다.
+        "  var W = 1000; var H = 600;"
+        "  var doc = app.documents.add(DocumentColorSpace.RGB, W, H);"
+        "  var layer = doc.layers.add();"
+        "  layer.name = 'worksheet';"
+        "  var ab = doc.artboards[0].artboardRect;"
+        "  var abLeft = ab[0], abTop = ab[1], abRight = ab[2], abBottom = ab[3];"
+        "  var abWidth = abRight - abLeft;"
+        "  var qrSize = abWidth * 0.10;"
+        "  if (qrSize < 60) qrSize = 60;"
+        "  if (qrSize > 1500) qrSize = 1500;"
+        "  var sc = qrSize / 90.0;"
+        "  var margin = 18 * sc;"
+        "  var bigFont = 26 * sc;"
+        "  var noteFont = 13 * sc;"
+        "  var boxH = bigFont * 1.5;"
+        "  var lineGap = 6 * sc;"
+        "  var blk = new RGBColor(); blk.red = 0; blk.green = 0; blk.blue = 0;"
+        "  var boxFill = new RGBColor();"
+        f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
+        "  var boxStroke = new RGBColor();"
+        f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
+        "  var malgun = null;"
+        "  var malgunNames = ['Gulim','GulimChe','굴림','굴림체','Dotum','DotumChe','돋움','돋움체','MalgunGothic','Malgun Gothic','맑은 고딕','맑은고딕'];"
+        "  for (var mi = 0; mi < malgunNames.length && malgun == null; mi++) {"
+        "    try { malgun = app.textFonts.getByName(malgunNames[mi]); } catch(e) { malgun = null; }"
+        "  }"
+        # 헤더 폭 사전 측정 (글씨에 박스 폭 맞추기)
+        f'  var headerStr = "{header_js}";'
+        "  var headerWidth = bigFont * 6;"
+        "  var measHdr = layer.textFrames.add();"
+        "  measHdr.contents = headerStr;"
+        "  measHdr.textRange.characterAttributes.size = bigFont;"
+        "  if (malgun) measHdr.textRange.characterAttributes.textFont = malgun;"
+        "  measHdr.position = [0, 0];"
+        "  try {"
+        "    var mhb = measHdr.geometricBounds;"
+        "    headerWidth = mhb[2] - mhb[0];"
+        "  } catch (e) {}"
+        "  try { measHdr.remove(); } catch (e) {}"
+        "  var boxPadX = bigFont * 0.7;"
+        "  var boxW = headerWidth + boxPadX * 2;"
+        "  var minBoxW = bigFont * 6;"
+        "  if (boxW < minBoxW) boxW = minBoxW;"
+        # 노트 위치/크기 + 높이 사전 측정
+        f'  var noteTextStr = "{note_js}";'
+        "  var pad = 6 * sc;"
+        "  var qrOriginX = abRight - margin - qrSize;"
+        "  var noteW = qrSize * 1.9;"
+        "  var noteRight = qrOriginX + qrSize;"
+        "  var noteLeft = noteRight - noteW;"
+        "  if (noteLeft < abLeft + margin + boxW / 2) {"
+        "    noteLeft = qrOriginX;"
+        "    noteW = qrSize;"
+        "  }"
+        "  var noteTextW = noteW - pad * 2;"
+        "  var noteTextLeft = noteLeft + pad;"
+        "  var noteH = 0;"
+        "  if (noteTextStr.length > 0) {"
+        "    var tmpY = abTop;"
+        "    var tmpPath = layer.pathItems.add();"
+        "    tmpPath.filled = false; tmpPath.stroked = false;"
+        "    tmpPath.setEntirePath(["
+        "      [noteTextLeft, tmpY],"
+        "      [noteTextLeft + noteTextW, tmpY],"
+        "      [noteTextLeft + noteTextW, tmpY - 5000],"
+        "      [noteTextLeft, tmpY - 5000]"
+        "    ]);"
+        "    tmpPath.closed = true;"
+        "    var tmpTf = layer.textFrames.areaText(tmpPath);"
+        "    tmpTf.contents = noteTextStr;"
+        "    tmpTf.textRange.characterAttributes.size = noteFont;"
+        "    if (malgun) tmpTf.textRange.characterAttributes.textFont = malgun;"
+        "    var contentH = noteFont * 1.4;"
+        "    try {"
+        "      var tfLines = tmpTf.lines;"
+        "      if (tfLines.length > 0) {"
+        "        contentH = tfLines[0].geometricBounds[1] - tfLines[tfLines.length - 1].geometricBounds[3];"
+        "      }"
+        "    } catch (e) {}"
+        "    noteH = contentH + pad * 2 + noteFont;"
+        "    try { tmpTf.remove(); } catch (e) {}"
+        "    try { tmpPath.remove(); } catch (e) {}"
+        "  }"
+        # 빈 캔버스라 도면 침범 처리는 불필요. topY 는 abTop 그대로.
+        "  var rightDepth = qrSize;"
+        "  if (noteH > 0) rightDepth += lineGap + noteH;"
+        "  var overlayDepth = (rightDepth > boxH) ? rightDepth : boxH;"
+        "  var topY = abTop;"
+        # 캔버스 높이를 헤더 컨텐츠에 맞춰 트림 — 빈 여백이 너무 크면 FlexSign 붙여넣기 시 거슬림.
+        "  var needAbBottom = topY - (overlayDepth + margin * 2);"
+        "  if (needAbBottom < abBottom) {"
+        "    try { doc.artboards[0].artboardRect = [abLeft, abTop, abRight, needAbBottom]; } catch(e) {}"
+        "    abBottom = needAbBottom;"
+        "  }"
+        # 좌측: 싸인월드 + 전화번호
+        "  var leftTf = layer.textFrames.add();"
+        f'  leftTf.contents = "{left_js}";'
+        "  leftTf.textRange.characterAttributes.size = bigFont;"
+        "  if (malgun) leftTf.textRange.characterAttributes.textFont = malgun;"
+        "  leftTf.position = [0, 0];"
+        "  var lb = leftTf.geometricBounds;"
+        "  var leftTargetX = abLeft + margin;"
+        "  var leftTargetTop = topY - margin;"
+        "  leftTf.position = [leftTargetX - lb[0], leftTargetTop - lb[1]];"
+        # 중앙: 박스 + 헤더 텍스트
+        "  var centerX = (abLeft + abRight) / 2;"
+        "  var boxLeft = centerX - boxW / 2;"
+        "  var boxTop = topY - margin;"
+        "  var box = layer.pathItems.rectangle(boxTop, boxLeft, boxW, boxH);"
+        "  box.filled = true; box.fillColor = boxFill;"
+        "  box.stroked = true; box.strokeColor = boxStroke;"
+        "  box.strokeWidth = 0.5 * sc;"
+        "  var headerTf = layer.textFrames.add();"
+        f'  headerTf.contents = "{header_js}";'
+        "  headerTf.textRange.characterAttributes.size = bigFont;"
+        "  if (malgun) headerTf.textRange.characterAttributes.textFont = malgun;"
+        "  headerTf.position = [0, 0];"
+        "  var hb = headerTf.geometricBounds;"
+        "  var glyphCx = (hb[0] + hb[2]) / 2;"
+        "  var glyphCy = (hb[1] + hb[3]) / 2;"
+        "  var boxCenterY = boxTop - boxH / 2;"
+        "  headerTf.position = [centerX - glyphCx, boxCenterY - glyphCy];"
+        # 우측: QR
+        "  var qrOriginY = topY - margin;"
+        f"  var m = {qr_js_matrix};"
+        "  var N = m.length;"
+        "  var cell = qrSize / N;"
+        "  var grp = layer.groupItems.add();"
+        "  grp.name = 'qr';"
+        "  for (var y = 0; y < N; y++) {"
+        "    for (var x = 0; x < N; x++) {"
+        "      if (m[y][x]) {"
+        "        var r = grp.pathItems.rectangle("
+        "          qrOriginY - y * cell, qrOriginX + x * cell, cell, cell"
+        "        );"
+        "        r.filled = true; r.stroked = false; r.fillColor = blk;"
+        "      }"
+        "    }"
+        "  }"
+        # QR 아래: 노트 박스
+        "  var noteTfRef = null;"
+        "  if (noteH > 0) {"
+        "    var noteTop = qrOriginY - qrSize - lineGap;"
+        "    var notePath = layer.pathItems.add();"
+        "    notePath.filled = false; notePath.stroked = false;"
+        "    notePath.setEntirePath(["
+        "      [noteTextLeft, noteTop - pad],"
+        "      [noteTextLeft + noteTextW, noteTop - pad],"
+        "      [noteTextLeft + noteTextW, noteTop - noteH + pad],"
+        "      [noteTextLeft, noteTop - noteH + pad]"
+        "    ]);"
+        "    notePath.closed = true;"
+        "    var noteTf = layer.textFrames.areaText(notePath);"
+        "    noteTf.contents = noteTextStr;"
+        "    noteTf.textRange.characterAttributes.size = noteFont;"
+        "    if (malgun) noteTf.textRange.characterAttributes.textFont = malgun;"
+        "    noteTfRef = noteTf;"
+        "    var noteBox = layer.pathItems.rectangle(noteTop, noteLeft, noteW, noteH);"
+        "    noteBox.filled = false;"
+        "    noteBox.stroked = true;"
+        "    noteBox.strokeColor = boxStroke;"
+        "    noteBox.strokeWidth = 0.5 * sc;"
+        "  }"
+        # FlexSign 메트릭 회피 — 좌측/노트는 윤곽선 변환, 헤더 텍스트는 사용자 수정 여지 남김.
+        "  try { leftTf.createOutline(); } catch (e) {}"
+        "  if (noteTfRef) { try { noteTfRef.createOutline(); } catch (e) {} }"
+        # v8 저장 — 자동지시서작성과 달리 PDF 는 만들지 않는다.
+        # 이 AI 는 "FlexSign 에서 복사해 거래처 캔버스에 붙이는" 중간물이고, 최종 PDF 는
+        # 사용자가 인쇄 단계에서 PDF24 로 만들면 _process_printed_pdf 가 업로드한다.
+        "  var opts = new IllustratorSaveOptions();"
+        "  opts.compatibility = Compatibility.ILLUSTRATOR8;"
+        "  opts.saveMultipleArtboards = false;"
+        "  doc.saveAs(dstFile, opts);"
+        "  doc.close(SaveOptions.DONOTSAVECHANGES);"
+        "  'OK';"
+        "} catch (e) { 'ERR: ' + e.toString(); }"
+    )
+
+    try:
+        result = ai_app.DoJavaScript(script)
+        if result and str(result).startswith("ERR"):
+            ui_log(f"Illustrator 헤더 처리 실패: {result}")
+            return False
+        return True
+    except Exception as e:
+        ui_log(f"DoJavaScript 호출 실패: {e}")
+        return False
+
+
+def convert_header_only(order_number: str, qr_js_matrix: str,
+                        header_text: str, left_text: str, note_text: str) -> Path | None:
+    """주문 정보로부터 헤더만 그린 AI v8 를 생성. 성공 시 경로, 실패 시 None."""
+    try:
+        import pythoncom
+        import win32com.client as win32
+
+        pythoncom.CoInitialize()
+        ai_app = win32.GetActiveObject("Illustrator.Application")
+        ai_app.UserInteractionLevel = -1
+
+        out_dir = WATCH_DIR / "converted"
+        out_dir.mkdir(exist_ok=True)
+        ts = time.strftime("%y%m%d_%H%M%S")
+        out_path = out_dir / f"{order_number}_헤더_{ts}.ai"
+
+        if not process_header_only_to_v8(ai_app, out_path, qr_js_matrix,
+                                         header_text, left_text, note_text):
+            return None
+        ui_log(f"{order_number} 헤더 AI 저장 완료")
+        return out_path
+    except Exception as e:
+        ui_log(f"헤더 변환 실패: {e}")
+        return None
+
+
 def convert_ai_file(ai_path: Path, qr_js_matrix: str,
                     header_text: str, left_text: str, note_text: str
                     ) -> tuple[Path, Path] | None:
@@ -1635,6 +1876,37 @@ def process_zip(zip_path: Path):
 
     ui_status("processing", f"{order_number} 파일을 준비하고 있습니다")
     ui_log(f"{company}  {title}")
+
+    # 헤더-only 모드 — 자동지시서작성 실패 시 폴백. 거래처 원본을 다시 열지 않고
+    # 빈 캔버스에 헤더(QR + 박스 + 좌측텍스트 + 노트박스)만 그려 FlexSign 에 띄운다.
+    # 사용자는 그 헤더를 복사해 거래처 원본 캔버스에 붙여 인쇄 → PDF24 흐름으로 진입.
+    if meta.get("headerOnly"):
+        qr_js = qr_matrix_js(EVIDENCE_URL_BASE + quote(order_number, safe=""))
+        out = convert_header_only(order_number, qr_js,
+                                  header_text, left_text, note_text)
+        if out:
+            launch_flexsign(out)
+            # 인쇄 매칭 큐에 등록 — 사용자가 PDF24 로 인쇄하면 자동지시서작성 흐름과 동일하게
+            # 다이얼로그가 떠서 이 주문에 매칭. acknowledged 호출 X (이미 IN_PROGRESS).
+            delivery_ko = (meta.get("deliveryMethod") or "").strip()
+            delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
+            remember_order_for_print(
+                order_number, company,
+                (str(meta.get("dueDate")).split("T")[0] if meta.get("dueDate") else ""),
+                delivery_enum,
+            )
+        # JSON 만 들어 있는 ZIP 이라 추출 폴더는 그대로 청소.
+        try:
+            shutil.rmtree(str(temp_dir), ignore_errors=True)
+        except Exception:
+            pass
+        DONE_DIR.mkdir(exist_ok=True)
+        dest = DONE_DIR / zip_path.name
+        if dest.exists():
+            dest.unlink()
+        shutil.move(str(zip_path), str(dest))
+        ui_status("watching", "지시서가 도착하면 자동으로 열어드립니다")
+        return
 
     extract_dir = WATCH_DIR / order_number
     if extract_dir.exists():
