@@ -114,6 +114,10 @@ export default function PdfPanZoom({ url }) {
                                             key={i}
                                             pageNumber={i + 1}
                                             width={pageWidth}
+                                            // CSS transform 으로 확대하면 캔버스 비트맵이 그대로 늘어나서 흐릿해진다.
+                                            // DPR 을 maxScale 만큼 올려두면 4x 까지 줌해도 픽셀 1:1 로 떨어져 선명함.
+                                            // 비용은 캔버스 메모리 16 배지만 어드민 데스크톱에서만 쓰여 감당 가능.
+                                            devicePixelRatio={4}
                                             renderAnnotationLayer={false}
                                             renderTextLayer={false}
                                             className="ppz-page"
