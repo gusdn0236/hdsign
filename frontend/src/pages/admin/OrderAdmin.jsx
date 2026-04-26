@@ -103,6 +103,7 @@ export default function OrderAdmin() {
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null);
+  const [carouselIndex, setCarouselIndex] = useState(0);
   const [sortMode, setSortMode] = useState("DEFAULT");
   const [clientFilter, setClientFilter] = useState("");
   const [dueDateRange, setDueDateRange] = useState("ALL");
@@ -176,7 +177,25 @@ export default function OrderAdmin() {
 
   useEffect(() => {
     setLightboxIndex(null);
+    setCarouselIndex(0);
   }, [selectedOrderId]);
+
+  // 모달이 열릴 때 "본 시각" 갱신 → 행 배지 즉시 클리어.
+  // 백엔드 응답을 기다리지 않고 낙관적으로 로컬 상태부터 갱신.
+  useEffect(() => {
+    if (!selectedOrderId || !token) return;
+    const nowIso = new Date().toISOString();
+    setOrders((prev) =>
+      prev.map((o) => (o.id === selectedOrderId ? { ...o, adminViewedAt: nowIso } : o))
+    );
+    setTrashOrders((prev) =>
+      prev.map((o) => (o.id === selectedOrderId ? { ...o, adminViewedAt: nowIso } : o))
+    );
+    fetch(`${BASE_URL}/api/admin/orders/${selectedOrderId}/viewed`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {});
+  }, [selectedOrderId, token]);
 
   useEffect(() => {
     setClientFilter("");
@@ -192,6 +211,36 @@ export default function OrderAdmin() {
       })),
     [selectedFiles.evidence]
   );
+
+  // 모달 좌측 캐러셀 슬라이드 — 1번: 지시서 PDF (있으면), 2번~: evidence 사진들.
+  // photoIndex 는 클릭 시 PhotoLightbox 가 같은 사진을 풀스크린으로 열기 위해 사용.
+  const carouselSlides = useMemo(() => {
+    const slides = [];
+    if (selectedOrder?.worksheetPdfUrl) {
+      slides.push({ type: "pdf", url: selectedOrder.worksheetPdfUrl });
+    }
+    selectedFiles.evidence.forEach((file, idx) => {
+      slides.push({ type: "photo", file, photoIndex: idx });
+    });
+    return slides;
+  }, [selectedOrder, selectedFiles.evidence]);
+
+  // 좌/우 화살표 키로 캐러셀 이동. lightbox 가 열려 있을 땐 lightbox 가 우선 처리.
+  useEffect(() => {
+    if (!selectedOrderId || lightboxIndex !== null) return;
+    if (carouselSlides.length <= 1) return;
+    const handler = (e) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setCarouselIndex((i) => (i - 1 + carouselSlides.length) % carouselSlides.length);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setCarouselIndex((i) => (i + 1) % carouselSlides.length);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedOrderId, lightboxIndex, carouselSlides.length]);
 
   const statusCounts = useMemo(() => {
     const counts = { RECEIVED: 0, IN_PROGRESS: 0, COMPLETED: 0 };
@@ -577,7 +626,7 @@ export default function OrderAdmin() {
         msg: "헤더 ZIP을 다운받았습니다. FlexSign에서 헤더를 복사해 거래처 원본에 붙여 인쇄해주세요.",
       });
     } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "헤더 재생성 중 오류가 발생했습니다." });
+      setFeedback({ type: "error", msg: err.message || "QR재생성 중 오류가 발생했습니다." });
     } finally {
       setRegeneratingHeaderId(null);
     }
@@ -719,17 +768,18 @@ export default function OrderAdmin() {
             <th>납기</th>
             <th>{activeFilter === "TRASH" ? "남은 일수" : "상태"}</th>
             <th>{activeFilter === "TRASH" ? "삭제일" : "등록일"}</th>
-            <th>처리</th>
+            <th>상태변경</th>
+            <th>프로그램실행</th>
           </tr>
         </thead>
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={8} className="order-empty">요청 목록을 불러오는 중입니다.</td>
+              <td colSpan={9} className="order-empty">요청 목록을 불러오는 중입니다.</td>
             </tr>
           ) : filteredOrders.length === 0 ? (
             <tr>
-              <td colSpan={8} className="order-empty">
+              <td colSpan={9} className="order-empty">
                 {activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "표시할 요청이 없습니다."}
               </td>
             </tr>
@@ -743,6 +793,15 @@ export default function OrderAdmin() {
               const restoring = restoringOrderId === order.id;
               const deleting = deletingOrderId === order.id;
               const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
+              const viewedAt = order.adminViewedAt ? new Date(order.adminViewedAt).getTime() : 0;
+              const evidenceAt = order.evidenceLastUploadedAt
+                ? new Date(order.evidenceLastUploadedAt).getTime()
+                : 0;
+              const worksheetAt = order.worksheetUpdatedAt
+                ? new Date(order.worksheetUpdatedAt).getTime()
+                : 0;
+              const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
+              const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
 
               return (
                 <tr
@@ -758,7 +817,23 @@ export default function OrderAdmin() {
                     }
                   }}
                 >
-                  <td className="order-num">{order.orderNumber}</td>
+                  <td className="order-num">
+                    <span className="order-num-text">{order.orderNumber}</span>
+                    {(hasNewEvidence || hasNewWorksheet) && (
+                      <span className="row-badges">
+                        {hasNewEvidence && (
+                          <span className="row-badge badge-evidence" title="새 작업 사진이 올라왔습니다">
+                            사진
+                          </span>
+                        )}
+                        {hasNewWorksheet && (
+                          <span className="row-badge badge-worksheet" title="지시서/납기가 변경되었습니다">
+                            변경
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </td>
                   <td>{order.clientCompanyName || "-"}</td>
                   <td>{requestLabel(order.requestType)}</td>
                   <td className="order-title">{order.title || requestLabel(order.requestType)}</td>
@@ -799,57 +874,7 @@ export default function OrderAdmin() {
                           {deleting ? "삭제 중..." : "영구삭제"}
                         </button>
                       </div>
-                    ) : nextStatus ? (
-                      order.status === "RECEIVED" && order.requestType === "ORDER" ? (
-                        <button
-                          type="button"
-                          className="next-status-btn action-worksheet"
-                          onClick={(e) => downloadWorksheet(e, order)}
-                          disabled={downloadingId === order.id}
-                        >
-                          {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
-                        </button>
-                      ) : order.status === "IN_PROGRESS" && order.requestType === "ORDER" ? (
-                        <div className="next-status-stack">
-                          <button
-                            type="button"
-                            className="next-status-btn action-worksheet"
-                            onClick={(e) => regenerateHeader(e, order)}
-                            disabled={regeneratingHeaderId === order.id}
-                            title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, 헤더(QR+주문정보) 만 다시 생성"
-                          >
-                            {regeneratingHeaderId === order.id ? "준비 중..." : "헤더 재생성"}
-                          </button>
-                          <button
-                            type="button"
-                            className="next-status-btn action-complete"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              updateOrderStatus(order.id, nextStatus);
-                            }}
-                            disabled={updating}
-                          >
-                            {updating ? "변경 중..." : "작업완료처리"}
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateOrderStatus(order.id, nextStatus);
-                          }}
-                          disabled={updating}
-                        >
-                          {updating
-                            ? "변경 중..."
-                            : order.status === "IN_PROGRESS"
-                              ? "작업완료처리"
-                              : "다음 단계"}
-                        </button>
-                      )
-                    ) : (
+                    ) : !nextStatus ? (
                       <button
                         type="button"
                         className="next-status-btn action-trash"
@@ -861,7 +886,48 @@ export default function OrderAdmin() {
                       >
                         {trashing ? "이동 중..." : "휴지통으로"}
                       </button>
+                    ) : order.status === "RECEIVED" && order.requestType === "ORDER" ? (
+                      // ORDER 의 RECEIVED 는 [지시서 자동작성하기] 로만 진행 — 수동 상태변경은 제공 안 함.
+                      null
+                    ) : (
+                      <button
+                        type="button"
+                        className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateOrderStatus(order.id, nextStatus);
+                        }}
+                        disabled={updating}
+                      >
+                        {updating
+                          ? "변경 중..."
+                          : order.status === "IN_PROGRESS"
+                            ? "작업완료처리"
+                            : "다음 단계"}
+                      </button>
                     )}
+                  </td>
+                  <td>
+                    {!isTrash && nextStatus && order.requestType === "ORDER" && order.status === "RECEIVED" ? (
+                      <button
+                        type="button"
+                        className="next-status-btn action-worksheet"
+                        onClick={(e) => downloadWorksheet(e, order)}
+                        disabled={downloadingId === order.id}
+                      >
+                        {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
+                      </button>
+                    ) : !isTrash && nextStatus && order.requestType === "ORDER" && order.status === "IN_PROGRESS" ? (
+                      <button
+                        type="button"
+                        className="next-status-btn action-worksheet"
+                        onClick={(e) => regenerateHeader(e, order)}
+                        disabled={regeneratingHeaderId === order.id}
+                        title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더(QR+주문정보) 만 다시 생성"
+                      >
+                        {regeneratingHeaderId === order.id ? "준비 중..." : "QR재생성"}
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               );
@@ -886,16 +952,77 @@ export default function OrderAdmin() {
 
             <div className="order-preview-left">
               <div className="order-file-stage">
-                {selectedFiles.work.length ? (
+                {carouselSlides.length === 0 ? (
                   <div className="order-preview-file-fallback">
-                    <p className="fallback-title">첨부 파일</p>
-                    <p className="fallback-desc">아래 링크로 파일을 확인할 수 있습니다.</p>
+                    <p className="fallback-title">표시할 자료 없음</p>
+                    <p className="fallback-desc">지시서 PDF나 작업 사진이 아직 없습니다.</p>
                   </div>
                 ) : (
-                  <div className="order-preview-file-fallback">
-                    <p className="fallback-title">첨부 파일 없음</p>
-                    <p className="fallback-desc">등록된 첨부 파일이 없습니다.</p>
-                  </div>
+                  (() => {
+                    const slide = carouselSlides[carouselIndex] || carouselSlides[0];
+                    if (slide.type === "pdf") {
+                      return (
+                        <iframe
+                          key={slide.url}
+                          className="order-preview-pdf"
+                          src={slide.url}
+                          title="지시서 PDF"
+                        />
+                      );
+                    }
+                    return (
+                      <button
+                        type="button"
+                        className="order-carousel-photo"
+                        onClick={() => setLightboxIndex(slide.photoIndex)}
+                        title="크게 보기"
+                      >
+                        <img src={slide.file.fileUrl} alt={slide.file.originalName} />
+                        <div className="order-carousel-photo-meta">
+                          <span>{slide.file.uploadedDepartment || "부서 미상"}</span>
+                          <span>{formatDateTime(slide.file.createdAt)}</span>
+                        </div>
+                      </button>
+                    );
+                  })()
+                )}
+
+                {carouselSlides.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      className="order-carousel-nav prev"
+                      onClick={() =>
+                        setCarouselIndex((i) => (i - 1 + carouselSlides.length) % carouselSlides.length)
+                      }
+                      aria-label="이전"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      className="order-carousel-nav next"
+                      onClick={() => setCarouselIndex((i) => (i + 1) % carouselSlides.length)}
+                      aria-label="다음"
+                    >
+                      ›
+                    </button>
+                    <div className="order-carousel-dots">
+                      {carouselSlides.map((slide, idx) => (
+                        <button
+                          type="button"
+                          key={`${slide.type}-${idx}`}
+                          className={`order-carousel-dot ${idx === carouselIndex ? "active" : ""}`}
+                          onClick={() => setCarouselIndex(idx)}
+                          aria-label={slide.type === "pdf" ? "지시서" : `사진 ${idx}`}
+                        />
+                      ))}
+                    </div>
+                    <div className="order-carousel-counter">
+                      {carouselIndex + 1} / {carouselSlides.length}
+                      {carouselSlides[carouselIndex]?.type === "pdf" ? " · 지시서" : " · 작업 사진"}
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -912,35 +1039,6 @@ export default function OrderAdmin() {
                       {file.originalName}
                     </a>
                   ))}
-                </div>
-              )}
-
-              {selectedFiles.evidence.length > 0 && (
-                <div className="evidence-section">
-                  <div className="evidence-section-head">
-                    <span className="evidence-section-title">작업 사진</span>
-                    <span className="evidence-section-count">{selectedFiles.evidence.length}장</span>
-                  </div>
-                  <div className="evidence-section-grid">
-                    {selectedFiles.evidence.map((file, index) => (
-                      <button
-                        type="button"
-                        key={file.id || `${file.originalName}-evidence-${index}`}
-                        className="evidence-section-item"
-                        onClick={() => setLightboxIndex(index)}
-                      >
-                        <img src={file.fileUrl} alt={file.originalName} loading="lazy" />
-                        <div className="evidence-section-meta">
-                          <span className="evidence-section-dept">
-                            {file.uploadedDepartment || "부서 미상"}
-                          </span>
-                          <span className="evidence-section-time">
-                            {formatDateTime(file.createdAt)}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
                 </div>
               )}
             </div>
@@ -1004,9 +1102,9 @@ export default function OrderAdmin() {
                           className="next-status-btn action-worksheet"
                           disabled={regeneratingHeaderId === selectedOrder.id}
                           onClick={(e) => regenerateHeader(e, selectedOrder)}
-                          title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, 헤더(QR+주문정보) 만 다시 생성"
+                          title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더(QR+주문정보) 만 다시 생성"
                         >
-                          {regeneratingHeaderId === selectedOrder.id ? "준비 중..." : "헤더 재생성"}
+                          {regeneratingHeaderId === selectedOrder.id ? "준비 중..." : "QR재생성"}
                         </button>
                       )}
                       <select

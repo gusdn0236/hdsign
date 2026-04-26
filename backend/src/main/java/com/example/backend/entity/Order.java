@@ -89,6 +89,19 @@ public class Order {
     @Column(length = 500)
     private String worksheetPdfUrl;
 
+    // 작업자가 QR로 evidence 사진 업로드한 가장 최근 시각.
+    // 관리자 모달에서 adminViewedAt 보다 이 시각이 늦으면 행에 "신규 사진" 배지 표시.
+    @Column
+    private LocalDateTime evidenceLastUploadedAt;
+
+    // 워처가 PDF24로 지시서 PDF를 (재)업로드한 시각. 납기/지시서 변경의 최종 신호.
+    @Column
+    private LocalDateTime worksheetUpdatedAt;
+
+    // 관리자가 마지막으로 모달을 열어 본 시각. 위 두 시각보다 늦으면 배지가 사라진다.
+    @Column
+    private LocalDateTime adminViewedAt;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 

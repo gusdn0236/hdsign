@@ -23,6 +23,7 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -144,6 +145,10 @@ public class PublicEvidenceController {
                     .body(Map.of("message", "사진 업로드에 실패했습니다. 잠시 후 다시 시도해 주세요."));
         }
 
+        // 관리자 페이지 행 배지 트리거. adminViewedAt 보다 이 시각이 늦으면 "신규 사진" 표시.
+        order.setEvidenceLastUploadedAt(LocalDateTime.now());
+        orderRepository.save(order);
+
         Map<String, Object> body = new HashMap<>();
         body.put("uploaded", uploaded);
         body.put("count", uploaded.size());
@@ -244,6 +249,9 @@ public class PublicEvidenceController {
                 : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
         String url = normalizedPublicUrl + key;
         order.setWorksheetPdfUrl(url);
+        // 관리자 행 배지 트리거 — 납기 변경/지시서 수정 시 워처가 PDF 를 재업로드 하므로
+        // 이 시각이 곧 "지시서 변경" 신호가 된다.
+        order.setWorksheetUpdatedAt(LocalDateTime.now());
         orderRepository.save(order);
 
         // DB 가 새 URL 로 바뀐 직후 옛 R2 객체 삭제(best-effort). 실패해도 다음 영구삭제 시 청소됨.

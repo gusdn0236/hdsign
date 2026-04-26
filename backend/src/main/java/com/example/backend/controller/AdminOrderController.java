@@ -60,6 +60,16 @@ public class AdminOrderController {
         return ResponseEntity.ok(orders);
     }
 
+    // 관리자가 모달을 열면 "본 시각" 갱신 → 행 배지(신규 사진/지시서 변경) 클리어.
+    // 멱등 — 여러 번 호출해도 동일.
+    @PutMapping("/{id}/viewed")
+    public ResponseEntity<OrderDto.Response> markViewed(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        order.setAdminViewedAt(LocalDateTime.now());
+        return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
+    }
+
     // 상태 변경
     @PutMapping("/{id}/status")
     public ResponseEntity<OrderDto.Response> updateStatus(
