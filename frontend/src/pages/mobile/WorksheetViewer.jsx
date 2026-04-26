@@ -6,7 +6,6 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './WorksheetViewer.css';
 
-// Vite ?url import 으로 PDF.js worker 를 정적 자산으로 번들. CDN 의존 X.
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
@@ -16,6 +15,7 @@ const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시�
 const MAX_DEPT_LEN = 100;
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
+const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
 
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
@@ -68,16 +68,17 @@ const DELIVERY_LABELS = {
 export default function WorksheetViewer() {
     const { orderNumber } = useParams();
     const fileInputRef = useRef(null);
-    const containerRef = useRef(null);
+    const stageRef = useRef(null);
 
     const [detail, setDetail] = useState(null);
     const [detailError, setDetailError] = useState('');
     const [loadingDetail, setLoadingDetail] = useState(true);
-
+    const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
+    const [pageRatio, setPageRatio] = useState(DEFAULT_PAGE_RATIO);
+    const [pdfReady, setPdfReady] = useState(false);
     const [pdfError, setPdfError] = useState('');
-    const [pageWidth, setPageWidth] = useState(0);
 
     // 시트 (탭하면 열림)
     const [sheetOpen, setSheetOpen] = useState(false);
@@ -89,31 +90,67 @@ export default function WorksheetViewer() {
     const [uploading, setUploading] = useState(false);
     const [uploadResult, setUploadResult] = useState(null);
     const [uploadError, setUploadError] = useState('');
+    const [pdfViewKey, setPdfViewKey] = useState(0);
+    // 화질 점진 향상 — TransformWrapper.onTransformed 로 현재 핀치 줌 스케일 추적,
+    // 디바운스 후 renderScale 갱신 → Page 재렌더(devicePixelRatio 가 scale 배수로).
+    // 줌 안 했을 땐 base DPR 로 빠르게, 줌하면 글씨 또렷해지게.
+    const [renderScale, setRenderScale] = useState(1);
+    const transformRef = useRef(null);
+    const renderScaleTimerRef = useRef(null);
 
-    // 뷰어 진입 동안 브라우저 페이지 줌(핀치) 비활성화. 떠날 때 원복.
+    const resetPdfView = useCallback((e) => {
+        e?.stopPropagation?.();
+        if (transformRef.current?.resetTransform) {
+            transformRef.current.resetTransform(0);
+            setRenderScale(1);
+            return;
+        }
+        setPdfReady(false);
+        setPdfViewKey((key) => key + 1);
+    }, []);
+
+    const handleTransformed = useCallback((_ref, state) => {
+        if (renderScaleTimerRef.current) clearTimeout(renderScaleTimerRef.current);
+        renderScaleTimerRef.current = setTimeout(() => {
+            setRenderScale((prev) => {
+                const next = Math.max(1, Math.min(5, state.scale || 1));
+                return Math.abs(next - prev) > 0.05 ? next : prev;
+            });
+        }, 280);
+    }, []);
+
+    useEffect(() => () => {
+        if (renderScaleTimerRef.current) clearTimeout(renderScaleTimerRef.current);
+    }, []);
+
+    // 브라우저 페이지 줌은 막고, PDF 자체만 TransformWrapper 로 확대/이동한다.
     useEffect(() => {
         const meta = document.querySelector('meta[name="viewport"]');
         if (!meta) return undefined;
         const original = meta.getAttribute('content') || '';
         meta.setAttribute(
             'content',
-            'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
+            'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
         );
         return () => meta.setAttribute('content', original);
     }, []);
 
-    // 컨테이너 폭 측정 → PDF 페이지 폭 = 화면 폭
     useEffect(() => {
         const measure = () => {
-            if (!containerRef.current) return;
-            // 좌우 8px 패딩 빼고 꽉 채우기
-            const w = containerRef.current.clientWidth - 16;
-            setPageWidth(Math.max(280, w));
+            if (!stageRef.current) return;
+            const rect = stageRef.current.getBoundingClientRect();
+            setStageSize({
+                width: Math.max(0, Math.floor(rect.width)),
+                height: Math.max(0, Math.floor(rect.height)),
+            });
         };
         measure();
+        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+        if (observer && stageRef.current) observer.observe(stageRef.current);
         window.addEventListener('resize', measure);
         window.addEventListener('orientationchange', measure);
         return () => {
+            observer?.disconnect();
             window.removeEventListener('resize', measure);
             window.removeEventListener('orientationchange', measure);
         };
@@ -150,21 +187,46 @@ export default function WorksheetViewer() {
         queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
     }, [queued]);
 
-    // R2 CORS 가 hdsigncraft.com 에 열려있어 PDF.js 가 R2 URL 직접 fetch.
-    // R2 egress 무료라 조회량과 무관하게 추가 비용 0. 백엔드 프록시 엔드포인트는
-    // 폴백용으로 남겨둠(/api/public/worksheets/{n}/pdf) — CORS 가 깨지면 즉시 전환 가능.
     const pdfFile = useMemo(
         () => (detail?.worksheetPdfUrl ? { url: detail.worksheetPdfUrl } : null),
         [detail],
     );
 
+    useEffect(() => {
+        setNumPages(0);
+        setCurrentPage(1);
+        setPageRatio(DEFAULT_PAGE_RATIO);
+        setPdfReady(false);
+        setPdfError('');
+        setPdfViewKey((key) => key + 1);
+    }, [detail?.worksheetPdfUrl]);
+
+    const pageWidth = useMemo(() => {
+        if (!stageSize.width || !stageSize.height) return 0;
+        const padding = 16;
+        const maxWidth = Math.max(260, stageSize.width - padding);
+        const maxHeight = Math.max(260, stageSize.height - padding);
+        return Math.floor(Math.min(maxWidth, maxHeight * pageRatio));
+    }, [pageRatio, stageSize.height, stageSize.width]);
+
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
-        setCurrentPage(1);
+        setCurrentPage((page) => Math.min(Math.max(1, page), n || 1));
         setPdfError('');
     }, []);
+
     const onDocError = useCallback((err) => {
         setPdfError(err?.message || 'PDF 를 표시할 수 없습니다.');
+    }, []);
+
+    const onPageLoad = useCallback((page) => {
+        const viewport = page.getViewport({ scale: 1 });
+        if (viewport?.width && viewport?.height) {
+            const nextRatio = viewport.width / viewport.height;
+            setPageRatio((currentRatio) => (
+                Math.abs(currentRatio - nextRatio) > 0.001 ? nextRatio : currentRatio
+            ));
+        }
     }, []);
 
     const handlePickFiles = async (e) => {
@@ -180,6 +242,7 @@ export default function WorksheetViewer() {
             processed.push({ file: f, previewUrl: URL.createObjectURL(f) });
         }
         setQueued((prev) => [...prev, ...processed]);
+        setSheetOpen(true);
         setCompressing(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
@@ -253,13 +316,8 @@ export default function WorksheetViewer() {
         [queued]
     );
 
-    // 뒤로가기 — 평범한 <a href> 로 풀 페이지 이동. SPA 네비(useNavigate/Link) 는
-    // PDF.js 캔버스 렌더로 메인 쓰레드가 막혀있을 때 onClick 이 묵살되는 케이스가
-    // 있었음. anchor 의 기본 동작은 브라우저가 직접 처리하므로 JS 상태 무관하게
-    // 무조건 동작. 풀 리로드 비용은 목록 페이지가 가벼워 무시 가능.
-
     return (
-        <div className="wsv-page" ref={containerRef}>
+        <div className="wsv-page">
             <header className="wsv-topbar">
                 <a
                     href="/m/worksheets"
@@ -284,8 +342,8 @@ export default function WorksheetViewer() {
 
             <div
                 className="wsv-stage"
+                ref={stageRef}
                 onClick={() => {
-                    // PDF 영역 단일 탭 → 시트 토글. 핀치/팬 도중에는 click 이벤트가 발생하지 않음.
                     if (!sheetOpen) setSheetOpen(true);
                 }}
             >
@@ -294,40 +352,54 @@ export default function WorksheetViewer() {
                 {!loadingDetail && !detailError && !pdfFile && (
                     <div className="wsv-msg">PDF 가 아직 등록되지 않았습니다.</div>
                 )}
+                {pdfFile && pageWidth > 0 && !pdfReady && !pdfError && (
+                    <div className="wsv-msg wsv-pdf-loading">PDF 불러오는 중…</div>
+                )}
                 {pdfFile && pageWidth > 0 && (
                     <TransformWrapper
+                        key={`pdf-view-${pdfViewKey}`}
+                        ref={transformRef}
                         initialScale={1}
                         minScale={1}
                         maxScale={5}
-                        doubleClick={{ mode: 'toggle', step: 1.5 }}
-                        wheel={{ step: 0.2 }}
+                        centerOnInit
+                        doubleClick={{ mode: 'toggle', step: 1.4 }}
+                        wheel={{ step: 0.18 }}
                         pinch={{ step: 5 }}
                         panning={{ velocityDisabled: true }}
+                        onTransformed={handleTransformed}
                     >
                         <TransformComponent
-                            wrapperClass="wsv-tc-wrapper"
-                            contentClass="wsv-tc-content"
+                            wrapperClass="wsv-pdf-wrapper"
+                            contentClass="wsv-pdf-content"
                         >
                             <Document
                                 file={pdfFile}
                                 onLoadSuccess={onDocLoad}
                                 onLoadError={onDocError}
-                                loading={<div className="wsv-msg">PDF 불러오는 중…</div>}
+                                loading={null}
                                 error={<div className="wsv-msg error">PDF 표시 실패</div>}
                                 noData={<div className="wsv-msg">PDF 가 비어있습니다.</div>}
                             >
                                 {numPages > 0 && (
                                     <Page
-                                        // key 에 page 포함 — 페이지 전환시 캔버스 재생성으로 깔끔하게 다시 그리게.
-                                        key={`p-${currentPage}`}
                                         pageNumber={currentPage}
                                         width={pageWidth}
-                                        // 한 페이지만 그리니 DPR 3(retina 기본) 으로 충분히 선명하면서도
-                                        // 메인 쓰레드 부하 적음. 모든 페이지를 한꺼번에 그리던 이전 방식은
-                                        // 페이지 수 × 렌더시간으로 누적돼 20~30초 멈춤이 났음.
-                                        devicePixelRatio={3}
+                                        // 줌 안 한 상태에선 DPR 3 으로 빠르게, 핀치줌하면 디바운스 후
+                                        // renderScale 이 올라가며 DPR 도 비례 증가(상한 8) → 글씨 선명.
+                                        devicePixelRatio={Math.min(8, Math.max(3, Math.ceil(3 * renderScale)))}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
+                                        onLoadSuccess={onPageLoad}
+                                        onRenderSuccess={() => {
+                                            setPdfReady(true);
+                                            // Page 가 실제로 그려진 직후 한 번 더 가운데 정렬 — centerOnInit
+                                            // 이 빈 콘텐츠 기준으로 계산돼 어긋나는 케이스 방지.
+                                            requestAnimationFrame(() => {
+                                                transformRef.current?.resetTransform?.(0);
+                                            });
+                                        }}
+                                        loading={null}
                                         className="wsv-page-canvas"
                                     />
                                 )}
@@ -338,32 +410,59 @@ export default function WorksheetViewer() {
                 {pdfError && <div className="wsv-msg error">{pdfError}</div>}
 
                 {numPages > 1 && (
-                    <div
-                        className="wsv-pager"
-                        // 시트 토글이 wsv-stage onClick 으로 처리되는데, 페이지 버튼 탭이
-                        // 그 핸들러로 버블링되면 시트가 열려버림. 여기서 차단.
-                        onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="wsv-pager" onClick={(e) => e.stopPropagation()}>
                         <button
                             type="button"
                             className="wsv-pager-btn"
-                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            onClick={() => {
+                                setPdfReady(false);
+                                setCurrentPage((p) => Math.max(1, p - 1));
+                            }}
                             disabled={currentPage <= 1}
                             aria-label="이전 페이지"
                         >‹</button>
-                        <span className="wsv-pager-text">
-                            {currentPage} / {numPages}
-                        </span>
+                        <span className="wsv-pager-text">{currentPage} / {numPages}</span>
                         <button
                             type="button"
                             className="wsv-pager-btn"
-                            onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
+                            onClick={() => {
+                                setPdfReady(false);
+                                setCurrentPage((p) => Math.min(numPages, p + 1));
+                            }}
                             disabled={currentPage >= numPages}
                             aria-label="다음 페이지"
                         >›</button>
                     </div>
                 )}
             </div>
+
+            <div className="wsv-actionbar">
+                <button
+                    type="button"
+                    className="wsv-action-reset"
+                    onClick={resetPdfView}
+                >
+                    ⟲ 전체보기
+                </button>
+                <button
+                    type="button"
+                    className="wsv-action-camera"
+                    onClick={() => setSheetOpen(true)}
+                    aria-label="사진찍기"
+                >
+                    <span className="wsv-action-camera-emoji" aria-hidden="true">📷</span>
+                    <span className="wsv-action-camera-text">사진찍기</span>
+                </button>
+            </div>
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                onChange={handlePickFiles}
+                style={{ display: 'none' }}
+            />
 
             {/* 바닥 시트 — 사진 업로드 */}
             {sheetOpen && (
@@ -399,15 +498,6 @@ export default function WorksheetViewer() {
                         >
                             {compressing ? '사진 처리 중…' : '📷 사진 찍기 / 선택하기'}
                         </button>
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            multiple
-                            onChange={handlePickFiles}
-                            style={{ display: 'none' }}
-                        />
 
                         {queued.length > 0 && (
                             <div className="wsv-queue">

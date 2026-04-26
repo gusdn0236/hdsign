@@ -1,3 +1,9 @@
+.wsv-page,
+:root:has(.wsv-page),
+body:has(.wsv-page) {
+    background: #18181b;
+}
+
 .wsv-page {
     position: fixed;
     inset: 0;
@@ -6,14 +12,13 @@
     flex-direction: column;
     -webkit-tap-highlight-color: transparent;
     overflow: hidden;
-    /* iOS Safari 가 페이지 자체를 핀치줌 하려는 시도 차단 */
     overscroll-behavior: none;
 }
 
 .wsv-topbar {
     flex-shrink: 0;
     position: relative;
-    z-index: 40;  /* 시트 backdrop(30) 위에 — 시트 열려있어도 뒤로가기 항상 클릭 가능 */
+    z-index: 100;  /* PDF 뷰어와 시트 위에 — 뒤로가기 항상 클릭 가능 */
     background: #18181b;
     color: #fff;
     display: flex;
@@ -80,38 +85,8 @@
     align-items: stretch;
     justify-content: center;
     overflow: hidden;
-    cursor: zoom-in;
-    /* 페이지 네비(.wsv-pager) 가 absolute 로 띄울 컨테이너 */
     position: relative;
-    /* 브라우저 가장자리 swipe-back 제스처는 살리고, 핀치줌은 viewport meta 의
-       user-scalable=no + 내부 라이브러리 element 의 touch-action: none 으로 차단. */
-}
-
-.wsv-tc-wrapper {
-    width: 100% !important;
-    height: 100% !important;
-    background: #18181b;
-    touch-action: none !important;
-}
-.wsv-tc-content {
-    display: flex !important;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 8px;
-    touch-action: none !important;
-}
-
-.wsv-page-canvas {
-    background: #fff;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-    border-radius: 4px;
-    overflow: hidden;
-}
-.wsv-page-canvas canvas {
-    display: block;
-    max-width: 100%;
-    height: auto !important;
+    cursor: zoom-in;
 }
 
 .wsv-msg {
@@ -125,12 +100,53 @@
 .wsv-msg.error {
     color: #fca5a5;
 }
+.wsv-pdf-loading {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    pointer-events: none;
+    background: #18181b;
+}
 
-/* 페이지 네비 — 다중 페이지 PDF 일 때만 노출 */
+.wsv-pdf-wrapper {
+    width: 100% !important;
+    height: 100% !important;
+    background: #18181b;
+    touch-action: none !important;
+    /* 라이브러리가 변환한 콘텐츠가 wrapper 안에서 가운데 정렬되도록.
+       wrapper 자체는 grid 컨테이너로 두고 콘텐츠(트랜스폼된 div) 가 한 자리. */
+    display: grid !important;
+    place-items: center !important;
+}
+.wsv-pdf-content {
+    /* width:100% 제거 — 콘텐츠가 자식(Page) 의 자연 크기로 잡혀야 라이브러리의
+       centerOnInit / resetTransform 이 페이지를 정확히 가운데 정렬한다.
+       이전엔 width:100% 로 콘텐츠가 stage 폭을 차지해 페이지가 좌측에 치우치고
+       transform 좌표 보정이 어긋나 우반쪽만 보이던 문제 발생. */
+    display: flex !important;
+    padding: 8px;
+    box-sizing: border-box;
+    touch-action: none !important;
+}
+.wsv-page-canvas {
+    background: #fff;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.wsv-page-canvas canvas {
+    display: block;
+    max-width: 100%;
+    height: auto !important;
+}
 .wsv-pager {
     position: absolute;
-    bottom: 16px;
     left: 50%;
+    bottom: 12px;
     transform: translateX(-50%);
     z-index: 20;
     display: flex;
@@ -143,8 +159,8 @@
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .wsv-pager-btn {
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
     border-radius: 999px;
     border: none;
     background: transparent;
@@ -152,7 +168,6 @@
     font-size: 22px;
     line-height: 1;
     cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
 }
 .wsv-pager-btn:disabled {
     color: #52525b;
@@ -165,6 +180,61 @@
     min-width: 40px;
     text-align: center;
 }
+.wsv-actionbar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px max(10px, env(safe-area-inset-bottom));
+    background: #18181b;
+    border-top: 1px solid #27272a;
+}
+.wsv-action-reset {
+    flex-shrink: 0;
+    border: none;
+    height: 48px;
+    padding: 0 18px;
+    border-radius: 12px;
+    background: #27272a;
+    color: #e4e4e7;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.wsv-action-reset:active {
+    transform: translateY(1px);
+    background: #3f3f46;
+}
+.wsv-action-camera {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    height: 56px;
+    padding: 0 22px;
+    border-radius: 999px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 8px 22px rgba(37, 99, 235, 0.45);
+    -webkit-tap-highlight-color: transparent;
+}
+.wsv-action-camera:active {
+    transform: translateY(1px);
+    background: #1d4ed8;
+}
+.wsv-action-camera-emoji {
+    font-size: 22px;
+    line-height: 1;
+}
+.wsv-action-camera-text {
+    letter-spacing: 0.02em;
+}
 
 /* 시트 ----------------------------------------------------------- */
 .wsv-sheet-backdrop {
@@ -174,7 +244,7 @@
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    z-index: 30;
+    z-index: 90;
     animation: wsv-fade-in 0.18s ease;
 }
 @keyframes wsv-fade-in {
@@ -397,7 +467,7 @@
     align-items: center;
     justify-content: center;
     padding: 16px;
-    z-index: 50;
+    z-index: 120;
 }
 .wsv-modal {
     background: #fff;
