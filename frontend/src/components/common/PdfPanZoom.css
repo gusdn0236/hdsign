@@ -17,22 +17,17 @@
 }
 .ppz-tc-content {
     display: flex !important;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 8px;
+    width: 100% !important;
+    height: 100% !important;
 }
 
-.ppz-page {
+.ppz-iframe {
+    border: 0;
     background: #fff;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-    border-radius: 4px;
-    overflow: hidden;
-}
-.ppz-page canvas {
     display: block;
-    max-width: 100%;
-    height: auto !important;
+    /* react-zoom-pan-pinch 가 wrapper 위 마우스 이벤트로 드래그/휠을 잡아야 한다.
+       iframe 이 마우스 이벤트를 자기 안쪽으로 흡수하면 라이브러리가 동작 못 함. */
+    pointer-events: none;
 }
 
 /* 컨트롤 ----------------------------------------------------------- */

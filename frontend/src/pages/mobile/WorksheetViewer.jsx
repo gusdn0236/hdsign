@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -251,18 +251,19 @@ export default function WorksheetViewer() {
         [queued]
     );
 
-    // 뒤로가기 — <Link> 로 처리. anchor 요소라 onClick 이 어떤 이유로(메인 쓰레드 블록,
-    // 이벤트 리스너 누수 등) 안 먹어도 브라우저의 href 기본 동작이 fallback 으로 살아있다.
-    // useNavigate 만 쓰면 모바일 사파리/PWA 의 일부 상태에서 클릭이 묵살되는 케이스가 있었음.
+    // 뒤로가기 — 평범한 <a href> 로 풀 페이지 이동. SPA 네비(useNavigate/Link) 는
+    // PDF.js 캔버스 렌더로 메인 쓰레드가 막혀있을 때 onClick 이 묵살되는 케이스가
+    // 있었음. anchor 의 기본 동작은 브라우저가 직접 처리하므로 JS 상태 무관하게
+    // 무조건 동작. 풀 리로드 비용은 목록 페이지가 가벼워 무시 가능.
 
     return (
         <div className="wsv-page" ref={containerRef}>
             <header className="wsv-topbar">
-                <Link
-                    to="/m/worksheets"
+                <a
+                    href="/m/worksheets"
                     className="wsv-back"
                     aria-label="뒤로"
-                >‹</Link>
+                >‹</a>
                 <div className="wsv-topbar-text">
                     <div className="wsv-topbar-company">
                         {detail?.companyName || (loadingDetail ? '…' : '거래처 미상')}
@@ -318,11 +319,10 @@ export default function WorksheetViewer() {
                                         key={i}
                                         pageNumber={i + 1}
                                         width={pageWidth}
-                                        // DPR 3(retina) 기본값은 캔버스가 너무 커 메인 쓰레드를 수 초 막아 버튼이
-                                        // 안 먹던 문제 → 1.5 로 낮췄더니 글씨가 흐려짐. 2 가 균형점:
-                                        // 1.5 대비 픽셀 1.78배지만 핀치줌(최대 5x)에서 글씨가 또렷하게 읽히고
-                                        // 1 페이지 기준 추가 렌더 시간 ~0.5s 정도라 입력 지연도 체감 없음.
-                                        devicePixelRatio={2}
+                                        // 화질 최우선 — DPR 4 로 핀치줌 5x 에서도 글씨 거의 1:1. 메인 쓰레드 부하는
+                                        // 큰 편이지만 뒤로가기 버튼은 <a href> 풀 이동이라 JS 상태 무관하게 동작하므로
+                                        // "버튼이 늦게 활성화되는" 문제는 화질과 분리해 해결됨.
+                                        devicePixelRatio={4}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
                                         className="wsv-page-canvas"
