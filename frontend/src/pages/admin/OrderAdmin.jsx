@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
+import PdfViewer from "../../components/common/PdfViewer.jsx";
 import "./OrderAdmin.css";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -974,18 +975,13 @@ export default function OrderAdmin() {
                   (() => {
                     const slide = carouselSlides[carouselIndex] || carouselSlides[0];
                     if (slide.type === "pdf") {
-                      // 브라우저 내장 PDF 뷰어를 iframe 으로. #toolbar/navpanes/scrollbar=0
-                      // 으로 UI 만 숨기고 본 동작은 그대로:
-                      //  - Ctrl+휠 = 조금씩 확대(매 단계 다시 그려 선명)
-                      //  - 클릭 드래그 = 이동(hand 도구)
-                      // 별도 라이브러리 없이 가장 가볍고 가장 선명한 조합.
+                      // react-pdf 기반 PdfViewer — 줌 변경 시 캔버스를 새 해상도로 다시
+                      // 그려 모든 배율에서 선명. 컨트롤 바가 모달 외부 버튼들과 같은
+                      // 레벨에 있어 PDF 그리는 동안에도 클릭이 막히지 않음.
                       return (
-                        <iframe
-                          key={slide.url}
-                          className="order-preview-pdf"
-                          src={`${slide.url}#toolbar=0&navpanes=0&scrollbar=0`}
-                          title="지시서 PDF"
-                        />
+                        <div key={slide.url} className="order-preview-pdf">
+                          <PdfViewer url={slide.url} />
+                        </div>
                       );
                     }
                     return (
