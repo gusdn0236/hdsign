@@ -6,6 +6,8 @@
     flex-direction: column;
     -webkit-tap-highlight-color: transparent;
     overflow: hidden;
+    /* iOS Safari 가 페이지 자체를 핀치줌 하려는 시도 차단 */
+    overscroll-behavior: none;
 }
 
 .wsv-topbar {
@@ -70,12 +72,15 @@
     justify-content: center;
     overflow: hidden;
     cursor: zoom-in;
+    /* 브라우저 기본 핀치줌(페이지 전체 확대) 차단 — react-zoom-pan-pinch 가 단독 처리 */
+    touch-action: none;
 }
 
 .wsv-tc-wrapper {
     width: 100% !important;
     height: 100% !important;
     background: #18181b;
+    touch-action: none !important;
 }
 .wsv-tc-content {
     display: flex !important;
@@ -83,6 +88,7 @@
     align-items: center;
     gap: 6px;
     padding: 8px;
+    touch-action: none !important;
 }
 
 .wsv-page-canvas {

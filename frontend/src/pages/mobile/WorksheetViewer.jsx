@@ -89,6 +89,18 @@ export default function WorksheetViewer() {
     const [uploadResult, setUploadResult] = useState(null);
     const [uploadError, setUploadError] = useState('');
 
+    // 뷰어 진입 동안 브라우저 페이지 줌(핀치) 비활성화. 떠날 때 원복.
+    useEffect(() => {
+        const meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) return undefined;
+        const original = meta.getAttribute('content') || '';
+        meta.setAttribute(
+            'content',
+            'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover'
+        );
+        return () => meta.setAttribute('content', original);
+    }, []);
+
     // 컨테이너 폭 측정 → PDF 페이지 폭 = 화면 폭
     useEffect(() => {
         const measure = () => {
