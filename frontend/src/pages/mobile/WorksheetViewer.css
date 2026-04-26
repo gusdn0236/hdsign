@@ -86,7 +86,6 @@ body:has(.wsv-page) {
     justify-content: center;
     overflow: hidden;
     position: relative;
-    cursor: zoom-in;
 }
 
 .wsv-msg {

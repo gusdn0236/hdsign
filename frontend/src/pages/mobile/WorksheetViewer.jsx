@@ -350,13 +350,11 @@ export default function WorksheetViewer() {
                 )}
             </header>
 
-            <div
-                className="wsv-stage"
-                ref={stageRef}
-                onClick={() => {
-                    if (!sheetOpen) setSheetOpen(true);
-                }}
-            >
+            {/* stage 자체엔 onClick 없음 — 옛 버전엔 PDF 영역 탭 = 업로드 시트 열기
+                동작이 있었지만, 액션바에 명시적 사진찍기 버튼이 생긴 뒤로는 중복일 뿐
+                아니라 PWA 풀스크린에서 stage 가 화면 거의 전체를 덮어 어딜 눌러도
+                시트가 튀어나오는 버그처럼 동작했음. 시트 열기는 사진찍기 버튼 전용. */}
+            <div className="wsv-stage" ref={stageRef}>
                 {loadingDetail && <div className="wsv-msg">불러오는 중…</div>}
                 {!loadingDetail && detailError && <div className="wsv-msg error">{detailError}</div>}
                 {!loadingDetail && !detailError && !pdfFile && (
