@@ -4,6 +4,97 @@
     padding: 0 20px 80px;
 }
 
+/* ── 50MB 초과 안내 모달 ── */
+.oversize-overlay {
+    position: fixed; inset: 0; z-index: 10000;
+    background: rgba(15, 23, 42, 0.55);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+}
+.oversize-modal {
+    background: #fff; border-radius: 14px;
+    width: 100%; max-width: 480px;
+    padding: 26px 28px 22px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    animation: oversize-in 140ms ease-out;
+}
+@keyframes oversize-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.oversize-title {
+    margin: 0 0 8px; font-size: 18px; font-weight: 700;
+    color: #b91c1c;
+}
+.oversize-desc {
+    margin: 0 0 18px; font-size: 14px; line-height: 1.55;
+    color: #3f3f46;
+}
+.oversize-options {
+    display: flex; flex-direction: column; gap: 12px;
+    margin-bottom: 20px;
+}
+.oversize-option {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 10px; padding: 12px 14px;
+}
+.oversize-option-num {
+    flex-shrink: 0;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: #005f73; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    margin-top: 1px;
+}
+.oversize-option-body {
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 14px; color: #1e293b;
+    line-height: 1.5;
+}
+.oversize-option-body b { font-weight: 700; }
+.oversize-sub { font-size: 12.5px; color: #64748b; }
+.oversize-email-row {
+    margin-top: 6px;
+    display: flex; align-items: center; gap: 8px;
+    background: #fff; border: 1px solid #cbd5e1;
+    border-radius: 6px; padding: 6px 10px;
+}
+.oversize-email {
+    font-size: 13.5px; font-weight: 600; color: #0f172a;
+    user-select: all;
+}
+.oversize-copy {
+    margin-left: auto;
+    background: #005f73; color: #fff;
+    border: none; border-radius: 5px;
+    padding: 4px 10px; font-size: 12px;
+    cursor: pointer; font-family: inherit;
+}
+.oversize-copy:hover { background: #00475a; }
+.oversize-warn {
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #9a3412;
+}
+.oversize-warn b { font-weight: 700; color: #7c2d12; }
+
+.oversize-close {
+    width: 100%;
+    background: #1e293b; color: #fff;
+    border: none; border-radius: 8px;
+    padding: 10px; font-size: 14px; font-weight: 600;
+    cursor: pointer; font-family: inherit;
+    transition: background 0.12s;
+}
+.oversize-close:hover { background: #0f172a; }
+
 /* ── Page-level drop overlay ── */
 .page-drop-overlay {
     position: fixed; inset: 0; z-index: 9999;
@@ -222,6 +313,13 @@
 }
 .watt-btn:hover { border-color: #005f73; color: #005f73; }
 .watt-btn.active { border-color: #005f73; background: #005f73; color: #fff; }
+
+/* "LED수량맞춤" 은 W 수치 버튼과 다른 의미라 점선 테두리로 구분 */
+.watt-btn-qty {
+    border-style: dashed;
+    color: #005f73;
+}
+.watt-btn-qty.active { border-style: solid; }
 
 .sidebar-item-remove {
     background: none;

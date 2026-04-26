@@ -31,8 +31,8 @@ from watchdog.observers import Observer
 WATCH_DIR = Path(r"C:\Users\USER\Desktop\hdsign_orders")
 DOWNLOADS_DIR = Path.home() / "Downloads"
 DONE_DIR = WATCH_DIR / "done"
-# Bullzip(또는 다른 무인 PDF 프린터) 가 인쇄 PDF 를 떨어뜨리는 폴더.
-# Bullzip 설정에서 "Folder" 를 이 경로로 맞추고 "Show save as dialog" 끄기.
+# PDF24(또는 다른 무인 PDF 프린터) 가 인쇄 PDF 를 떨어뜨리는 폴더.
+# PDF24 자동 저장 프로파일에서 저장 폴더를 이 경로로, "저장 시 대화상자" 끄기.
 PRINTED_PDF_DIR = WATCH_DIR / "printed"
 FLEXSIGN_EXE = r"C:\Users\USER\Desktop\FlexiSIGN 6.6\Program\App.exe"
 EVIDENCE_URL_BASE = "https://hdsigncraft.com/p/"
@@ -46,6 +46,20 @@ PING_PORT = 5577
 HEADER_BOX_FILL = (220, 220, 220)     # 연한 회색
 HEADER_BOX_STROKE = (130, 130, 130)   # 박스 테두리
 
+# FlexSign 인쇄 다이얼로그가 자동으로 PDF24 를 선택하도록 워처가 임시로 기본 프린터를 전환한다.
+# 시스템에 등록된 정확한 프린터 이름으로 맞춰야 함 (제어판 → 장치 및 프린터 에서 확인).
+PDF24_PRINTER_NAME = "PDF24"
+
+# 실제 종이 인쇄가 향할 프린터를 결정하는 규칙. 시스템 기본 프린터와 무관하게 여기로 보낸다.
+# 노트북·사무실 PC 가 서로 다른 삼성 모델을 쓰므로, 정확 일치 후보 → 부분 일치 패턴 순으로
+# 실제 설치된 프린터를 찾는다. 새 PC 가 생기면 후보 리스트에 추가만 하면 됨.
+PAPER_PRINTER_CANDIDATES = [
+    "Samsung X7600 Series",   # 노트북
+    # 사무실 모델명 확인 시 여기에 추가
+]
+# 후보에 정확 일치하는 프린터가 없을 때 부분 일치(대소문자 무시)로 fallback. 빈 문자열이면 비활성.
+PAPER_PRINTER_PATTERN = "Samsung"
+
 _seen_zips: set[str] = set()
 _seen_lock = threading.Lock()
 _ui_queue: queue.Queue = queue.Queue()
@@ -55,6 +69,14 @@ _ui_queue: queue.Queue = queue.Queue()
 _recent_orders: collections.deque = collections.deque(maxlen=20)
 _recent_orders_lock = threading.Lock()
 _seen_printed: set[str] = set()
+# watchdog 이 같은 파일에 대해 on_created + on_moved 를 거의 동시에 두 번 보내는 경우가
+# 있어서 dedup 체크와 set 추가 사이의 race 로 다이얼로그가 두 번 뜨는 문제가 있었다.
+# 락으로 check-and-add 를 원자적으로 만들어 한 파일당 정확히 한 번만 처리하도록 보장.
+_seen_printed_lock = threading.Lock()
+
+# 워처가 PDF24 로 바꾸기 직전의 원래 기본 프린터. 인쇄 PDF 감지 시 여기로 복구.
+_saved_default_printer: str | None = None
+_printer_lock = threading.Lock()
 
 
 # ── UI helpers (thread-safe) ────────────────────────────────────────────────
@@ -82,13 +104,18 @@ def is_running(exe: str) -> bool:
     return exe.lower() in r.stdout.lower()
 
 
-def check_prerequisites() -> bool:
-    """Run from background thread. Uses ctypes MessageBox (thread-safe)."""
+def missing_required_apps() -> list[str]:
     missing = []
     if not is_running("Illustrator.exe"):
         missing.append("Adobe Illustrator")
     if not is_running("App.exe"):
         missing.append("FlexiSIGN")
+    return missing
+
+
+def check_prerequisites() -> bool:
+    """Run from background thread. Uses ctypes MessageBox (thread-safe)."""
+    missing = missing_required_apps()
     if missing:
         apps = "\n".join(f"  • {p}" for p in missing)
         ctypes.windll.user32.MessageBoxW(
@@ -132,6 +159,17 @@ DELIVERY_SHORT = {
     "직접 수령": "찾으러오심",
     "지방화물차 배송": "상차",
 }
+
+# 백엔드 enum ↔ 한글 라벨. 메타데이터는 한글로 오므로 enum 으로 변환해서 PATCH 한다.
+# 다이얼로그 드롭다운은 한글로 표시한다.
+DELIVERY_ENUM_TO_KO = {
+    "CARGO":       "화물 발송",
+    "QUICK":       "퀵 발송",
+    "DIRECT":      "직접 배송",
+    "PICKUP":      "직접 수령",
+    "LOCAL_CARGO": "지방화물차 배송",
+}
+DELIVERY_KO_TO_ENUM = {v: k for k, v in DELIVERY_ENUM_TO_KO.items()}
 
 
 def _format_md(value) -> str:
@@ -225,18 +263,24 @@ def notify_worksheet_acknowledged(order_number: str):
         ui_log(f"작업중 전환 호출 실패: {e}")
 
 
-def patch_due_date(order_number: str, new_due: date) -> bool:
-    """다이얼로그에서 확정한 최종 납기 일자를 백엔드에 전달."""
+def patch_due_date(order_number: str, new_due: date,
+                   delivery_enum: str | None = None) -> bool:
+    """다이얼로그에서 확정한 최종 납기 일자(+선택적으로 배송방법)를 백엔드에 전달.
+    delivery_enum 은 백엔드 enum 명(CARGO/QUICK/DIRECT/PICKUP/LOCAL_CARGO). None/빈값이면 송신 생략."""
     if not order_number:
         return False
     url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/due-date"
-    body = json.dumps({"dueDate": new_due.isoformat()}).encode("utf-8")
+    payload: dict[str, str] = {"dueDate": new_due.isoformat()}
+    if delivery_enum:
+        payload["deliveryMethod"] = delivery_enum
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             resp.read()
-        ui_log(f"{order_number} 납기 {new_due.isoformat()} 로 업데이트")
+        suffix = f" / 배송 {delivery_enum}" if delivery_enum else ""
+        ui_log(f"{order_number} 납기 {new_due.isoformat()}{suffix} 로 업데이트")
         return True
     except urllib.error.HTTPError as e:
         ui_log(f"납기 업데이트 실패 ({e.code}): {order_number}")
@@ -245,9 +289,11 @@ def patch_due_date(order_number: str, new_due: date) -> bool:
     return False
 
 
-def remember_order_for_print(order_number: str, company_name: str, due_date_iso: str | None):
+def remember_order_for_print(order_number: str, company_name: str,
+                             due_date_iso: str | None, delivery_enum: str | None):
     """FlexSign에 보낸 주문을 인쇄 매칭용 큐에 기록.
-    인쇄 PDF가 떨어지면 가장 최근 항목을 꺼내 다이얼로그에 표시한다."""
+    인쇄 PDF가 떨어지면 가장 최근 항목을 꺼내 다이얼로그에 표시한다.
+    delivery_enum 은 백엔드 enum 명(CARGO 등). 한글이 들어오면 변환되지 않으니 빈 값."""
     with _recent_orders_lock:
         # 같은 주문이 또 처리될 수 있으니 같은 번호는 앞 항목을 제거하고 맨 뒤에 다시 넣는다.
         for existing in list(_recent_orders):
@@ -258,6 +304,7 @@ def remember_order_for_print(order_number: str, company_name: str, due_date_iso:
             "orderNumber": order_number,
             "companyName": company_name or "",
             "dueDate": due_date_iso or "",
+            "deliveryMethod": delivery_enum or "",
             "ts": time.time(),
         })
 
@@ -300,16 +347,130 @@ def resolve_new_due_date(current_iso: str, day_input: int) -> date:
         return next_first - timedelta(days=1)
 
 
-def print_pdf_to_default_printer(pdf_path: Path) -> bool:
-    """ShellExecute "print" 동사로 PDF를 윈도우 기본 프린터에 보낸다.
-    기본 프린터는 [윈도우 설정 → 프린터 및 스캐너] 에서 삼성으로 지정해 두면 된다."""
+def _get_default_printer() -> str | None:
     try:
-        ctypes.windll.shell32.ShellExecuteW(0, "print", str(pdf_path), None, None, 0)
-        ui_log(f"종이 인쇄 전달: {pdf_path.name}")
+        import win32print
+        return win32print.GetDefaultPrinter()
+    except Exception as e:
+        ui_log(f"기본 프린터 조회 실패: {e}")
+        return None
+
+
+def _set_default_printer(name: str) -> bool:
+    try:
+        import win32print
+        win32print.SetDefaultPrinter(name)
         return True
     except Exception as e:
-        ui_log(f"종이 인쇄 실패: {e}")
+        ui_log(f"기본 프린터 변경 실패 ({name}): {e}")
         return False
+
+
+def switch_default_to_pdf24() -> None:
+    """FlexSign 인쇄 다이얼로그가 PDF24 를 자동 선택하도록 임시 전환.
+    이전 기본 프린터를 _saved_default_printer 에 보관하고, 인쇄 PDF 감지 시 복구한다.
+    이미 PDF24 로 되어 있거나 PDF24 가 시스템에 없으면 아무 동작 안 함."""
+    global _saved_default_printer
+    with _printer_lock:
+        current = _get_default_printer()
+        if not current:
+            return
+        if current == PDF24_PRINTER_NAME:
+            return
+        # 이미 한 번 전환해 두고 아직 복구되지 않았다면, 원래 값을 덮어쓰지 않는다.
+        if _saved_default_printer is None:
+            _saved_default_printer = current
+        if _set_default_printer(PDF24_PRINTER_NAME):
+            ui_log(f"기본 프린터: {current} → {PDF24_PRINTER_NAME} (인쇄 후 자동 복구)")
+        else:
+            # 전환 실패 시 저장된 값도 의미 없으므로 비운다.
+            _saved_default_printer = None
+
+
+def restore_default_printer() -> None:
+    """_process_printed_pdf 시작 시 호출 — 종이 인쇄 단계에서 원래 프린터로 가도록."""
+    global _saved_default_printer
+    with _printer_lock:
+        if _saved_default_printer is None:
+            return
+        prev = _saved_default_printer
+        _saved_default_printer = None
+        if _set_default_printer(prev):
+            ui_log(f"기본 프린터 복구: → {prev}")
+
+
+def _list_installed_printers() -> list[str]:
+    try:
+        import win32print
+        flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+        printers = win32print.EnumPrinters(flags, None, 2)
+        return [p["pPrinterName"] for p in printers]
+    except Exception as e:
+        ui_log(f"프린터 목록 조회 실패: {e}")
+        return []
+
+
+def resolve_paper_printer() -> str | None:
+    """현재 PC 에 실제로 설치된 종이 프린터를 결정.
+    1) PAPER_PRINTER_CANDIDATES 의 정확 일치를 우선 — 모델별 명시 지정.
+    2) 후보가 없으면 PAPER_PRINTER_PATTERN 부분 일치(대소문자 무시) 로 첫 매치를 사용.
+       PDF24 자체는 제외해서 "Samsung" 매칭이 가상 프린터로 가지 않게 한다.
+    3) 그래도 없으면 None — 인쇄 보류."""
+    installed = _list_installed_printers()
+    if not installed:
+        return None
+    for name in PAPER_PRINTER_CANDIDATES:
+        if name in installed:
+            return name
+    if PAPER_PRINTER_PATTERN:
+        needle = PAPER_PRINTER_PATTERN.lower()
+        for name in installed:
+            if name == PDF24_PRINTER_NAME:
+                continue
+            if needle in name.lower():
+                return name
+    return None
+
+
+def print_pdf_to_paper(pdf_path: Path) -> bool:
+    """현재 PC 에 설치된 삼성 프린터로 직접 PDF 인쇄. 시스템 기본 프린터를 건드리지 않으므로
+    노트북처럼 기본이 PDF24 로 잡혀 있어도 종이는 항상 삼성으로 간다.
+    1차: ShellExecute "printto" — 프린터를 명시 지정해 PDF 핸들러에 전달.
+    2차(폴백): 기본 프린터를 잠깐 그 프린터로 바꾼 뒤 "print" 동사 호출,
+              스풀러가 작업을 큐에 넣을 시간을 두고 원래 프린터로 복구."""
+    target = resolve_paper_printer()
+    if not target:
+        ui_log("종이 프린터를 찾지 못함 — PAPER_PRINTER_CANDIDATES 또는 PAPER_PRINTER_PATTERN 확인 필요")
+        return False
+
+    # 1차: printto 동사
+    try:
+        import win32api
+        rc = win32api.ShellExecute(
+            0, "printto", str(pdf_path), f'"{target}"', None, 0
+        )
+        if rc > 32:
+            ui_log(f"종이 인쇄({target}) 전달: {pdf_path.name}")
+            return True
+        ui_log(f"printto 거부(rc={rc}) — 기본 프린터 임시 전환 방식으로 폴백")
+    except Exception as e:
+        ui_log(f"printto 예외: {e} — 기본 프린터 임시 전환 방식으로 폴백")
+
+    # 2차: 기본 프린터 임시 전환
+    with _printer_lock:
+        prev = _get_default_printer()
+        if not _set_default_printer(target):
+            ui_log(f"종이 프린터({target}) 기본 설정 실패 — 인쇄 보류")
+            return False
+        try:
+            ctypes.windll.shell32.ShellExecuteW(0, "print", str(pdf_path), None, None, 0)
+            ui_log(f"종이 인쇄({target}) 전달(폴백): {pdf_path.name}")
+            # ShellExecute 는 비동기 — 스풀러가 PDF 를 가져갈 시간을 둔다.
+            time.sleep(2.0)
+            return True
+        finally:
+            if prev and prev != target:
+                _set_default_printer(prev)
 
 
 # ── 인쇄 다이얼로그 ─────────────────────────────────────────────────────────
@@ -340,7 +501,7 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
     dlg.configure(bg="white")
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
-    dlg.geometry("380x210")
+    dlg.geometry("520x290")
 
     tk.Label(
         dlg, text="인쇄 PDF — 어떤 주문에 매칭?",
@@ -379,7 +540,21 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         font=("맑은 고딕", 18, "bold"), relief="solid", bd=1,
     )
     day_entry.pack(side="left", padx=(0, 4))
-    tk.Label(frame, text="일 (납기)", bg="white", fg="#3f3f46",
+    tk.Label(frame, text="일", bg="white", fg="#3f3f46",
+             font=("맑은 고딕", 11)).pack(side="left", padx=(0, 12))
+
+    # 배송방법 — enum/한글 라벨 양쪽 다 다룬다. 표시는 한글, 결과는 enum 으로 변환.
+    delivery_labels_in_order = list(DELIVERY_ENUM_TO_KO.values())
+    base_delivery_enum = (orders[0].get("deliveryMethod") or "") if orders else ""
+    base_delivery_ko = DELIVERY_ENUM_TO_KO.get(base_delivery_enum, "")
+    delivery_var = tk.StringVar(value=base_delivery_ko)
+    delivery_combo = ttk.Combobox(
+        frame, textvariable=delivery_var, state="readonly",
+        values=delivery_labels_in_order, width=12,
+        font=("맑은 고딕", 10),
+    )
+    delivery_combo.pack(side="left", padx=(0, 4))
+    tk.Label(frame, text="배송", bg="white", fg="#3f3f46",
              font=("맑은 고딕", 11)).pack(side="left")
 
     def on_combo_changed(_event=None):
@@ -387,11 +562,15 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         if sel == NO_MATCH_LABEL:
             day_var.set("")
             day_entry.configure(state="disabled")
+            delivery_var.set("")
+            delivery_combo.configure(state="disabled")
             return
         day_entry.configure(state="normal")
+        delivery_combo.configure(state="readonly")
         for lbl, o in choices:
             if lbl == sel and o is not None:
                 day_var.set(_day_from_iso(o.get("dueDate") or ""))
+                delivery_var.set(DELIVERY_ENUM_TO_KO.get(o.get("deliveryMethod") or "", ""))
                 break
         day_entry.focus_set()
         day_entry.select_range(0, "end")
@@ -411,12 +590,16 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         d = int(s)
         if d < 1 or d > 31:
             return
+        delivery_ko = delivery_var.get().strip()
+        delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
         for lbl, o in choices:
             if lbl == sel and o is not None:
                 result["value"] = {
                     "order_number": o["orderNumber"],
                     "day": d,
                     "current_due_iso": o.get("dueDate") or "",
+                    "delivery_method": delivery_enum,
+                    "original_delivery_method": o.get("deliveryMethod") or "",
                 }
                 dlg.destroy()
                 return
@@ -425,12 +608,95 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         result["value"] = None
         dlg.destroy()
 
+    # 확인/취소 버튼 — 키보드를 안 쓰고 마우스로 끝낼 수 있게.
+    button_row = tk.Frame(dlg, bg="white")
+    button_row.pack(pady=(16, 0))
+    tk.Button(
+        button_row, text="확인", command=confirm,
+        font=("맑은 고딕", 11, "bold"),
+        bg="#22c55e", fg="white",
+        activebackground="#16a34a", activeforeground="white",
+        relief="flat", padx=22, pady=5, cursor="hand2",
+    ).pack(side="left", padx=(0, 8))
+    tk.Button(
+        button_row, text="취소", command=cancel,
+        font=("맑은 고딕", 11),
+        bg="#e4e4e7", fg="#3f3f46",
+        activebackground="#d4d4d8", activeforeground="#18181b",
+        relief="flat", padx=22, pady=5, cursor="hand2",
+    ).pack(side="left")
+
+    # Enter/Esc 는 다이얼로그 어디에 포커스가 있어도 동작하도록 위젯별로도 바인딩.
     dlg.bind("<Return>", confirm)
     dlg.bind("<Escape>", cancel)
+    day_entry.bind("<Return>", confirm)
+    combo.bind("<Return>", confirm)
     dlg.protocol("WM_DELETE_WINDOW", cancel)
 
-    # 일자 칸에 포커스 — 가장 최근 주문 그대로 인쇄하는 흔한 흐름이 Enter 한 번이면 끝.
-    dlg.after(50, lambda: (day_entry.focus_set(), day_entry.select_range(0, "end"), day_entry.icursor("end")))
+    def _grab_focus():
+        """다이얼로그가 즉시 키보드를 받도록 강제. SetForegroundWindow 만으로는 다른
+        프로세스가 foreground 를 점유하고 있을 때 무시되는 경우가 많아서, 점유 스레드에
+        AttachThreadInput 으로 입력 큐를 붙인 뒤 SetForegroundWindow 를 호출하는 트릭이
+        가장 확실. Tk Toplevel 의 winfo_id 는 내부 윈도우라 GetParent 로 실제 toplevel
+        HWND 를 얻어야 한다."""
+        try:
+            dlg.deiconify()
+            dlg.lift()
+            dlg.update_idletasks()
+        except Exception:
+            pass
+        try:
+            import win32api
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+
+            # Alt 토글 — Windows foreground 잠금 1차 우회
+            win32api.keybd_event(0x12, 0, 0, 0)
+            win32api.keybd_event(0x12, 0, 0x0002, 0)
+
+            tk_hwnd = int(dlg.winfo_id())
+            toplevel = user32.GetParent(tk_hwnd) or tk_hwnd
+
+            fg_hwnd = user32.GetForegroundWindow()
+            if fg_hwnd and fg_hwnd != toplevel:
+                # 점유 중인 창의 스레드에 입력 큐를 붙여 SetForegroundWindow 차단을 무력화
+                fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None)
+                cur_thread = kernel32.GetCurrentThreadId()
+                if fg_thread and fg_thread != cur_thread:
+                    user32.AttachThreadInput(cur_thread, fg_thread, True)
+                    try:
+                        user32.BringWindowToTop(toplevel)
+                        user32.SetForegroundWindow(toplevel)
+                        user32.SetActiveWindow(toplevel)
+                    finally:
+                        user32.AttachThreadInput(cur_thread, fg_thread, False)
+                else:
+                    user32.SetForegroundWindow(toplevel)
+            else:
+                user32.SetForegroundWindow(toplevel)
+        except Exception:
+            pass
+        try:
+            dlg.focus_force()
+            day_entry.focus_set()
+            day_entry.select_range(0, "end")
+            day_entry.icursor("end")
+        except Exception:
+            pass
+
+    # 윈도우가 실제로 화면에 매핑되는 시점에 첫 시도. 그 전엔 SetForegroundWindow 가
+    # 무시될 수 있어 after(50) 만으론 부족했음.
+    def _on_first_map(_event=None):
+        try:
+            dlg.unbind("<Map>")
+        except Exception:
+            pass
+        dlg.after(20, _grab_focus)
+    dlg.bind("<Map>", _on_first_map)
+    # 매핑 이벤트가 누락된 환경(드물게)에 대비해 시간차로 추가 시도.
+    dlg.after(150, _grab_focus)
+    dlg.after(400, _grab_focus)
+    dlg.after(800, _grab_focus)
     dlg.grab_set()
     dlg.wait_window()
     return result["value"]
@@ -445,17 +711,24 @@ def _process_printed_pdf(pdf_path: Path):
       - 주문 선택 + 일자: 납기 PATCH + PDF 덮어쓰기 + 종이 인쇄
     """
     key = str(pdf_path.resolve())
-    if key in _seen_printed:
-        return
-    _seen_printed.add(key)
+    # check-and-add 를 락으로 원자화 — watchdog 이 동일 파일에 대해 on_created/on_moved 를
+    # 연달아 발사해 두 스레드가 동시에 진입하는 경우 다이얼로그가 두 번 뜨는 race 방지.
+    with _seen_printed_lock:
+        if key in _seen_printed:
+            return
+        _seen_printed.add(key)
     # 파일이 완전히 쓰여질 때까지 잠깐 대기 (PDF24 가 청크 단위로 쓸 수 있음)
     time.sleep(0.8)
+
+    # PDF24 가 출력을 끝낸 시점이므로, 이후 종이 인쇄가 원래 프린터(삼성)로 가도록
+    # 워처가 launch_flexsign 직전에 임시 전환했던 기본 프린터를 즉시 복구한다.
+    restore_default_printer()
 
     orders = list_recent_orders()
     if not orders:
         # 매칭할 주문이 큐에 없으면 일단 종이만 인쇄. 직원이 따로 처리할 수 있도록 로그만 남김.
         ui_log(f"인쇄 PDF 감지 — 큐에 주문 없음, 종이 인쇄만 진행: {pdf_path.name}")
-        print_pdf_to_default_printer(pdf_path)
+        print_pdf_to_paper(pdf_path)
         return
 
     holder: dict = {"value": None, "done": threading.Event()}
@@ -477,13 +750,17 @@ def _process_printed_pdf(pdf_path: Path):
     order_number = sel.get("order_number")
     if order_number is None:
         ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name})")
-        print_pdf_to_default_printer(pdf_path)
+        print_pdf_to_paper(pdf_path)
         return
 
     new_due = resolve_new_due_date(sel.get("current_due_iso", ""), sel["day"])
-    patch_due_date(order_number, new_due)
+    # 배송방법은 다이얼로그에서 변경된 경우에만 함께 보낸다(원래 값과 같으면 생략).
+    new_delivery = sel.get("delivery_method") or ""
+    orig_delivery = sel.get("original_delivery_method") or ""
+    delivery_to_send = new_delivery if (new_delivery and new_delivery != orig_delivery) else None
+    patch_due_date(order_number, new_due, delivery_to_send)
     upload_worksheet_pdf(order_number, pdf_path)
-    print_pdf_to_default_printer(pdf_path)
+    print_pdf_to_paper(pdf_path)
 
 
 class PrintedPdfHandler(FileSystemEventHandler):
@@ -835,15 +1112,7 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str,
                     header_text: str, left_text: str, note_text: str
                     ) -> tuple[Path, Path] | None:
     """변환 성공 시 (AI v8 경로, PDF 경로) 튜플을 반환. 실패 시 None.
-    Illustrator 는 워처가 자동 실행하지 않는다 (라이센스/메모리 부담) — 사용자가
-    먼저 켜놔야 한다. FlexSign 은 launch_flexsign 단계에서 안 켜져 있으면 자동
-    실행하므로 여기서 검사하지 않는다."""
-    if not is_running("Illustrator.exe"):
-        ui_alert(
-            "Illustrator 필요",
-            "Adobe Illustrator가 실행 중이 아닙니다.\n먼저 Illustrator를 열어 주세요.",
-        )
-        return None
+    Illustrator/FlexSign 실행 여부는 process_zip 진입 시점에 일괄 검사한다."""
     try:
         import pythoncom
         import win32com.client as win32
@@ -875,17 +1144,130 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str,
         return None
 
 
+_gs_path_cache: str | None | type(...) = ...  # 미탐색 sentinel: ...
+
+
+def _find_ghostscript() -> str | None:
+    """Ghostscript 실행파일 찾기 — PATH → 표준 설치 경로 → PDF24 번들 순서.
+    한 번 찾은 결과는 모듈 캐시에 저장."""
+    global _gs_path_cache
+    if _gs_path_cache is not ...:
+        return _gs_path_cache  # type: ignore[return-value]
+
+    candidates: list[Path] = []
+    # 1) PATH 검색
+    for name in ("gswin64c.exe", "gswin32c.exe", "gs.exe"):
+        try:
+            r = subprocess.run(
+                ["where", name], capture_output=True, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if r.returncode == 0:
+                first = r.stdout.strip().splitlines()
+                if first:
+                    candidates.append(Path(first[0].strip()))
+        except Exception:
+            pass
+
+    # 2) 표준 설치 경로
+    for base in (Path(r"C:\Program Files\gs"), Path(r"C:\Program Files (x86)\gs")):
+        if base.exists():
+            for sub in base.iterdir():
+                if sub.is_dir():
+                    for exe in ("gswin64c.exe", "gswin32c.exe"):
+                        p = sub / "bin" / exe
+                        if p.exists():
+                            candidates.append(p)
+
+    # 3) PDF24 번들 — 버전마다 위치가 달라서 glob 으로 탐색
+    pdf24_bases = [
+        Path(r"C:\Program Files\PDF24"),
+        Path(r"C:\Program Files (x86)\PDF24"),
+    ]
+    for base in pdf24_bases:
+        if base.exists():
+            for exe_name in ("gs.exe", "gswin64c.exe", "gswin32c.exe"):
+                for found in base.rglob(exe_name):
+                    candidates.append(found)
+
+    for c in candidates:
+        if c.exists():
+            _gs_path_cache = str(c)
+            return _gs_path_cache
+
+    _gs_path_cache = None
+    return None
+
+
+def compress_pdf_for_upload(src: Path) -> Path:
+    """업로드 직전 PDF 다운샘플링. 벡터 텍스트는 유지한 채 이미지/스트림 압축.
+    Ghostscript 가 없거나 압축 실패 시 원본 경로를 그대로 반환 (폴백)."""
+    gs_exe = _find_ghostscript()
+    if not gs_exe:
+        ui_log("Ghostscript 미설치 — 원본 PDF 그대로 업로드 (압축 건너뜀)")
+        return src
+
+    out = src.with_name(src.stem + ".min.pdf")
+    cmd = [
+        gs_exe,
+        "-sDEVICE=pdfwrite",
+        "-dCompatibilityLevel=1.5",
+        "-dPDFSETTINGS=/ebook",      # 150dpi 다운샘플링, JPEG 품질 적당, 벡터 보존
+        "-dDetectDuplicateImages=true",
+        "-dCompressFonts=true",
+        "-dSubsetFonts=true",
+        "-dNOPAUSE", "-dQUIET", "-dBATCH",
+        f"-sOutputFile={out}",
+        str(src),
+    ]
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if r.returncode != 0 or not out.exists():
+            ui_log(f"PDF 압축 실패(rc={r.returncode}) — 원본으로 업로드")
+            return src
+        # 압축이 오히려 커진 경우(이미 잘 압축된 PDF) 원본 사용
+        if out.stat().st_size >= src.stat().st_size:
+            try:
+                out.unlink()
+            except Exception:
+                pass
+            return src
+        before_kb = src.stat().st_size // 1024
+        after_kb = out.stat().st_size // 1024
+        ui_log(f"PDF 압축: {before_kb}KB → {after_kb}KB ({100 - after_kb * 100 // max(before_kb, 1)}% 절감)")
+        return out
+    except subprocess.TimeoutExpired:
+        ui_log("PDF 압축 타임아웃(120s) — 원본으로 업로드")
+        return src
+    except Exception as e:
+        ui_log(f"PDF 압축 예외: {e} — 원본으로 업로드")
+        return src
+
+
 def upload_worksheet_pdf(order_number: str, pdf_path: Path) -> bool:
     """변환된 PDF를 백엔드에 업로드. 거래처 카드에 노출되는 단일 PDF로 덮어씀.
+    업로드 직전 Ghostscript 로 다운샘플링해 용량을 줄인다 (텍스트는 벡터 유지).
     multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음)."""
     if not order_number or not pdf_path.exists():
         return False
+
+    upload_path = compress_pdf_for_upload(pdf_path)
+    cleanup_compressed = upload_path != pdf_path
+
     url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/worksheet-pdf"
     boundary = f"----hdsign{int(time.time()*1000)}"
     try:
-        pdf_bytes = pdf_path.read_bytes()
+        pdf_bytes = upload_path.read_bytes()
     except Exception as e:
         ui_log(f"PDF 읽기 실패: {e}")
+        if cleanup_compressed:
+            try:
+                upload_path.unlink()
+            except Exception:
+                pass
         return False
 
     head = (
@@ -899,16 +1281,23 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path) -> bool:
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     req.add_header("Content-Length", str(len(body)))
+    ok = False
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             resp.read()
         ui_log(f"{order_number} PDF 업로드 완료")
-        return True
+        ok = True
     except urllib.error.HTTPError as e:
         ui_log(f"PDF 업로드 실패 ({e.code}): {order_number}")
     except Exception as e:
         ui_log(f"PDF 업로드 호출 실패: {e}")
-    return False
+    finally:
+        if cleanup_compressed:
+            try:
+                upload_path.unlink()
+            except Exception:
+                pass
+    return ok
 
 
 def _find_flexsign_hwnd() -> int:
@@ -996,6 +1385,7 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     user32 = ctypes.windll.user32
     VK_CONTROL = 0x11
     VK_RETURN = 0x0D
+    VK_MENU = 0x12  # Alt
     KEYEVENTF_KEYUP = 0x0002
 
     def _press(vk: int) -> None:
@@ -1006,6 +1396,44 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         win32api.keybd_event(modifier, 0, 0, 0)
         _press(key)
         win32api.keybd_event(modifier, 0, KEYEVENTF_KEYUP, 0)
+
+    def _force_foreground() -> bool:
+        """Windows foreground stealing 보호 우회 + 검증.
+        Alt 토글로 SetForegroundWindow 차단 해제 → 호출 → 실제 활성화 확인.
+        가짜로 다른 창에 키 보내는 것을 방지하기 위해 검증 단계가 핵심."""
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            time.sleep(0.2)
+        for _ in range(3):
+            # Alt 키 1회 토글 → OS 의 foreground 잠금 해제 트릭
+            win32api.keybd_event(VK_MENU, 0, 0, 0)
+            win32api.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            time.sleep(0.3)
+            if user32.GetForegroundWindow() == hwnd:
+                return True
+            time.sleep(0.25)
+        return False
+
+    def _wait_for_open_dialog(timeout: float = 3.0) -> int:
+        """Ctrl+O 가 메뉴 단축키로 인식되면 표준 파일 열기 다이얼로그(class "#32770")가
+        떠서 foreground 를 가져간다. 이 검증 없이 그냥 sleep 후 Ctrl+V 를 보내면
+        Ctrl+O 가 캔버스에 흡수된 경우 경로 텍스트가 캔버스에 그대로 붙는 사고가 난다.
+        다이얼로그 hwnd 를 반환하거나, 시간 안에 안 나타나면 0 을 반환해 호출자가 중단."""
+        end = time.time() + timeout
+        buf = ctypes.create_unicode_buffer(64)
+        while time.time() < end:
+            fg = user32.GetForegroundWindow()
+            if fg and fg != hwnd:
+                user32.GetClassNameW(fg, buf, 64)
+                if buf.value == "#32770":
+                    return fg
+            time.sleep(0.12)
+        return 0
 
     # 클립보드 백업 (사용자가 다른 데서 쓰던 내용 복원하기 위함)
     prev_clip = ""
@@ -1020,15 +1448,37 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         prev_clip = ""
 
     try:
-        # 1) 창 활성화 + 최소화 해제
-        if user32.IsIconic(hwnd):
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        user32.SetForegroundWindow(hwnd)
+        # 1) 창 활성화 보장 — 검증까지 통과해야 키 입력을 시작한다.
+        if not _force_foreground():
+            ui_log("FlexSign 창을 foreground 로 가져오지 못함 — 메뉴 자동화 중단")
+            return False
         time.sleep(0.4)
 
-        # 2) Ctrl+O — 파일 열기 다이얼로그
-        _chord(VK_CONTROL, ord('O'))
-        time.sleep(0.7)
+        # 2) Ctrl+O — 파일 열기 다이얼로그. 다이얼로그가 실제로 떴는지 폴링해서
+        # 확인한다. 캔버스/도구에 포커스가 있어 단축키가 흡수된 케이스를 방지.
+        # 한 번 실패하면 캔버스 클릭 같은 다른 이벤트 없이 한 번 더 재시도.
+        dlg_hwnd = 0
+        for attempt in range(2):
+            _chord(VK_CONTROL, ord('O'))
+            dlg_hwnd = _wait_for_open_dialog(timeout=3.0)
+            if dlg_hwnd:
+                break
+            ui_log(f"Ctrl+O 후 다이얼로그 미감지 — 재시도 {attempt + 1}/2")
+            # 재시도 전에 메인 창에 다시 foreground 보장
+            if not _force_foreground():
+                break
+            time.sleep(0.4)
+        if not dlg_hwnd:
+            ui_log("파일 열기 다이얼로그가 끝내 나타나지 않음 — 캔버스 오입력 방지를 위해 중단")
+            return False
+
+        # 다이얼로그가 이미 foreground 이지만, 다이얼로그 안의 파일이름 입력칸에
+        # 키 입력이 정확히 가도록 한 번 더 명시.
+        try:
+            user32.SetForegroundWindow(dlg_hwnd)
+        except Exception:
+            pass
+        time.sleep(0.25)
 
         # 3) 파일 경로를 클립보드에 복사 후 Ctrl+V
         win32clipboard.OpenClipboard()
@@ -1037,13 +1487,14 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             win32clipboard.SetClipboardText(str(file_path), 13)  # CF_UNICODETEXT
         finally:
             win32clipboard.CloseClipboard()
-        time.sleep(0.15)
+        time.sleep(0.3)
         _chord(VK_CONTROL, ord('V'))
-        time.sleep(0.25)
+        # 긴 한글 경로를 다이얼로그가 해석하는 데 시간 필요.
+        time.sleep(0.5)
 
         # 4) Enter — 열기 확정
         _press(VK_RETURN)
-        time.sleep(0.4)
+        time.sleep(0.7)
         return True
     except Exception as e:
         ui_log(f"FlexSign 메뉴 열기 실패: {e}")
@@ -1098,6 +1549,11 @@ def launch_flexsign(file_path: Path):
         # 창이 막 떠서 메뉴/단축키가 안정화될 때까지 잠시 더 기다림
         time.sleep(1.5)
 
+    # FlexSign 인쇄 다이얼로그가 PDF24 를 자동 선택하도록 기본 프린터를 임시 전환.
+    # 인쇄 PDF 가 PRINTED_PDF_DIR 에 떨어지면 _process_printed_pdf 시작부에서
+    # restore_default_printer() 가 원래(삼성) 프린터로 즉시 복구한다.
+    switch_default_to_pdf24()
+
     ui_log(f"FlexSign 창(HWND={hwnd}) — [파일 → 열기] 시뮬레이션")
     ok = _open_file_via_menu(hwnd, file_path)
     if ok:
@@ -1131,6 +1587,23 @@ def process_zip(zip_path: Path):
         if key in _seen_zips:
             return
         _seen_zips.add(key)
+
+    # 작업 시작 전에 Illustrator/FlexSign 모두 실행 중인지 확인.
+    # 둘 중 하나라도 없으면 ai→fs 자동화가 깨지므로(콜드 부팅된 FlexSign은
+    # 도큐먼트 인식이 불안정) 처리 상태로 넘어가지 않고 사용자에게 안내한 뒤,
+    # ZIP 을 그대로 두고 _seen_zips 에서 빼서 재시도(같은 파일 재저장 또는
+    # 어드민에서 다시 받기)할 수 있게 한다.
+    missing = missing_required_apps()
+    if missing:
+        apps = ", ".join(missing)
+        ui_log(f"{zip_path.name} 처리 보류 — 미실행: {apps}")
+        ui_alert(
+            "프로그램 실행 필요",
+            f"아래 프로그램이 실행 중이 아닙니다:\n\n  • " + "\n  • ".join(missing)
+            + "\n\n먼저 실행한 뒤 어드민에서 [지시서 작성하기] 를 다시 눌러주세요.",
+        )
+        _seen_zips.discard(key)
+        return
 
     time.sleep(1.5)
 
@@ -1175,7 +1648,6 @@ def process_zip(zip_path: Path):
     # Windows는 대소문자 구분 안 하므로 "*.ai" 하나로 .AI / .ai 모두 매칭 — dedupe
     ai_files = sorted({p.resolve() for p in extract_dir.glob("*.ai")})
     any_converted = False
-    pdf_to_upload: Path | None = None
     if not ai_files:
         ui_log(f"{order_number}: AI 파일 없음 — 확인 필요")
     else:
@@ -1183,21 +1655,24 @@ def process_zip(zip_path: Path):
             converted = convert_ai_file(Path(ai_file), qr_js,
                                         header_text, left_text, note_text)
             if converted:
-                ai_out, pdf_out = converted
+                ai_out, _pdf_out = converted
                 launch_flexsign(ai_out)
-                # 한 주문에 AI가 여러 개여도 PDF 는 마지막 것 1개만 거래처에 노출.
-                pdf_to_upload = pdf_out
                 any_converted = True
 
     if any_converted:
         notify_worksheet_acknowledged(order_number)
-        if pdf_to_upload is not None:
-            upload_worksheet_pdf(order_number, pdf_to_upload)
+        # 거래처 작업현황에 노출되는 지시서 PDF 는 "완성본" 만 보여야 한다.
+        # 즉, 직원이 FlexSign에서 [인쇄] 를 눌러 PRINTED_PDF_DIR 에 PDF 가 떨어진
+        # 시점에 _process_printed_pdf 가 업로드한다.
+        # 여기서(자동작성 직후)는 아직 작업 전 시안이므로 절대 업로드하지 않는다.
         # 인쇄 PDF 가 떨어지면 매칭할 수 있도록 큐에 등록.
+        delivery_ko = (meta.get("deliveryMethod") or "").strip()
+        delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
         remember_order_for_print(
             order_number,
             company,
             (str(meta.get("dueDate")).split("T")[0] if meta.get("dueDate") else ""),
+            delivery_enum,
         )
 
     DONE_DIR.mkdir(exist_ok=True)

@@ -150,8 +150,10 @@ public class PublicEvidenceController {
     }
 
     /**
-     * FlexSign 인쇄 시점에 작업자가 다이얼로그로 확정한 최종 납기 일자를 PATCH.
-     * 워처가 보내는 본문: { "dueDate": "yyyy-MM-dd" }. 잘못된 포맷이면 400.
+     * FlexSign 인쇄 시점에 작업자가 다이얼로그로 확정한 최종 납기 일자/배송방법을 PATCH.
+     * 워처가 보내는 본문 예: { "dueDate": "yyyy-MM-dd", "deliveryMethod": "CARGO" }
+     * 둘 다 옵션이지만 둘 다 비어있으면 400. 잘못된 포맷도 400.
+     * 엔드포인트 이름은 "/due-date" 그대로 유지 — 기존 워처 빌드와의 호환성을 위해.
      */
     @PostMapping("/{orderNumber}/due-date")
     public ResponseEntity<?> updateDueDate(
@@ -163,22 +165,38 @@ public class PublicEvidenceController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
         }
-        String raw = body == null ? null : body.get("dueDate");
-        if (raw == null || raw.isBlank()) {
-            return ResponseEntity.badRequest().body(Map.of("message", "dueDate가 비어 있습니다."));
+        if (body == null) body = Map.of();
+
+        String dueRaw = body.get("dueDate");
+        String deliveryRaw = body.get("deliveryMethod");
+        boolean hasDue = dueRaw != null && !dueRaw.isBlank();
+        boolean hasDelivery = deliveryRaw != null && !deliveryRaw.isBlank();
+        if (!hasDue && !hasDelivery) {
+            return ResponseEntity.badRequest().body(Map.of("message", "dueDate 또는 deliveryMethod 중 하나는 있어야 합니다."));
         }
-        LocalDate parsed;
-        try {
-            parsed = LocalDate.parse(raw.trim());
-        } catch (DateTimeParseException e) {
-            return ResponseEntity.badRequest().body(Map.of("message", "dueDate 포맷은 yyyy-MM-dd 입니다."));
+
+        if (hasDue) {
+            try {
+                order.setDueDate(LocalDate.parse(dueRaw.trim()));
+            } catch (DateTimeParseException e) {
+                return ResponseEntity.badRequest().body(Map.of("message", "dueDate 포맷은 yyyy-MM-dd 입니다."));
+            }
         }
-        order.setDueDate(parsed);
+
+        if (hasDelivery) {
+            try {
+                order.setDeliveryMethod(Order.DeliveryMethod.valueOf(deliveryRaw.trim()));
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of("message", "deliveryMethod 가 유효하지 않습니다 (CARGO/QUICK/DIRECT/PICKUP/LOCAL_CARGO)."));
+            }
+        }
+
         orderRepository.save(order);
-        return ResponseEntity.ok(Map.of(
-                "orderNumber", order.getOrderNumber(),
-                "dueDate", order.getDueDate().toString()
-        ));
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("orderNumber", order.getOrderNumber());
+        resp.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);
+        resp.put("deliveryMethod", order.getDeliveryMethod() != null ? order.getDeliveryMethod().name() : null);
+        return ResponseEntity.ok(resp);
     }
 
     /**

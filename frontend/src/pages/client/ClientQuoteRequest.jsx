@@ -4,9 +4,54 @@ import { useAuth } from '../../context/AuthContext';
 import { submitQuoteApi } from '../../api/client';
 import './ClientRequest.css';
 
-const LARGE_LINK_THRESHOLD_MB = 25;
-const MAX_TOTAL_FILE_SIZE_MB = 300;
+// 50MB 초과 시 Railway 메모리/타임아웃 부담 + 일러스트 COM RPC 실패 위험이 커서, 한도를 명시하고
+// 초과 케이스는 분할 발주 또는 이메일로 안내한다.
+const MAX_TOTAL_FILE_SIZE_MB = 50;
 const MAX_TOTAL_FILE_SIZE_BYTES = MAX_TOTAL_FILE_SIZE_MB * 1024 * 1024;
+const COMPANY_EMAIL = 'hdno88@daum.net';
+
+function OversizeNotice({ open, totalMB, onClose }) {
+    if (!open) return null;
+    const copyEmail = () => {
+        try { navigator.clipboard.writeText(COMPANY_EMAIL); } catch (_) {}
+    };
+    return (
+        <div className="oversize-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+            <div className="oversize-modal" onClick={(e) => e.stopPropagation()}>
+                <h3 className="oversize-title">파일 용량이 너무 큽니다</h3>
+                <p className="oversize-desc">
+                    첨부 총 용량 <b>{totalMB}MB</b>가 한도(<b>{MAX_TOTAL_FILE_SIZE_MB}MB</b>)를 초과했습니다.<br />
+                    아래 두 가지 중 한 가지로 진행해 주세요.
+                </p>
+                <div className="oversize-options">
+                    <div className="oversize-option">
+                        <span className="oversize-option-num">1</span>
+                        <div className="oversize-option-body">
+                            <b>파일을 나누어 여러 건으로 발주</b>
+                            <span className="oversize-sub">한 건당 {MAX_TOTAL_FILE_SIZE_MB}MB 이하가 되도록 나눠 보내주세요.</span>
+                        </div>
+                    </div>
+                    <div className="oversize-option">
+                        <span className="oversize-option-num">2</span>
+                        <div className="oversize-option-body">
+                            <b>이메일로 발주</b>
+                            <span className="oversize-sub">아래 주소로 파일과 발주 내용을 보내주시면 동일하게 접수됩니다.</span>
+                            <div className="oversize-email-row">
+                                <span className="oversize-email">{COMPANY_EMAIL}</span>
+                                <button type="button" className="oversize-copy" onClick={copyEmail}>복사</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <p className="oversize-warn">
+                    ※ 메일로 발주하신 작업물은 <b>작업현황 페이지에서 실시간 확인이 어렵습니다.</b><br />
+                    발주는 정상적으로 접수되오니 진행 상황은 <b>사무실로 문의</b> 바랍니다.
+                </p>
+                <button type="button" className="oversize-close" onClick={onClose}>확인</button>
+            </div>
+        </div>
+    );
+}
 
 function FileDropZone({ files, onFilesChange }) {
     const [dragging, setDragging] = useState(false);
@@ -46,7 +91,7 @@ function FileDropZone({ files, onFilesChange }) {
                 <span className="drop-zone-icon">📁</span>
                 <p className="drop-zone-text">파일을 드래그하거나 클릭하여 업로드</p>
                 <p className="drop-zone-sub">
-                    AI, PDF, JPG, PNG, ZIP 등 모든 형식 가능 ({LARGE_LINK_THRESHOLD_MB}MB 초과분은 자동 대용량 링크 전환, 총 {MAX_TOTAL_FILE_SIZE_MB}MB)
+                    AI, PDF, JPG, PNG, ZIP 등 모든 형식 가능 (총 {MAX_TOTAL_FILE_SIZE_MB}MB 이하)
                 </p>
                 <input
                     ref={inputRef}
@@ -134,7 +179,14 @@ export default function ClientQuoteRequest() {
             dragCounter.current = 0;
             setPageDragging(false);
             const dropped = Array.from(e.dataTransfer.files || []);
-            if (dropped.length > 0) setFiles([...filesRef.current, ...dropped]);
+            if (!dropped.length) return;
+            const merged = [...filesRef.current, ...dropped];
+            const totalBytes = merged.reduce((s, f) => s + (f?.size || 0), 0);
+            if (totalBytes > MAX_TOTAL_FILE_SIZE_BYTES) {
+                setOversizeNotice({ open: true, totalMB: Math.ceil(totalBytes / 1024 / 1024) });
+                return;
+            }
+            setFiles(merged);
         };
         window.addEventListener('dragenter', onDragEnter);
         window.addEventListener('dragleave', onDragLeave);
@@ -148,7 +200,14 @@ export default function ClientQuoteRequest() {
         };
     }, []);
 
+    const [oversizeNotice, setOversizeNotice] = useState({ open: false, totalMB: 0 });
+
     const handleFilesChange = useCallback((newFiles) => {
+        const totalBytes = newFiles.reduce((s, f) => s + (f?.size || 0), 0);
+        if (totalBytes > MAX_TOTAL_FILE_SIZE_BYTES) {
+            setOversizeNotice({ open: true, totalMB: Math.ceil(totalBytes / 1024 / 1024) });
+            return;
+        }
         setFiles(newFiles);
         if (!title.trim() && newFiles.length > 0) {
             const suggested = newFiles[0].name.replace(/\.[^/.]+$/, '');
@@ -237,6 +296,11 @@ export default function ClientQuoteRequest() {
                     </div>
                 </div>
             )}
+            <OversizeNotice
+                open={oversizeNotice.open}
+                totalMB={oversizeNotice.totalMB}
+                onClose={() => setOversizeNotice({ open: false, totalMB: 0 })}
+            />
             <div className="request-page-header">
                 <h1 className="request-page-title">견적 요청 접수</h1>
             </div>

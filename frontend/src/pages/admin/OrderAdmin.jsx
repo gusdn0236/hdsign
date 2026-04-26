@@ -23,14 +23,41 @@ const DELIVERY_LABELS = {
   LOCAL_CARGO: "지방화물차 배송",
 };
 
+const DELIVERY_SHORT_LABELS = {
+  CARGO: "화물",
+  QUICK: "퀵",
+  DIRECT: "직접배송",
+  PICKUP: "직접수령",
+  LOCAL_CARGO: "지방화물",
+};
+
+const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+
 const REQUEST_TYPE_LABELS = {
-  ORDER: "작업 요청",
-  QUOTE: "견적 요청",
+  ORDER: "발주",
+  QUOTE: "견적",
 };
 
 function formatDate(value) {
   if (!value) return "-";
   return String(value).split("T")[0];
+}
+
+function formatDateWithDay(value) {
+  if (!value) return "-";
+  const dateStr = String(value).split("T")[0];
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return dateStr;
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return dateStr;
+  return `${dateStr} (${WEEKDAY_KO[dt.getDay()]})`;
+}
+
+function formatDueDate(dueDate, deliveryMethod) {
+  if (!dueDate) return "-";
+  const base = formatDateWithDay(dueDate);
+  const delivery = DELIVERY_SHORT_LABELS[deliveryMethod];
+  return delivery ? `${base} ${delivery}` : base;
 }
 
 function formatDateTime(value) {
@@ -75,6 +102,9 @@ export default function OrderAdmin() {
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null);
+  const [sortMode, setSortMode] = useState("DEFAULT");
+  const [clientFilter, setClientFilter] = useState("");
+  const [dueDateRange, setDueDateRange] = useState("ALL");
 
   const loadOrders = async () => {
     setLoading(true);
@@ -147,6 +177,10 @@ export default function OrderAdmin() {
     setLightboxIndex(null);
   }, [selectedOrderId]);
 
+  useEffect(() => {
+    setClientFilter("");
+  }, [activeFilter]);
+
   const evidencePhotos = useMemo(
     () =>
       selectedFiles.evidence.map((file) => ({
@@ -166,11 +200,76 @@ export default function OrderAdmin() {
     return counts;
   }, [orders]);
 
-  const filteredOrders = useMemo(() => {
+  const statusFilteredOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
     if (activeFilter === "ALL") return orders;
     return orders.filter((order) => order.status === activeFilter);
   }, [activeFilter, orders, trashOrders]);
+
+  const availableClients = useMemo(() => {
+    const set = new Set();
+    statusFilteredOrders.forEach((o) => {
+      if (o.clientCompanyName) set.add(o.clientCompanyName);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "ko"));
+  }, [statusFilteredOrders]);
+
+  const filteredOrders = useMemo(() => {
+    if (activeFilter === "TRASH") return statusFilteredOrders;
+
+    let result = [...statusFilteredOrders];
+
+    if (sortMode === "BY_CLIENT") {
+      if (clientFilter) {
+        result = result.filter((o) => (o.clientCompanyName || "") === clientFilter);
+      }
+      result.sort((a, b) => {
+        const ca = a.clientCompanyName || "";
+        const cb = b.clientCompanyName || "";
+        if (ca === cb) {
+          const da = a.dueDate ? String(a.dueDate).split("T")[0] : "";
+          const db = b.dueDate ? String(b.dueDate).split("T")[0] : "";
+          if (!da && !db) return 0;
+          if (!da) return 1;
+          if (!db) return -1;
+          return da.localeCompare(db);
+        }
+        return ca.localeCompare(cb, "ko");
+      });
+    } else if (sortMode === "BY_DUE_DATE") {
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const weekEnd = new Date(now);
+      weekEnd.setDate(weekEnd.getDate() + 7);
+      const weekEndStr = `${weekEnd.getFullYear()}-${pad(weekEnd.getMonth() + 1)}-${pad(weekEnd.getDate())}`;
+
+      if (dueDateRange === "TODAY") {
+        result = result.filter((o) => o.dueDate && String(o.dueDate).split("T")[0] === today);
+      } else if (dueDateRange === "WEEK") {
+        result = result.filter((o) => {
+          if (!o.dueDate) return false;
+          const d = String(o.dueDate).split("T")[0];
+          return d >= today && d <= weekEndStr;
+        });
+      } else if (dueDateRange === "OVERDUE") {
+        result = result.filter((o) => {
+          if (!o.dueDate) return false;
+          return String(o.dueDate).split("T")[0] < today && o.status !== "COMPLETED";
+        });
+      }
+      result.sort((a, b) => {
+        const da = a.dueDate ? String(a.dueDate).split("T")[0] : "";
+        const db = b.dueDate ? String(b.dueDate).split("T")[0] : "";
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        return da.localeCompare(db);
+      });
+    }
+
+    return result;
+  }, [statusFilteredOrders, sortMode, clientFilter, dueDateRange, activeFilter]);
 
   const filterTabs = [
     { key: "ALL", label: "전체", count: orders.length },
@@ -405,12 +504,32 @@ export default function OrderAdmin() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      // 워처가 ZIP을 받아 QR을 박은 뒤 /worksheet-acknowledged 를 호출하면 IN_PROGRESS 로 전환된다.
-      // 그 사이에 같은 버튼을 두 번 누르지 않도록 클라이언트 UI 를 즉시 IN_PROGRESS 로 전환.
-      // 워처 처리 후 들어오는 백엔드 동기화 결과와 같은 상태로 수렴.
-      setOrders((prev) =>
-        prev.map((o) => (o.id === order.id ? { ...o, status: "IN_PROGRESS" } : o))
-      );
+      // 다운로드 직후 백엔드에 IN_PROGRESS 를 즉시 영속화한다.
+      // 이렇게 안 하면 워처가 /worksheet-acknowledged 를 부르기 전에 loadOrders 가
+      // 다시 RECEIVED 로 덮어쓸 수 있어 버튼이 "지시서 자동작성하기" 로 되돌아간다.
+      // 워처의 acknowledge 는 멱등(이미 IN_PROGRESS 면 무시)이므로 중복 호출 무해.
+      try {
+        const statusRes = await fetch(`${BASE_URL}/api/admin/orders/${order.id}/status`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ status: "IN_PROGRESS" }),
+        });
+        if (statusRes.ok) {
+          const updated = await statusRes.json();
+          setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
+        } else {
+          setOrders((prev) =>
+            prev.map((o) => (o.id === order.id ? { ...o, status: "IN_PROGRESS" } : o))
+          );
+        }
+      } catch (_) {
+        setOrders((prev) =>
+          prev.map((o) => (o.id === order.id ? { ...o, status: "IN_PROGRESS" } : o))
+        );
+      }
       setFeedback({
         type: "success",
         msg: "ZIP을 다운받았습니다. 워처가 처리되면 자동으로 작업중으로 전환됩니다.",
@@ -457,6 +576,65 @@ export default function OrderAdmin() {
           </button>
         ))}
       </div>
+
+      {activeFilter !== "TRASH" && (
+        <div className="order-sort-row">
+          <div className="sort-buttons">
+            <button
+              type="button"
+              className={`sort-btn ${sortMode === "DEFAULT" ? "active" : ""}`}
+              onClick={() => {
+                setSortMode("DEFAULT");
+                setClientFilter("");
+                setDueDateRange("ALL");
+              }}
+            >
+              기본
+            </button>
+            <button
+              type="button"
+              className={`sort-btn ${sortMode === "BY_CLIENT" ? "active" : ""}`}
+              onClick={() => setSortMode("BY_CLIENT")}
+            >
+              거래처별
+            </button>
+            <button
+              type="button"
+              className={`sort-btn ${sortMode === "BY_DUE_DATE" ? "active" : ""}`}
+              onClick={() => setSortMode("BY_DUE_DATE")}
+            >
+              납기별
+            </button>
+          </div>
+          {sortMode === "BY_CLIENT" && (
+            <select
+              className="sort-select"
+              value={clientFilter}
+              onChange={(e) => setClientFilter(e.target.value)}
+            >
+              <option value="">전체 거래처 (이름순)</option>
+              {availableClients.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          )}
+          {sortMode === "BY_DUE_DATE" && (
+            <select
+              className="sort-select"
+              value={dueDateRange}
+              onChange={(e) => setDueDateRange(e.target.value)}
+            >
+              <option value="ALL">전체 (가까운 납기순)</option>
+              <option value="TODAY">오늘 납기</option>
+              <option value="WEEK">7일 이내</option>
+              <option value="OVERDUE">지연 (완료 제외)</option>
+            </select>
+          )}
+          {(sortMode !== "DEFAULT") && (
+            <span className="sort-result-count">{filteredOrders.length}건</span>
+          )}
+        </div>
+      )}
 
       {activeFilter === "COMPLETED" && statusCounts.COMPLETED > 0 && (
         <div className="bulk-action-row">
@@ -542,8 +720,8 @@ export default function OrderAdmin() {
                   <td className="order-num">{order.orderNumber}</td>
                   <td>{order.clientCompanyName || "-"}</td>
                   <td>{requestLabel(order.requestType)}</td>
-                  <td>{order.title || requestLabel(order.requestType)}</td>
-                  <td>{formatDate(order.dueDate)}</td>
+                  <td className="order-title">{order.title || requestLabel(order.requestType)}</td>
+                  <td>{formatDueDate(order.dueDate, order.deliveryMethod)}</td>
                   <td>
                     {isTrash ? (
                       <span className="status-badge status-trash">
@@ -553,7 +731,7 @@ export default function OrderAdmin() {
                       <span className={`status-badge ${statusMeta.className}`}>{statusMeta.label}</span>
                     )}
                   </td>
-                  <td>{formatDate(isTrash ? order.deletedAt : order.createdAt)}</td>
+                  <td>{formatDateWithDay(isTrash ? order.deletedAt : order.createdAt)}</td>
                   <td>
                     {isTrash ? (
                       <div className="trash-actions">
@@ -588,7 +766,7 @@ export default function OrderAdmin() {
                           onClick={(e) => downloadWorksheet(e, order)}
                           disabled={downloadingId === order.id}
                         >
-                          {downloadingId === order.id ? "준비 중..." : "지시서 작성하기"}
+                          {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
                         </button>
                       ) : (
                         <button
@@ -600,7 +778,11 @@ export default function OrderAdmin() {
                           }}
                           disabled={updating}
                         >
-                          {updating ? "변경 중..." : "다음 단계"}
+                          {updating
+                            ? "변경 중..."
+                            : order.status === "IN_PROGRESS"
+                              ? "작업완료처리"
+                              : "다음 단계"}
                         </button>
                       )
                     ) : (
@@ -749,7 +931,7 @@ export default function OrderAdmin() {
                           disabled={downloadingId === selectedOrder.id}
                           onClick={(e) => downloadWorksheet(e, selectedOrder)}
                         >
-                          {downloadingId === selectedOrder.id ? "준비 중..." : "지시서 작성하기"}
+                          {downloadingId === selectedOrder.id ? "준비 중..." : "지시서 자동작성하기"}
                         </button>
                       )}
                       <select
