@@ -51,6 +51,13 @@
     font-variant-numeric: tabular-nums;
     font-size: 13px;
 }
+.pv-hint {
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 12px;
+    letter-spacing: 0.02em;
+}
 .pv-pager {
     display: flex;
     align-items: center;
@@ -72,6 +79,22 @@
     min-height: 0;
     overflow: auto;
     position: relative;
+    /* 스크롤 체이닝 차단 — 스테이지가 끝까지 스크롤되어도 body 로 전파 X */
+    overscroll-behavior: contain;
+    cursor: grab;
+    user-select: none;
+}
+.pv-stage--panning,
+.pv-stage:active {
+    cursor: grabbing;
+}
+
+.pv-canvas-wrap {
+    /* 스테이지 전체를 최소 채우도록 — 페이지가 작으면 가운데 정렬,
+       크면 자연스럽게 overflow 발생시켜 스크롤 가능. */
+    min-width: 100%;
+    min-height: 100%;
+    box-sizing: border-box;
     padding: 16px;
     display: flex;
     justify-content: center;
@@ -83,15 +106,15 @@
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
     border-radius: 4px;
     overflow: hidden;
+    /* flex 컨테이너 안에서 줄어들지 않도록 — 줌인 시 스테이지보다 커져야 함 */
+    flex-shrink: 0;
 }
 .pv-page canvas {
     display: block;
-    max-width: 100%;
-    height: auto !important;
+    /* max-width 100% 같은 클램핑 금지 — Page 의 width prop 으로 결정된 크기 그대로 */
 }
 
-/* 로딩 오버레이 — pointer-events:none 이 핵심.
-   캔버스 드로잉 중에도 컨트롤 버튼 클릭이 큐에 안 쌓임. */
+/* 로딩 오버레이 — pointer-events:none 으로 컨트롤 클릭 차단 X */
 .pv-loading {
     position: absolute;
     inset: 0;
@@ -104,6 +127,7 @@
     font-weight: 600;
     background: rgba(24, 24, 27, 0.55);
     pointer-events: none;
+    z-index: 5;
 }
 .pv-spinner {
     width: 24px;
@@ -129,4 +153,5 @@
     font-size: 13px;
     font-weight: 700;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    z-index: 6;
 }

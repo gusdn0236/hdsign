@@ -181,6 +181,17 @@ export default function OrderAdmin() {
     setCarouselIndex(0);
   }, [selectedOrderId]);
 
+  // 모달 열린 동안 body 스크롤 잠금 — PDF 뷰어 안에서 휠 굴리면 뒷배경 홈페이지가
+  // 스크롤되던 문제 차단. PdfViewer 의 overscroll-behavior:contain 과 이중 안전장치.
+  useEffect(() => {
+    if (!selectedOrderId) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, [selectedOrderId]);
+
   // 모달이 열릴 때 "본 시각" 갱신 → 행 배지 즉시 클리어.
   // 백엔드 응답을 기다리지 않고 낙관적으로 로컬 상태부터 갱신.
   useEffect(() => {
