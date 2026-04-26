@@ -252,17 +252,11 @@ export default function WorksheetViewer() {
         [queued]
     );
 
-    // 뒤로가기 — 시트 열려있으면 먼저 닫기, 아니면 히스토리 뒤로 (없으면 목록으로).
+    // 뒤로가기 — 시트 상태 무관하게 항상 목록으로 이동. 사용자가 "뒤로" 를 눌렀는데
+    // 시트만 닫히고 페이지는 그대로면 "안 먹는다" 고 느끼므로, 한 번에 작업 완료.
+    // 시트는 backdrop 탭 / × 버튼으로 따로 닫을 수 있다.
     const handleBack = () => {
-        if (sheetOpen) {
-            setSheetOpen(false);
-            return;
-        }
-        if (window.history.length > 1) {
-            navigate(-1);
-        } else {
-            navigate('/m/worksheets');
-        }
+        navigate('/m/worksheets');
     };
 
     return (
@@ -329,6 +323,10 @@ export default function WorksheetViewer() {
                                         key={i}
                                         pageNumber={i + 1}
                                         width={pageWidth}
+                                        // 폰의 DPR(보통 2~3)로 렌더하면 캔버스가 너무 커서 메인 쓰레드가
+                                        // 수 초 동안 막혀 버튼 탭이 안 먹는다. 1.5 로 고정해 절반 수준으로
+                                        // 그리고, 핀치줌(최대 5x)으로 확대해도 충분히 또렷하게 보이는 균형점.
+                                        devicePixelRatio={1.5}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
                                         className="wsv-page-canvas"

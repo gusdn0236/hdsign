@@ -53,9 +53,11 @@ export default function PdfPanZoom({ url }) {
             <TransformWrapper
                 initialScale={1}
                 minScale={0.5}
-                maxScale={5}
+                maxScale={4}
                 doubleClick={{ mode: 'toggle', step: 1.5 }}
-                wheel={{ step: 0.2 }}
+                // 마우스 휠 한 칸은 deltaY ~100 이라 step 이 크면 한 번에 끝까지 확대됨.
+                // 0.06 정도가 마우스 휠로 자연스럽게 단계별 확대되는 강도.
+                wheel={{ step: 0.06, smoothStep: 0.005 }}
                 pinch={{ step: 5 }}
                 panning={{ velocityDisabled: true }}
             >

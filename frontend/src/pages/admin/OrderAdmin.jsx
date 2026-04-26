@@ -946,8 +946,16 @@ export default function OrderAdmin() {
       />
 
       {selectedOrder && (
-        <div className="order-preview-modal" onClick={() => setSelectedOrderId(null)}>
-          <div className="order-preview-content" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="order-preview-modal"
+          // mousedown 으로 닫기 — PDF 영역에서 드래그하다 모달 밖에서 마우스를 떼는 경우
+          // click 이 backdrop(공통 조상) 에서 발사돼 모달이 닫히는 문제를 방지.
+          // mousedown 은 시작 지점 기준이라 PDF 안에서 시작했으면 backdrop 으로 안 옴.
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setSelectedOrderId(null);
+          }}
+        >
+          <div className="order-preview-content" onMouseDown={(e) => e.stopPropagation()}>
             <button type="button" className="order-modal-close" onClick={() => setSelectedOrderId(null)}>
               ×
             </button>
