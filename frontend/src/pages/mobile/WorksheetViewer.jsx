@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -67,6 +67,7 @@ const DELIVERY_LABELS = {
 
 export default function WorksheetViewer() {
     const { orderNumber } = useParams();
+    const navigate = useNavigate();
     const fileInputRef = useRef(null);
     const stageRef = useRef(null);
 
@@ -319,11 +320,20 @@ export default function WorksheetViewer() {
     return (
         <div className="wsv-page">
             <header className="wsv-topbar">
-                <a
-                    href="/m/worksheets"
+                {/* Link + onClick 조합:
+                    - PWA standalone 에서 평범한 <a href> 는 외부 사파리로 빠져나가는 케이스가
+                      있어 React Router 의 SPA 내비게이션(pushState) 으로 처리해야 PWA 안에서
+                      목록으로 이동.
+                    - onClick 으로 navigate() 명시 호출 + Link 의 anchor href 가 fallback. */}
+                <Link
+                    to="/m/worksheets"
+                    onClick={(e) => {
+                        e.preventDefault();
+                        navigate('/m/worksheets');
+                    }}
                     className="wsv-back"
                     aria-label="뒤로"
-                >‹</a>
+                >‹</Link>
                 <div className="wsv-topbar-text">
                     <div className="wsv-topbar-company">
                         {detail?.companyName || (loadingDetail ? '…' : '거래처 미상')}

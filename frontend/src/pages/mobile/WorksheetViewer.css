@@ -189,6 +189,10 @@ body:has(.wsv-page) {
     padding: 10px 14px max(10px, env(safe-area-inset-bottom));
     background: #18181b;
     border-top: 1px solid #27272a;
+    /* z-index 명시 — PWA 환경에서 다른 요소에 가려져 클릭이 안 먹는 케이스 방지 */
+    position: relative;
+    z-index: 50;
+    pointer-events: auto;
 }
 .wsv-action-reset {
     flex-shrink: 0;
