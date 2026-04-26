@@ -3,6 +3,13 @@
 <head>
     <meta charset="UTF-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+
+    <!-- 배포 시 청크 해시가 바뀌므로 옛 index.html 이 캐시되면 옛 청크 404 발생.
+         메타 태그는 HTTP 헤더만큼 강력하진 않지만 브라우저 디스크 캐시 동작에 힌트를 준다. -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+    <meta http-equiv="Pragma" content="no-cache"/>
+    <meta http-equiv="Expires" content="0"/>
+
     <title>HD Sign | 간판 전문기업</title>
     <meta name="description" content="HD Sign – 갈바, 스테인리스, 에폭시, 특수 간판 전문 제작업체. 품질과 신뢰로 함께합니다."/>
 
@@ -65,7 +72,7 @@
             }
         })();
     </script>
-  <script type="module" crossorigin src="/assets/index-BJT0IUSW.js"></script>
+  <script type="module" crossorigin src="/assets/index-B-opG0fH.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-Dwv3s-W2.css">
 </head>
 <body>
