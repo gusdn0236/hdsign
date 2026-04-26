@@ -11,6 +11,7 @@ import queue
 import shutil
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -767,6 +768,11 @@ class PrintedPdfHandler(FileSystemEventHandler):
     def _handle(self, src: Path):
         if src.suffix.lower() != ".pdf":
             return
+        # 워처가 업로드 직전에 만드는 압축본(.min.pdf)이 같은 폴더로 들어와도 다이얼로그가
+        # 다시 뜨지 않도록 방어. 압축본은 이미 temp 로 보내고 있지만, 누가 옛 빌드를
+        # 사용하더라도 매칭 다이얼로그 중복은 막는다.
+        if src.name.lower().endswith(".min.pdf"):
+            return
         if src.parent != PRINTED_PDF_DIR:
             return
         threading.Thread(target=_process_printed_pdf, args=(src,), daemon=True).start()
@@ -1448,7 +1454,9 @@ def compress_pdf_for_upload(src: Path) -> Path:
         ui_log("Ghostscript 미설치 — 원본 PDF 그대로 업로드 (압축 건너뜀)")
         return src
 
-    out = src.with_name(src.stem + ".min.pdf")
+    # 압축본은 PRINTED_PDF_DIR 가 아닌 시스템 temp 에 쓴다.
+    # 같은 폴더에 쓰면 watchdog 의 on_created 가 다시 발사돼 매칭 다이얼로그가 두 번 뜸.
+    out = Path(tempfile.gettempdir()) / f"hdsign_{src.stem}.min.pdf"
     cmd = [
         gs_exe,
         "-sDEVICE=pdfwrite",
