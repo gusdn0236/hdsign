@@ -55,10 +55,9 @@ export default function PdfPanZoom({ url }) {
                 minScale={0.5}
                 maxScale={4}
                 doubleClick={{ mode: 'toggle', step: 1.5 }}
-                // 라이브러리는 deltaY 부호만 보고 ±1 로 정규화 — step 이 그대로 한 이벤트당
-                // 스케일 증감. 매끄러운 휠 마우스는 한 번 굴림에 여러 이벤트가 와서 누적되므로
-                // 0.03 정도가 일반/매끄러운 휠 양쪽에서 자연스러움. (smoothStep 은 v4 에 없음)
-                wheel={{ step: 0.03 }}
+                // 휠 한 칸 = +/- 버튼 한 번 누름과 동일한 줌 강도(zoomIn 기본 step 0.5).
+                // 사용자가 휠과 버튼 사이 일관된 감각을 원해서 맞춤. (smoothStep 은 v4 에 없음)
+                wheel={{ step: 0.5 }}
                 pinch={{ step: 5 }}
                 panning={{ velocityDisabled: true }}
             >

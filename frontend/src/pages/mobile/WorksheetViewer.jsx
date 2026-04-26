@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -67,7 +67,6 @@ const DELIVERY_LABELS = {
 
 export default function WorksheetViewer() {
     const { orderNumber } = useParams();
-    const navigate = useNavigate();
     const fileInputRef = useRef(null);
     const containerRef = useRef(null);
 
@@ -252,22 +251,18 @@ export default function WorksheetViewer() {
         [queued]
     );
 
-    // 뒤로가기 — 시트 상태 무관하게 항상 목록으로 이동. 사용자가 "뒤로" 를 눌렀는데
-    // 시트만 닫히고 페이지는 그대로면 "안 먹는다" 고 느끼므로, 한 번에 작업 완료.
-    // 시트는 backdrop 탭 / × 버튼으로 따로 닫을 수 있다.
-    const handleBack = () => {
-        navigate('/m/worksheets');
-    };
+    // 뒤로가기 — <Link> 로 처리. anchor 요소라 onClick 이 어떤 이유로(메인 쓰레드 블록,
+    // 이벤트 리스너 누수 등) 안 먹어도 브라우저의 href 기본 동작이 fallback 으로 살아있다.
+    // useNavigate 만 쓰면 모바일 사파리/PWA 의 일부 상태에서 클릭이 묵살되는 케이스가 있었음.
 
     return (
         <div className="wsv-page" ref={containerRef}>
             <header className="wsv-topbar">
-                <button
-                    type="button"
-                    onClick={handleBack}
+                <Link
+                    to="/m/worksheets"
                     className="wsv-back"
                     aria-label="뒤로"
-                >‹</button>
+                >‹</Link>
                 <div className="wsv-topbar-text">
                     <div className="wsv-topbar-company">
                         {detail?.companyName || (loadingDetail ? '…' : '거래처 미상')}
@@ -323,10 +318,11 @@ export default function WorksheetViewer() {
                                         key={i}
                                         pageNumber={i + 1}
                                         width={pageWidth}
-                                        // 폰의 DPR(보통 2~3)로 렌더하면 캔버스가 너무 커서 메인 쓰레드가
-                                        // 수 초 동안 막혀 버튼 탭이 안 먹는다. 1.5 로 고정해 절반 수준으로
-                                        // 그리고, 핀치줌(최대 5x)으로 확대해도 충분히 또렷하게 보이는 균형점.
-                                        devicePixelRatio={1.5}
+                                        // DPR 3(retina) 기본값은 캔버스가 너무 커 메인 쓰레드를 수 초 막아 버튼이
+                                        // 안 먹던 문제 → 1.5 로 낮췄더니 글씨가 흐려짐. 2 가 균형점:
+                                        // 1.5 대비 픽셀 1.78배지만 핀치줌(최대 5x)에서 글씨가 또렷하게 읽히고
+                                        // 1 페이지 기준 추가 렌더 시간 ~0.5s 정도라 입력 지연도 체감 없음.
+                                        devicePixelRatio={2}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
                                         className="wsv-page-canvas"
