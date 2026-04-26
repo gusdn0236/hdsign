@@ -81,6 +81,8 @@
     justify-content: center;
     overflow: hidden;
     cursor: zoom-in;
+    /* 페이지 네비(.wsv-pager) 가 absolute 로 띄울 컨테이너 */
+    position: relative;
     /* 브라우저 가장자리 swipe-back 제스처는 살리고, 핀치줌은 viewport meta 의
        user-scalable=no + 내부 라이브러리 element 의 touch-action: none 으로 차단. */
 }
@@ -122,6 +124,46 @@
 }
 .wsv-msg.error {
     color: #fca5a5;
+}
+
+/* 페이지 네비 — 다중 페이지 PDF 일 때만 노출 */
+.wsv-pager {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(24, 24, 27, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    padding: 4px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.wsv-pager-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 999px;
+    border: none;
+    background: transparent;
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.wsv-pager-btn:disabled {
+    color: #52525b;
+}
+.wsv-pager-text {
+    color: #e4e4e7;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 0 8px;
+    min-width: 40px;
+    text-align: center;
 }
 
 /* 시트 ----------------------------------------------------------- */

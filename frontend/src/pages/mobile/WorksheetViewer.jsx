@@ -75,6 +75,7 @@ export default function WorksheetViewer() {
     const [loadingDetail, setLoadingDetail] = useState(true);
 
     const [numPages, setNumPages] = useState(0);
+    const [currentPage, setCurrentPage] = useState(1);
     const [pdfError, setPdfError] = useState('');
     const [pageWidth, setPageWidth] = useState(0);
 
@@ -159,6 +160,7 @@ export default function WorksheetViewer() {
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
+        setCurrentPage(1);
         setPdfError('');
     }, []);
     const onDocError = useCallback((err) => {
@@ -314,25 +316,53 @@ export default function WorksheetViewer() {
                                 error={<div className="wsv-msg error">PDF 표시 실패</div>}
                                 noData={<div className="wsv-msg">PDF 가 비어있습니다.</div>}
                             >
-                                {Array.from({ length: numPages }, (_, i) => (
+                                {numPages > 0 && (
                                     <Page
-                                        key={i}
-                                        pageNumber={i + 1}
+                                        // key 에 page 포함 — 페이지 전환시 캔버스 재생성으로 깔끔하게 다시 그리게.
+                                        key={`p-${currentPage}`}
+                                        pageNumber={currentPage}
                                         width={pageWidth}
-                                        // 화질 최우선 — DPR 4 로 핀치줌 5x 에서도 글씨 거의 1:1. 메인 쓰레드 부하는
-                                        // 큰 편이지만 뒤로가기 버튼은 <a href> 풀 이동이라 JS 상태 무관하게 동작하므로
-                                        // "버튼이 늦게 활성화되는" 문제는 화질과 분리해 해결됨.
-                                        devicePixelRatio={4}
+                                        // 한 페이지만 그리니 DPR 3(retina 기본) 으로 충분히 선명하면서도
+                                        // 메인 쓰레드 부하 적음. 모든 페이지를 한꺼번에 그리던 이전 방식은
+                                        // 페이지 수 × 렌더시간으로 누적돼 20~30초 멈춤이 났음.
+                                        devicePixelRatio={3}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
                                         className="wsv-page-canvas"
                                     />
-                                ))}
+                                )}
                             </Document>
                         </TransformComponent>
                     </TransformWrapper>
                 )}
                 {pdfError && <div className="wsv-msg error">{pdfError}</div>}
+
+                {numPages > 1 && (
+                    <div
+                        className="wsv-pager"
+                        // 시트 토글이 wsv-stage onClick 으로 처리되는데, 페이지 버튼 탭이
+                        // 그 핸들러로 버블링되면 시트가 열려버림. 여기서 차단.
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            type="button"
+                            className="wsv-pager-btn"
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage <= 1}
+                            aria-label="이전 페이지"
+                        >‹</button>
+                        <span className="wsv-pager-text">
+                            {currentPage} / {numPages}
+                        </span>
+                        <button
+                            type="button"
+                            className="wsv-pager-btn"
+                            onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
+                            disabled={currentPage >= numPages}
+                            aria-label="다음 페이지"
+                        >›</button>
+                    </div>
+                )}
             </div>
 
             {/* 바닥 시트 — 사진 업로드 */}
