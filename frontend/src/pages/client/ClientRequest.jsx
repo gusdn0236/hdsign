@@ -707,7 +707,16 @@ export default function ClientRequest() {
                     <span className="submitted-icon">✅</span>
                     <h2 className="submitted-title">작업 요청이 접수되었습니다</h2>
                     <p className="submitted-desc">담당자가 확인 후 빠르게 연락드리겠습니다.</p>
-                    <button className="req-submit-btn" onClick={reset}>새 요청 작성하기</button>
+                    <div className="submitted-actions">
+                        <button type="button" className="req-submit-btn" onClick={reset}>새 요청 작성하기</button>
+                        <button
+                            type="button"
+                            className="req-submit-btn req-submit-btn--secondary"
+                            onClick={() => navigate('/client/status')}
+                        >
+                            작업현황 보기
+                        </button>
+                    </div>
                 </div>
             </div>
         );

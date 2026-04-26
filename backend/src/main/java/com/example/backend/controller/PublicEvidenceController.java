@@ -181,20 +181,38 @@ public class PublicEvidenceController {
             return ResponseEntity.badRequest().body(Map.of("message", "dueDate 또는 deliveryMethod 중 하나는 있어야 합니다."));
         }
 
+        // 실제로 값이 바뀌었는지 비교 — 같은 값으로 PATCH 가 와도 "변경" 배지를 띄우지 않기 위해.
+        boolean changed = false;
+
         if (hasDue) {
+            LocalDate parsed;
             try {
-                order.setDueDate(LocalDate.parse(dueRaw.trim()));
+                parsed = LocalDate.parse(dueRaw.trim());
             } catch (DateTimeParseException e) {
                 return ResponseEntity.badRequest().body(Map.of("message", "dueDate 포맷은 yyyy-MM-dd 입니다."));
+            }
+            if (!parsed.equals(order.getDueDate())) {
+                order.setDueDate(parsed);
+                changed = true;
             }
         }
 
         if (hasDelivery) {
+            Order.DeliveryMethod parsedDelivery;
             try {
-                order.setDeliveryMethod(Order.DeliveryMethod.valueOf(deliveryRaw.trim()));
+                parsedDelivery = Order.DeliveryMethod.valueOf(deliveryRaw.trim());
             } catch (IllegalArgumentException e) {
                 return ResponseEntity.badRequest().body(Map.of("message", "deliveryMethod 가 유효하지 않습니다 (CARGO/QUICK/DIRECT/PICKUP/LOCAL_CARGO)."));
             }
+            if (parsedDelivery != order.getDeliveryMethod()) {
+                order.setDeliveryMethod(parsedDelivery);
+                changed = true;
+            }
+        }
+
+        // 실제 변경이 발생했을 때만 배지 트리거.
+        if (changed) {
+            order.setWorksheetUpdatedAt(LocalDateTime.now());
         }
 
         orderRepository.save(order);
@@ -212,7 +230,10 @@ public class PublicEvidenceController {
     @PostMapping("/{orderNumber}/worksheet-pdf")
     public ResponseEntity<?> uploadWorksheetPdf(
             @PathVariable String orderNumber,
-            @RequestParam("file") MultipartFile file
+            @RequestParam("file") MultipartFile file,
+            // 워처 인쇄 다이얼로그에서 사용자가 "지시서 내용 변경됨" 체크박스를 켰을 때 true.
+            // 단순 재인쇄(동일 내용)로 인한 PDF 재업로드는 false → 배지 안 띄움.
+            @RequestParam(value = "contentChanged", required = false) Boolean contentChanged
     ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null) {
@@ -248,10 +269,16 @@ public class PublicEvidenceController {
                 ? ""
                 : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
         String url = normalizedPublicUrl + key;
+
+        // 첫 부착(이전 URL 이 없었음) 또는 사용자가 "지시서 내용 변경됨" 체크박스를 켰을 때만
+        // "변경" 배지 트리거. 단순 재인쇄(동일 내용)는 배지 안 띄움.
+        // 납기/배송 실제 변경은 /due-date 에서 별도로 잡는다.
+        boolean firstAttachment = order.getWorksheetPdfUrl() == null || order.getWorksheetPdfUrl().isBlank();
+        boolean userMarkedChanged = Boolean.TRUE.equals(contentChanged);
         order.setWorksheetPdfUrl(url);
-        // 관리자 행 배지 트리거 — 납기 변경/지시서 수정 시 워처가 PDF 를 재업로드 하므로
-        // 이 시각이 곧 "지시서 변경" 신호가 된다.
-        order.setWorksheetUpdatedAt(LocalDateTime.now());
+        if (firstAttachment || userMarkedChanged) {
+            order.setWorksheetUpdatedAt(LocalDateTime.now());
+        }
         orderRepository.save(order);
 
         // DB 가 새 URL 로 바뀐 직후 옛 R2 객체 삭제(best-effort). 실패해도 다음 영구삭제 시 청소됨.

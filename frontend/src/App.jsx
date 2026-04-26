@@ -24,20 +24,39 @@ import PrivateRoute from './components/common/PrivateRoute.jsx'
 
 // 배포 시마다 chunk 해시가 바뀐다. 옛 index.html 을 캐싱한 사용자가 옛 chunk 를 fetch 하면
 // 404 가 나면서 "Failed to fetch dynamically imported module" 로 빈 화면이 뜬다.
-// 첫 실패 시 페이지를 한 번 reload 해서 새 index.html 을 받게 한다 (sessionStorage 로 무한
-// 새로고침 루프 방지).
+// 첫 실패 시 캐시버스터 쿼리(?_cb=ts)로 navigate 해서 옛 index.html 캐시를 우회하고
+// 새 index.html 을 강제로 받게 한다. 그냥 location.reload() 는 HTTP 캐시를 우회하지 못해
+// 옛 index.html 을 그대로 다시 받아 같은 에러가 반복되는 케이스가 있었다.
+// sessionStorage 로 무한 새로고침 루프 방지.
 const RELOAD_KEY = 'chunk-load-reloaded'
+const CB_PARAM = '_cb'
 const lazyWithRetry = (factory) =>
     lazy(async () => {
         try {
             const mod = await factory()
-            window.sessionStorage.removeItem(RELOAD_KEY)
+            // 성공했으면 retry 플래그 정리 + URL 에 _cb 가 남아있으면 깨끗이 제거
+            if (window.sessionStorage.getItem(RELOAD_KEY)) {
+                window.sessionStorage.removeItem(RELOAD_KEY)
+                try {
+                    const cleanUrl = new URL(window.location.href)
+                    if (cleanUrl.searchParams.has(CB_PARAM)) {
+                        cleanUrl.searchParams.delete(CB_PARAM)
+                        window.history.replaceState(null, '', cleanUrl.toString())
+                    }
+                } catch { /* ignore */ }
+            }
             return mod
         } catch (err) {
             if (!window.sessionStorage.getItem(RELOAD_KEY)) {
                 window.sessionStorage.setItem(RELOAD_KEY, '1')
-                window.location.reload()
-                // reload 가 일어나는 동안 React 가 렌더 시도하지 않도록 빈 컴포넌트 반환
+                try {
+                    const url = new URL(window.location.href)
+                    url.searchParams.set(CB_PARAM, Date.now().toString())
+                    window.location.replace(url.toString())
+                } catch {
+                    window.location.reload()
+                }
+                // navigate 가 일어나는 동안 React 가 렌더 시도하지 않도록 빈 컴포넌트 반환
                 return { default: () => null }
             }
             throw err
@@ -56,6 +75,8 @@ const ClientRequest    = lazyWithRetry(() => import('./pages/client/ClientReques
 const ClientQuoteRequest = lazyWithRetry(() => import('./pages/client/ClientQuoteRequest.jsx'))
 const ClientStatus     = lazyWithRetry(() => import('./pages/client/ClientStatus.jsx'))
 const EvidenceCapture  = lazyWithRetry(() => import('./pages/evidence/EvidenceCapture.jsx'))
+const WorksheetList    = lazyWithRetry(() => import('./pages/mobile/WorksheetList.jsx'))
+const WorksheetViewer  = lazyWithRetry(() => import('./pages/mobile/WorksheetViewer.jsx'))
 
 const RouteFallback = () => (
     <div style={{
@@ -71,7 +92,8 @@ function App() {
     const isAdmin  = location.pathname.startsWith('/admin')
     const isClient = location.pathname.startsWith('/client')
     const isEvidence = location.pathname.startsWith('/p/')
-    const hideHeaderFooter = isAdmin || isClient || isEvidence
+    const isMobileApp = location.pathname.startsWith('/m/')
+    const hideHeaderFooter = isAdmin || isClient || isEvidence || isMobileApp
 
     return (
         <AuthProvider>
@@ -116,6 +138,9 @@ function App() {
                         </Route>
 
                         <Route path="/p/:orderNumber" element={<EvidenceCapture />} />
+
+                        <Route path="/m/worksheets" element={<WorksheetList />} />
+                        <Route path="/m/worksheets/:orderNumber" element={<WorksheetViewer />} />
 
                         <Route path="/client/login" element={<ClientLogin />} />
                         <Route path="/client" element={<ClientLayout />}>

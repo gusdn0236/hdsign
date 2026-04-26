@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+import unicodedata
 from datetime import date, timedelta
 from tkinter import messagebox, ttk
 import urllib.error
@@ -67,6 +68,11 @@ _ui_queue: queue.Queue = queue.Queue()
 
 # FlexSign 으로 보낸 주문들의 메타. 인쇄 PDF 가 떨어졌을 때 가장 최근 항목과 매칭한다.
 # (deque 로 최대 20건만 유지 — 그 이상 한번에 처리할 일은 거의 없음)
+# 워처 재시작 후에도 큐가 살아있도록 _RECENT_ORDERS_FILE 에 영속화. 이전 세션에서
+# FlexSign 에 띄워놓고 인쇄만 안 한 주문도 매칭 다이얼로그가 뜨도록 보장.
+_RECENT_ORDERS_FILE = WATCH_DIR / "state" / "recent_orders.json"
+# 24시간 지난 항목은 인쇄 매칭 후보에서 제외 — 사무실에서 익일 처리하는 일은 드뭄.
+_RECENT_ORDERS_TTL_SEC = 24 * 3600
 _recent_orders: collections.deque = collections.deque(maxlen=20)
 _recent_orders_lock = threading.Lock()
 _seen_printed: set[str] = set()
@@ -78,6 +84,12 @@ _seen_printed_lock = threading.Lock()
 # 워처가 PDF24 로 바꾸기 직전의 원래 기본 프린터. 인쇄 PDF 감지 시 여기로 복구.
 _saved_default_printer: str | None = None
 _printer_lock = threading.Lock()
+
+# 사무실 네트워크 거래처 폴더 베이스 경로 등 외부 설정. 빌드 없이 사무실에서 한 줄
+# 추가만으로 동작하도록 JSON 파일로 분리. 키 예시:
+#   { "network_customer_base": "\\\\hd-server\\공용\\거래처" }
+# 미설정/접근불가 시 워처는 로컬 converted/ 만 사용하는 기존 동작으로 폴백.
+_CONFIG_FILE = WATCH_DIR / "state" / "config.json"
 
 
 # ── UI helpers (thread-safe) ────────────────────────────────────────────────
@@ -183,9 +195,10 @@ def _format_md(value) -> str:
 
 
 def format_header_text(meta: dict) -> str:
-    """중앙 박스용 한 줄 텍스트. 예: '04-24발주 / 04-25화물'.
-    공백 대신 슬래시로 구분 — FlexSign 글자 메트릭 변환에서 공백 폭이 늘어나
-    가독성이 떨어지는 문제 회피."""
+    """중앙 박스용 한 줄 텍스트. 예: '04-24발주/04-25화물'.
+    공백을 모두 제거하고 슬래시로 구분 — FlexSign 글자 메트릭 변환에서 공백 폭이
+    크게 늘어나 회색 박스 밖으로 글씨가 밀려나는 문제 회피. 회사명/주소가 들어가는
+    값은 따로 없으므로 공백을 다 빼도 의미 손실 없음."""
     parts = []
     order_md = _format_md(meta.get("createdAt"))
     if order_md:
@@ -194,7 +207,7 @@ def format_header_text(meta: dict) -> str:
     delivery = DELIVERY_SHORT.get((meta.get("deliveryMethod") or "").strip(), "")
     if due_md:
         parts.append(f"{due_md}{delivery}" if delivery else due_md)
-    return " / ".join(parts) if parts else "-"
+    return "/".join(parts).replace(" ", "") if parts else "-"
 
 
 def format_left_text(meta: dict) -> str:
@@ -290,6 +303,59 @@ def patch_due_date(order_number: str, new_due: date,
     return False
 
 
+def _save_recent_orders_unlocked() -> None:
+    """_recent_orders 를 디스크에 직렬화. 호출자가 _recent_orders_lock 을 보유한
+    상태여야 한다. 원자성 보장을 위해 .tmp 에 쓰고 replace."""
+    try:
+        _RECENT_ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _RECENT_ORDERS_FILE.with_suffix(".tmp")
+        data = list(_recent_orders)
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(_RECENT_ORDERS_FILE)
+    except Exception as e:
+        # 영속화 실패해도 메모리 큐는 유효 — 로그만 남기고 계속 진행.
+        ui_log(f"인쇄 매칭 큐 저장 실패: {e}")
+
+
+def load_recent_orders() -> None:
+    """워처 시작 시 디스크에서 큐 복구. 파일 없거나 깨졌으면 조용히 빈 상태로 시작.
+    TTL 지난 항목은 로드 시점에 걸러낸다."""
+    try:
+        raw = _RECENT_ORDERS_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    except Exception as e:
+        ui_log(f"인쇄 매칭 큐 로드 실패(파일 읽기): {e}")
+        return
+    try:
+        items = json.loads(raw)
+        if not isinstance(items, list):
+            return
+    except Exception as e:
+        ui_log(f"인쇄 매칭 큐 로드 실패(JSON): {e}")
+        return
+    now = time.time()
+    cutoff = now - _RECENT_ORDERS_TTL_SEC
+    with _recent_orders_lock:
+        _recent_orders.clear()
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            ts = it.get("ts")
+            if not isinstance(ts, (int, float)) or ts < cutoff:
+                continue
+            _recent_orders.append({
+                "orderNumber": it.get("orderNumber") or "",
+                "companyName": it.get("companyName") or "",
+                "dueDate": it.get("dueDate") or "",
+                "deliveryMethod": it.get("deliveryMethod") or "",
+                "ts": float(ts),
+            })
+        _save_recent_orders_unlocked()
+    if _recent_orders:
+        ui_log(f"인쇄 매칭 큐 복구: {len(_recent_orders)}건")
+
+
 def remember_order_for_print(order_number: str, company_name: str,
                              due_date_iso: str | None, delivery_enum: str | None):
     """FlexSign에 보낸 주문을 인쇄 매칭용 큐에 기록.
@@ -308,13 +374,135 @@ def remember_order_for_print(order_number: str, company_name: str,
             "deliveryMethod": delivery_enum or "",
             "ts": time.time(),
         })
+        _save_recent_orders_unlocked()
 
 
 def list_recent_orders() -> list[dict]:
     """최근 처리한 주문을 최신순(가장 최근이 [0])으로 반환. 큐는 그대로 유지.
-    인쇄 PDF 다이얼로그에서 직원이 어떤 주문에 매칭할지 직접 고르는 데 쓴다."""
+    인쇄 PDF 다이얼로그에서 직원이 어떤 주문에 매칭할지 직접 고르는 데 쓴다.
+    TTL 지난 항목은 결과에서 제외 — 메모리에는 남겨둔다(다음 save 때 자연 정리)."""
+    cutoff = time.time() - _RECENT_ORDERS_TTL_SEC
     with _recent_orders_lock:
-        return list(reversed(_recent_orders))
+        fresh = [o for o in _recent_orders if o.get("ts", 0) >= cutoff]
+        return list(reversed(fresh))
+
+
+# ── Network customer folder delivery ─────────────────────────────────────────
+
+def _load_config() -> dict:
+    """워처 외부 설정(JSON) 로드. 파일 없거나 깨졌으면 빈 dict — 기존 동작으로 폴백."""
+    try:
+        return json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        ui_log(f"config.json 로드 실패: {e}")
+        return {}
+
+
+_FORBIDDEN_FS_CHARS = set('<>:"/\\|?*')
+
+
+def _sanitize_folder_name(name: str) -> str:
+    """Windows 폴더명 금지문자 치환 + 앞뒤 공백/마침표 제거.
+    빈 문자열은 그대로 빈 문자열 반환 (호출자가 폴백)."""
+    if not name:
+        return ""
+    cleaned = "".join("_" if c in _FORBIDDEN_FS_CHARS else c for c in name)
+    return cleaned.strip().strip(".")
+
+
+def _normalize_company_key(name: str) -> str:
+    """거래처 폴더 매칭용 정규화 키. NFC + 모든 공백류 제거 + 소문자.
+    윈도우 파일시스템이 NFD 로 저장하는 케이스 + 사람이 입력한 공백 차이를 흡수."""
+    if not name:
+        return ""
+    n = unicodedata.normalize("NFC", name)
+    n = "".join(n.split())  # 공백/탭/개행 모두 제거
+    return n.lower()
+
+
+def resolve_customer_folder(network_base: Path, company_name: str) -> Path:
+    """네트워크 베이스 안에서 companyName 에 해당하는 거래처 폴더 결정.
+    공백/대소문자/NFC 무시 정확 일치 매칭만 신뢰 — 글자가 다르면(오타 등) 매칭 X.
+    기존 폴더 매칭되면 그 폴더 경로(이름 변형 없이) 반환,
+    아니면 '<companyName> (자동생성)' 신규 경로 반환 (실제 생성은 호출자).
+    스캔 실패(권한/네트워크 끊김) 시에도 자동생성 경로로 폴백."""
+    target_key = _normalize_company_key(company_name)
+    safe_company = _sanitize_folder_name(company_name) or "(미지정)"
+    fallback_new = network_base / f"{safe_company} (자동생성)"
+    if not target_key:
+        return fallback_new
+    try:
+        for child in network_base.iterdir():
+            if not child.is_dir():
+                continue
+            if _normalize_company_key(child.name) == target_key:
+                return child
+    except Exception as e:
+        ui_log(f"거래처 폴더 스캔 실패({e}) — 자동생성 경로로 진행")
+    return fallback_new
+
+
+def deliver_to_network_folder(meta: dict, original_ai: Path,
+                              v8_ai: Path) -> Path | None:
+    """원본 .ai + v8 .ai 를 네트워크 거래처 폴더의 주문별 하위폴더로 복사.
+    구조: <network_base>/<거래처폴더>/<MM-DD title>/{원본.ai, <stem>_v8.ai}
+    성공 시 네트워크 v8 .ai 경로 반환 — FlexSign 으로 그걸 열어야 [Save .fs] 가
+    같은 폴더에 떨어진다.
+    네트워크 미설정/접근실패/복사실패 시 None 반환 — 호출자가 로컬 converted/ 사용."""
+    config = _load_config()
+    base_str = (config.get("network_customer_base") or "").strip()
+    if not base_str:
+        return None
+    network_base = Path(base_str)
+    try:
+        if not network_base.exists():
+            ui_log(f"네트워크 베이스 폴더 접근 불가: {base_str} — 로컬만 사용")
+            return None
+    except Exception as e:
+        ui_log(f"네트워크 베이스 확인 실패: {e} — 로컬만 사용")
+        return None
+
+    company = (meta.get("companyName") or "").strip()
+    title = (meta.get("title") or "").strip()
+    order_number = (meta.get("orderNumber") or "").strip()
+    md = _format_md(meta.get("createdAt"))
+    if not md:
+        today = date.today()
+        md = f"{today.month:02d}-{today.day:02d}"
+
+    if title:
+        order_folder_raw = f"{md} {title}"
+    elif order_number:
+        # title 빈 케이스 폴백 — 주문번호로 식별 가능하게.
+        order_folder_raw = f"{md} {order_number}"
+    else:
+        order_folder_raw = md
+    order_folder_name = _sanitize_folder_name(order_folder_raw) or md
+
+    customer_folder = resolve_customer_folder(network_base, company)
+    is_new_customer = customer_folder.name.endswith("(자동생성)") and not customer_folder.exists()
+    order_folder = customer_folder / order_folder_name
+    try:
+        order_folder.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        ui_log(f"네트워크 주문 폴더 생성 실패: {e} — 로컬만 사용")
+        return None
+    if is_new_customer:
+        ui_log(f"거래처 폴더 신규 생성: {customer_folder.name}")
+
+    try:
+        dst_orig = order_folder / original_ai.name
+        shutil.copy2(str(original_ai), str(dst_orig))
+        dst_v8 = order_folder / f"{original_ai.stem}_v8.ai"
+        shutil.copy2(str(v8_ai), str(dst_v8))
+    except Exception as e:
+        ui_log(f"네트워크 복사 실패: {e} — 로컬 v8 사용")
+        return None
+
+    ui_log(f"네트워크 저장: {customer_folder.name} / {order_folder_name}")
+    return dst_v8
 
 
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
@@ -477,15 +665,26 @@ def print_pdf_to_paper(pdf_path: Path) -> bool:
 # ── 인쇄 다이얼로그 ─────────────────────────────────────────────────────────
 
 def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
-    """모달 다이얼로그: 어떤 주문에 매칭할지 + 납기 일자.
-    가장 최근이 기본 선택. 옛 주문 재인쇄 시 직원이 드롭다운에서 변경.
+    """모달 다이얼로그: 방금 인쇄한 PDF 를 어느 주문에 매칭하고 웹 작업현황에 어떻게 반영할지.
 
     리턴값:
       None — 사용자 취소(Esc/X). 호출자는 아무것도 하지 않는다(종이 인쇄도 생략).
-      {"order_number": None} — "매칭 안 함" 선택. 종이 인쇄만 진행.
-      {"order_number": str, "day": int, "current_due_iso": str} — 매칭 + 납기.
+      {"order_number": None} — "웹에 안 올림" 선택. 종이 인쇄만 진행.
+      {"order_number": str, "day": int, "current_due_iso": str,
+       "delivery_method": str, "original_delivery_method": str,
+       "content_changed": bool} — 매칭 + 납기 + (선택)지시서 내용 변경 표시.
     """
-    NO_MATCH_LABEL = "── 매칭 안 함 (종이만 인쇄) ──"
+    NO_MATCH_LABEL = "── 이 인쇄본은 웹에 올리지 않음 ──"
+
+    # 색상 팔레트 — Tailwind zinc 기반, OrderAdmin 과 톤 맞춤.
+    BG = "#ffffff"
+    BG_SOFT = "#fafafa"
+    BORDER = "#e4e4e7"
+    TITLE_FG = "#18181b"
+    LABEL_FG = "#3f3f46"
+    SUB_FG = "#71717a"
+    ACCENT = "#16a34a"
+    ACCENT_HOVER = "#15803d"
 
     # 콤보박스 표시값과 주문 매핑.
     choices: list[tuple[str, dict | None]] = []
@@ -498,33 +697,61 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
     result: dict = {"value": None}
 
     dlg = tk.Toplevel()
-    dlg.title("인쇄 PDF 매칭")
-    dlg.configure(bg="white")
+    dlg.title("웹에 변경사항 적용하기")
+    dlg.configure(bg=BG)
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
-    dlg.geometry("520x290")
+    dlg.geometry("580x460")
 
+    # ── 헤더 ────────────────────────────────────────────────
+    header = tk.Frame(dlg, bg=BG)
+    header.pack(fill="x", padx=22, pady=(18, 0))
     tk.Label(
-        dlg, text="인쇄 PDF — 어떤 주문에 매칭?",
-        bg="white", fg="#18181b",
-        font=("맑은 고딕", 12, "bold"),
-    ).pack(pady=(14, 0))
+        header, text="웹에 변경사항 적용하기",
+        bg=BG, fg=TITLE_FG,
+        font=("맑은 고딕", 15, "bold"), anchor="w",
+    ).pack(fill="x")
     tk.Label(
-        dlg, text="가장 최근이 기본. 옛 주문이면 드롭다운에서 변경하세요.",
-        bg="white", fg="#71717a",
-        font=("맑은 고딕", 9),
-    ).pack(pady=(2, 8))
+        header,
+        text="방금 인쇄한 PDF 를 거래처 작업현황 / 어드민 페이지에 반영합니다.",
+        bg=BG, fg=SUB_FG,
+        font=("맑은 고딕", 9), anchor="w",
+    ).pack(fill="x", pady=(3, 0))
+
+    tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(14, 0))
+
+    # ── ① 주문 선택 ───────────────────────────────────────
+    sec1 = tk.Frame(dlg, bg=BG)
+    sec1.pack(fill="x", padx=22, pady=(14, 0))
+    tk.Label(
+        sec1, text="① 어느 작업의 인쇄본인가요?",
+        bg=BG, fg=TITLE_FG,
+        font=("맑은 고딕", 10, "bold"), anchor="w",
+    ).pack(fill="x")
 
     combo_var = tk.StringVar(value=choices[0][0])  # 가장 최근
     combo = ttk.Combobox(
-        dlg, textvariable=combo_var, state="readonly", width=42,
+        sec1, textvariable=combo_var, state="readonly",
         values=[lbl for lbl, _ in choices],
-        font=("맑은 고딕", 10),
+        font=("맑은 고딕", 10), height=12,
     )
-    combo.pack(pady=(0, 12), padx=12)
+    combo.pack(fill="x", pady=(7, 0))
 
-    frame = tk.Frame(dlg, bg="white")
-    frame.pack()
+    # ── ② 변경 내용 ───────────────────────────────────────
+    sec2 = tk.Frame(dlg, bg=BG)
+    sec2.pack(fill="x", padx=22, pady=(18, 0))
+    tk.Label(
+        sec2, text="② 바뀐 내용 (그대로면 손대지 않아도 됩니다)",
+        bg=BG, fg=TITLE_FG,
+        font=("맑은 고딕", 10, "bold"), anchor="w",
+    ).pack(fill="x")
+
+    fields_card = tk.Frame(sec2, bg=BG_SOFT, highlightbackground=BORDER,
+                           highlightthickness=1)
+    fields_card.pack(fill="x", pady=(8, 0))
+
+    fields = tk.Frame(fields_card, bg=BG_SOFT)
+    fields.pack(padx=14, pady=12, anchor="w")
 
     def _day_from_iso(iso: str) -> str:
         if not iso:
@@ -534,29 +761,59 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         except ValueError:
             return ""
 
+    # 납기
+    tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
+             font=("맑은 고딕", 10, "bold")).pack(side="left")
     base_day = _day_from_iso(orders[0].get("dueDate") or "") if orders else ""
     day_var = tk.StringVar(value=base_day)
     day_entry = tk.Entry(
-        frame, textvariable=day_var, width=4, justify="center",
-        font=("맑은 고딕", 18, "bold"), relief="solid", bd=1,
+        fields, textvariable=day_var, width=4, justify="center",
+        font=("맑은 고딕", 16, "bold"),
+        relief="solid", bd=1,
+        bg="white", highlightthickness=0,
     )
-    day_entry.pack(side="left", padx=(0, 4))
-    tk.Label(frame, text="일", bg="white", fg="#3f3f46",
-             font=("맑은 고딕", 11)).pack(side="left", padx=(0, 12))
+    day_entry.pack(side="left", padx=(8, 3))
+    tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
+             font=("맑은 고딕", 10)).pack(side="left", padx=(0, 22))
 
-    # 배송방법 — enum/한글 라벨 양쪽 다 다룬다. 표시는 한글, 결과는 enum 으로 변환.
+    # 배송 — enum/한글 라벨 양쪽 다. 표시는 한글, 결과는 enum 으로 변환.
+    tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
+             font=("맑은 고딕", 10, "bold")).pack(side="left")
     delivery_labels_in_order = list(DELIVERY_ENUM_TO_KO.values())
     base_delivery_enum = (orders[0].get("deliveryMethod") or "") if orders else ""
     base_delivery_ko = DELIVERY_ENUM_TO_KO.get(base_delivery_enum, "")
     delivery_var = tk.StringVar(value=base_delivery_ko)
     delivery_combo = ttk.Combobox(
-        frame, textvariable=delivery_var, state="readonly",
-        values=delivery_labels_in_order, width=12,
+        fields, textvariable=delivery_var, state="readonly",
+        values=delivery_labels_in_order, width=11,
         font=("맑은 고딕", 10),
     )
-    delivery_combo.pack(side="left", padx=(0, 4))
-    tk.Label(frame, text="배송", bg="white", fg="#3f3f46",
-             font=("맑은 고딕", 11)).pack(side="left")
+    delivery_combo.pack(side="left", padx=(8, 0))
+
+    # 지시서 내용 변경 체크박스
+    check_card = tk.Frame(sec2, bg=BG_SOFT, highlightbackground=BORDER,
+                          highlightthickness=1)
+    check_card.pack(fill="x", pady=(10, 0))
+
+    content_changed_var = tk.BooleanVar(value=False)
+    check_inner = tk.Frame(check_card, bg=BG_SOFT)
+    check_inner.pack(fill="x", padx=14, pady=10, anchor="w")
+
+    content_cb = tk.Checkbutton(
+        check_inner, text="지시서 내용이 바뀌었어요 (도면/사양 변경)",
+        variable=content_changed_var,
+        bg=BG_SOFT, fg=TITLE_FG,
+        activebackground=BG_SOFT, selectcolor="white",
+        font=("맑은 고딕", 10, "bold"),
+        anchor="w", padx=0,
+    )
+    content_cb.pack(anchor="w")
+    tk.Label(
+        check_inner,
+        text="체크하면 어드민 행에 \"변경\" 배지가 다시 표시되어 관리자가 확인합니다.",
+        bg=BG_SOFT, fg=SUB_FG,
+        font=("맑은 고딕", 9), anchor="w",
+    ).pack(anchor="w", padx=(22, 0), pady=(2, 0))
 
     def on_combo_changed(_event=None):
         sel = combo_var.get()
@@ -565,9 +822,12 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
             day_entry.configure(state="disabled")
             delivery_var.set("")
             delivery_combo.configure(state="disabled")
+            content_changed_var.set(False)
+            content_cb.configure(state="disabled")
             return
         day_entry.configure(state="normal")
         delivery_combo.configure(state="readonly")
+        content_cb.configure(state="normal")
         for lbl, o in choices:
             if lbl == sel and o is not None:
                 day_var.set(_day_from_iso(o.get("dueDate") or ""))
@@ -601,6 +861,7 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
                     "current_due_iso": o.get("dueDate") or "",
                     "delivery_method": delivery_enum,
                     "original_delivery_method": o.get("deliveryMethod") or "",
+                    "content_changed": bool(content_changed_var.get()),
                 }
                 dlg.destroy()
                 return
@@ -609,23 +870,28 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         result["value"] = None
         dlg.destroy()
 
-    # 확인/취소 버튼 — 키보드를 안 쓰고 마우스로 끝낼 수 있게.
-    button_row = tk.Frame(dlg, bg="white")
-    button_row.pack(pady=(16, 0))
-    tk.Button(
-        button_row, text="확인", command=confirm,
-        font=("맑은 고딕", 11, "bold"),
-        bg="#22c55e", fg="white",
-        activebackground="#16a34a", activeforeground="white",
-        relief="flat", padx=22, pady=5, cursor="hand2",
-    ).pack(side="left", padx=(0, 8))
+    # ── 버튼 ──────────────────────────────────────────────
+    tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(20, 0))
+
+    button_row = tk.Frame(dlg, bg=BG)
+    button_row.pack(fill="x", padx=22, pady=(14, 16))
+
     tk.Button(
         button_row, text="취소", command=cancel,
         font=("맑은 고딕", 11),
-        bg="#e4e4e7", fg="#3f3f46",
-        activebackground="#d4d4d8", activeforeground="#18181b",
-        relief="flat", padx=22, pady=5, cursor="hand2",
-    ).pack(side="left")
+        bg="#f4f4f5", fg=LABEL_FG,
+        activebackground=BORDER, activeforeground=TITLE_FG,
+        relief="flat", padx=22, pady=8, cursor="hand2",
+        bd=0,
+    ).pack(side="right", padx=(8, 0))
+    tk.Button(
+        button_row, text="✓  웹에 적용하기", command=confirm,
+        font=("맑은 고딕", 11, "bold"),
+        bg=ACCENT, fg="white",
+        activebackground=ACCENT_HOVER, activeforeground="white",
+        relief="flat", padx=24, pady=8, cursor="hand2",
+        bd=0,
+    ).pack(side="right")
 
     # Enter/Esc 는 다이얼로그 어디에 포커스가 있어도 동작하도록 위젯별로도 바인딩.
     dlg.bind("<Return>", confirm)
@@ -760,7 +1026,9 @@ def _process_printed_pdf(pdf_path: Path):
     orig_delivery = sel.get("original_delivery_method") or ""
     delivery_to_send = new_delivery if (new_delivery and new_delivery != orig_delivery) else None
     patch_due_date(order_number, new_due, delivery_to_send)
-    upload_worksheet_pdf(order_number, pdf_path)
+    # 사용자가 다이얼로그에서 "지시서 내용 변경됨" 체크 시에만 contentChanged=true 송신.
+    upload_worksheet_pdf(order_number, pdf_path,
+                         content_changed=bool(sel.get("content_changed", False)))
     print_pdf_to_paper(pdf_path)
 
 
@@ -860,6 +1128,54 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "      doc.layers[i].remove();"
         "    }"
         "  }"
+        # 거래처 데이터에 두 가지 사전처리: (1) 텍스트 윤곽선화 — FlexSign 글자
+        # 메트릭 차이로 자모가 벌어지는 문제를 거래처 원본 텍스트에도 회피.
+        # (2) 최상위 그룹 한 겹 풀기 — FlexSign 에서 도면 전체가 한 덩어리로
+        # 묶여 보이는 문제 회피. worksheet 레이어 추가 전에 수행하므로 우리가
+        # 만들 워크시트 텍스트/그룹은 영향 없음.
+        # 잠긴/숨김 레이어는 편집이 안 되므로 일괄 해제 후 작업, 끝나고 복구.
+        "  var prevLock = []; var prevVis = [];"
+        "  for (var li = 0; li < doc.layers.length; li++) {"
+        "    var lyrT = doc.layers[li];"
+        "    prevLock.push(lyrT.locked); prevVis.push(lyrT.visible);"
+        "    try { lyrT.locked = false; lyrT.visible = true; } catch (e) {}"
+        "  }"
+        # createOutline 은 textFrame 을 group 으로 치환하면서 컬렉션이 변하므로
+        # 원본 참조를 먼저 배열에 캡처해두고 처리한다.
+        "  var origText = [];"
+        "  for (var ti0 = 0; ti0 < doc.textFrames.length; ti0++) {"
+        "    origText.push(doc.textFrames[ti0]);"
+        "  }"
+        "  for (var ti = 0; ti < origText.length; ti++) {"
+        "    try { origText[ti].createOutline(); } catch (e) {}"
+        "  }"
+        # 클립그룹(마스크) 은 깨지면 안 되므로 스킵, 내부 중첩 그룹(로고 등
+        # 의도된 그룹) 은 그대로 유지. 이중 처리 방지를 위해 처리 시점의 원본
+        # 그룹만 배열에 캡처.
+        "  for (var li2 = 0; li2 < doc.layers.length; li2++) {"
+        "    var lyrG = doc.layers[li2];"
+        "    var origGroups = [];"
+        "    for (var gi0 = 0; gi0 < lyrG.groupItems.length; gi0++) {"
+        "      origGroups.push(lyrG.groupItems[gi0]);"
+        "    }"
+        "    for (var gi = 0; gi < origGroups.length; gi++) {"
+        "      var g = origGroups[gi];"
+        "      if (g.clipped) continue;"
+        "      try {"
+        "        while (g.pageItems.length > 0) {"
+        "          g.pageItems[0].moveBefore(g);"
+        "        }"
+        "        g.remove();"
+        "      } catch (e) {}"
+        "    }"
+        "  }"
+        # 레이어 잠금/표시 상태 복구.
+        "  for (var li3 = 0; li3 < doc.layers.length && li3 < prevLock.length; li3++) {"
+        "    try {"
+        "      doc.layers[li3].visible = prevVis[li3];"
+        "      doc.layers[li3].locked = prevLock[li3];"
+        "    } catch (e) {}"
+        "  }"
         "  var layer = doc.layers.add();"
         "  layer.name = 'worksheet';"
         # 대지(첫 번째 artboard) 와 실제 도면 bounds 둘 다 측정.
@@ -956,31 +1272,22 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "  var noteTextLeft = noteLeft + pad;"
         "  var noteH = 0;"
         "  if (noteTextStr.length > 0) {"
-        "    var tmpY = abTop;"
-        "    var tmpPath = layer.pathItems.add();"
-        "    tmpPath.filled = false; tmpPath.stroked = false;"
-        "    tmpPath.setEntirePath(["
-        "      [noteTextLeft, tmpY],"
-        "      [noteTextLeft + noteTextW, tmpY],"
-        "      [noteTextLeft + noteTextW, tmpY - 5000],"
-        "      [noteTextLeft, tmpY - 5000]"
-        "    ]);"
-        "    tmpPath.closed = true;"
-        "    var tmpTf = layer.textFrames.areaText(tmpPath);"
-        "    tmpTf.contents = noteTextStr;"
-        "    tmpTf.textRange.characterAttributes.size = noteFont;"
-        "    if (malgun) tmpTf.textRange.characterAttributes.textFont = malgun;"
-        "    var contentH = noteFont * 1.4;"
-        "    try {"
-        "      var tfLines = tmpTf.lines;"
-        "      if (tfLines.length > 0) {"
-        "        contentH = tfLines[0].geometricBounds[1] - tfLines[tfLines.length - 1].geometricBounds[3];"
-        "      }"
-        "    } catch (e) {}"
+        # Illustrator 의 lines.length 는 도큐먼트가 compose 되기 전이라 0 을 돌려주는
+        # 케이스가 잦다. 임시 프레임 측정에 의존하면 멀티라인 텍스트가 한 줄 분량으로
+        # 짤려 들어가 실제 [추가물품]/[추가요청사항] 이 보이지 않는 사고가 난다.
+        # 텍스트만 보고 단락(\\r) 수 + 단락별 wrap(글자수/한 줄 수용량) 으로 보수적으로 추정.
+        "    var paras = noteTextStr.split('\\r');"
+        "    var avgCharW = noteFont * 0.7;"
+        "    var maxCharsPerLine = Math.max(1, Math.floor(noteTextW / avgCharW));"
+        "    var totalLines = 0;"
+        "    for (var k = 0; k < paras.length; k++) {"
+        "      var pl = paras[k].length;"
+        "      if (pl <= 0) totalLines += 1;"
+        "      else totalLines += Math.ceil(pl / maxCharsPerLine);"
+        "    }"
+        "    var contentH = totalLines * noteFont * 1.4;"
         # 마지막 줄이 영역 밖으로 잘리는 케이스 방지 — 한 줄 높이만큼 안전 마진 추가.
         "    noteH = contentH + pad * 2 + noteFont;"
-        "    try { tmpTf.remove(); } catch (e) {}"
-        "    try { tmpPath.remove(); } catch (e) {}"
         "  }"
         # 워크시트 전체 깊이 = max(우측 컬럼: QR + 노트, 중앙 컬럼: 헤더박스). 이 깊이만큼
         # 도면 위쪽으로 띄워야 한다. 폼 자체는 항상 우측·중앙 상단에 고정.
@@ -1079,10 +1386,12 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "    try { doc.artboards[0].artboardRect = [abLeft, needAbTop, abRight, needAbBottom]; } catch (e) {}"
         "  }"
         # FlexSign 이 v8 AI 의 글자 메트릭을 다르게 해석해서 자모 사이가 벌어지는
-        # 문제를 막기 위해 좌측(거래처/전화)과 노트(주문번호/요청사항)는 윤곽선으로
-        # 변환한다. 단, 발주/납품일자가 들어간 헤더 박스 텍스트는 사용자가 나중에
-        # 직접 수정해야 할 일이 있으므로 텍스트 형태로 남겨둔다.
+        # 문제를 막기 위해 모든 텍스트(좌측, 헤더, 노트)를 윤곽선으로 변환한다.
+        # 헤더 박스도 outline 하지 않으면 FlexSign 이 슬래시 양옆에 공백을 끼워넣어
+        # 글씨가 회색 박스 밖으로 밀려난다. 사용자가 나중에 텍스트를 수정해야 할
+        # 일이 생기면 삭제 후 다시 입력하는 워크플로로 처리.
         "  try { leftTf.createOutline(); } catch (e) {}"
+        "  try { headerTf.createOutline(); } catch (e) {}"
         "  if (noteTfRef) { try { noteTfRef.createOutline(); } catch (e) {} }"
         # PDF 먼저 저장 — 모바일 거래처 페이지에서 무한 확대해도 깨지지 않는 벡터 PDF.
         # preserveEditability=false 로 print-ready 사이즈로 압축한다.
@@ -1198,30 +1507,18 @@ def process_header_only_to_v8(ai_app, dst_path: Path,
         "  var noteTextLeft = noteLeft + pad;"
         "  var noteH = 0;"
         "  if (noteTextStr.length > 0) {"
-        "    var tmpY = abTop;"
-        "    var tmpPath = layer.pathItems.add();"
-        "    tmpPath.filled = false; tmpPath.stroked = false;"
-        "    tmpPath.setEntirePath(["
-        "      [noteTextLeft, tmpY],"
-        "      [noteTextLeft + noteTextW, tmpY],"
-        "      [noteTextLeft + noteTextW, tmpY - 5000],"
-        "      [noteTextLeft, tmpY - 5000]"
-        "    ]);"
-        "    tmpPath.closed = true;"
-        "    var tmpTf = layer.textFrames.areaText(tmpPath);"
-        "    tmpTf.contents = noteTextStr;"
-        "    tmpTf.textRange.characterAttributes.size = noteFont;"
-        "    if (malgun) tmpTf.textRange.characterAttributes.textFont = malgun;"
-        "    var contentH = noteFont * 1.4;"
-        "    try {"
-        "      var tfLines = tmpTf.lines;"
-        "      if (tfLines.length > 0) {"
-        "        contentH = tfLines[0].geometricBounds[1] - tfLines[tfLines.length - 1].geometricBounds[3];"
-        "      }"
-        "    } catch (e) {}"
+        # convert_with_header 와 동일한 이유로 lines 측정 대신 단락 기반 추정 사용.
+        "    var paras = noteTextStr.split('\\r');"
+        "    var avgCharW = noteFont * 0.7;"
+        "    var maxCharsPerLine = Math.max(1, Math.floor(noteTextW / avgCharW));"
+        "    var totalLines = 0;"
+        "    for (var k = 0; k < paras.length; k++) {"
+        "      var pl = paras[k].length;"
+        "      if (pl <= 0) totalLines += 1;"
+        "      else totalLines += Math.ceil(pl / maxCharsPerLine);"
+        "    }"
+        "    var contentH = totalLines * noteFont * 1.4;"
         "    noteH = contentH + pad * 2 + noteFont;"
-        "    try { tmpTf.remove(); } catch (e) {}"
-        "    try { tmpPath.remove(); } catch (e) {}"
         "  }"
         # 빈 캔버스라 도면 침범 처리는 불필요. topY 는 abTop 그대로.
         "  var rightDepth = qrSize;"
@@ -1303,8 +1600,10 @@ def process_header_only_to_v8(ai_app, dst_path: Path,
         "    noteBox.strokeColor = boxStroke;"
         "    noteBox.strokeWidth = 0.5 * sc;"
         "  }"
-        # FlexSign 메트릭 회피 — 좌측/노트는 윤곽선 변환, 헤더 텍스트는 사용자 수정 여지 남김.
+        # FlexSign 메트릭 회피 — 모든 텍스트(좌측/헤더/노트)를 윤곽선으로 변환.
+        # 헤더를 outline 하지 않으면 FlexSign 이 슬래시 양옆 공백을 늘려 회색 박스 밖으로 밀어낸다.
         "  try { leftTf.createOutline(); } catch (e) {}"
+        "  try { headerTf.createOutline(); } catch (e) {}"
         "  if (noteTfRef) { try { noteTfRef.createOutline(); } catch (e) {} }"
         # v8 저장 — 자동지시서작성과 달리 PDF 는 만들지 않는다.
         # 이 AI 는 "FlexSign 에서 복사해 거래처 캔버스에 붙이는" 중간물이고, 최종 PDF 는
@@ -1496,10 +1795,15 @@ def compress_pdf_for_upload(src: Path) -> Path:
         return src
 
 
-def upload_worksheet_pdf(order_number: str, pdf_path: Path) -> bool:
+def upload_worksheet_pdf(order_number: str, pdf_path: Path,
+                         content_changed: bool = False) -> bool:
     """변환된 PDF를 백엔드에 업로드. 거래처 카드에 노출되는 단일 PDF로 덮어씀.
     업로드 직전 Ghostscript 로 다운샘플링해 용량을 줄인다 (텍스트는 벡터 유지).
-    multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음)."""
+    multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음).
+
+    content_changed=True 면 contentChanged=true 폼 필드를 함께 보내서 백엔드가
+    "변경" 배지를 띄우게 한다. 사용자가 다이얼로그에서 체크박스 켰을 때만 True.
+    """
     if not order_number or not pdf_path.exists():
         return False
 
@@ -1519,13 +1823,23 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path) -> bool:
                 pass
         return False
 
-    head = (
+    # contentChanged 필드는 사용자가 체크박스 켰을 때만 포함. 안 보내면 백엔드가
+    # 단순 재인쇄로 간주해 worksheetUpdatedAt 갱신 안 함.
+    extra_field = b""
+    if content_changed:
+        extra_field = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="contentChanged"\r\n\r\n'
+            f"true\r\n"
+        ).encode("utf-8")
+
+    file_head = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{pdf_path.name}"\r\n'
         "Content-Type: application/pdf\r\n\r\n"
     ).encode("utf-8")
     tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
-    body = head + pdf_bytes + tail
+    body = extra_field + file_head + pdf_bytes + tail
 
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
@@ -1547,6 +1861,106 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path) -> bool:
             except Exception:
                 pass
     return ok
+
+
+def _dismiss_flexsign_alerts(main_hwnd: int) -> int:
+    """FlexSign 콜드 스타트 시 뜨는 '(null) file not found or wrong.' 경고창을 닫는다.
+    이 모달이 떠 있으면 메인 창이 foreground 로 못 올라오고 Ctrl+O 도 흡수돼서
+    [파일 열기] 자동화가 깨진다. 메인 창과 동일 PID + class '#32770' +
+    텍스트에 'file not found' 또는 '(null)' 포함인 창만 PostMessage(WM_CLOSE) 로
+    닫는다 (사용자가 직접 띄운 다른 모달은 보존). 반환값은 닫은 창 수.
+    """
+    if not main_hwnd:
+        return 0
+    user32 = ctypes.windll.user32
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
+    user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.IsWindowVisible.restype = ctypes.c_bool
+    user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+    user32.PostMessageW.restype = ctypes.c_bool
+    user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+
+    pid_buf = ctypes.c_uint32(0)
+    user32.GetWindowThreadProcessId(main_hwnd, ctypes.byref(pid_buf))
+    target_pid = pid_buf.value
+    if not target_pid:
+        return 0
+
+    WM_CLOSE = 0x0010
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def _read_text(h) -> str:
+        try:
+            length = user32.GetWindowTextLengthW(h)
+            if not length:
+                return ""
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(h, buf, length + 1)
+            return buf.value or ""
+        except Exception:
+            return ""
+
+    def _gather_static_text(h) -> str:
+        parts: list[str] = []
+        cls_buf = ctypes.create_unicode_buffer(64)
+
+        def _cb_child(child, _lp):
+            try:
+                user32.GetClassNameW(child, cls_buf, 64)
+                if cls_buf.value.lower() == "static":
+                    t = _read_text(child)
+                    if t:
+                        parts.append(t)
+            except Exception:
+                pass
+            return True
+
+        try:
+            user32.EnumChildWindows(h, WNDENUMPROC(_cb_child), 0)
+        except Exception:
+            pass
+        return " | ".join(parts)
+
+    targets: list = []
+
+    def _scan(hwnd, _lparam):
+        try:
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, cls, 64)
+            if cls.value != "#32770":
+                return True
+            wpid = ctypes.c_uint32(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+            if wpid.value != target_pid:
+                return True
+            combined = (_read_text(hwnd) + " " + _gather_static_text(hwnd)).lower()
+            if "file not found" in combined or "(null)" in combined:
+                targets.append(hwnd)
+        except Exception:
+            pass
+        return True
+
+    try:
+        user32.EnumWindows(WNDENUMPROC(_scan), 0)
+    except Exception:
+        return 0
+
+    closed = 0
+    for h in targets[:10]:  # 안전망 — 비정상적으로 많이 매치되면 컷오프
+        try:
+            if user32.PostMessageW(h, WM_CLOSE, None, None):
+                closed += 1
+        except Exception:
+            pass
+    return closed
 
 
 def _find_flexsign_hwnd() -> int:
@@ -1697,6 +2111,18 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         prev_clip = ""
 
     try:
+        # 0) FlexSign 콜드 스타트 직후의 '(null) file not found or wrong.' 모달 두 개를
+        #    선제로 닫는다. 떠 있으면 메인 창이 foreground 로 못 올라오고 Ctrl+O 도
+        #    흡수돼 자동화가 깨진다. 두 번째 모달이 늦게 뜨는 케이스 대비 한 번 더 시도.
+        dismissed = _dismiss_flexsign_alerts(hwnd)
+        if dismissed:
+            ui_log(f"FlexSign 시작 경고창 {dismissed}개 자동 닫음")
+            time.sleep(0.5)
+            extra = _dismiss_flexsign_alerts(hwnd)
+            if extra:
+                ui_log(f"FlexSign 시작 경고창 {extra}개 추가 닫음")
+                time.sleep(0.4)
+
         # 1) 창 활성화 보장 — 검증까지 통과해야 키 입력을 시작한다.
         if not _force_foreground():
             ui_log("FlexSign 창을 foreground 로 가져오지 못함 — 메뉴 자동화 중단")
@@ -1730,10 +2156,14 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         time.sleep(0.25)
 
         # 3) 파일 경로를 클립보드에 복사 후 Ctrl+V
+        # 절대경로는 따옴표로 감싸야 다이얼로그 시작 폴더와 무관하게 그 파일로 직행한다.
+        # 미감싼 경로는 공백/한글이 섞이면 옛날 #32770 다이얼로그(FlexSign 6.6 등)가
+        # 토큰을 분리해 검색하려다 "파일 없음" 으로 실패하는 케이스가 있다.
+        clip_path = f'"{file_path}"'
         win32clipboard.OpenClipboard()
         try:
             win32clipboard.EmptyClipboard()
-            win32clipboard.SetClipboardText(str(file_path), 13)  # CF_UNICODETEXT
+            win32clipboard.SetClipboardText(clip_path, 13)  # CF_UNICODETEXT
         finally:
             win32clipboard.CloseClipboard()
         time.sleep(0.3)
@@ -1928,6 +2358,9 @@ def process_zip(zip_path: Path):
     # Windows는 대소문자 구분 안 하므로 "*.ai" 하나로 .AI / .ai 모두 매칭 — dedupe
     ai_files = sorted({p.resolve() for p in extract_dir.glob("*.ai")})
     any_converted = False
+    # 네트워크 거래처 폴더로 모두 복사됐는지 추적 — 모두 성공한 경우만 추출 폴더 청소.
+    # 한 건이라도 실패하면 원본을 추출 폴더에 남겨 사용자가 수동 복구 가능하게.
+    all_network_ok = True
     if not ai_files:
         ui_log(f"{order_number}: AI 파일 없음 — 확인 필요")
     else:
@@ -1936,8 +2369,17 @@ def process_zip(zip_path: Path):
                                         header_text, left_text, note_text)
             if converted:
                 ai_out, _pdf_out = converted
-                launch_flexsign(ai_out)
+                # 네트워크 거래처/주문 폴더에 원본 + v8 복사. 성공 시 그 v8 경로를
+                # FlexSign 에 열어주면 [Save .fs] 가 같은 폴더에 자동으로 떨어진다.
+                # 실패 시 None — 로컬 converted/ v8 로 폴백.
+                network_v8 = deliver_to_network_folder(meta, Path(ai_file), ai_out)
+                if network_v8 is None:
+                    all_network_ok = False
+                flex_target = network_v8 if network_v8 is not None else ai_out
+                launch_flexsign(flex_target)
                 any_converted = True
+            else:
+                all_network_ok = False
 
     if any_converted:
         notify_worksheet_acknowledged(order_number)
@@ -1960,6 +2402,14 @@ def process_zip(zip_path: Path):
     if dest.exists():
         dest.unlink()
     shutil.move(str(zip_path), str(dest))
+
+    # 모든 변환 + 네트워크 복사가 성공하면 추출 폴더 청소 — 원본은 네트워크에
+    # 보관되었으니 로컬에 잔류시킬 이유가 없다. 한 건이라도 실패하면 보존(수동 복구용).
+    if any_converted and all_network_ok:
+        try:
+            shutil.rmtree(str(extract_dir), ignore_errors=True)
+        except Exception:
+            pass
 
     ui_status("watching", "지시서가 도착하면 자동으로 열어드립니다")
 
@@ -2169,6 +2619,9 @@ class App(tk.Tk):
             WATCH_DIR.mkdir(parents=True, exist_ok=True)
             DONE_DIR.mkdir(parents=True, exist_ok=True)
             PRINTED_PDF_DIR.mkdir(parents=True, exist_ok=True)
+
+            # 이전 세션의 인쇄 매칭 큐 복구 — 워처가 잠깐 꺼졌다 켜져도 다이얼로그가 뜨도록.
+            load_recent_orders()
 
             for existing in WATCH_DIR.glob("*_지시서.zip"):
                 threading.Thread(target=process_zip, args=(existing,), daemon=True).start()

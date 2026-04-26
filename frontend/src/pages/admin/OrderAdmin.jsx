@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
+import PdfPanZoom from "../../components/common/PdfPanZoom.jsx";
 import "./OrderAdmin.css";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -961,16 +962,12 @@ export default function OrderAdmin() {
                   (() => {
                     const slide = carouselSlides[carouselIndex] || carouselSlides[0];
                     if (slide.type === "pdf") {
-                      // #toolbar=0&navpanes=0&scrollbar=0 — Chrome/Edge 의 내장 PDF 뷰어
-                      // 툴바/사이드바/스크롤바를 숨겨 PDF 본문만 보이게 한다.
-                      // 확대·축소는 Ctrl+휠 / 핀치줌(브라우저 기본)으로.
+                      // PDF.js 기반 뷰어 — 마우스 드래그로 이동, [확대][축소][원래대로]
+                      // 버튼으로 단축키 없이도 조작 가능. 더블클릭/휠/핀치줌 도 지원.
                       return (
-                        <iframe
-                          key={slide.url}
-                          className="order-preview-pdf"
-                          src={`${slide.url}#toolbar=0&navpanes=0&scrollbar=0`}
-                          title="지시서 PDF"
-                        />
+                        <div key={slide.url} className="order-preview-pdf">
+                          <PdfPanZoom url={slide.url} />
+                        </div>
                       );
                     }
                     return (
