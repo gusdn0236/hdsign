@@ -406,6 +406,11 @@ export default function OrderAdmin() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       // 워처가 ZIP을 받아 QR을 박은 뒤 /worksheet-acknowledged 를 호출하면 IN_PROGRESS 로 전환된다.
+      // 그 사이에 같은 버튼을 두 번 누르지 않도록 클라이언트 UI 를 즉시 IN_PROGRESS 로 전환.
+      // 워처 처리 후 들어오는 백엔드 동기화 결과와 같은 상태로 수렴.
+      setOrders((prev) =>
+        prev.map((o) => (o.id === order.id ? { ...o, status: "IN_PROGRESS" } : o))
+      );
       setFeedback({
         type: "success",
         msg: "ZIP을 다운받았습니다. 워처가 처리되면 자동으로 작업중으로 전환됩니다.",

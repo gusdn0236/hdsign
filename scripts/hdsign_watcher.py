@@ -15,7 +15,7 @@ import threading
 import time
 import tkinter as tk
 from datetime import date, timedelta
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import urllib.error
 import urllib.request
 import zipfile
@@ -144,7 +144,9 @@ def _format_md(value) -> str:
 
 
 def format_header_text(meta: dict) -> str:
-    """중앙 박스용 한 줄 텍스트. 예: '04-24발주 04-25화물'."""
+    """중앙 박스용 한 줄 텍스트. 예: '04-24발주 / 04-25화물'.
+    공백 대신 슬래시로 구분 — FlexSign 글자 메트릭 변환에서 공백 폭이 늘어나
+    가독성이 떨어지는 문제 회피."""
     parts = []
     order_md = _format_md(meta.get("createdAt"))
     if order_md:
@@ -153,7 +155,7 @@ def format_header_text(meta: dict) -> str:
     delivery = DELIVERY_SHORT.get((meta.get("deliveryMethod") or "").strip(), "")
     if due_md:
         parts.append(f"{due_md}{delivery}" if delivery else due_md)
-    return " ".join(parts) if parts else "-"
+    return " / ".join(parts) if parts else "-"
 
 
 def format_left_text(meta: dict) -> str:
@@ -260,13 +262,11 @@ def remember_order_for_print(order_number: str, company_name: str, due_date_iso:
         })
 
 
-def pop_recent_order() -> dict | None:
-    """가장 최근 FlexSign 에 보낸 주문을 꺼낸다 (있으면 큐에서 제거)."""
+def list_recent_orders() -> list[dict]:
+    """최근 처리한 주문을 최신순(가장 최근이 [0])으로 반환. 큐는 그대로 유지.
+    인쇄 PDF 다이얼로그에서 직원이 어떤 주문에 매칭할지 직접 고르는 데 쓴다."""
     with _recent_orders_lock:
-        try:
-            return _recent_orders.pop()
-        except IndexError:
-            return None
+        return list(reversed(_recent_orders))
 
 
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
@@ -314,111 +314,175 @@ def print_pdf_to_default_printer(pdf_path: Path) -> bool:
 
 # ── 인쇄 다이얼로그 ─────────────────────────────────────────────────────────
 
-def _ask_due_date_blocking(company_name: str, current_due_iso: str) -> int | None:
-    """모달 다이얼로그: 거래처명만 표시 + 일자 입력칸. Enter 확정, Esc 취소.
-    리턴값: 사용자가 입력한 day(int) 또는 None(취소)."""
-    # Tkinter 메인 루프 안에서만 안전하게 만들 수 있으므로, 이 함수는 UI 큐를 통해 호출됨.
-    result: dict = {"day": None}
+def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
+    """모달 다이얼로그: 어떤 주문에 매칭할지 + 납기 일자.
+    가장 최근이 기본 선택. 옛 주문 재인쇄 시 직원이 드롭다운에서 변경.
 
-    base_day = ""
-    if current_due_iso:
-        try:
-            base_day = str(date.fromisoformat(current_due_iso).day)
-        except ValueError:
-            base_day = ""
+    리턴값:
+      None — 사용자 취소(Esc/X). 호출자는 아무것도 하지 않는다(종이 인쇄도 생략).
+      {"order_number": None} — "매칭 안 함" 선택. 종이 인쇄만 진행.
+      {"order_number": str, "day": int, "current_due_iso": str} — 매칭 + 납기.
+    """
+    NO_MATCH_LABEL = "── 매칭 안 함 (종이만 인쇄) ──"
+
+    # 콤보박스 표시값과 주문 매핑.
+    choices: list[tuple[str, dict | None]] = []
+    for o in orders:
+        company = (o.get("companyName") or "").strip()
+        label = f"{o['orderNumber']}  {company}".rstrip()
+        choices.append((label, o))
+    choices.append((NO_MATCH_LABEL, None))
+
+    result: dict = {"value": None}
 
     dlg = tk.Toplevel()
-    dlg.title("최종 납기")
+    dlg.title("인쇄 PDF 매칭")
     dlg.configure(bg="white")
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
-    dlg.geometry("280x140")
+    dlg.geometry("380x210")
 
     tk.Label(
-        dlg, text=company_name or "주문 확인",
+        dlg, text="인쇄 PDF — 어떤 주문에 매칭?",
         bg="white", fg="#18181b",
-        font=("맑은 고딕", 13, "bold"),
-    ).pack(pady=(18, 0))
+        font=("맑은 고딕", 12, "bold"),
+    ).pack(pady=(14, 0))
     tk.Label(
-        dlg, text="최종 납품날짜를 입력해주세요",
+        dlg, text="가장 최근이 기본. 옛 주문이면 드롭다운에서 변경하세요.",
         bg="white", fg="#71717a",
         font=("맑은 고딕", 9),
-    ).pack(pady=(2, 6))
+    ).pack(pady=(2, 8))
+
+    combo_var = tk.StringVar(value=choices[0][0])  # 가장 최근
+    combo = ttk.Combobox(
+        dlg, textvariable=combo_var, state="readonly", width=42,
+        values=[lbl for lbl, _ in choices],
+        font=("맑은 고딕", 10),
+    )
+    combo.pack(pady=(0, 12), padx=12)
 
     frame = tk.Frame(dlg, bg="white")
     frame.pack()
-    var = tk.StringVar(value=base_day)
-    entry = tk.Entry(
-        frame, textvariable=var, width=4, justify="center",
+
+    def _day_from_iso(iso: str) -> str:
+        if not iso:
+            return ""
+        try:
+            return str(date.fromisoformat(iso).day)
+        except ValueError:
+            return ""
+
+    base_day = _day_from_iso(orders[0].get("dueDate") or "") if orders else ""
+    day_var = tk.StringVar(value=base_day)
+    day_entry = tk.Entry(
+        frame, textvariable=day_var, width=4, justify="center",
         font=("맑은 고딕", 18, "bold"), relief="solid", bd=1,
     )
-    entry.pack(side="left", padx=(0, 4))
-    tk.Label(frame, text="일", bg="white", fg="#3f3f46",
-             font=("맑은 고딕", 13)).pack(side="left")
+    day_entry.pack(side="left", padx=(0, 4))
+    tk.Label(frame, text="일 (납기)", bg="white", fg="#3f3f46",
+             font=("맑은 고딕", 11)).pack(side="left")
+
+    def on_combo_changed(_event=None):
+        sel = combo_var.get()
+        if sel == NO_MATCH_LABEL:
+            day_var.set("")
+            day_entry.configure(state="disabled")
+            return
+        day_entry.configure(state="normal")
+        for lbl, o in choices:
+            if lbl == sel and o is not None:
+                day_var.set(_day_from_iso(o.get("dueDate") or ""))
+                break
+        day_entry.focus_set()
+        day_entry.select_range(0, "end")
+        day_entry.icursor("end")
+
+    combo.bind("<<ComboboxSelected>>", on_combo_changed)
 
     def confirm(_event=None):
-        s = var.get().strip()
+        sel = combo_var.get()
+        if sel == NO_MATCH_LABEL:
+            result["value"] = {"order_number": None}
+            dlg.destroy()
+            return
+        s = day_var.get().strip()
         if not s.isdigit():
             return
         d = int(s)
         if d < 1 or d > 31:
             return
-        result["day"] = d
-        dlg.destroy()
+        for lbl, o in choices:
+            if lbl == sel and o is not None:
+                result["value"] = {
+                    "order_number": o["orderNumber"],
+                    "day": d,
+                    "current_due_iso": o.get("dueDate") or "",
+                }
+                dlg.destroy()
+                return
 
     def cancel(_event=None):
-        result["day"] = None
+        result["value"] = None
         dlg.destroy()
 
     dlg.bind("<Return>", confirm)
     dlg.bind("<Escape>", cancel)
     dlg.protocol("WM_DELETE_WINDOW", cancel)
 
-    # 포커스 + 전체 선택 → 그대로 Enter 도, 숫자 타닥 입력도 모두 자연스럽게.
-    dlg.after(50, lambda: (entry.focus_set(), entry.select_range(0, "end"), entry.icursor("end")))
+    # 일자 칸에 포커스 — 가장 최근 주문 그대로 인쇄하는 흔한 흐름이 Enter 한 번이면 끝.
+    dlg.after(50, lambda: (day_entry.focus_set(), day_entry.select_range(0, "end"), day_entry.icursor("end")))
     dlg.grab_set()
     dlg.wait_window()
-    return result["day"]
+    return result["value"]
 
 
 def _process_printed_pdf(pdf_path: Path):
     """인쇄 폴더에 새 PDF 가 떨어졌을 때 호출.
-    가장 최근 주문과 매칭 → 다이얼로그 → 납기 PATCH + PDF 업로드(덮어쓰기) → 종이 인쇄."""
+    드롭다운 다이얼로그로 어떤 주문에 매칭할지 직원이 선택.
+    선택 결과:
+      - 취소(Esc/X): 아무것도 안 함 (종이도 X)
+      - "매칭 안 함": 종이만 인쇄
+      - 주문 선택 + 일자: 납기 PATCH + PDF 덮어쓰기 + 종이 인쇄
+    """
     key = str(pdf_path.resolve())
     if key in _seen_printed:
         return
     _seen_printed.add(key)
-    # 파일이 완전히 쓰여질 때까지 잠깐 대기 (Bullzip 이 청크 단위로 쓸 수 있음)
+    # 파일이 완전히 쓰여질 때까지 잠깐 대기 (PDF24 가 청크 단위로 쓸 수 있음)
     time.sleep(0.8)
 
-    order = pop_recent_order()
-    if not order:
-        ui_log("인쇄 PDF 감지 — 매칭할 주문이 없어 무시")
+    orders = list_recent_orders()
+    if not orders:
+        # 매칭할 주문이 큐에 없으면 일단 종이만 인쇄. 직원이 따로 처리할 수 있도록 로그만 남김.
+        ui_log(f"인쇄 PDF 감지 — 큐에 주문 없음, 종이 인쇄만 진행: {pdf_path.name}")
+        print_pdf_to_default_printer(pdf_path)
         return
-    order_number = order["orderNumber"]
-    company = order.get("companyName", "")
-    current_due = order.get("dueDate", "")
 
-    # 다이얼로그는 메인 루프에서 모달로 띄워야 안전 — UI 큐로 전환.
-    holder: dict = {"day": None, "done": threading.Event()}
+    holder: dict = {"value": None, "done": threading.Event()}
 
     def _ask_on_ui():
         try:
-            holder["day"] = _ask_due_date_blocking(company, current_due)
+            holder["value"] = _ask_print_match_blocking(orders)
         finally:
             holder["done"].set()
 
     _ui_queue.put(("run", _ask_on_ui))
     holder["done"].wait()
 
-    if holder["day"] is None:
-        ui_log(f"{order_number} 인쇄 — 사용자가 일자 입력 취소(업로드/PATCH 생략)")
-    else:
-        new_due = resolve_new_due_date(current_due, holder["day"])
-        patch_due_date(order_number, new_due)
-        upload_worksheet_pdf(order_number, pdf_path)
+    sel = holder["value"]
+    if sel is None:
+        ui_log(f"인쇄 — 사용자 취소: 종이 인쇄/업로드 모두 생략 ({pdf_path.name})")
+        return
 
-    # 무인 PDF 프린터 라우팅: 항상 종이 인쇄까지 자동 진행.
+    order_number = sel.get("order_number")
+    if order_number is None:
+        ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name})")
+        print_pdf_to_default_printer(pdf_path)
+        return
+
+    new_due = resolve_new_due_date(sel.get("current_due_iso", ""), sel["day"])
+    patch_due_date(order_number, new_due)
+    upload_worksheet_pdf(order_number, pdf_path)
     print_pdf_to_default_printer(pdf_path)
 
 
@@ -460,10 +524,13 @@ def format_note_text(meta: dict) -> str:
 # ── Illustrator & FlexSign ────────────────────────────────────────────────────
 
 def _js_escape(s: str) -> str:
+    # 줄바꿈은 JSX 의 \r (CR, paragraph break) 로 변환 — Illustrator textFrame 과
+    # area text 모두 \r 을 표준 줄바꿈으로 인식한다. \n 만 넣으면 area text 에서
+    # 줄바꿈이 안 되어 한 줄로 들어가는 케이스가 발생.
     return (s.replace("\\", "\\\\")
              .replace('"', '\\"')
              .replace("\r", "")
-             .replace("\n", "\\n"))
+             .replace("\n", "\\r"))
 
 
 def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
@@ -512,15 +579,12 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "  }"
         "  var layer = doc.layers.add();"
         "  layer.name = 'worksheet';"
-        # 대지(첫 번째 artboard) 기준 위치, 도면(geometricBounds) 기준 크기 — 분리.
-        # 이유: 거래처가 같은 템플릿 대지에 작은/큰 간판을 그려 보내기 때문에
-        # 대지 폭으로 스케일하면 작은 간판에서 글씨가 너무 크고, 큰 간판에선 너무 작게 보였다.
+        # 대지(첫 번째 artboard) 와 실제 도면 bounds 둘 다 측정.
         "  var ab = doc.artboards[0].artboardRect;"
-        "  var abLeft = ab[0], abTop = ab[1], abRight = ab[2];"
+        "  var abLeft = ab[0], abTop = ab[1], abRight = ab[2], abBottom = ab[3];"
         "  var abWidth = abRight - abLeft;"
-        # 실제 도면 영역(있으면)을 측정해 사이즈 기준과 충돌 검사 둘 다에 사용.
         "  var hasArt = doc.pageItems.length > 0;"
-        "  var artLeft = abLeft, artTop = abTop, artRight = abRight, artBottom = ab[3], artWidth = abWidth;"
+        "  var artLeft = abLeft, artTop = abTop, artRight = abRight, artBottom = abBottom, artWidth = abWidth;"
         "  if (hasArt) {"
         "    try {"
         "      var dbnd = doc.geometricBounds;"  # [left, top, right, bottom]
@@ -529,20 +593,37 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "      if (artWidth <= 0) artWidth = abWidth;"
         "    } catch (e) { hasArt = false; }"
         "  }"
-        # QR은 도면 폭의 8% (50~1000pt 사이) — 도면이 크면 QR/글씨/박스도 같이 커진다.
-        "  var qrSize = artWidth * 0.08;"
-        "  if (qrSize < 50) qrSize = 50;"
-        "  if (qrSize > 1000) qrSize = 1000;"
+        # 도면이 대지를 벗어나 있으면 대지를 도면 전체를 포함하도록 확장.
+        # 이유: 워크시트가 대지 폭 기준으로 그려지므로, 대지 밖에 컨텐츠가 있는
+        # 거래처 파일에서 그 부분이 누락되어 보이는 문제를 막기 위함.
+        # (Illustrator 좌표계: top > bottom, left < right)
+        "  if (hasArt) {"
+        "    var needLeft = (artLeft < abLeft) ? artLeft : abLeft;"
+        "    var needTop = (artTop > abTop) ? artTop : abTop;"
+        "    var needRight = (artRight > abRight) ? artRight : abRight;"
+        "    var needBottom = (artBottom < abBottom) ? artBottom : abBottom;"
+        "    if (needLeft != abLeft || needTop != abTop || needRight != abRight || needBottom != abBottom) {"
+        "      try {"
+        "        doc.artboards[0].artboardRect = [needLeft, needTop, needRight, needBottom];"
+        "        ab = doc.artboards[0].artboardRect;"
+        "        abLeft = ab[0]; abTop = ab[1]; abRight = ab[2]; abBottom = ab[3];"
+        "        abWidth = abRight - abLeft;"
+        "      } catch (e) {}"
+        "    }"
+        "  }"
+        # 워크시트가 대지 상단 폭을 꽉 채우도록 대지 폭(abWidth) 기준 10%.
+        # 도면 크기와 무관하게 대지 기준으로 비례시켜야 작은 간판이든 큰 간판이든
+        # 워크시트(QR/박스/거래처명)가 일관되게 상단을 차지한다.
+        "  var qrSize = abWidth * 0.10;"
+        "  if (qrSize < 60) qrSize = 60;"
+        "  if (qrSize > 1500) qrSize = 1500;"
         "  var sc = qrSize / 90.0;"
         "  var margin = 18 * sc;"
         "  var bigFont = 26 * sc;"
         "  var noteFont = 13 * sc;"
-        # 박스 높이는 폰트에 맞춰 꽉 차게(1.25배). 너비는 대지의 약 45% — 시각적으로
-        # 가운데를 확실히 점유하도록. 단, 텍스트가 들어갈 최소폭은 보장.
-        "  var boxH = bigFont * 1.25;"
-        "  var boxW = abWidth * 0.45;"
-        "  var minBoxW = bigFont * 12;"
-        "  if (boxW < minBoxW) boxW = minBoxW;"
+        # 박스 높이는 폰트에 맞춰 꽉 차게(1.5배). 폭은 헤더 텍스트 측정 후
+        # 결정 — 글씨가 박스 양옆을 거의 꽉 채우도록. (아래 헤더 생성 시점에 계산)
+        "  var boxH = bigFont * 1.5;"
         "  var lineGap = 6 * sc;"
         # 색상 / 폰트 — 노트 사전 측정 단계에서도 동일 폰트를 적용해야 정확한 줄높이가 나온다.
         "  var blk = new RGBColor(); blk.red = 0; blk.green = 0; blk.blue = 0;"
@@ -550,11 +631,31 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         f"  boxFill.red = {fr}; boxFill.green = {fg}; boxFill.blue = {fb};"
         "  var boxStroke = new RGBColor();"
         f"  boxStroke.red = {sr}; boxStroke.green = {sg}; boxStroke.blue = {sb};"
+        # FlexSign v8 호환성을 위해 굴림/돋움 우선 — 맑은 고딕은 메트릭 차이로
+        # 자모가 벌어지거나 마지막 글자가 잘리는 문제 발생.
         "  var malgun = null;"
-        "  var malgunNames = ['MalgunGothic','MalgunGothicRegular','MalgunGothic-Regular','Malgun Gothic','맑은 고딕','맑은고딕'];"
+        "  var malgunNames = ['Gulim','GulimChe','굴림','굴림체','Dotum','DotumChe','돋움','돋움체','MalgunGothic','Malgun Gothic','맑은 고딕','맑은고딕'];"
         "  for (var mi = 0; mi < malgunNames.length && malgun == null; mi++) {"
         "    try { malgun = app.textFonts.getByName(malgunNames[mi]); } catch(e) { malgun = null; }"
         "  }"
+        # ── 헤더 폭 사전 측정 → 박스 폭을 글씨에 꽉 맞춤 (좌우 padding 만 약간).
+        # 측정용 프레임은 폭만 잰 뒤 즉시 제거하고, 실제 헤더는 아래에서 다시 만든다.
+        f'  var headerStr = "{header_js}";'
+        "  var headerWidth = bigFont * 6;"
+        "  var measHdr = layer.textFrames.add();"
+        "  measHdr.contents = headerStr;"
+        "  measHdr.textRange.characterAttributes.size = bigFont;"
+        "  if (malgun) measHdr.textRange.characterAttributes.textFont = malgun;"
+        "  measHdr.position = [0, 0];"
+        "  try {"
+        "    var mhb = measHdr.geometricBounds;"
+        "    headerWidth = mhb[2] - mhb[0];"
+        "  } catch (e) {}"
+        "  try { measHdr.remove(); } catch (e) {}"
+        "  var boxPadX = bigFont * 0.7;"
+        "  var boxW = headerWidth + boxPadX * 2;"
+        "  var minBoxW = bigFont * 6;"
+        "  if (boxW < minBoxW) boxW = minBoxW;"
         # ── 노트 박스의 가로 위치 / 너비를 미리 결정해 두고, 텍스트 컨텐츠 높이도 사전 측정.
         # 이 값을 워크시트 전체 깊이 계산에 포함해야, 노트가 길어 도면을 침범할 때
         # 워크시트 폼을 충분히 위로 올릴 수 있다.
@@ -593,7 +694,8 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "        contentH = tfLines[0].geometricBounds[1] - tfLines[tfLines.length - 1].geometricBounds[3];"
         "      }"
         "    } catch (e) {}"
-        "    noteH = contentH + pad * 2;"
+        # 마지막 줄이 영역 밖으로 잘리는 케이스 방지 — 한 줄 높이만큼 안전 마진 추가.
+        "    noteH = contentH + pad * 2 + noteFont;"
         "    try { tmpTf.remove(); } catch (e) {}"
         "    try { tmpPath.remove(); } catch (e) {}"
         "  }"
@@ -608,7 +710,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "    topY = artTop + overlayHeight + margin;"
         "  }"
         "  var needAbTop = (topY > abTop) ? (topY + margin) : abTop;"
-        "  var needAbBottom = ab[3];"
+        "  var needAbBottom = abBottom;"
         # 노트가 너무 길어 대지 하단을 넘어가면 그만큼 대지를 키운다.
         "  if (noteH > 0) {"
         "    var preNoteBot = topY - margin - qrSize - lineGap - noteH;"
@@ -690,15 +792,14 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "  }"
         # 워크시트 요소들이 원래 대지 밖으로 밀려난 경우 대지를 그만큼 확장.
         # 위/아래 양쪽 변동을 한 번에 반영한다.
-        "  if (needAbTop > abTop || needAbBottom < ab[3]) {"
+        "  if (needAbTop > abTop || needAbBottom < abBottom) {"
         "    try { doc.artboards[0].artboardRect = [abLeft, needAbTop, abRight, needAbBottom]; } catch (e) {}"
         "  }"
-        # FlexSign 가 v8 AI 의 글자 메트릭을 다르게 해석해서 자모 사이가 벌어지는
-        # 문제를 막으려면, 저장 전에 모든 텍스트를 윤곽선(아웃라인)으로 변환해야
-        # 한다. 변환 후엔 폰트 의존이 사라져 어떤 프로그램에서 열어도 모양이
-        # 그대로 유지된다.
+        # FlexSign 이 v8 AI 의 글자 메트릭을 다르게 해석해서 자모 사이가 벌어지는
+        # 문제를 막기 위해 좌측(거래처/전화)과 노트(주문번호/요청사항)는 윤곽선으로
+        # 변환한다. 단, 발주/납품일자가 들어간 헤더 박스 텍스트는 사용자가 나중에
+        # 직접 수정해야 할 일이 있으므로 텍스트 형태로 남겨둔다.
         "  try { leftTf.createOutline(); } catch (e) {}"
-        "  try { headerTf.createOutline(); } catch (e) {}"
         "  if (noteTfRef) { try { noteTfRef.createOutline(); } catch (e) {} }"
         # PDF 먼저 저장 — 모바일 거래처 페이지에서 무한 확대해도 깨지지 않는 벡터 PDF.
         # preserveEditability=false 로 print-ready 사이즈로 압축한다.
@@ -733,9 +834,15 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
 def convert_ai_file(ai_path: Path, qr_js_matrix: str,
                     header_text: str, left_text: str, note_text: str
                     ) -> tuple[Path, Path] | None:
-    """변환 성공 시 (AI v8 경로, PDF 경로) 튜플을 반환. 실패 시 None."""
+    """변환 성공 시 (AI v8 경로, PDF 경로) 튜플을 반환. 실패 시 None.
+    Illustrator 는 워처가 자동 실행하지 않는다 (라이센스/메모리 부담) — 사용자가
+    먼저 켜놔야 한다. FlexSign 은 launch_flexsign 단계에서 안 켜져 있으면 자동
+    실행하므로 여기서 검사하지 않는다."""
     if not is_running("Illustrator.exe"):
-        ui_alert("Illustrator 필요", "Adobe Illustrator가 실행 중이 아닙니다.\n먼저 Illustrator를 열어 주세요.")
+        ui_alert(
+            "Illustrator 필요",
+            "Adobe Illustrator가 실행 중이 아닙니다.\n먼저 Illustrator를 열어 주세요.",
+        )
         return None
     try:
         import pythoncom
@@ -749,8 +856,11 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str,
         out_dir.mkdir(exist_ok=True)
         # FlexSign이 같은 파일명을 캐시해서 이전 버전을 다시 띄우는 일을 막기 위해
         # 변환 파일명에 타임스탬프를 붙여 매번 새 경로로 만든다.
+        # 확장자 .ai (Illustrator v8): FlexSign 으로 임포트 시 화면 표시는 정상.
+        # 직원이 회사 네트워크 폴더에 저장할 때 [다른 이름으로 저장 → FlexiSIGN(.fs)]
+        # 한 번 클릭으로 .fs 로 저장한다.
         ts = time.strftime("%y%m%d_%H%M%S")
-        out_path = out_dir / f"{ai_path.stem}_{ts}{ai_path.suffix}"
+        out_path = out_dir / f"{ai_path.stem}_{ts}.ai"
         pdf_path = out_dir / f"{ai_path.stem}_{ts}.pdf"
 
         if not process_ai_to_v8(ai_app, ai_path, out_path, pdf_path, qr_js_matrix,
@@ -869,6 +979,89 @@ def _post_drop_files(hwnd: int, file_path: str) -> bool:
     return bool(user32.PostMessageW(hwnd, WM_DROPFILES, hmem, None))
 
 
+def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
+    """FlexSign 창에 [파일 → 열기] 메뉴를 키보드로 시뮬레이션해 .ai 를
+    untitled .fs 도큐먼트로 임포트시킨다. 드래그앤드롭 방식은 .ai 도큐먼트로
+    잡혀 [Save] 시 .ai 로 저장되지만, [Open] 메뉴로 열면 새 .fs 로 잡혀
+    [Save] 한 번이면 .fs 로 저장된다.
+    동작 순서: 창 활성화 → Ctrl+O → (다이얼로그) 클립보드에 경로 복사 → Ctrl+V → Enter.
+    """
+    try:
+        import win32api
+        import win32clipboard
+    except Exception as e:
+        ui_log(f"win32 모듈 로드 실패: {e}")
+        return False
+
+    user32 = ctypes.windll.user32
+    VK_CONTROL = 0x11
+    VK_RETURN = 0x0D
+    KEYEVENTF_KEYUP = 0x0002
+
+    def _press(vk: int) -> None:
+        win32api.keybd_event(vk, 0, 0, 0)
+        win32api.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+
+    def _chord(modifier: int, key: int) -> None:
+        win32api.keybd_event(modifier, 0, 0, 0)
+        _press(key)
+        win32api.keybd_event(modifier, 0, KEYEVENTF_KEYUP, 0)
+
+    # 클립보드 백업 (사용자가 다른 데서 쓰던 내용 복원하기 위함)
+    prev_clip = ""
+    try:
+        win32clipboard.OpenClipboard()
+        try:
+            if win32clipboard.IsClipboardFormatAvailable(13):  # CF_UNICODETEXT
+                prev_clip = win32clipboard.GetClipboardData(13) or ""
+        finally:
+            win32clipboard.CloseClipboard()
+    except Exception:
+        prev_clip = ""
+
+    try:
+        # 1) 창 활성화 + 최소화 해제
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        time.sleep(0.4)
+
+        # 2) Ctrl+O — 파일 열기 다이얼로그
+        _chord(VK_CONTROL, ord('O'))
+        time.sleep(0.7)
+
+        # 3) 파일 경로를 클립보드에 복사 후 Ctrl+V
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(str(file_path), 13)  # CF_UNICODETEXT
+        finally:
+            win32clipboard.CloseClipboard()
+        time.sleep(0.15)
+        _chord(VK_CONTROL, ord('V'))
+        time.sleep(0.25)
+
+        # 4) Enter — 열기 확정
+        _press(VK_RETURN)
+        time.sleep(0.4)
+        return True
+    except Exception as e:
+        ui_log(f"FlexSign 메뉴 열기 실패: {e}")
+        return False
+    finally:
+        # 클립보드 원복
+        try:
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                if prev_clip:
+                    win32clipboard.SetClipboardText(prev_clip, 13)
+            finally:
+                win32clipboard.CloseClipboard()
+        except Exception:
+            pass
+
+
 def launch_flexsign(file_path: Path):
     ui_log(f"FlexSign 전달 시도: {file_path.name}")
     hwnd = 0
@@ -877,35 +1070,57 @@ def launch_flexsign(file_path: Path):
     except Exception as e:
         ui_log(f"FlexSign 창 검색 실패: {e}")
 
-    if hwnd:
-        ui_log(f"FlexSign 창 발견(HWND={hwnd}) — 파일 드롭 중")
+    # FlexSign 창이 없으면 워처가 자동으로 띄운다. 이때 명령행 인자로 file_path 를
+    # 넘기면 .ai 도큐먼트로 잡혀 .fs 저장이 안 되므로, 빈 인스턴스로만 띄우고
+    # 창이 뜨면 그 위에 [파일 → 열기] 시뮬레이션을 적용한다.
+    if not hwnd:
+        if not Path(FLEXSIGN_EXE).exists():
+            ui_log(f"FlexSign 실행파일을 찾을 수 없습니다: {FLEXSIGN_EXE}")
+            return
         try:
-            ok = _post_drop_files(hwnd, str(file_path))
+            subprocess.Popen([FLEXSIGN_EXE])
+            ui_log("FlexSign 자동 실행 — 창 뜰 때까지 대기")
         except Exception as e:
-            ui_log(f"드롭 메시지 실패: {e}")
-            ok = False
-        if ok:
+            ui_log(f"FlexSign 실행 실패: {e}")
+            return
+        # 창 뜨길 polling (최대 ~30초)
+        for _ in range(60):
+            time.sleep(0.5)
             try:
-                # 최소화 상태에서만 RESTORE — 최대화 상태면 그대로 유지
-                if ctypes.windll.user32.IsIconic(hwnd):
-                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
+                hwnd = _find_flexsign_hwnd()
             except Exception:
-                pass
-            ui_log(f"FlexSign에 전달 완료: {file_path.name}")
-        else:
-            ui_log(f"드롭 실패 — 수동으로 파일을 열어주세요: {file_path}")
+                hwnd = 0
+            if hwnd:
+                break
+        if not hwnd:
+            ui_log("FlexSign 창을 찾지 못함 — 수동으로 파일을 열어주세요")
+            return
+        # 창이 막 떠서 메뉴/단축키가 안정화될 때까지 잠시 더 기다림
+        time.sleep(1.5)
+
+    ui_log(f"FlexSign 창(HWND={hwnd}) — [파일 → 열기] 시뮬레이션")
+    ok = _open_file_via_menu(hwnd, file_path)
+    if ok:
+        ui_log(f"FlexSign에 전달 완료: {file_path.name}")
         return
 
-    # FlexSign 창을 못 찾음 — 새 인스턴스로 실행
-    if not Path(FLEXSIGN_EXE).exists():
-        ui_log(f"FlexSign 창도 실행파일도 찾을 수 없습니다: {FLEXSIGN_EXE}")
-        return
+    # 메뉴 자동화 실패 시 fallback — .ai 도큐먼트로 잡히지만 화면 표시는 됨.
+    ui_log("메뉴 열기 실패 — 드롭 방식으로 폴백")
     try:
-        subprocess.Popen([FLEXSIGN_EXE, str(file_path)])
-        ui_log(f"FlexSign 창 미발견 — 새 인스턴스 실행: {file_path.name}")
+        ok2 = _post_drop_files(hwnd, str(file_path))
     except Exception as e:
-        ui_log(f"FlexSign 실행 실패: {e}")
+        ui_log(f"드롭 메시지 실패: {e}")
+        ok2 = False
+    if ok2:
+        try:
+            if ctypes.windll.user32.IsIconic(hwnd):
+                ctypes.windll.user32.ShowWindow(hwnd, 9)
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        ui_log(f"FlexSign에 드롭 전달: {file_path.name}")
+    else:
+        ui_log(f"드롭 실패 — 수동으로 파일을 열어주세요: {file_path}")
 
 
 # ── ZIP processing ────────────────────────────────────────────────────────────
