@@ -1,0 +1,26 @@
+{
+  "name": "HD사인 작업 지시서",
+  "short_name": "HD지시서",
+  "description": "HD사인 모바일 작업 지시서 뷰어",
+  "start_url": "/m/worksheets",
+  "scope": "/m/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#18181b",
+  "theme_color": "#18181b",
+  "lang": "ko-KR",
+  "icons": [
+    {
+      "src": "/favicon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
