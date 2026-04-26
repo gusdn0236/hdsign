@@ -95,8 +95,9 @@ export default function WorksheetList() {
     useEffect(() => {
         aliveRef.current = true;
         fetchList();
-        // 워처가 PDF 재업로드하면 즉시 보여야 하므로 30초마다 폴링
-        const timer = setInterval(fetchList, 30000);
+        // 60초 폴링 — 30s 보다 데이터/서버 부담 절반. 사용자 체감 신선도는
+        // visibilitychange(백→포 복귀시 즉시 재조회) 가 보강해줘서 거의 동일.
+        const timer = setInterval(fetchList, 60000);
         // 백그라운드 → 포그라운드 복귀 시 즉시 재조회 (PWA 홈 아이콘 흐름 대응)
         const onVisible = () => {
             if (document.visibilityState === 'visible') fetchList();
