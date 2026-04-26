@@ -82,6 +82,16 @@ export default function WorksheetList() {
         }
     }, []);
 
+    // 캐시버스터(_v) 가 URL 에 남아 있으면 한 번 들어온 뒤 깨끗하게 제거.
+    // 사용자가 이 URL 을 공유/북마크하면 ?_v=... 가 따라가는 게 보기 싫어서.
+    useEffect(() => {
+        if (window.location.search.includes('_v=')) {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('_v');
+            window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+        }
+    }, []);
+
     useEffect(() => {
         aliveRef.current = true;
         fetchList();
@@ -150,7 +160,16 @@ export default function WorksheetList() {
                     <button
                         type="button"
                         className={`ws-refresh-btn ${refreshing ? 'spinning' : ''}`}
-                        onClick={() => fetchList({ manual: true })}
+                        onClick={() => {
+                            // PWA(홈화면 추가) 는 사파리의 새로고침 버튼이 없고 iOS WebKit 이
+                            // index.html / chunks 를 공격적으로 캐시한다. http-equiv no-cache 만으로는
+                            // 부족 — 쿼리 파라미터를 새로 붙여 다른 URL 로 인식시킨 뒤 replace 로
+                            // 강제로 다시 받는다. 이게 PWA 의 "사파리 새로고침" 역할.
+                            setRefreshing(true);
+                            const url = new URL(window.location.href);
+                            url.searchParams.set('_v', Date.now().toString());
+                            window.location.replace(url.toString());
+                        }}
                         disabled={refreshing}
                         aria-label="새로고침"
                     >
