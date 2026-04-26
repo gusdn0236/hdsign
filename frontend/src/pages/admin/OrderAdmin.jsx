@@ -955,7 +955,11 @@ export default function OrderAdmin() {
             if (e.target === e.currentTarget) setSelectedOrderId(null);
           }}
         >
-          <div className="order-preview-content" onMouseDown={(e) => e.stopPropagation()}>
+          {/* 안쪽에 stopPropagation 을 걸면 react-zoom-pan-pinch 가 window 레벨에서
+              듣는 mousedown 까지 막혀 PDF 드래그가 동작하지 않는다. backdrop 의
+              e.target === e.currentTarget 체크만으로도 자식 클릭은 닫힘을 트리거하지
+              않으므로 여기서는 propagation 을 막지 않는다. */}
+          <div className="order-preview-content">
             <button type="button" className="order-modal-close" onClick={() => setSelectedOrderId(null)}>
               ×
             </button>

@@ -55,9 +55,10 @@ export default function PdfPanZoom({ url }) {
                 minScale={0.5}
                 maxScale={4}
                 doubleClick={{ mode: 'toggle', step: 1.5 }}
-                // 마우스 휠 한 칸은 deltaY ~100 이라 step 이 크면 한 번에 끝까지 확대됨.
-                // 0.06 정도가 마우스 휠로 자연스럽게 단계별 확대되는 강도.
-                wheel={{ step: 0.06, smoothStep: 0.005 }}
+                // 라이브러리는 deltaY 부호만 보고 ±1 로 정규화 — step 이 그대로 한 이벤트당
+                // 스케일 증감. 매끄러운 휠 마우스는 한 번 굴림에 여러 이벤트가 와서 누적되므로
+                // 0.03 정도가 일반/매끄러운 휠 양쪽에서 자연스러움. (smoothStep 은 v4 에 없음)
+                wheel={{ step: 0.03 }}
                 pinch={{ step: 5 }}
                 panning={{ velocityDisabled: true }}
             >
