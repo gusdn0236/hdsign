@@ -90,15 +90,14 @@
 }
 
 .pv-canvas-wrap {
-    /* 스테이지 전체를 최소 채우도록 — 페이지가 작으면 가운데 정렬,
-       크면 자연스럽게 overflow 발생시켜 스크롤 가능. */
-    min-width: 100%;
-    min-height: 100%;
+    /* block 레이아웃 — width: max-content 로 콘텐츠에 맞춰 늘어나고,
+       min-width: 100% 로 작을 땐 stage 전체를 채움. 안쪽 .pv-page 의
+       margin: 0 auto 가 작은 페이지만 가운데 정렬. */
     box-sizing: border-box;
     padding: 16px;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
+    width: max-content;
+    min-width: 100%;
+    min-height: 100%;
 }
 
 .pv-page {
@@ -106,8 +105,8 @@
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
     border-radius: 4px;
     overflow: hidden;
-    /* flex 컨테이너 안에서 줄어들지 않도록 — 줌인 시 스테이지보다 커져야 함 */
-    flex-shrink: 0;
+    /* canvas-wrap 이 자기보다 클 때만 가운데 정렬 — 페이지가 더 크면 0 으로 무력화 */
+    margin: 0 auto;
 }
 .pv-page canvas {
     display: block;

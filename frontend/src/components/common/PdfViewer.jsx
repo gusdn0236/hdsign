@@ -14,6 +14,7 @@ const DPR_CAP = 6;
 
 export default function PdfViewer({ url }) {
     const stageRef = useRef(null);
+    const scaleRef = useRef(1);
     const [stageWidth, setStageWidth] = useState(0);
 
     const [numPages, setNumPages] = useState(0);
@@ -24,8 +25,8 @@ export default function PdfViewer({ url }) {
     const [pageRendering, setPageRendering] = useState(false);
     const [error, setError] = useState('');
 
-    // 폭 측정 — window resize 만 듣는다. 스테이지 내부 콘텐츠가 커져 스크롤바가
-    // 생길 때 ResizeObserver 가 폭을 다시 잡으면 무한 루프가 발생하므로 의도적으로 제외.
+    useEffect(() => { scaleRef.current = scale; }, [scale]);
+
     useEffect(() => {
         const measure = () => {
             if (stageRef.current) setStageWidth(stageRef.current.clientWidth);
@@ -48,33 +49,74 @@ export default function PdfViewer({ url }) {
         return Math.min(native * scale, DPR_CAP);
     }, [scale]);
 
-    const zoomIn = useCallback(() => {
-        setScale((s) => Math.min(MAX_SCALE, +(s + ZOOM_STEP).toFixed(2)));
-    }, []);
-    const zoomOut = useCallback(() => {
-        setScale((s) => Math.max(MIN_SCALE, +(s - ZOOM_STEP).toFixed(2)));
-    }, []);
-    const zoomReset = useCallback(() => setScale(1), []);
+    /**
+     * 줌 + scroll 보정. anchorX/Y 는 stage 좌표계(0..clientWidth/Height) 위 한 점으로,
+     * 줌 전후로 그 점이 화면상 같은 위치에 머물도록 새 scrollLeft/Top 을 계산.
+     * 안 주면 stage 가운데를 기준으로 확대.
+     *
+     * 수식 — 줌 전 stage 좌표계의 점 (ax, ay) 가 콘텐츠상 위치는 (scrollL+ax, scrollT+ay).
+     * 새 scale 에서 그 콘텐츠 위치는 ratio 배 — (scrollL+ax)·r, (scrollT+ay)·r.
+     * 그 점을 다시 (ax, ay) 에 두려면 newScroll = oldPos·r - anchor.
+     */
+    const zoomTo = useCallback((target, anchorX, anchorY) => {
+        const stage = stageRef.current;
+        if (!stage) return;
+        const oldScale = scaleRef.current;
+        const clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, +target.toFixed(2)));
+        if (clamped === oldScale) return;
 
-    // Ctrl+휠 줌. 네이티브 리스너 + passive:false 로 preventDefault 가능하게.
-    // (React 의 onWheel 은 일부 환경에서 passive 라 preventDefault 가 무시됨)
+        const ax = anchorX != null ? anchorX : stage.clientWidth / 2;
+        const ay = anchorY != null ? anchorY : stage.clientHeight / 2;
+        const ratio = clamped / oldScale;
+        const targetX = (stage.scrollLeft + ax) * ratio - ax;
+        const targetY = (stage.scrollTop + ay) * ratio - ay;
+
+        setScale(clamped);
+        // Page 의 width prop 변경 → 래퍼 div 스타일은 React 커밋 직후 즉시 반영.
+        // 다음 프레임에 새 scrollWidth/Height 기준으로 scroll 보정.
+        requestAnimationFrame(() => {
+            if (!stageRef.current) return;
+            stageRef.current.scrollLeft = Math.max(0, targetX);
+            stageRef.current.scrollTop = Math.max(0, targetY);
+        });
+    }, []);
+
+    const zoomIn = useCallback(() => {
+        zoomTo(scaleRef.current + ZOOM_STEP);
+    }, [zoomTo]);
+    const zoomOut = useCallback(() => {
+        zoomTo(scaleRef.current - ZOOM_STEP);
+    }, [zoomTo]);
+    const zoomReset = useCallback(() => {
+        const stage = stageRef.current;
+        setScale(1);
+        if (stage) {
+            requestAnimationFrame(() => {
+                stage.scrollLeft = 0;
+                stage.scrollTop = 0;
+            });
+        }
+    }, []);
+
+    // Ctrl+휠 줌 — 마우스 포인터 위치를 앵커로. native 리스너 + passive:false 로
+    // preventDefault 가능하게(React onWheel 은 일부 환경에서 passive 라 무시됨).
     useEffect(() => {
         const stage = stageRef.current;
         if (!stage) return;
         const onWheel = (e) => {
-            if (e.ctrlKey || e.metaKey) {
-                e.preventDefault();
-                if (e.deltaY < 0) zoomIn();
-                else zoomOut();
-            }
-            // Ctrl 없는 휠은 기본 스크롤(스테이지 내부) 그대로 둔다.
-            // 뒷배경 전파는 CSS overscroll-behavior:contain + 모달 body 락 으로 차단.
+            if (!(e.ctrlKey || e.metaKey)) return;
+            e.preventDefault();
+            const rect = stage.getBoundingClientRect();
+            const ax = e.clientX - rect.left;
+            const ay = e.clientY - rect.top;
+            const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+            zoomTo(scaleRef.current + delta, ax, ay);
         };
         stage.addEventListener('wheel', onWheel, { passive: false });
         return () => stage.removeEventListener('wheel', onWheel);
-    }, [zoomIn, zoomOut]);
+    }, [zoomTo]);
 
-    // 클릭 드래그로 스테이지 스크롤 이동 (확대 시 PDF 가 스테이지보다 커져 스크롤 가능할 때).
+    // 클릭 드래그로 스크롤 이동 — 확대 상태에서만 동작.
     const onPanStart = useCallback((e) => {
         if (e.button !== 0) return;
         const stage = stageRef.current;
@@ -161,9 +203,11 @@ export default function PdfViewer({ url }) {
             </div>
 
             <div className="pv-stage" ref={stageRef} onMouseDown={onPanStart}>
-                {/* canvas-wrap — flex 컨테이너로 페이지를 가운데 정렬하면서 스테이지보다
-                    커지면 자연스럽게 overflow 발생시켜 스크롤 가능하게. min-width/height
-                    100% 로 작은 페이지일 때도 스테이지 전체를 채워 grab 영역 확보. */}
+                {/* canvas-wrap — block 레이아웃. width: max-content + min-width: 100% 로
+                    페이지가 작으면 stage 폭, 크면 페이지 폭. .pv-page 의 margin: 0 auto
+                    가 작은 경우만 가운데 정렬하고 큰 경우엔 자연스레 무력화됨.
+                    flex justify-content:center 는 양쪽 overflow 를 만들어 좌측 영역이
+                    scroll 0 미만이라 닿을 수 없는 문제가 있어 사용 X. */}
                 <div className="pv-canvas-wrap">
                     {stageWidth > 0 && (
                         <Document
@@ -176,7 +220,9 @@ export default function PdfViewer({ url }) {
                         >
                             {numPages > 0 && (
                                 <Page
-                                    key={`p-${currentPage}-${scale}`}
+                                    /* key 에 scale 미포함 — 스케일 변경 시 unmount 없이
+                                       width prop 만 갱신해 부드럽게 재렌더. */
+                                    key={`p-${currentPage}`}
                                     pageNumber={currentPage}
                                     width={stageWidth * scale}
                                     devicePixelRatio={renderDpr}

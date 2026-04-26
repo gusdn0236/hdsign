@@ -481,12 +481,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 12px;
 }
 
 .order-preview-content {
-  width: min(1200px, 96vw);
-  height: min(86vh, 900px);
+  width: min(1600px, 98vw);
+  height: min(96vh, 1200px);
   background: #fff;
   border-radius: 14px;
   overflow: hidden;
@@ -525,7 +525,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 12px;
 }
 
 .order-preview-image {
@@ -731,7 +731,8 @@
 }
 
 .order-preview-info {
-  width: 350px;
+  width: 320px;
+  flex-shrink: 0;
   border-left: 1px solid #ebebeb;
   padding: 28px 22px 20px;
   overflow-y: auto;
