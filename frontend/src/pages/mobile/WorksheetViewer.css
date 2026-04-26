@@ -45,6 +45,12 @@ body:has(.wsv-page) {
     cursor: pointer;
     padding: 0;
     -webkit-tap-highlight-color: transparent;
+    /* iOS PWA standalone 에서 탭이 안 먹는 경우 방어 — pointer-events 강제 활성,
+       touch-action manipulation 으로 네이티브 더블탭/줌 지연 제거. */
+    pointer-events: auto !important;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
 }
 .wsv-back:active {
     background: #3f3f46;
@@ -205,6 +211,10 @@ body:has(.wsv-page) {
     font-weight: 800;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+    pointer-events: auto !important;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
 }
 .wsv-action-reset:active {
     transform: translateY(1px);
@@ -226,6 +236,10 @@ body:has(.wsv-page) {
     cursor: pointer;
     box-shadow: 0 8px 22px rgba(37, 99, 235, 0.45);
     -webkit-tap-highlight-color: transparent;
+    pointer-events: auto !important;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
 }
 .wsv-action-camera:active {
     transform: translateY(1px);

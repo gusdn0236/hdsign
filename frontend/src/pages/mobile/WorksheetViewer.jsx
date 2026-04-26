@@ -124,6 +124,14 @@ export default function WorksheetViewer() {
         if (renderScaleTimerRef.current) clearTimeout(renderScaleTimerRef.current);
     }, []);
 
+    // iOS PWA standalone 에서 click 이벤트가 안 발사되는 케이스를 보강.
+    // touchend 시점에 액션을 즉시 트리거하고 후속 synthetic click 은 preventDefault
+    // 로 막아 중복 발사 방지. 데스크톱(터치 없는 환경) 에선 평범하게 onClick 만 발사.
+    const tapHandler = useCallback((action) => (e) => {
+        e.preventDefault();
+        action(e);
+    }, []);
+
     // 브라우저 페이지 줌은 막고, PDF 자체만 TransformWrapper 로 확대/이동한다.
     useEffect(() => {
         const meta = document.querySelector('meta[name="viewport"]');
@@ -331,6 +339,7 @@ export default function WorksheetViewer() {
                         e.preventDefault();
                         navigate('/m/worksheets');
                     }}
+                    onTouchEnd={tapHandler(() => navigate('/m/worksheets'))}
                     className="wsv-back"
                     aria-label="뒤로"
                 >‹</Link>
@@ -449,6 +458,7 @@ export default function WorksheetViewer() {
                     type="button"
                     className="wsv-action-reset"
                     onClick={resetPdfView}
+                    onTouchEnd={tapHandler(resetPdfView)}
                 >
                     ⟲ 전체보기
                 </button>
@@ -456,6 +466,7 @@ export default function WorksheetViewer() {
                     type="button"
                     className="wsv-action-camera"
                     onClick={() => setSheetOpen(true)}
+                    onTouchEnd={tapHandler(() => setSheetOpen(true))}
                     aria-label="사진찍기"
                 >
                     <span className="wsv-action-camera-emoji" aria-hidden="true">📷</span>
