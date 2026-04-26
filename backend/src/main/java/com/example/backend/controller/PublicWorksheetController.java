@@ -3,12 +3,21 @@ package com.example.backend.controller;
 import com.example.backend.entity.Order;
 import com.example.backend.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -29,12 +38,20 @@ import java.util.Map;
  * worksheetPdfUrl 도 추가로 검사 — 이론상 IN_PROGRESS 면 PDF 가 있어야 하지만
  * 워처 흐름의 엣지케이스로 PDF 없이 IN_PROGRESS 가 되는 경우 모바일에서는 표시 무의미.
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/public/worksheets")
 @RequiredArgsConstructor
 public class PublicWorksheetController {
 
     private final OrderRepository orderRepository;
+    private final S3Client s3Client;
+
+    @Value("${r2.bucket}")
+    private String bucket;
+
+    @Value("${r2.public-url}")
+    private String publicUrl;
 
     @GetMapping
     public ResponseEntity<?> list() {
@@ -67,6 +84,54 @@ public class PublicWorksheetController {
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다.")));
+    }
+
+    /**
+     * PDF 프록시 — R2 의 PDF 를 서버 사이드에서 가져와 같은 출처(백엔드) 로 응답.
+     * R2 버킷 자체에 CORS 를 안 열어도 fetch 기반 PDF.js 가 바이트를 받을 수 있게 함.
+     * 인증 없음 — 어차피 R2 public URL 도 무인증이라 보안 수준은 동일.
+     */
+    @GetMapping("/{orderNumber}/pdf")
+    public ResponseEntity<?> proxyPdf(@PathVariable String orderNumber) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null || order.getDeletedAt() != null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String pdfUrl = order.getWorksheetPdfUrl();
+        if (pdfUrl == null || pdfUrl.isBlank()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String key = extractKey(pdfUrl);
+        if (key == null) {
+            log.warn("PDF 프록시 — key 추출 실패 [{}], url={}", orderNumber, pdfUrl);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+
+        try {
+            ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
+                    GetObjectRequest.builder().bucket(bucket).key(key).build()
+            );
+            long contentLength = stream.response().contentLength();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_PDF);
+            headers.setContentLength(contentLength);
+            // 같은 PDF 가 잠깐 동안 여러 번 fetch 될 수 있으니 짧게 캐시.
+            headers.setCacheControl("public, max-age=60");
+            // 인라인 표시(첨부 다운로드 X).
+            headers.setContentDispositionFormData("inline", "worksheet.pdf");
+            return new ResponseEntity<>(new InputStreamResource(stream), headers, HttpStatus.OK);
+        } catch (Exception e) {
+            log.warn("PDF 프록시 실패 [{}/{}]: {}", orderNumber, key, e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
+        }
+    }
+
+    private String extractKey(String url) {
+        if (url == null || url.isBlank()) return null;
+        if (publicUrl == null || publicUrl.isBlank()) return null;
+        String base = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
+        if (!url.startsWith(base)) return null;
+        return url.substring(base.length());
     }
 
     private Map<String, Object> toSummary(Order o, LocalDate today) {

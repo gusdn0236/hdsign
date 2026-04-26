@@ -137,7 +137,11 @@ export default function WorksheetViewer() {
         queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
     }, [queued]);
 
-    const pdfFile = useMemo(() => detail?.worksheetPdfUrl ? { url: detail.worksheetPdfUrl } : null, [detail]);
+    // R2 직접 URL 대신 백엔드 프록시 — R2 CORS 미설정 환경에서도 PDF.js 가 fetch 가능.
+    const pdfFile = useMemo(() => {
+        if (!detail?.worksheetPdfUrl || !orderNumber) return null;
+        return { url: `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/pdf` };
+    }, [detail, orderNumber]);
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
