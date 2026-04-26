@@ -150,11 +150,13 @@ export default function WorksheetViewer() {
         queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
     }, [queued]);
 
-    // R2 직접 URL 대신 백엔드 프록시 — R2 CORS 미설정 환경에서도 PDF.js 가 fetch 가능.
-    const pdfFile = useMemo(() => {
-        if (!detail?.worksheetPdfUrl || !orderNumber) return null;
-        return { url: `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/pdf` };
-    }, [detail, orderNumber]);
+    // R2 CORS 가 hdsigncraft.com 에 열려있어 PDF.js 가 R2 URL 직접 fetch.
+    // R2 egress 무료라 조회량과 무관하게 추가 비용 0. 백엔드 프록시 엔드포인트는
+    // 폴백용으로 남겨둠(/api/public/worksheets/{n}/pdf) — CORS 가 깨지면 즉시 전환 가능.
+    const pdfFile = useMemo(
+        () => (detail?.worksheetPdfUrl ? { url: detail.worksheetPdfUrl } : null),
+        [detail],
+    );
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);

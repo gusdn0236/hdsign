@@ -218,9 +218,8 @@ export default function OrderAdmin() {
   const carouselSlides = useMemo(() => {
     const slides = [];
     if (selectedOrder?.worksheetPdfUrl) {
-      // R2 직접 URL 은 CORS 때문에 PDF.js 가 fetch 못 함. 백엔드 프록시 통해 같은 출처로.
-      const proxyUrl = `${BASE_URL}/api/public/worksheets/${encodeURIComponent(selectedOrder.orderNumber)}/pdf`;
-      slides.push({ type: "pdf", url: proxyUrl });
+      // R2 CORS 설정된 환경 — 직접 URL 사용. egress 무료.
+      slides.push({ type: "pdf", url: selectedOrder.worksheetPdfUrl });
     }
     selectedFiles.evidence.forEach((file, idx) => {
       slides.push({ type: "photo", file, photoIndex: idx });
