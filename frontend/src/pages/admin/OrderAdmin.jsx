@@ -961,11 +961,14 @@ export default function OrderAdmin() {
                   (() => {
                     const slide = carouselSlides[carouselIndex] || carouselSlides[0];
                     if (slide.type === "pdf") {
+                      // #toolbar=0&navpanes=0&scrollbar=0 — Chrome/Edge 의 내장 PDF 뷰어
+                      // 툴바/사이드바/스크롤바를 숨겨 PDF 본문만 보이게 한다.
+                      // 확대·축소는 Ctrl+휠 / 핀치줌(브라우저 기본)으로.
                       return (
                         <iframe
                           key={slide.url}
                           className="order-preview-pdf"
-                          src={slide.url}
+                          src={`${slide.url}#toolbar=0&navpanes=0&scrollbar=0`}
                           title="지시서 PDF"
                         />
                       );
