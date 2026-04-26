@@ -115,8 +115,10 @@ public class PublicWorksheetController {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_PDF);
             headers.setContentLength(contentLength);
-            // 같은 PDF 가 잠깐 동안 여러 번 fetch 될 수 있으니 짧게 캐시.
-            headers.setCacheControl("public, max-age=60");
+            // 워처가 같은 주문에 대해 PDF 를 재업로드하면 worksheetPdfUrl(R2 키) 자체가 바뀌므로
+            // 같은 프록시 URL 응답이 짧게 stale 해도 다음 fetch 시 새 PDF 가 자동으로 보인다.
+            // 5분 캐시 — 같은 사용자가 반복 조회할 때 트래픽 절감 (워처 재인쇄 → 5분 내 반영).
+            headers.setCacheControl("public, max-age=300");
             // 인라인 표시(첨부 다운로드 X).
             headers.setContentDispositionFormData("inline", "worksheet.pdf");
             return new ResponseEntity<>(new InputStreamResource(stream), headers, HttpStatus.OK);

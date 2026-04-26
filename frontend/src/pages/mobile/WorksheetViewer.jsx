@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -67,6 +67,7 @@ const DELIVERY_LABELS = {
 
 export default function WorksheetViewer() {
     const { orderNumber } = useParams();
+    const navigate = useNavigate();
     const fileInputRef = useRef(null);
     const containerRef = useRef(null);
 
@@ -249,10 +250,28 @@ export default function WorksheetViewer() {
         [queued]
     );
 
+    // 뒤로가기 — 시트 열려있으면 먼저 닫기, 아니면 히스토리 뒤로 (없으면 목록으로).
+    const handleBack = () => {
+        if (sheetOpen) {
+            setSheetOpen(false);
+            return;
+        }
+        if (window.history.length > 1) {
+            navigate(-1);
+        } else {
+            navigate('/m/worksheets');
+        }
+    };
+
     return (
         <div className="wsv-page" ref={containerRef}>
             <header className="wsv-topbar">
-                <Link to="/m/worksheets" className="wsv-back" aria-label="뒤로">‹</Link>
+                <button
+                    type="button"
+                    onClick={handleBack}
+                    className="wsv-back"
+                    aria-label="뒤로"
+                >‹</button>
                 <div className="wsv-topbar-text">
                     <div className="wsv-topbar-company">
                         {detail?.companyName || (loadingDetail ? '…' : '거래처 미상')}
