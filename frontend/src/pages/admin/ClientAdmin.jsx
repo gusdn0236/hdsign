@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import './ClientAdmin.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-const EMPTY_FORM = { username: '', password: '', companyName: '', networkFolderName: '', contactName: '', phone: '', email: '', isActive: true, pendingSignup: true };
+const EMPTY_FORM = { username: '', password: '', companyName: '', networkFolderName: '', contactName: '', phone: '', email: '', aliases: '', isActive: true, pendingSignup: true };
 
 function formatDate(val) {
     if (!val) return '-';
@@ -65,6 +65,7 @@ export default function ClientAdmin() {
             contactName: client.contactName || '',
             phone: client.phone || '',
             email: client.email || '',
+            aliases: client.aliases || '',
             isActive: client.isActive ?? true,
         });
         setModalMode('edit');
@@ -132,6 +133,7 @@ export default function ClientAdmin() {
                 contactName: '',
                 phone: '',
                 email: '',
+                aliases: '',
                 error: null,
             })));
             setModalMode('bulk');
@@ -177,6 +179,7 @@ export default function ClientAdmin() {
                         contactName: r.contactName,
                         phone: r.phone,
                         email: r.email,
+                        aliases: r.aliases,
                         pendingSignup: bulkPendingMode,
                     })),
                 }),
@@ -553,6 +556,13 @@ export default function ClientAdmin() {
                                 <label>이메일</label>
                                 <input {...field('email')} type="email" placeholder="담당자 이메일 (선택)" />
                             </div>
+                            <div className="ca-field">
+                                <label>별칭 (검색 보조)</label>
+                                <input {...field('aliases')} placeholder="콤마구분, 예: 디자인H, dH" />
+                                <small className="ca-hint">
+                                    거래처가 회원가입 시 이 별칭으로 검색해도 본 행이 후보로 뜹니다. 폴더명/업체명과 거래처가 부르는 상호가 다를 때 사용.
+                                </small>
+                            </div>
                             <div className="ca-modal-actions">
                                 <button type="button" className="ca-cancel-btn" onMouseDown={(e) => { if (e.target === e.currentTarget) closeModal(); }}>취소</button>
                                 <button type="submit" className="ca-save-btn" disabled={saving}>{saving ? '추가 중...' : '추가'}</button>
@@ -596,6 +606,13 @@ export default function ClientAdmin() {
                             <div className="ca-field">
                                 <label>이메일</label>
                                 <input {...field('email')} type="email" />
+                            </div>
+                            <div className="ca-field">
+                                <label>별칭 (검색 보조)</label>
+                                <input {...field('aliases')} placeholder="콤마구분, 예: 디자인H, dH" />
+                                <small className="ca-hint">
+                                    거래처가 회원가입 시 이 별칭으로 검색해도 본 행이 후보로 뜹니다.
+                                </small>
                             </div>
                             <div className="ca-field ca-field-toggle">
                                 <label>계정 상태</label>
@@ -684,6 +701,7 @@ export default function ClientAdmin() {
                                             {!bulkPendingMode && <th>아이디 *</th>}
                                             {!bulkPendingMode && <th>비번 *</th>}
                                             <th>업체명 *</th>
+                                            <th>별칭</th>
                                             <th>담당자</th>
                                             <th>연락처</th>
                                             <th>이메일</th>
@@ -701,6 +719,7 @@ export default function ClientAdmin() {
                                                 {!bulkPendingMode && <td><input value={r.username} placeholder="영문" onChange={(e) => updateBulkRow(idx, { username: e.target.value })} /></td>}
                                                 {!bulkPendingMode && <td><input value={r.password} placeholder="4자+" onChange={(e) => updateBulkRow(idx, { password: e.target.value })} /></td>}
                                                 <td><input value={r.companyName} onChange={(e) => updateBulkRow(idx, { companyName: e.target.value })} /></td>
+                                                <td><input value={r.aliases} placeholder="콤마구분" onChange={(e) => updateBulkRow(idx, { aliases: e.target.value })} /></td>
                                                 <td><input value={r.contactName} onChange={(e) => updateBulkRow(idx, { contactName: e.target.value })} /></td>
                                                 <td><input value={r.phone} onChange={(e) => updateBulkRow(idx, { phone: e.target.value })} /></td>
                                                 <td><input value={r.email} onChange={(e) => updateBulkRow(idx, { email: e.target.value })} /></td>
@@ -708,7 +727,7 @@ export default function ClientAdmin() {
                                             </tr>
                                         ))}
                                         {visibleRows.length === 0 && (
-                                            <tr><td colSpan={bulkPendingMode ? 7 : 9} className="ca-empty">표시할 폴더가 없습니다.</td></tr>
+                                            <tr><td colSpan={bulkPendingMode ? 8 : 10} className="ca-empty">표시할 폴더가 없습니다.</td></tr>
                                         )}
                                     </tbody>
                                 </table>

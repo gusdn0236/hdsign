@@ -13,13 +13,15 @@ export default function ClientSignup() {
     // Step 1
     const [query, setQuery] = useState('');
     const [matches, setMatches] = useState([]);
+    // 백엔드가 정확일치 결과를 줬는지 여부. false 면 자모 유사도 후보 — 단일 후보라도 자동진입하지 않고 확인 받음.
+    const [matchesExact, setMatchesExact] = useState(true);
 
     // Step 2 — 선택한 거래처 + 신청 폼
     const [selected, setSelected] = useState(null); // {id, companyName, emailMasked}
     const [form, setForm] = useState({ username: '', phone: '', email: '' });
 
     const reset = () => {
-        setStep(1); setError(''); setQuery(''); setMatches([]);
+        setStep(1); setError(''); setQuery(''); setMatches([]); setMatchesExact(true);
         setSelected(null); setForm({ username: '', phone: '', email: '' });
     };
 
@@ -36,13 +38,16 @@ export default function ClientSignup() {
             if (!res.ok) throw new Error(data.message || '검색에 실패했습니다.');
             const list = Array.isArray(data?.matches) ? data.matches : [];
             if (list.length === 0) {
-                setError('일치하는 가입대기 거래처를 찾을 수 없습니다. 사무실에 문의해주세요.');
+                setError('일치하거나 비슷한 가입대기 거래처가 없습니다. 다른 표기로 다시 검색하거나 사무실에 문의해주세요.');
                 setMatches([]);
+                setMatchesExact(true);
                 return;
             }
+            const isExact = Boolean(data?.exact);
             setMatches(list);
-            // 단일 매칭이면 자동 진입.
-            if (list.length === 1) {
+            setMatchesExact(isExact);
+            // 정확일치 단일 후보만 자동 진입. 유사도 후보는 잘못 진입할 위험이 있어 본인 확인 카드를 띄움.
+            if (list.length === 1 && isExact) {
                 setSelected(list[0]);
                 setStep(2);
             }
@@ -100,16 +105,21 @@ export default function ClientSignup() {
                                 required
                             />
                             <small className="signup-hint">
-                                관리자가 등록한 거래처명(또는 사전 안내된 이메일)을 입력해주세요.
+                                관리자가 등록한 거래처명/이메일을 입력해주세요. 표기가 정확하지 않아도 비슷한 거래처를 후보로 보여드립니다.
                             </small>
                         </div>
                         <button type="submit" className="login-btn" disabled={loading || !query.trim()}>
                             {loading ? '검색 중...' : '거래처 찾기'}
                         </button>
 
-                        {matches.length > 1 && (
+                        {/* 후보 카드: 정확일치+다수 / 유사도(단일이라도 본인 확인 필요) 모두 노출 */}
+                        {(matches.length > 1 || (matches.length === 1 && !matchesExact)) && (
                             <div className="signup-matches">
-                                <p>여러 거래처가 매칭되었습니다. 본인 거래처를 선택해주세요:</p>
+                                <p>
+                                    {matchesExact
+                                        ? '여러 거래처가 매칭되었습니다. 본인 거래처를 선택해주세요:'
+                                        : '정확히 일치하는 거래처가 없습니다. 비슷한 거래처 중 본인 거래처를 선택해주세요:'}
+                                </p>
                                 {matches.map((m) => (
                                     <button
                                         key={m.id} type="button" className="signup-match-btn"

@@ -12,6 +12,7 @@ import com.example.backend.repository.ClientUserRepository;
 import com.example.backend.repository.OrderFileRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.security.JwtUtil;
+import com.example.backend.util.HangulSimilarity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,6 +29,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -140,32 +142,109 @@ public class ClientService {
         return saveRequest(order, client, files);
     }
 
-    /** 가입 검색 — 거래처명 정규화 매칭 또는 이메일 정확 매칭. PENDING_SIGNUP 행만 대상. */
+    /** 가입 검색 — PENDING_SIGNUP 행만 대상.
+     *  1단계 정확일치 (companyName/networkFolderName/aliases 정규화 일치 OR 이메일 일치) → 그것만 반환.
+     *  정확일치가 없으면 2단계 자모 유사도 후보 최대 5개.
+     *  이메일성 쿼리(@ 포함)는 정확일치만, 유사도 단계는 건너뜀 — 이메일은 오타 허용 위험 큼. */
     @Transactional(readOnly = true)
     public ClientAuthDto.SignupSearchResponse signupSearch(String query) {
         if (query == null || query.isBlank())
-            return new ClientAuthDto.SignupSearchResponse(List.of());
+            return new ClientAuthDto.SignupSearchResponse(List.of(), false);
         String trimmed = query.trim();
         String byName = normalizeKey(trimmed);
         String byEmail = trimmed.toLowerCase();
+        boolean emailQuery = trimmed.contains("@");
 
-        List<ClientAuthDto.SignupSearchMatch> matches = new ArrayList<>();
+        List<ClientUser> pending = new ArrayList<>();
         for (ClientUser u : clientUserRepository.findAll()) {
-            if (!"PENDING_SIGNUP".equals(u.getStatus())) continue;
-            boolean nameHit = u.getCompanyName() != null && normalizeKey(u.getCompanyName()).equals(byName);
-            boolean folderHit = u.getNetworkFolderName() != null && !u.getNetworkFolderName().isBlank()
-                    && normalizeKey(u.getNetworkFolderName()).equals(byName);
-            boolean emailHit = u.getEmail() != null && !u.getEmail().isBlank()
-                    && u.getEmail().equalsIgnoreCase(byEmail);
-            if (nameHit || folderHit || emailHit) {
-                matches.add(new ClientAuthDto.SignupSearchMatch(
-                        u.getId(),
-                        u.getCompanyName(),
-                        maskEmail(u.getEmail())
-                ));
+            if ("PENDING_SIGNUP".equals(u.getStatus())) pending.add(u);
+        }
+
+        // 1단계: 정확일치
+        List<ClientAuthDto.SignupSearchMatch> exact = new ArrayList<>();
+        for (ClientUser u : pending) {
+            if (matchesExact(u, byName, byEmail)) {
+                exact.add(toMatch(u));
             }
         }
-        return new ClientAuthDto.SignupSearchResponse(matches);
+        if (!exact.isEmpty() || emailQuery) {
+            return new ClientAuthDto.SignupSearchResponse(exact, true);
+        }
+
+        // 2단계: 자모 유사도 — 후보별 최저 거리/비율 계산 후 상위 5개.
+        // 후보 텍스트 = companyName + networkFolderName + aliases 토큰들.
+        List<Scored> scored = new ArrayList<>();
+        for (ClientUser u : pending) {
+            double bestRatio = 1.0;
+            int bestDist = Integer.MAX_VALUE;
+            boolean anyContains = false;
+            for (String cand : candidatesOf(u)) {
+                if (cand == null || cand.isBlank()) continue;
+                int d = HangulSimilarity.jamoDistance(trimmed, cand);
+                double r = HangulSimilarity.similarityRatio(trimmed, cand);
+                if (d < bestDist) bestDist = d;
+                if (r < bestRatio) bestRatio = r;
+                if (HangulSimilarity.containsAsJamo(trimmed, cand)) anyContains = true;
+            }
+            // 통과 조건: 자모거리 ≤ 3 OR 비율 ≤ 0.4 OR 4자모 이상 substring 일치
+            if (bestDist <= 3 || bestRatio <= 0.4 || anyContains) {
+                scored.add(new Scored(u, bestRatio, bestDist));
+            }
+        }
+        scored.sort(Comparator.<Scored>comparingDouble(s -> s.ratio).thenComparingInt(s -> s.dist));
+
+        List<ClientAuthDto.SignupSearchMatch> fuzzy = new ArrayList<>();
+        for (int i = 0; i < Math.min(5, scored.size()); i++) {
+            fuzzy.add(toMatch(scored.get(i).user));
+        }
+        return new ClientAuthDto.SignupSearchResponse(fuzzy, false);
+    }
+
+    private boolean matchesExact(ClientUser u, String byNameNormalized, String byEmailLower) {
+        if (u.getCompanyName() != null && normalizeKey(u.getCompanyName()).equals(byNameNormalized)) return true;
+        if (u.getNetworkFolderName() != null && !u.getNetworkFolderName().isBlank()
+                && normalizeKey(u.getNetworkFolderName()).equals(byNameNormalized)) return true;
+        if (u.getEmail() != null && !u.getEmail().isBlank()
+                && u.getEmail().equalsIgnoreCase(byEmailLower)) return true;
+        // 별칭 토큰 중 하나라도 정확일치
+        for (String alias : splitAliases(u.getAliases())) {
+            if (normalizeKey(alias).equals(byNameNormalized)) return true;
+        }
+        return false;
+    }
+
+    private List<String> candidatesOf(ClientUser u) {
+        List<String> list = new ArrayList<>();
+        if (u.getCompanyName() != null) list.add(u.getCompanyName());
+        if (u.getNetworkFolderName() != null && !u.getNetworkFolderName().isBlank())
+            list.add(u.getNetworkFolderName());
+        list.addAll(splitAliases(u.getAliases()));
+        return list;
+    }
+
+    private static List<String> splitAliases(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String t : raw.split("[,;\\n]+")) {
+            String s = t.trim();
+            if (!s.isEmpty()) out.add(s);
+        }
+        return out;
+    }
+
+    private ClientAuthDto.SignupSearchMatch toMatch(ClientUser u) {
+        return new ClientAuthDto.SignupSearchMatch(
+                u.getId(),
+                u.getCompanyName(),
+                maskEmail(u.getEmail())
+        );
+    }
+
+    private static final class Scored {
+        final ClientUser user;
+        final double ratio;
+        final int dist;
+        Scored(ClientUser u, double r, int d) { this.user = u; this.ratio = r; this.dist = d; }
     }
 
     /** 가입 신청 — 검색 단계에서 받은 id 에 신청 정보 박고 PENDING_APPROVAL 전환.

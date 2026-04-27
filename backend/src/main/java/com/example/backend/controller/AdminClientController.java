@@ -47,7 +47,8 @@ public class AdminClientController {
                 .networkFolderName(req.getNetworkFolderName() != null ? req.getNetworkFolderName().trim() : "")
                 .contactName(req.getContactName() != null ? req.getContactName().trim() : "")
                 .phone(req.getPhone() != null ? req.getPhone().trim() : "")
-                .email(req.getEmail() != null && !req.getEmail().isBlank() ? req.getEmail().trim().toLowerCase() : null);
+                .email(req.getEmail() != null && !req.getEmail().isBlank() ? req.getEmail().trim().toLowerCase() : null)
+                .aliases(normalizeAliases(req.getAliases()));
 
         if (pending) {
             // 가입대기 — username/password 비워둠. 거래처가 가입 신청 시 채워지고,
@@ -187,6 +188,9 @@ public class AdminClientController {
             });
             user.setEmail(normalizedEmail);
         }
+        if (req.getAliases() != null) {
+            user.setAliases(normalizeAliases(req.getAliases()));
+        }
 
         return ResponseEntity.ok(toResponse(clientUserRepository.save(user)));
     }
@@ -252,7 +256,8 @@ public class AdminClientController {
                             .networkFolderName(row.getNetworkFolderName() != null ? row.getNetworkFolderName().trim() : "")
                             .contactName(row.getContactName() != null ? row.getContactName().trim() : "")
                             .phone(row.getPhone() != null ? row.getPhone().trim() : "")
-                            .email(row.getEmail() != null && !row.getEmail().isBlank() ? row.getEmail().trim().toLowerCase() : null);
+                            .email(row.getEmail() != null && !row.getEmail().isBlank() ? row.getEmail().trim().toLowerCase() : null)
+                            .aliases(normalizeAliases(row.getAliases()));
 
                     if (pending) {
                         b.username(null).password("").isActive(false).status("PENDING_SIGNUP");
@@ -288,6 +293,20 @@ public class AdminClientController {
         return ResponseEntity.ok(body);
     }
 
+    /** 별칭 입력 정규화 — 콤마/세미콜론/줄바꿈 구분, 토큰 trim, 빈토큰 제거, 중복 제거.
+     *  결과는 ", " 로 다시 합쳐 보관 (사람이 읽기 쉬움). */
+    private static String normalizeAliases(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String[] tokens = raw.split("[,;\\n]+");
+        java.util.LinkedHashSet<String> uniq = new java.util.LinkedHashSet<>();
+        for (String t : tokens) {
+            String s = t.trim();
+            if (!s.isEmpty()) uniq.add(s);
+        }
+        if (uniq.isEmpty()) return null;
+        return String.join(", ", uniq);
+    }
+
     /** 폴더명 ↔ 거래처명 매칭용 정규화: NFC + 공백 제거 + 소문자.
      *  워처의 _normalize_company_key 와 동일 규칙. */
     private static String normalizeKey(String s) {
@@ -319,6 +338,7 @@ public class AdminClientController {
                 user.getContactName(),
                 user.getPhone(),
                 user.getEmail(),
+                user.getAliases(),
                 user.getIsActive(),
                 user.getStatus(),
                 user.getSignupRequestedAt() != null ? user.getSignupRequestedAt().toString() : null,

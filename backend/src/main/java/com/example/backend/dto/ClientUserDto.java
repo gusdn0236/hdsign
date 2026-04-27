@@ -18,6 +18,8 @@ public class ClientUserDto {
         private String contactName;
         private String phone;
         private String email;
+        // 콤마구분 별칭 — 가입 검색 자모 유사도 후보 풀에 추가됨.
+        private String aliases;
         // true 면 가입대기(PENDING_SIGNUP) 행으로 생성: username/password 무시, 이메일/전화도 빈 채로 OK.
         // 거래처가 가입 신청 시 채워진다.
         private Boolean pendingSignup;
@@ -30,6 +32,7 @@ public class ClientUserDto {
         private String contactName;
         private String phone;
         private String email;
+        private String aliases;
         private Boolean isActive;
     }
 
@@ -53,6 +56,7 @@ public class ClientUserDto {
         private String contactName;
         private String phone;
         private String email;
+        private String aliases;
         // true 면 username/password 무시, PENDING_SIGNUP 으로 행 생성.
         private Boolean pendingSignup;
     }
@@ -66,6 +70,7 @@ public class ClientUserDto {
         private String contactName;
         private String phone;
         private String email;
+        private String aliases;
         private Boolean isActive;
         private String status;
         private String signupRequestedAt;

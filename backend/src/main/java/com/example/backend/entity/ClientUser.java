@@ -59,6 +59,12 @@ public class ClientUser {
 
     private LocalDateTime signupRequestedAt;
 
+    // 가입 검색 별칭 — 콤마 구분 (예: "디자인H, dH").
+    // 폴더명/업체명과 거래처 사장님 머릿속 상호명이 다른 경우(음차/약어)를 보완.
+    // signupSearch() 가 자모 유사도 후보 풀에 별칭들을 함께 넣어 매칭한다.
+    @Column(length = 500)
+    private String aliases;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 }
