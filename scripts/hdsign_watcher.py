@@ -17,7 +17,7 @@ import time
 import tkinter as tk
 import unicodedata
 from datetime import date, timedelta
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 import urllib.error
 import urllib.request
 import zipfile
@@ -400,6 +400,20 @@ def _load_config() -> dict:
         return {}
 
 
+def _save_config(config: dict) -> bool:
+    """config.json 에 원자적 쓰기. .tmp → replace 로 부분 쓰기 위험 회피.
+    GUI [추적 폴더 변경] 같은 사용자 액션에서만 호출 — 실패 시 ui_log 로 보고."""
+    try:
+        _CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _CONFIG_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_CONFIG_FILE)
+        return True
+    except Exception as e:
+        ui_log(f"config.json 저장 실패: {e}")
+        return False
+
+
 _FORBIDDEN_FS_CHARS = set('<>:"/\\|?*')
 
 
@@ -646,6 +660,53 @@ def trigger_folder_sync_async():
         if not ok:
             ui_log("거래처 폴더 동기화 실패 — config.json admin 계정/네트워크 베이스 확인")
     threading.Thread(target=_run, daemon=True).start()
+
+
+def get_current_tracked_base() -> str:
+    """GUI 라벨에 보여줄 현재 추적 베이스 경로. 미설정 시 빈 문자열."""
+    return (_load_config().get("network_customer_base") or "").strip()
+
+
+def change_tracked_folder_async(initial_dir: str | None = None):
+    """GUI [추적 폴더 변경] 버튼에서 호출.
+    1) 폴더 선택 다이얼로그 → 새 base 결정
+    2) 검증: 존재 + 1단계 하위 폴더 카운트 (0이면 사용자 재확인)
+    3) config.json 갱신 + 즉시 동기화 트리거
+    UI 작업(다이얼로그/메시지박스)은 메인 스레드에서, 동기화는 백그라운드.
+    """
+    def _ask():
+        chosen = filedialog.askdirectory(
+            title="거래처 폴더 베이스 선택 (예: 2027년 거래처 폴더)",
+            initialdir=initial_dir or get_current_tracked_base() or "",
+            mustexist=True,
+        )
+        if not chosen:
+            return  # 사용자 취소
+        # filedialog 가 반환하는 경로는 forward slash. 그대로 Path 로 다룸.
+        new_base = Path(chosen)
+        try:
+            children = [c for c in new_base.iterdir() if c.is_dir()]
+        except Exception as e:
+            messagebox.showerror("추적 폴더 변경 실패",
+                                 f"폴더에 접근할 수 없습니다:\n{e}")
+            return
+        if len(children) == 0:
+            if not messagebox.askyesno(
+                "확인",
+                f"선택한 폴더에 하위 거래처 폴더가 없습니다.\n\n{chosen}\n\n그래도 추적 대상으로 설정할까요?"):
+                return
+
+        config = _load_config()
+        config["network_customer_base"] = str(new_base)
+        if not _save_config(config):
+            messagebox.showerror("저장 실패", "config.json 저장에 실패했습니다. 워처 로그를 확인해주세요.")
+            return
+        ui_log(f"추적 폴더 변경: {new_base.name} (하위 폴더 {len(children)}개)")
+        _ui_queue.put(("refresh_tracked",))
+        # 새 경로로 즉시 한 번 동기화 → 거래처관리 자동완성/일괄등록에 바로 반영.
+        trigger_folder_sync_async()
+
+    _ui_queue.put(("run", _ask))
 
 
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
@@ -2678,6 +2739,25 @@ class App(tk.Tk):
             command=trigger_folder_sync_async,
         )
         sync_btn.pack(side="left")
+        change_btn = tk.Button(
+            act, text="추적 폴더 변경",
+            bg="#f4f4f5", fg="#3f3f46",
+            activebackground="#e4e4e7",
+            font=("맑은 고딕", 9),
+            relief="flat", bd=0, highlightthickness=0,
+            cursor="hand2", padx=12, pady=6,
+            command=change_tracked_folder_async,
+        )
+        change_btn.pack(side="left", padx=(8, 0))
+
+        # 현재 추적 경로를 작게 표시 — 매년 1월 폴더 옮긴 후 사장님이 확인 용도.
+        self._tracked_lbl = tk.Label(
+            self._card, text="", bg=self.CARD, fg="#a1a1aa",
+            font=("맑은 고딕", 8), anchor="w", justify="left",
+            wraplength=360,
+        )
+        self._tracked_lbl.pack(fill="x", padx=24, pady=(6, 0))
+        self._refresh_tracked_label()
 
         # Divider
         tk.Frame(self._card, bg="#e4e4e7", height=1).pack(fill="x", padx=24, pady=(20, 0))
@@ -2715,6 +2795,14 @@ class App(tk.Tk):
         self._log_text.bind("<Button-3>", self._show_log_menu)
 
     # ── state updates ──
+
+    def _refresh_tracked_label(self):
+        """현재 추적 경로 라벨 갱신. config.json 미설정이면 안내 문구."""
+        path = get_current_tracked_base()
+        if path:
+            self._tracked_lbl.config(text=f"추적 중: {path}")
+        else:
+            self._tracked_lbl.config(text="추적 폴더 미설정 — [추적 폴더 변경]으로 지정해주세요.")
 
     def set_status(self, state: str, detail: str = ""):
         cfg = {
@@ -2786,6 +2874,8 @@ class App(tk.Tk):
                     # 워커 스레드가 모달 다이얼로그를 띄워야 할 때 사용.
                     fn = item[1]
                     self.after(0, fn)
+                elif item[0] == "refresh_tracked":
+                    self.after(0, self._refresh_tracked_label)
         except Exception:
             pass
         self.after(100, self._poll_queue)
