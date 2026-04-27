@@ -19,7 +19,9 @@
  * controllerchange 이벤트가 페이지에 발사되면 자동으로 reload 해서 최신 코드 적용.
  */
 
-const VERSION = 'v1';
+// VERSION 은 SW 자체의 캐시 키. 갱신/버그픽스 후 무조건 한 단계 올려야 옛 캐시
+// (옛 index.html, 옛 assets) 가 강제로 폐기되고 클라이언트가 새 버전을 잡는다.
+const VERSION = 'v2';
 const HTML_CACHE = 'hdsign-html-' + VERSION;
 const ASSET_CACHE = 'hdsign-asset-' + VERSION;
 
@@ -49,9 +51,11 @@ self.addEventListener('fetch', (event) => {
     const url = new URL(req.url);
     if (url.origin !== self.location.origin) return;
 
-    // SPA 내비게이션 / HTML 요청
+    // SPA 내비게이션 / HTML 요청 — { cache: 'reload' } 로 브라우저 HTTP 캐시와
+    // CDN(GH Pages/Fastly) 엣지 캐시를 우회. 그래야 신규 배포 직후 사용자가
+    // 가진 옛 index.html(옛 chunk 해시 참조) 이 더 이상 안 잡혀 청크 404 가 사라짐.
     if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
-        event.respondWith(networkFirst(req, HTML_CACHE));
+        event.respondWith(networkFirst(req, HTML_CACHE, { cache: 'reload' }));
         return;
     }
 
@@ -65,10 +69,13 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(networkFirst(req, ASSET_CACHE));
 });
 
-async function networkFirst(request, cacheName) {
+async function networkFirst(request, cacheName, fetchOpts) {
     const cache = await caches.open(cacheName);
     try {
-        const response = await fetch(request);
+        // fetchOpts.cache === 'reload' 면 브라우저가 HTTP 캐시 무시 + 'Pragma:
+        // no-cache' / 'Cache-Control: no-cache' 헤더를 자동 첨부 → CDN 엣지 캐시도
+        // 대부분 우회. HTML 요청에 한해 사용해 항상 최신 chunk 해시 참조를 받는다.
+        const response = await fetch(request, fetchOpts);
         if (response && response.ok) {
             cache.put(request, response.clone()).catch(() => {});
         }
