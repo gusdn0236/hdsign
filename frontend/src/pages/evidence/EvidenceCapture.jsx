@@ -4,7 +4,7 @@ import './EvidenceCapture.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const DEPT_KEY = 'hdsign_uploader_department';
-const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시부', '아크릴가공부(5층)', '배송팀', '도장부'];
+const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시부', '아크릴가공부(5층)', '배송팀', '도장부', '후레임부'];
 const MAX_DEPT_LEN = 100;
 
 // 카메라 원본은 보통 3~5MB+. 한 변 1600px / JPEG 0.82로 압축하면 200~500KB로 떨어진다.

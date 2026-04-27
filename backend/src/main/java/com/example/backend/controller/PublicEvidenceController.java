@@ -164,7 +164,7 @@ public class PublicEvidenceController {
     @PostMapping("/{orderNumber}/due-date")
     public ResponseEntity<?> updateDueDate(
             @PathVariable String orderNumber,
-            @org.springframework.web.bind.annotation.RequestBody Map<String, String> body
+            @org.springframework.web.bind.annotation.RequestBody Map<String, Object> body
     ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null) {
@@ -173,12 +173,15 @@ public class PublicEvidenceController {
         }
         if (body == null) body = Map.of();
 
-        String dueRaw = body.get("dueDate");
-        String deliveryRaw = body.get("deliveryMethod");
+        String dueRaw = body.get("dueDate") instanceof String s ? s : null;
+        String deliveryRaw = body.get("deliveryMethod") instanceof String s ? s : null;
+        Object tagsObj = body.get("departmentTags");
         boolean hasDue = dueRaw != null && !dueRaw.isBlank();
         boolean hasDelivery = deliveryRaw != null && !deliveryRaw.isBlank();
-        if (!hasDue && !hasDelivery) {
-            return ResponseEntity.badRequest().body(Map.of("message", "dueDate 또는 deliveryMethod 중 하나는 있어야 합니다."));
+        // tagsObj 가 List 면 명시적 갱신 의도(빈 배열도 "태그 비우기" 의도). 키 자체가 없으면 갱신 안 함.
+        boolean hasTags = tagsObj instanceof List<?>;
+        if (!hasDue && !hasDelivery && !hasTags) {
+            return ResponseEntity.badRequest().body(Map.of("message", "dueDate / deliveryMethod / departmentTags 중 하나는 있어야 합니다."));
         }
 
         // 실제로 값이 바뀌었는지 비교 — 같은 값으로 PATCH 가 와도 "변경" 배지를 띄우지 않기 위해.
@@ -210,7 +213,23 @@ public class PublicEvidenceController {
             }
         }
 
-        // 실제 변경이 발생했을 때만 배지 트리거.
+        // 부서 태그 갱신 — 모바일 뷰어 필터에만 영향. 배부 변경은 "변경" 배지 트리거 X
+        // (작업 내용/납기/배송이 안 바뀌었으면 거래처/관리자 입장에선 알릴 게 없음).
+        if (hasTags) {
+            String csv = ((List<?>) tagsObj).stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(Object::toString)
+                    .map(String::trim)
+                    .filter(t -> !t.isEmpty())
+                    .distinct()
+                    .collect(java.util.stream.Collectors.joining(","));
+            String oldCsv = order.getDepartmentTags() == null ? "" : order.getDepartmentTags();
+            if (!csv.equals(oldCsv)) {
+                order.setDepartmentTags(csv.isEmpty() ? null : csv);
+            }
+        }
+
+        // 실제 변경이 발생했을 때만 배지 트리거. (태그 변경은 changed 에 포함하지 않음)
         if (changed) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
         }
@@ -220,7 +239,18 @@ public class PublicEvidenceController {
         resp.put("orderNumber", order.getOrderNumber());
         resp.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);
         resp.put("deliveryMethod", order.getDeliveryMethod() != null ? order.getDeliveryMethod().name() : null);
+        resp.put("departmentTags", splitTags(order.getDepartmentTags()));
         return ResponseEntity.ok(resp);
+    }
+
+    private static List<String> splitTags(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : csv.split(",")) {
+            String t = part.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
     }
 
     /**
@@ -233,7 +263,11 @@ public class PublicEvidenceController {
             @RequestParam("file") MultipartFile file,
             // 워처 인쇄 다이얼로그에서 사용자가 "지시서 내용 변경됨" 체크박스를 켰을 때 true.
             // 단순 재인쇄(동일 내용)로 인한 PDF 재업로드는 false → 배지 안 띄움.
-            @RequestParam(value = "contentChanged", required = false) Boolean contentChanged
+            @RequestParam(value = "contentChanged", required = false) Boolean contentChanged,
+            // 작업자가 "지시서 내용 변경" 분기에서 입력한 변경 메모.
+            // 모바일 뷰어에서 PDF 한 번 탭하면 이 텍스트가 떠서 작업자가 즉시 확인.
+            // contentChanged=true 일 때만 저장하고, 그 외(신규/납기단순변경)에는 비운다.
+            @RequestParam(value = "changeNote", required = false) String changeNote
     ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null) {
@@ -278,6 +312,15 @@ public class PublicEvidenceController {
         order.setWorksheetPdfUrl(url);
         if (firstAttachment || userMarkedChanged) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
+        }
+        // changeNote 는 "최신 변경분만" 보이도록 매 업로드마다 다시 산출한다.
+        // 내용변경(체크박스 ON) 일 때만 새 메모를 저장하고, 그 외(신규작성·단순 재인쇄)는 비운다.
+        if (userMarkedChanged) {
+            String trimmed = changeNote == null ? "" : changeNote.trim();
+            if (trimmed.length() > 2000) trimmed = trimmed.substring(0, 2000);
+            order.setWorksheetChangeNote(trimmed.isEmpty() ? null : trimmed);
+        } else {
+            order.setWorksheetChangeNote(null);
         }
         orderRepository.save(order);
 

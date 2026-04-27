@@ -1,3 +1,8 @@
 backend/.gradle-home/
 backend/.gradle-home-fix/
 tmp_mail_test/
+
+# 워처 빌드 산출물 — GitHub 100MB 한도 초과해서 git 으론 못 올림.
+# 빌드는 scripts/build_exe.bat 로 로컬에서 재생성, 배포는 별도 경로(공유폴더 등) 사용.
+scripts/dist/hdsign_worksheet.exe
+scripts/build/hdsign_worksheet/hdsign_worksheet.pkg

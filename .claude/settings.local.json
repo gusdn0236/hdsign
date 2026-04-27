@@ -55,7 +55,19 @@
       "Bash(cmd //c \"gradlew.bat compileJava --no-daemon\")",
       "PowerShell(.\\\\gradlew.bat compileJava --no-daemon 2>&1 | Select-Object -Last 25)",
       "PowerShell(.\\\\backend\\\\gradlew.bat -p backend compileJava --no-daemon 2>&1 | Select-Object -Last 8)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(python3 -c \"from PIL import Image; im=Image.open\\(r'C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\assets\\\\distribution.jpg'\\); print\\(im.size, im.mode\\)\")",
+      "Bash(./gradlew.bat compileJava --console=plain)",
+      "Bash(./gradlew.bat clean *)",
+      "Bash(where python *)",
+      "Bash(where python3 *)",
+      "Bash(npx --no-install eslint src/pages/mobile/WorksheetViewer.jsx)",
+      "Bash(npx eslint *)",
+      "Bash(\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe\" -c \"import fitz; print\\('fitz OK', fitz.__version__\\)\")",
+      "Bash(\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe\" -c \"import pymupdf; print\\('pymupdf OK', pymupdf.__version__\\)\")",
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\('C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\build_exe.bat'\\); $bytes[0..30] | ForEach-Object { '{0:X2}' -f $_ })",
+      "PowerShell($path = 'C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\build_exe.bat'; $content = [System.IO.File]::ReadAllText\\($path\\); $content = $content -replace \"`r`n\", \"`n\" -replace \"`n\", \"`r`n\"; [System.IO.File]::WriteAllText\\($path, $content, [System.Text.Encoding]::ASCII\\); $bytes = [System.IO.File]::ReadAllBytes\\($path\\); $bytes[0..30] | ForEach-Object { '{0:X2}' -f $_ })",
+      "PowerShell(Test-Path *)"
     ]
   }
 }

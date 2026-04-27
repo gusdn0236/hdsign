@@ -80,6 +80,9 @@ public class PublicWorksheetController {
                     body.put("note", o.getNote());
                     body.put("additionalItems", o.getAdditionalItems());
                     body.put("hasSMPS", o.getHasSMPS());
+                    // 모바일 뷰어 PDF 한번 탭 시 노출되는 "변경사항 텍스트".
+                    // null/빈문자면 모바일에서 추가요청사항(note) 으로 폴백.
+                    body.put("worksheetChangeNote", o.getWorksheetChangeNote());
                     return ResponseEntity.ok(body);
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -152,6 +155,18 @@ public class PublicWorksheetController {
         if (o.getDueDate() != null) {
             item.put("daysUntilDue", today.until(o.getDueDate()).getDays());
         }
+        // 모바일 뷰어 부서 필터용 태그. 워처 인쇄 다이얼로그에서 분배함 칸 클릭으로 지정.
+        item.put("departmentTags", splitTags(o.getDepartmentTags()));
         return item;
+    }
+
+    private static List<String> splitTags(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : csv.split(",")) {
+            String t = part.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
     }
 }

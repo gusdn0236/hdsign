@@ -8,9 +8,11 @@ import collections
 import ctypes
 import json
 import queue
+import re
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -24,11 +26,42 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
+
+
+def _safe_url(url: str) -> str:
+    """URL 의 path/query/fragment 를 RFC 3986 안전 문자만 남기고 percent-encode.
+    백엔드가 한글이 들어간 URL(예: '.../주문-260427-03.pdf')을 그대로 내려줘도
+    urlopen 의 ASCII 인코딩 단계에서 'codec can't encode character' 로 죽는 걸 막는다."""
+    if not url:
+        return url
+    try:
+        u = urlsplit(url)
+        path = quote(u.path, safe="/%")
+        query = quote(u.query, safe="=&%+")
+        fragment = quote(u.fragment, safe="%")
+        return urlunsplit((u.scheme, u.netloc, path, query, fragment))
+    except Exception:
+        return url
 
 import qrcode
+from PIL import Image, ImageTk
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+
+# PyMuPDF — 인쇄 다이얼로그 [기존 변경] 탭의 그리드 미리보기 썸네일 렌더에만 쓴다.
+# 미설치 환경에서도 워처는 동작하도록 폴백(텍스트 카드)을 둔다.
+try:
+    import fitz  # type: ignore
+except Exception:
+    fitz = None  # type: ignore
+
+# pyzbar — 인쇄된 PDF 안의 QR 을 디코드해 주문번호 자동 매칭에 쓴다.
+# 미설치/디코드 실패 시 None 반환 → 다이얼로그가 평소처럼 수동 선택 모드로 뜬다.
+try:
+    from pyzbar.pyzbar import decode as pyzbar_decode  # type: ignore
+except Exception:
+    pyzbar_decode = None  # type: ignore
 
 WATCH_DIR = Path(r"C:\Users\USER\Desktop\hdsign_orders")
 DOWNLOADS_DIR = Path.home() / "Downloads"
@@ -90,6 +123,50 @@ _printer_lock = threading.Lock()
 #   { "network_customer_base": "\\\\hd-server\\공용\\거래처" }
 # 미설정/접근불가 시 워처는 로컬 converted/ 만 사용하는 기존 동작으로 폴백.
 _CONFIG_FILE = WATCH_DIR / "state" / "config.json"
+
+
+# ── 작업지시서 분배함 → 모바일 부서 태그 매핑 ─────────────────────────────
+# 인쇄 다이얼로그에서 사무실 분배함 사진을 그대로 띄우고, 직원이 칸을 클릭해
+# "이 지시서는 어느 칸에 꽂힌다"고 지정하면 → 해당 칸에 매핑된 부서 태그가 붙는다.
+# 같은 지시서가 여러 칸에 꽂히는 경우(여러 부서를 거치는 간판) 다중 태그 허용.
+#
+# 분배함 사진은 scripts/assets/distribution.jpg (실제 사진 3510x5613).
+# 좌표는 (left, top, right, bottom) — 사진 원본 픽셀 좌표 기준. 다이얼로그에서 표시할 때
+# 비율 유지로 축소하면서 클릭 좌표를 원본 픽셀 좌표로 역변환해 어떤 칸인지 판정한다.
+#
+# 좌표가 실제 사진과 어긋나면 빌드 후 여기 숫자만 조정하면 됨. 칸 라벨 옆 mapped_dept 가
+# 빈 문자열인 칸(배송2팀, 홍철웅팀장)은 사용 안 함 — 클릭해도 토글되지 않는다.
+SLOT_LAYOUT_PHOTO_SIZE = (3510, 5613)  # distribution.jpg 원본 (가로, 세로)
+
+# (slot_label, mapped_dept, (left, top, right, bottom))
+# mapped_dept 가 빈 문자열이면 비활성 칸(클릭 무시).
+SLOT_BOXES: list[tuple[str, str, tuple[int, int, int, int]]] = [
+    ("캡/일체형작업실", "완조립부", (85, 215, 907, 1443)),
+    ("시트/도안실", "완조립부", (941, 215, 1750, 1443)),
+    ("에폭시실", "에폭시부", (1766, 208, 2613, 1436)),
+    ("아크릴/실리콘네온", "CNC가공부", (2621, 208, 3460, 1436)),
+    ("후레임실", "완조립부", (148, 1723, 950, 2813)),
+    ("도장실", "도장부", (962, 1723, 1757, 2813)),
+    ("레이져용접", "CNC가공부", (1752, 1723, 2564, 2813)),
+    ("최창영부장", "CNC가공부", (2572, 1737, 3411, 2827)),
+    ("조립부", "완조립부", (183, 3472, 950, 4488)),
+    ("아크릴부(레이져)", "아크릴가공부(5층)", (976, 3458, 1702, 4474)),
+    ("배송1팀", "배송팀", (1717, 3451, 2500, 4467)),
+    ("배송2팀", "", (2509, 3444, 3300, 4460)),
+    ("홍철웅팀장", "", (232, 4533, 967, 5480)),
+    ("LED조립", "LED조립부", (990, 4533, 1716, 5480)),
+    ("고무스카시(CNC)", "CNC가공부", (1745, 4519, 2485, 5466)),
+    ("이휘원실장", "완조립부", (2502, 4519, 3249, 5466)),
+]
+
+
+def resource_path(rel: str) -> Path:
+    """개발(.py 직접 실행) / PyInstaller 빌드 양쪽에서 동일하게 동작하는 리소스 경로 헬퍼.
+    빌드 시 sys._MEIPASS 에 datas 가 풀리고, 개발 시엔 이 파일과 같은 폴더 기준."""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return Path(base) / rel
+    return Path(__file__).resolve().parent / rel
 
 
 # ── UI helpers (thread-safe) ────────────────────────────────────────────────
@@ -211,10 +288,12 @@ def format_header_text(meta: dict) -> str:
 
 
 def format_left_text(meta: dict) -> str:
-    """좌측 상단: 싸인월드 + 거래처 전화번호. 전화번호의 모든 공백은 제거한다."""
+    """좌측 상단: 거래처명 + 거래처 전화번호. 전화번호의 모든 공백은 제거한다.
+    거래처명이 비어 있으면 '거래처 미상' 으로 폴백 — 빈 칸이 박히는 것보다 의도가 분명."""
+    company = (meta.get("companyName") or "").strip() or "거래처 미상"
     phone_raw = meta.get("phone") or ""
     phone = "".join(phone_raw.split())
-    return "싸인월드\n" + phone if phone else "싸인월드"
+    return f"{company}\n{phone}" if phone else company
 
 
 class _PingHandler(BaseHTTPRequestHandler):
@@ -278,23 +357,33 @@ def notify_worksheet_acknowledged(order_number: str):
 
 
 def patch_due_date(order_number: str, new_due: date,
-                   delivery_enum: str | None = None) -> bool:
-    """다이얼로그에서 확정한 최종 납기 일자(+선택적으로 배송방법)를 백엔드에 전달.
-    delivery_enum 은 백엔드 enum 명(CARGO/QUICK/DIRECT/PICKUP/LOCAL_CARGO). None/빈값이면 송신 생략."""
+                   delivery_enum: str | None = None,
+                   department_tags: list[str] | None = None) -> bool:
+    """다이얼로그에서 확정한 최종 납기 일자(+선택적으로 배송방법/부서 태그)를 백엔드에 전달.
+    delivery_enum: 백엔드 enum 명(CARGO/QUICK/DIRECT/PICKUP/LOCAL_CARGO). None/빈값이면 송신 생략.
+    department_tags: 분배함 사진에서 직원이 클릭한 칸 → 매핑된 모바일 부서 태그(중복 제거).
+        None 이면 키 자체를 송신하지 않아 백엔드는 기존 태그 유지. 빈 리스트 [] 는 명시적
+        "태그 비우기" — 분배함을 모두 비활성으로 두고 적용한 경우."""
     if not order_number:
         return False
     url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/due-date"
-    payload: dict[str, str] = {"dueDate": new_due.isoformat()}
+    payload: dict = {"dueDate": new_due.isoformat()}
     if delivery_enum:
         payload["deliveryMethod"] = delivery_enum
-    body = json.dumps(payload).encode("utf-8")
+    if department_tags is not None:
+        payload["departmentTags"] = list(department_tags)
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             resp.read()
-        suffix = f" / 배송 {delivery_enum}" if delivery_enum else ""
-        ui_log(f"{order_number} 납기 {new_due.isoformat()}{suffix} 로 업데이트")
+        parts = [f"납기 {new_due.isoformat()}"]
+        if delivery_enum:
+            parts.append(f"배송 {delivery_enum}")
+        if department_tags is not None:
+            parts.append("태그 " + (", ".join(department_tags) if department_tags else "(없음)"))
+        ui_log(f"{order_number} {' / '.join(parts)} 로 업데이트")
         return True
     except urllib.error.HTTPError as e:
         ui_log(f"납기 업데이트 실패 ({e.code}): {order_number}")
@@ -347,6 +436,7 @@ def load_recent_orders() -> None:
             _recent_orders.append({
                 "orderNumber": it.get("orderNumber") or "",
                 "companyName": it.get("companyName") or "",
+                "originalFileName": it.get("originalFileName") or "",
                 "dueDate": it.get("dueDate") or "",
                 "deliveryMethod": it.get("deliveryMethod") or "",
                 "ts": float(ts),
@@ -357,10 +447,13 @@ def load_recent_orders() -> None:
 
 
 def remember_order_for_print(order_number: str, company_name: str,
-                             due_date_iso: str | None, delivery_enum: str | None):
+                             due_date_iso: str | None, delivery_enum: str | None,
+                             original_file_name: str = ""):
     """FlexSign에 보낸 주문을 인쇄 매칭용 큐에 기록.
     인쇄 PDF가 떨어지면 가장 최근 항목을 꺼내 다이얼로그에 표시한다.
-    delivery_enum 은 백엔드 enum 명(CARGO 등). 한글이 들어오면 변환되지 않으니 빈 값."""
+    delivery_enum 은 백엔드 enum 명(CARGO 등). 한글이 들어오면 변환되지 않으니 빈 값.
+    original_file_name 은 ZIP 안의 원본 .ai 파일명(예: '0907 아크릴스카시발주.ai').
+    [신규 작성] 탭에서 자동 생성된 print_*.pdf 대신 이 이름을 표시하기 위해 같이 보관."""
     with _recent_orders_lock:
         # 같은 주문이 또 처리될 수 있으니 같은 번호는 앞 항목을 제거하고 맨 뒤에 다시 넣는다.
         for existing in list(_recent_orders):
@@ -370,6 +463,7 @@ def remember_order_for_print(order_number: str, company_name: str,
         _recent_orders.append({
             "orderNumber": order_number,
             "companyName": company_name or "",
+            "originalFileName": original_file_name or "",
             "dueDate": due_date_iso or "",
             "deliveryMethod": delivery_enum or "",
             "ts": time.time(),
@@ -385,6 +479,22 @@ def list_recent_orders() -> list[dict]:
     with _recent_orders_lock:
         fresh = [o for o in _recent_orders if o.get("ts", 0) >= cutoff]
         return list(reversed(fresh))
+
+
+def fetch_existing_worksheets() -> list[dict]:
+    """공개 API 에서 IN_PROGRESS + PDF 부착된 작업지시서 목록을 가져온다.
+    인쇄 다이얼로그 [기존 변경] 탭에서 어느 지시서를 갱신할지 그리드로 보여주는 용도.
+    네트워크 실패 시 빈 리스트(다이얼로그는 신규 탭 위주로 표시)."""
+    url = f"{API_BASE}/api/public/worksheets"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception as e:
+        ui_log(f"기존 지시서 목록 조회 실패: {e}")
+        return []
 
 
 # ── Network customer folder delivery ─────────────────────────────────────────
@@ -625,8 +735,26 @@ def sync_network_folders_to_backend() -> bool:
     req.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            resp.read()
+            raw = resp.read()
         ui_log(f"거래처 폴더 동기화 완료: {len(folders)}개")
+        # 백엔드가 단일 폴더 이름변경을 자동감지해 거래처 networkFolderName 을 갱신했으면
+        # 결과를 노출 — 사용자가 거래처관리 탭을 다시 열기 전에 무슨 일이 일어났는지 보이게.
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            rename = payload.get("rename") if isinstance(payload, dict) else None
+            if isinstance(rename, dict):
+                old = rename.get("oldName")
+                new = rename.get("newName")
+                updated = rename.get("updatedClients", 0)
+                skipped = rename.get("skipped")
+                if skipped == "newNameAlreadyUsed":
+                    ui_log(f"폴더 이름변경 감지: '{old}' → '{new}' (신규명이 이미 다른 거래처에 사용 중 — 자동 매핑 보류, 거래처관리에서 정리 필요)")
+                elif updated:
+                    ui_log(f"폴더 이름변경 자동반영: '{old}' → '{new}' (거래처 {updated}건 업데이트)")
+                else:
+                    ui_log(f"폴더 이름변경 감지: '{old}' → '{new}' (해당 거래처 없음)")
+        except Exception:
+            pass
         return True
     except urllib.error.HTTPError as e:
         # 401 이면 캐시된 토큰 무효 — 다음 호출에서 재로그인 유도.
@@ -868,19 +996,152 @@ def print_pdf_to_paper(pdf_path: Path) -> bool:
 
 # ── 인쇄 다이얼로그 ─────────────────────────────────────────────────────────
 
-def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
-    """모달 다이얼로그: 방금 인쇄한 PDF 를 어느 주문에 매칭하고 웹 작업현황에 어떻게 반영할지.
+# 다이얼로그를 다시 열어도 같은 PDF 의 썸네일을 다시 받지 않도록 PIL.Image 단위로 캐시.
+# (ImageTk.PhotoImage 는 메인 Tk 스레드에서만 만들 수 있어 여기엔 PIL 까지만 보관.)
+_thumbnail_pil_cache: dict[str, "Image.Image"] = {}
+
+
+def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
+                            target_width: int) -> None:
+    """기존 변경 탭 그리드의 썸네일을 백그라운드에서 채워 넣는다.
+    work_items: [(worksheet_dict, placeholder_label), ...]. 각 PDF URL 을 순차적으로 받아
+    PyMuPDF 로 첫 페이지 렌더 → main thread 에서 ImageTk.PhotoImage 부착. 여러 카드를 동시에
+    내려받지 않고 직렬로 처리해 저성능 PC 에서 UI 가 얼지 않도록.
+
+    fitz 미설치 환경에서는 placeholder 그대로 둔다(텍스트 카드 폴백)."""
+    label_by_order: dict[str, "tk.Label"] = {}
+    for ws, label in work_items:
+        on = ws.get("orderNumber") or ""
+        if on:
+            label_by_order[on] = label
+
+    def _publish(order_num: str):
+        def _apply():
+            try:
+                if not dlg.winfo_exists():
+                    return
+            except Exception:
+                return
+            label = label_by_order.get(order_num)
+            if label is None:
+                return
+            try:
+                if not label.winfo_exists():
+                    return
+            except Exception:
+                return
+            pil = _thumbnail_pil_cache.get(order_num)
+            if pil is None:
+                return
+            try:
+                photo = ImageTk.PhotoImage(pil)
+                label.configure(image=photo, text="", bg="white")
+                label.image = photo  # GC 방지: 라벨에 명시 참조 attach
+            except Exception:
+                pass
+        try:
+            dlg.after(0, _apply)
+        except Exception:
+            pass
+
+    def _show_err(order_num: str, msg: str):
+        """플레이스홀더 라벨에 실패 사유를 직접 적어 진단 단서를 남긴다.
+        ui_log 만 남기면 직원이 사유를 못 보고 'PDF 가 안뜬다' 로만 인지하기 쉬움."""
+        def _apply():
+            label = label_by_order.get(order_num)
+            if label is None:
+                return
+            try:
+                if not label.winfo_exists():
+                    return
+                label.configure(text=msg, fg="#b91c1c")
+            except Exception:
+                pass
+        try:
+            dlg.after(0, _apply)
+        except Exception:
+            pass
+
+    def _worker():
+        for ws, _label in work_items:
+            try:
+                if not dlg.winfo_exists():
+                    return
+            except Exception:
+                return
+            order_num = ws.get("orderNumber") or ""
+            if not order_num:
+                continue
+            if order_num in _thumbnail_pil_cache:
+                _publish(order_num)
+                continue
+            raw_pdf_url = ws.get("worksheetPdfUrl") or ""
+            if fitz is None:
+                _show_err(order_num, "미리보기 라이브러리\n(pymupdf) 없음")
+                continue
+            if not raw_pdf_url:
+                _show_err(order_num, "PDF URL 없음\n(아직 업로드 전)")
+                continue
+            # R2 public URL 직접 호출은 버킷 정책에 따라 403 이 떨어진다.
+            # 백엔드 프록시(/api/public/worksheets/{orderNumber}/pdf) 가 모바일 뷰어와 동일하게
+            # 우회해 주므로 그쪽을 사용 — 워처가 R2 권한 변경에 영향받지 않음.
+            pdf_url = f"{API_BASE}/api/public/worksheets/{quote(order_num, safe='')}/pdf"
+            try:
+                with urllib.request.urlopen(_safe_url(pdf_url), timeout=20) as resp:
+                    data = resp.read()
+                doc = fitz.open(stream=data, filetype="pdf")
+                try:
+                    page = doc[0]
+                    page_w = max(1.0, float(page.rect.width))
+                    zoom = target_width / page_w
+                    mat = fitz.Matrix(zoom, zoom)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                finally:
+                    doc.close()
+                _thumbnail_pil_cache[order_num] = pil
+                _publish(order_num)
+            except Exception as e:
+                ui_log(f"썸네일 렌더 실패 [{order_num}]: {e}")
+                _show_err(order_num, f"렌더 실패\n{str(e)[:40]}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
+                              existing_worksheets: list[dict],
+                              qr_order_number: str | None = None) -> dict | None:
+    """모달 다이얼로그: 방금 인쇄한 PDF 를 어느 작업에 어떻게 반영할지 결정한다.
+
+    탭 두 개로 분기:
+      [신규 작성] — 가장 최근에 처리된 주문(orders[0])에 자동 매칭. 거래처/파일명/주문번호
+                     를 텍스트로 보여주고 최종납기일/배송만 입력.
+      [기존 변경] — 진행중 작업지시서 그리드(3열 PDF 미리보기)에서 한 건을 골라
+                     "납기/배송 변경" 또는 "지시서 내용 변경(텍스트 입력)" 선택.
+
+    qr_order_number 가 주어지면(=인쇄 PDF 의 QR 인식 성공):
+      - 그 주문이 existing_worksheets 에 이미 있으면(=기존 PDF 부착) → [기존 변경] 자동 진입
+        + 해당 지시서 자동 선택 + "지시서 내용 변경" 라디오 자동 선택. 매칭된 PDF 를
+        크게 띄워 사용자가 보면서 변경 메모를 작성한다.
+      - existing 에 없고 orders 큐에 있으면(=신규 출력) → [신규 작성] 탭에 그 주문을 우선 노출.
+      - 둘 다 매칭 실패 시 평소 다이얼로그 그대로(수동 선택).
 
     리턴값:
-      None — 사용자 취소(Esc/X). 호출자는 아무것도 하지 않는다(종이 인쇄도 생략).
-      {"order_number": None} — "웹에 안 올림" 선택. 종이 인쇄만 진행.
-      {"order_number": str, "day": int, "current_due_iso": str,
-       "delivery_method": str, "original_delivery_method": str,
-       "content_changed": bool} — 매칭 + 납기 + (선택)지시서 내용 변경 표시.
+      None — 사용자 취소(Esc/X). 호출자는 종이 인쇄도 생략.
+      {"order_number": None} — "이 인쇄본은 웹에 안 올림". 종이 인쇄만 진행.
+      {
+        "mode": "new" | "modify",
+        "change_type": "delivery" | "content",
+        "order_number": str,
+        "day": int | None,                 # delivery 분기에서만 채움
+        "current_due_iso": str,
+        "delivery_method": str,            # delivery 분기에서만 채움
+        "original_delivery_method": str,
+        "content_changed": bool,           # content 분기 = True
+        "change_note": str,                # content 분기에서 사용자가 입력한 변경 메모
+        "department_tags": list[str],      # 분배함 클릭으로 결정
+      }
     """
-    NO_MATCH_LABEL = "── 이 인쇄본은 웹에 올리지 않음 ──"
-
-    # 색상 팔레트 — Tailwind zinc 기반, OrderAdmin 과 톤 맞춤.
     BG = "#ffffff"
     BG_SOFT = "#fafafa"
     BORDER = "#e4e4e7"
@@ -890,13 +1151,29 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
     ACCENT = "#16a34a"
     ACCENT_HOVER = "#15803d"
 
-    # 콤보박스 표시값과 주문 매핑.
-    choices: list[tuple[str, dict | None]] = []
-    for o in orders:
-        company = (o.get("companyName") or "").strip()
-        label = f"{o['orderNumber']}  {company}".rstrip()
-        choices.append((label, o))
-    choices.append((NO_MATCH_LABEL, None))
+    # QR 매칭 결과 사전 분석. 기존 지시서에 있는 주문 → 변경 모드. 큐의 신규 → 신규 모드 + 우선노출.
+    qr_matched_ws: dict | None = None
+    qr_matched_recent: dict | None = None
+    if qr_order_number:
+        for w in existing_worksheets or []:
+            if (w.get("orderNumber") or "") == qr_order_number:
+                qr_matched_ws = w
+                break
+        if qr_matched_ws is None:
+            for o in orders or []:
+                if (o.get("orderNumber") or "") == qr_order_number:
+                    qr_matched_recent = o
+                    break
+
+    # 신규 탭의 most_recent 는 보통 최근 큐 헤드. QR 이 큐 안의 다른 주문을 가리키면 그 주문으로 교체
+    # (직원이 큐에 여러 주문 던져두고 늦게 인쇄한 경우 정확 매칭).
+    if qr_matched_recent is not None:
+        most_recent = qr_matched_recent
+    else:
+        most_recent = orders[0] if orders else None
+
+    THUMB_W = 220
+    THUMB_H = int(THUMB_W * 1.414)  # A4 portrait 비율
 
     result: dict = {"value": None}
 
@@ -905,57 +1182,187 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
     dlg.configure(bg=BG)
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
-    dlg.geometry("580x460")
+    # 좌측: 탭 영역(신규/기존) / 우측: 분배함 사진. 기존 720h → 880h 로 확장하여 그리드가
+    # 한 화면에 6장 정도 들어오도록.
+    dlg.geometry("1320x880")
+
+    # ── 줌 토플레벨 공통 헬퍼 ───────────────────────────────────────
+    # 인쇄 PDF / 매칭된 기존 지시서 둘 다 같은 패닝·스크롤·z-order 처리를 공유.
+    # 메인 다이얼로그가 -topmost 라 줌이 클릭 한 번에 가려지는 문제 해결: 줌 열려있는 동안
+    # 메인의 -topmost 를 끄고, 줌 닫으면 다시 켠다(분배함 클릭해도 줌 사진이 위에 그대로).
+    def _show_zoom_image(title: str, pil_img):
+        try:
+            zoom_dlg = tk.Toplevel(dlg)
+            zoom_dlg.title(title)
+            zoom_dlg.configure(bg=BG)
+            zoom_dlg.attributes("-topmost", True)
+            try:
+                dlg.attributes("-topmost", False)
+            except Exception:
+                pass
+
+            # 창 크기 = PDF 렌더 이미지 크기 + 스크롤바 한 줄. 화면을 꽉 채우는
+            # 85%×90% 고정 창은 PDF A4 비율 대비 좌우 여백이 너무 넓어서 분배함 옆에
+            # 살짝 띄워놓고 보기가 어려움 → PDF 에 딱 맞춰 작게 띄우고, 사용자가 직접
+            # 크기/위치를 조정해서 옆 자리에 놓을 수 있게 한다.
+            sw = zoom_dlg.winfo_screenwidth()
+            sh = zoom_dlg.winfo_screenheight()
+            # 스크롤바(약 18px) + 윈도우 보더(약 16px). 안 맞아도 스크롤로 보이므로 여유는 작게.
+            CHROME_W = 22
+            CHROME_H = 22
+            ww = min(int(sw * 0.95), pil_img.width + CHROME_W)
+            wh = min(int(sh * 0.92), pil_img.height + CHROME_H)
+            zoom_dlg.geometry(f"{ww}x{wh}+{(sw-ww)//2}+{(sh-wh)//2}")
+
+            canvas_frame = tk.Frame(zoom_dlg, bg=BG)
+            canvas_frame.pack(fill="both", expand=True)
+            vbar = ttk.Scrollbar(canvas_frame, orient="vertical")
+            hbar = ttk.Scrollbar(canvas_frame, orient="horizontal")
+            cv = tk.Canvas(canvas_frame, bg="#3f3f46", highlightthickness=0,
+                           yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+            vbar.config(command=cv.yview)
+            hbar.config(command=cv.xview)
+            vbar.pack(side="right", fill="y")
+            hbar.pack(side="bottom", fill="x")
+            cv.pack(side="left", fill="both", expand=True)
+
+            photo = ImageTk.PhotoImage(pil_img)
+            cv.create_image(0, 0, image=photo, anchor="nw")
+            cv.configure(scrollregion=(0, 0, pil_img.width, pil_img.height))
+            cv.image = photo  # GC 방지
+
+            def _on_wheel(e):
+                if e.state & 0x0001:
+                    cv.xview_scroll(int(-e.delta / 120), "units")
+                else:
+                    cv.yview_scroll(int(-e.delta / 120), "units")
+            cv.bind_all("<MouseWheel>", _on_wheel)
+
+            def _on_press(e):
+                cv.configure(cursor="fleur")
+                cv.scan_mark(e.x, e.y)
+            def _on_drag(e):
+                cv.scan_dragto(e.x, e.y, gain=1)
+            def _on_release(_e):
+                cv.configure(cursor="")
+            cv.configure(cursor="hand2")
+            cv.bind("<ButtonPress-1>", _on_press)
+            cv.bind("<B1-Motion>", _on_drag)
+            cv.bind("<ButtonRelease-1>", _on_release)
+
+            def _cleanup():
+                try:
+                    cv.unbind_all("<MouseWheel>")
+                except Exception:
+                    pass
+                try:
+                    dlg.attributes("-topmost", True)
+                except Exception:
+                    pass
+                try:
+                    zoom_dlg.destroy()
+                except Exception:
+                    pass
+            zoom_dlg.protocol("WM_DELETE_WINDOW", _cleanup)
+            zoom_dlg.bind("<Escape>", lambda _e: _cleanup())
+            return zoom_dlg
+        except Exception as e:
+            ui_log(f"줌 윈도우 생성 실패: {e}")
+            return None
+
+    def _open_zoom_for_matched_ws(ws):
+        """매칭된 기존 지시서의 PDF 를 별도 토플레벨에서 크게 표시.
+        다운로드 + 렌더는 백그라운드에서 처리하여 다이얼로그 진입이 멈추지 않도록 한다."""
+        if fitz is None or not ws:
+            return
+        order_num = (ws.get("orderNumber") or "").strip()
+        if not order_num:
+            return
+        company = (ws.get("companyName") or "거래처 미상").strip()
+        title = f"매칭된 지시서 — {company} / {order_num}"
+        pdf_url = f"{API_BASE}/api/public/worksheets/{quote(order_num, safe='')}/pdf"
+
+        def _worker():
+            try:
+                with urllib.request.urlopen(_safe_url(pdf_url), timeout=20) as resp:
+                    data = resp.read()
+                doc = fitz.open(stream=data, filetype="pdf")
+                try:
+                    page = doc[0]
+                    page_w = max(1.0, float(page.rect.width))
+                    sw = dlg.winfo_screenwidth()
+                    target_w = max(800, int(sw * 0.55))
+                    zoom = min(3.0, max(1.0, target_w / page_w))
+                    mat = fitz.Matrix(zoom, zoom)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                finally:
+                    doc.close()
+            except Exception as e:
+                ui_log(f"매칭 지시서 PDF 다운로드 실패: {e}")
+                return
+            try:
+                dlg.after(0, lambda: _show_zoom_image(title, pil))
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    body = tk.Frame(dlg, bg=BG)
+    body.pack(fill="both", expand=True)
+    left = tk.Frame(body, bg=BG)
+    left.pack(side="left", fill="both", expand=True)
+    right = tk.Frame(body, bg=BG_SOFT, highlightbackground=BORDER, highlightthickness=1)
+    right.pack(side="right", fill="y", padx=(0, 12), pady=12)
 
     # ── 헤더 ────────────────────────────────────────────────
-    header = tk.Frame(dlg, bg=BG)
+    # 좌측: 타이틀/부제. 우측: QR 결과 배너(빈 공간 활용).
+    header = tk.Frame(left, bg=BG)
     header.pack(fill="x", padx=22, pady=(18, 0))
+
+    title_box = tk.Frame(header, bg=BG)
+    title_box.pack(side="left", fill="x", expand=True)
     tk.Label(
-        header, text="웹에 변경사항 적용하기",
+        title_box, text="웹에 변경사항 적용하기",
         bg=BG, fg=TITLE_FG,
         font=("맑은 고딕", 15, "bold"), anchor="w",
     ).pack(fill="x")
     tk.Label(
-        header,
+        title_box,
         text="방금 인쇄한 PDF 를 거래처 작업현황 / 어드민 페이지에 반영합니다.",
         bg=BG, fg=SUB_FG,
         font=("맑은 고딕", 9), anchor="w",
     ).pack(fill="x", pady=(3, 0))
 
-    tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(14, 0))
-
-    # ── ① 주문 선택 ───────────────────────────────────────
-    sec1 = tk.Frame(dlg, bg=BG)
-    sec1.pack(fill="x", padx=22, pady=(14, 0))
-    tk.Label(
-        sec1, text="① 어느 작업의 인쇄본인가요?",
-        bg=BG, fg=TITLE_FG,
-        font=("맑은 고딕", 10, "bold"), anchor="w",
-    ).pack(fill="x")
-
-    combo_var = tk.StringVar(value=choices[0][0])  # 가장 최근
-    combo = ttk.Combobox(
-        sec1, textvariable=combo_var, state="readonly",
-        values=[lbl for lbl, _ in choices],
-        font=("맑은 고딕", 10), height=12,
+    # ── QR 인식 결과 배너 (헤더 우측) ───────────────────────
+    # _apply_qr_routing 가 텍스트/색상을 채운다.
+    qr_banner_holder = tk.Frame(header, bg=BG)
+    qr_banner_var = tk.StringVar(value="")
+    qr_banner_label = tk.Label(
+        qr_banner_holder, textvariable=qr_banner_var,
+        bg="#ecfdf5", fg="#065f46",
+        font=("맑은 고딕", 11, "bold"),
+        anchor="center", justify="left",
+        padx=18, pady=12,
     )
-    combo.pack(fill="x", pady=(7, 0))
 
-    # ── ② 변경 내용 ───────────────────────────────────────
-    sec2 = tk.Frame(dlg, bg=BG)
-    sec2.pack(fill="x", padx=22, pady=(18, 0))
-    tk.Label(
-        sec2, text="② 바뀐 내용 (그대로면 손대지 않아도 됩니다)",
-        bg=BG, fg=TITLE_FG,
-        font=("맑은 고딕", 10, "bold"), anchor="w",
-    ).pack(fill="x")
+    def _show_qr_banner(text: str, kind: str = "success"):
+        """kind: 'success' | 'warn'. 'warn' 은 매칭 실패 — 옅은 노랑 배경."""
+        if not text:
+            qr_banner_holder.pack_forget()
+            return
+        if kind == "warn":
+            qr_banner_label.configure(bg="#fef3c7", fg="#92400e",
+                                     highlightbackground="#fcd34d")
+        else:
+            qr_banner_label.configure(bg="#d1fae5", fg="#065f46",
+                                     highlightbackground="#6ee7b7")
+        qr_banner_label.configure(highlightthickness=1)
+        qr_banner_var.set(text)
+        qr_banner_holder.pack(side="right", padx=(20, 0))
+        qr_banner_label.pack()
 
-    fields_card = tk.Frame(sec2, bg=BG_SOFT, highlightbackground=BORDER,
-                           highlightthickness=1)
-    fields_card.pack(fill="x", pady=(8, 0))
-
-    fields = tk.Frame(fields_card, bg=BG_SOFT)
-    fields.pack(padx=14, pady=12, anchor="w")
+    tk.Frame(left, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(14, 0))
 
     def _day_from_iso(iso: str) -> str:
         if not iso:
@@ -965,120 +1372,886 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         except ValueError:
             return ""
 
-    # 납기
-    tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
-             font=("맑은 고딕", 10, "bold")).pack(side="left")
-    base_day = _day_from_iso(orders[0].get("dueDate") or "") if orders else ""
-    day_var = tk.StringVar(value=base_day)
-    day_entry = tk.Entry(
-        fields, textvariable=day_var, width=4, justify="center",
-        font=("맑은 고딕", 16, "bold"),
-        relief="solid", bd=1,
-        bg="white", highlightthickness=0,
-    )
-    day_entry.pack(side="left", padx=(8, 3))
-    tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
-             font=("맑은 고딕", 10)).pack(side="left", padx=(0, 22))
+    # ── 탭 컨테이너 ─────────────────────────────────────────
+    style = ttk.Style()
+    try:
+        style.configure("HD.TNotebook", background=BG, borderwidth=0)
+        style.configure("HD.TNotebook.Tab",
+                        padding=(18, 8), font=("맑은 고딕", 10, "bold"))
+    except Exception:
+        pass
 
-    # 배송 — enum/한글 라벨 양쪽 다. 표시는 한글, 결과는 enum 으로 변환.
-    tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
-             font=("맑은 고딕", 10, "bold")).pack(side="left")
-    delivery_labels_in_order = list(DELIVERY_ENUM_TO_KO.values())
-    base_delivery_enum = (orders[0].get("deliveryMethod") or "") if orders else ""
-    base_delivery_ko = DELIVERY_ENUM_TO_KO.get(base_delivery_enum, "")
-    delivery_var = tk.StringVar(value=base_delivery_ko)
-    delivery_combo = ttk.Combobox(
-        fields, textvariable=delivery_var, state="readonly",
-        values=delivery_labels_in_order, width=11,
-        font=("맑은 고딕", 10),
-    )
-    delivery_combo.pack(side="left", padx=(8, 0))
+    notebook = ttk.Notebook(left, style="HD.TNotebook")
+    notebook.pack(fill="both", expand=True, padx=22, pady=(14, 0))
 
-    # 지시서 내용 변경 체크박스
-    check_card = tk.Frame(sec2, bg=BG_SOFT, highlightbackground=BORDER,
-                          highlightthickness=1)
-    check_card.pack(fill="x", pady=(10, 0))
+    new_tab = tk.Frame(notebook, bg=BG)
+    modify_tab = tk.Frame(notebook, bg=BG)
+    notebook.add(new_tab, text="신규 지시서 작성")
+    notebook.add(modify_tab, text="기존 지시서 변경")
 
-    content_changed_var = tk.BooleanVar(value=False)
-    check_inner = tk.Frame(check_card, bg=BG_SOFT)
-    check_inner.pack(fill="x", padx=14, pady=10, anchor="w")
+    def _force_dialog_redraw():
+        """QR 자동 라우팅 직후 Windows 가 Tk 자식 위젯 paint 를 늦추는 경우가 있어
+        클릭 없이도 현재 화면을 즉시 다시 그리도록 요청한다."""
+        try:
+            dlg.update_idletasks()
+        except Exception:
+            pass
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = int(dlg.winfo_id())
+            hwnd = user32.GetParent(hwnd) or hwnd
+            # RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW
+            user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0004 | 0x0080 | 0x0100)
+            user32.UpdateWindow(hwnd)
+        except Exception:
+            pass
+        try:
+            dlg.update_idletasks()
+        except Exception:
+            pass
 
-    content_cb = tk.Checkbutton(
-        check_inner, text="지시서 내용이 바뀌었어요 (도면/사양 변경)",
-        variable=content_changed_var,
-        bg=BG_SOFT, fg=TITLE_FG,
-        activebackground=BG_SOFT, selectcolor="white",
-        font=("맑은 고딕", 10, "bold"),
-        anchor="w", padx=0,
-    )
-    content_cb.pack(anchor="w")
-    tk.Label(
-        check_inner,
-        text="체크하면 어드민 행에 \"변경\" 배지가 다시 표시되어 관리자가 확인합니다.",
-        bg=BG_SOFT, fg=SUB_FG,
-        font=("맑은 고딕", 9), anchor="w",
-    ).pack(anchor="w", padx=(22, 0), pady=(2, 0))
+    def _schedule_dialog_redraw():
+        for delay in (0, 40, 120, 300):
+            try:
+                dlg.after(delay, _force_dialog_redraw)
+            except Exception:
+                pass
 
-    def on_combo_changed(_event=None):
-        sel = combo_var.get()
-        if sel == NO_MATCH_LABEL:
-            day_var.set("")
-            day_entry.configure(state="disabled")
-            delivery_var.set("")
-            delivery_combo.configure(state="disabled")
-            content_changed_var.set(False)
-            content_cb.configure(state="disabled")
+    # ── [신규 작성] 탭 ─────────────────────────────────────
+    new_day_var = tk.StringVar()
+    new_delivery_var = tk.StringVar()
+    new_day_entry: tk.Entry | None = None
+
+    if most_recent is not None:
+        # ── 좌·우 분할: 좌측 = 정보+필드, 우측 = PDF 미리보기 ──
+        # 미리보기를 세로로 쌓으면 ②최종납기일 카드가 880px 다이얼로그 밖으로 밀려 잘림.
+        # 가로 분할로 미리보기를 보면서 납기일/배송을 같은 화면에서 입력 가능.
+        new_split = tk.Frame(new_tab, bg=BG)
+        new_split.pack(fill="both", expand=True, pady=(14, 0))
+        new_left_col = tk.Frame(new_split, bg=BG)
+        new_left_col.pack(side="left", fill="both", expand=True)
+        new_right_col = tk.Frame(new_split, bg=BG)
+        new_right_col.pack(side="right", fill="y", padx=(14, 0))
+
+        info_card = tk.Frame(new_left_col, bg=BG_SOFT,
+                             highlightbackground=BORDER, highlightthickness=1)
+        info_card.pack(fill="x")
+        company = (most_recent.get("companyName") or "거래처 미상").strip()
+        # 파일제목: 자동지시서 흐름이라면 ZIP 안의 원본 .ai 파일명을, 헤더-only/매칭 실패 시
+        # 폴백으로 인쇄된 PDF 파일명(보통 'print_yyyymmdd_...flexiSign-...') 을 쓴다.
+        # 확장자(.ai/.AI/.pdf)는 표시 단계에서 제거 — 사용자 식별에 불필요한 군더더기.
+        original_name = (most_recent.get("originalFileName") or "").strip()
+        if original_name:
+            file_title = re.sub(r"\.ai$", "", original_name, flags=re.IGNORECASE)
+        else:
+            file_title = re.sub(r"\.pdf$", "", pdf_path.name, flags=re.IGNORECASE)
+        info_text = f"{company}  /  {file_title}  /  {most_recent.get('orderNumber') or ''}"
+        tk.Label(info_card, text="현재 지시서",
+                 bg=BG_SOFT, fg=SUB_FG,
+                 font=("맑은 고딕", 9), anchor="w").pack(fill="x", padx=14, pady=(10, 2))
+        tk.Label(info_card, text=info_text,
+                 bg=BG_SOFT, fg=TITLE_FG,
+                 font=("맑은 고딕", 13, "bold"), anchor="w",
+                 wraplength=420, justify="left"
+                 ).pack(fill="x", padx=14, pady=(0, 12))
+
+        # ── 인쇄된 PDF 미리보기(우측) ──────────────────────────
+        # 클릭하거나 [확대] 누르면 별도 Toplevel 에서 더 크게(스크롤 가능) 본다.
+        # 이전(420×594) 보다 살짝 작게 — 다이얼로그 880px 안에서 하단 [확인]/[취소]
+        # 버튼이 잘리지 않도록 세로 약 50px 절약.
+        PREVIEW_W = 380
+        PREVIEW_H = int(PREVIEW_W * 1.414)
+        preview_card = tk.Frame(new_right_col, bg=BG_SOFT,
+                                highlightbackground=BORDER, highlightthickness=1)
+        preview_card.pack()
+        preview_inner = tk.Frame(preview_card, width=PREVIEW_W, height=PREVIEW_H,
+                                 bg="#e4e4e7", cursor="hand2")
+        preview_inner.pack_propagate(False)
+        preview_inner.pack(padx=8, pady=(8, 4))
+        preview_label = tk.Label(
+            preview_inner, bg="#e4e4e7", fg=SUB_FG,
+            font=("맑은 고딕", 11), text="미리보기 준비 중…",
+            cursor="hand2",
+        )
+        preview_label.pack(fill="both", expand=True)
+
+        # 우측에 [확대] 버튼 — 별도 창에서 큰 사이즈로 본다.
+        preview_btn_row = tk.Frame(preview_card, bg=BG_SOFT)
+        preview_btn_row.pack(fill="x", padx=8, pady=(0, 8))
+        zoom_btn = tk.Button(
+            preview_btn_row, text="🔍  크게 보기",
+            font=("맑은 고딕", 10, "bold"),
+            bg="#18181b", fg="white",
+            activebackground="#27272a", activeforeground="white",
+            relief="flat", padx=14, pady=6, bd=0, cursor="hand2",
+        )
+        zoom_btn.pack(side="right")
+
+        def _open_zoom_window(_event=None):
+            """인쇄된 PDF 첫 페이지를 별도 토플레벨에서 큰 해상도로 표시.
+            공통 줌 헬퍼(_show_zoom_image)가 패닝/스크롤/z-order 를 모두 처리한다."""
+            if fitz is None or not pdf_path.exists():
+                return
+            try:
+                sw = dlg.winfo_screenwidth()
+                target_w = max(900, int(sw * 0.85) - 80)
+                doc = fitz.open(str(pdf_path))
+                try:
+                    page = doc[0]
+                    page_w = max(1.0, float(page.rect.width))
+                    zoom = min(3.0, target_w / page_w)
+                    mat = fitz.Matrix(zoom, zoom)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                finally:
+                    doc.close()
+                _show_zoom_image(f"미리보기 — {pdf_path.name}", pil)
+            except Exception as e:
+                ui_log(f"미리보기 확대 실패: {e}")
+
+        zoom_btn.configure(command=_open_zoom_window)
+        # 미리보기 영역 직접 클릭으로도 확대.
+        preview_label.bind("<Button-1>", _open_zoom_window)
+        preview_inner.bind("<Button-1>", _open_zoom_window)
+
+        def _render_new_preview():
+            if fitz is None:
+                preview_label.configure(text="미리보기 라이브러리(pymupdf) 없음")
+                zoom_btn.configure(state="disabled")
+                return
+            if not pdf_path.exists():
+                preview_label.configure(text="PDF 파일을 찾을 수 없습니다")
+                zoom_btn.configure(state="disabled")
+                return
+            try:
+                doc = fitz.open(str(pdf_path))
+                try:
+                    page = doc[0]
+                    page_w = max(1.0, float(page.rect.width))
+                    zoom = PREVIEW_W / page_w
+                    mat = fitz.Matrix(zoom, zoom)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                finally:
+                    doc.close()
+                photo = ImageTk.PhotoImage(pil)
+                preview_label.configure(image=photo, text="", bg="white")
+                preview_label.image = photo  # GC 방지
+            except Exception as e:
+                preview_label.configure(text=f"미리보기 실패: {e}")
+                zoom_btn.configure(state="disabled")
+        # UI 스레드에서 즉시 시도 — 단일 PDF 라 렌더가 빠르고, 결과를 보면서 입력해야 하므로 동기.
+        dlg.after(50, _render_new_preview)
+
+        sec2 = tk.Frame(new_left_col, bg=BG)
+        sec2.pack(fill="x", pady=(18, 0))
+        tk.Label(sec2, text="② 최종납기일",
+                 bg=BG, fg=TITLE_FG,
+                 font=("맑은 고딕", 10, "bold"), anchor="w").pack(fill="x")
+
+        fields_card = tk.Frame(sec2, bg=BG_SOFT,
+                               highlightbackground=BORDER, highlightthickness=1)
+        fields_card.pack(fill="x", pady=(8, 0))
+        fields = tk.Frame(fields_card, bg=BG_SOFT)
+        fields.pack(padx=14, pady=12, anchor="w")
+
+        tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10, "bold")).pack(side="left")
+        new_day_var.set(_day_from_iso(most_recent.get("dueDate") or ""))
+        new_day_entry = tk.Entry(
+            fields, textvariable=new_day_var, width=4, justify="center",
+            font=("맑은 고딕", 16, "bold"),
+            relief="solid", bd=1, bg="white", highlightthickness=0,
+        )
+        new_day_entry.pack(side="left", padx=(8, 3))
+        tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 22))
+
+        tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10, "bold")).pack(side="left")
+        delivery_labels_in_order = list(DELIVERY_ENUM_TO_KO.values())
+        new_delivery_var.set(
+            DELIVERY_ENUM_TO_KO.get(most_recent.get("deliveryMethod") or "", "")
+        )
+        ttk.Combobox(
+            fields, textvariable=new_delivery_var, state="readonly",
+            values=delivery_labels_in_order, width=14,
+            font=("맑은 고딕", 10),
+        ).pack(side="left", padx=(8, 0))
+    else:
+        tk.Label(new_tab,
+                 text="최근 처리한 주문이 없어 신규 작성 모드를 사용할 수 없습니다.\n"
+                      "[기존 변경] 탭에서 갱신할 지시서를 골라주세요.",
+                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 10),
+                 anchor="w", justify="left").pack(fill="x", padx=2, pady=24)
+
+    # ── [기존 변경] 탭 ─────────────────────────────────────
+    # 두 페이지: pick_page(그리드) → chosen_page(라디오+폼). pack/unpack 으로 토글.
+    modify_state: dict = {"selected_ws": None, "change_type": None}
+    chosen_widgets: dict = {}
+
+    pick_page = tk.Frame(modify_tab, bg=BG)
+    chosen_page = tk.Frame(modify_tab, bg=BG)
+
+    def show_pick():
+        chosen_page.pack_forget()
+        pick_page.pack(fill="both", expand=True)
+
+    def show_chosen():
+        pick_page.pack_forget()
+        chosen_page.pack(fill="both", expand=True)
+
+    if not existing_worksheets:
+        tk.Label(pick_page,
+                 text="기존 작업지시서가 없습니다.\n신규 작성 탭을 사용하세요.",
+                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 10),
+                 anchor="w", justify="left").pack(fill="x", padx=2, pady=24)
+    else:
+        tk.Label(pick_page, text="어느 지시서를 변경하시나요?",
+                 bg=BG, fg=TITLE_FG,
+                 font=("맑은 고딕", 11, "bold"), anchor="w"
+                 ).pack(fill="x", pady=(14, 6))
+        if fitz is None:
+            tk.Label(pick_page,
+                     text="(미리보기 라이브러리(pymupdf) 미설치 — 카드만 표시됩니다)",
+                     bg=BG, fg=SUB_FG, font=("맑은 고딕", 9), anchor="w"
+                     ).pack(fill="x", pady=(0, 4))
+
+        # 스크롤 가능한 그리드 — Canvas + 내부 Frame 패턴.
+        grid_outer = tk.Frame(pick_page, bg=BG)
+        grid_outer.pack(fill="both", expand=True, pady=(0, 4))
+        grid_canvas = tk.Canvas(grid_outer, bg=BG, highlightthickness=0)
+        gscroll = ttk.Scrollbar(grid_outer, orient="vertical",
+                                command=grid_canvas.yview)
+        grid_canvas.configure(yscrollcommand=gscroll.set)
+        grid_inner = tk.Frame(grid_canvas, bg=BG)
+        inner_id = grid_canvas.create_window((0, 0), window=grid_inner, anchor="nw")
+        grid_canvas.pack(side="left", fill="both", expand=True)
+        gscroll.pack(side="right", fill="y")
+
+        def _on_inner_configure(_e=None):
+            grid_canvas.configure(scrollregion=grid_canvas.bbox("all"))
+        def _on_canvas_configure(e):
+            grid_canvas.itemconfig(inner_id, width=e.width)
+        grid_inner.bind("<Configure>", _on_inner_configure)
+        grid_canvas.bind("<Configure>", _on_canvas_configure)
+
+        # 다이얼로그 위에 마우스가 있을 때만 휠 스크롤 — 다른 요소(콤보박스 등) 와의 충돌 회피.
+        def _on_wheel(e):
+            grid_canvas.yview_scroll(int(-e.delta / 120), "units")
+        grid_canvas.bind("<Enter>",
+                         lambda _e: grid_canvas.bind_all("<MouseWheel>", _on_wheel))
+        grid_canvas.bind("<Leave>",
+                         lambda _e: grid_canvas.unbind_all("<MouseWheel>"))
+
+        cols = 3
+        for col in range(cols):
+            grid_inner.grid_columnconfigure(col, weight=1, uniform="card")
+
+        thumbnail_work: list[tuple[dict, "tk.Label"]] = []
+
+        def _on_pick(ws):
+            modify_state["selected_ws"] = ws
+            modify_state["change_type"] = None
+            _refresh_chosen()
+            show_chosen()
+
+        for idx, ws in enumerate(existing_worksheets):
+            r = idx // cols
+            c = idx % cols
+            card = tk.Frame(grid_inner, bg=BG_SOFT,
+                            highlightbackground=BORDER, highlightthickness=1,
+                            cursor="hand2")
+            card.grid(row=r, column=c, padx=6, pady=6, sticky="nsew")
+
+            thumb_frame = tk.Frame(card, width=THUMB_W, height=THUMB_H, bg="#e4e4e7")
+            thumb_frame.pack_propagate(False)
+            thumb_frame.pack(padx=8, pady=8)
+            thumb_label = tk.Label(thumb_frame, bg="#e4e4e7",
+                                   text="…" if fitz is not None else "(미리보기 없음)",
+                                   fg=SUB_FG, font=("맑은 고딕", 11))
+            thumb_label.pack(fill="both", expand=True)
+
+            company = (ws.get("companyName") or "거래처 미상").strip()
+            title = (ws.get("title") or "").strip()
+            order_num = ws.get("orderNumber") or ""
+
+            company_lbl = tk.Label(card, text=company, bg=BG_SOFT, fg=TITLE_FG,
+                                   font=("맑은 고딕", 10, "bold"), anchor="w")
+            company_lbl.pack(fill="x", padx=10)
+            title_lbl = None
+            if title:
+                title_lbl = tk.Label(card, text=title, bg=BG_SOFT, fg=LABEL_FG,
+                                     font=("맑은 고딕", 9), anchor="w",
+                                     wraplength=THUMB_W)
+                title_lbl.pack(fill="x", padx=10)
+            order_lbl = tk.Label(card, text=order_num, bg=BG_SOFT, fg=SUB_FG,
+                                 font=("맑은 고딕", 9), anchor="w")
+            order_lbl.pack(fill="x", padx=10, pady=(0, 8))
+
+            def _make_handler(ws_local):
+                return lambda _e=None: _on_pick(ws_local)
+            handler = _make_handler(ws)
+            for w in (card, thumb_frame, thumb_label,
+                      company_lbl, order_lbl):
+                w.bind("<Button-1>", handler)
+            if title_lbl is not None:
+                title_lbl.bind("<Button-1>", handler)
+
+            thumbnail_work.append((ws, thumb_label))
+
+        _start_thumbnail_loader(dlg, thumbnail_work, THUMB_W)
+
+    # chosen_page 빌더 — selected_ws 가 정해진 다음 호출. 기존 위젯을 모두 비우고 다시 그린다.
+    def _refresh_chosen():
+        for w in chosen_page.winfo_children():
+            w.destroy()
+        chosen_widgets.clear()
+        ws = modify_state["selected_ws"]
+        if ws is None:
             return
-        day_entry.configure(state="normal")
-        delivery_combo.configure(state="readonly")
-        content_cb.configure(state="normal")
-        for lbl, o in choices:
-            if lbl == sel and o is not None:
-                day_var.set(_day_from_iso(o.get("dueDate") or ""))
-                delivery_var.set(DELIVERY_ENUM_TO_KO.get(o.get("deliveryMethod") or "", ""))
-                break
-        day_entry.focus_set()
-        day_entry.select_range(0, "end")
-        day_entry.icursor("end")
 
-    combo.bind("<<ComboboxSelected>>", on_combo_changed)
+        company = (ws.get("companyName") or "거래처 미상").strip()
+        title = (ws.get("title") or "").strip()
+        order_num = ws.get("orderNumber") or ""
 
-    def confirm(_event=None):
-        sel = combo_var.get()
-        if sel == NO_MATCH_LABEL:
-            result["value"] = {"order_number": None}
+        # ── 상단 바: [← 다른 지시서] + 선택한 지시서 정보 ─────
+        # 기존: 정보 카드 + 뒤로가기 버튼이 두 줄로 쌓여 세로 공간 낭비.
+        # 변경: 한 줄에 좌측 뒤로가기, 우측 거래처/제목/주문번호 인라인 배치.
+        topbar = tk.Frame(chosen_page, bg=BG)
+        topbar.pack(fill="x", pady=(10, 0))
+
+        tk.Button(topbar, text="◀  다른 지시서 선택",
+                  command=lambda: show_pick(),
+                  font=("맑은 고딕", 9, "bold"),
+                  bg="#f4f4f5", fg=LABEL_FG,
+                  activebackground=BORDER, activeforeground=TITLE_FG,
+                  relief="flat", padx=14, pady=8, cursor="hand2", bd=0,
+                  ).pack(side="left")
+
+        info_box = tk.Frame(topbar, bg=BG)
+        info_box.pack(side="left", padx=(16, 0), fill="x", expand=True)
+        tk.Label(info_box, text=company,
+                 bg=BG, fg=TITLE_FG,
+                 font=("맑은 고딕", 13, "bold"),
+                 anchor="w", wraplength=560, justify="left",
+                 ).pack(fill="x")
+        sub_parts = []
+        if title:
+            sub_parts.append(title)
+        if order_num:
+            sub_parts.append(order_num)
+        if sub_parts:
+            tk.Label(info_box, text="  ·  ".join(sub_parts),
+                     bg=BG, fg=SUB_FG,
+                     font=("맑은 고딕", 9),
+                     anchor="w", wraplength=560, justify="left",
+                     ).pack(fill="x", pady=(2, 0))
+
+        # ── 통합 변경 폼 (납기/배송 + 내용 메모) ──────────────
+        # 기존: 둘 중 하나만 라디오로 선택 → 둘 다 바뀌면 손볼 수 없음.
+        # 변경: 한 카드에 납기·배송 줄 + 내용 메모 줄을 같이 표시. confirm 시
+        #       각 필드가 원본과 다르면 그것만 반영(메모는 입력된 경우에만 contentChanged).
+        # change_type 은 모드 전환 잔재 — 호출자가 이 다이얼로그 내부에서 분기에 안 쓰도록
+        #       confirm 에서 무조건 채워 보낸다(resolve_new_due_date 는 입력=원본이면 멱등).
+        modify_state["change_type"] = "combined"
+
+        form_holder = tk.Frame(chosen_page, bg=BG)
+        form_holder.pack(fill="x", pady=(8, 0))
+        form_card = tk.Frame(form_holder, bg=BG_SOFT,
+                             highlightbackground=BORDER, highlightthickness=1)
+        form_card.pack(fill="x")
+        chosen_widgets["form_card"] = form_card
+
+        inner = tk.Frame(form_card, bg=BG_SOFT)
+        inner.pack(fill="x", padx=14, pady=10)
+
+        # 1행: 납기/배송 — 변경이 없으면 기본값 그대로 두면 됨(서버 PATCH 가 멱등).
+        fields = tk.Frame(inner, bg=BG_SOFT)
+        fields.pack(fill="x", anchor="w")
+        tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10, "bold")).pack(side="left")
+        day_var_local = tk.StringVar(
+            value=_day_from_iso(ws.get("dueDate") or ""))
+        day_e = tk.Entry(
+            fields, textvariable=day_var_local, width=4, justify="center",
+            font=("맑은 고딕", 14, "bold"),
+            relief="solid", bd=1, bg="white", highlightthickness=0,
+        )
+        day_e.pack(side="left", padx=(10, 3))
+        tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 24))
+        tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10, "bold")).pack(side="left")
+        delivery_var_local = tk.StringVar(
+            value=DELIVERY_ENUM_TO_KO.get(ws.get("deliveryMethod") or "", "")
+        )
+        ttk.Combobox(
+            fields, textvariable=delivery_var_local, state="readonly",
+            values=list(DELIVERY_ENUM_TO_KO.values()), width=14,
+            font=("맑은 고딕", 10),
+        ).pack(side="left", padx=(10, 0))
+        chosen_widgets["mod_day_var"] = day_var_local
+        chosen_widgets["mod_delivery_var"] = delivery_var_local
+        chosen_widgets["mod_day_entry"] = day_e
+        day_e.bind("<Return>", confirm)
+
+        # 2행: 변경된 내용 메모 — 비워두면 contentChanged 안 보냄.
+        tk.Label(inner,
+                 text="변경된 내용  (선택 — 입력 시 모바일 뷰어에서 PDF 탭하면 노출)",
+                 bg=BG_SOFT, fg=SUB_FG,
+                 font=("맑은 고딕", 9),
+                 anchor="w").pack(fill="x", pady=(10, 3))
+        note_text = tk.Text(inner, height=2, wrap="word",
+                            relief="solid", bd=1,
+                            font=("맑은 고딕", 10), bg="white",
+                            highlightthickness=0)
+        note_text.pack(fill="x")
+        chosen_widgets["mod_note_text"] = note_text
+
+        # 진입 시 포커스는 납기 입력 — 가장 자주 만지는 필드.
+        day_e.focus_set()
+        day_e.select_range(0, "end")
+        day_e.icursor("end")
+
+        # ── 매칭된 지시서 PDF 미리보기 (가운데 정렬, 폼 아래) ────
+        # 폭 240 — 다이얼로그 880px 안에 헤더/통합폼/하단 버튼이 모두 잘림 없이 들어가는 한계 폭.
+        # 더 키우면 하단 [웹에 적용/취소/종이만] 버튼이 밀려 안 보임.
+        preview_pane = tk.Frame(chosen_page, bg=BG)
+        preview_pane.pack(fill="both", expand=True, pady=(8, 0))
+
+        PREVIEW_W_C = 240
+        PREVIEW_H_C = int(PREVIEW_W_C * 1.414)
+        preview_card = tk.Frame(preview_pane, bg=BG_SOFT,
+                                highlightbackground=BORDER, highlightthickness=1)
+        # anchor="n" 으로 위쪽 가운데 정렬 — 빈공간 안 생기게.
+        preview_card.pack(anchor="n")
+        preview_inner_c = tk.Canvas(preview_card,
+                                    width=PREVIEW_W_C, height=PREVIEW_H_C,
+                                    bg="#e4e4e7", highlightthickness=0,
+                                    cursor="hand2")
+        preview_inner_c.pack(padx=8, pady=(8, 4))
+        preview_inner_c.create_text(
+            PREVIEW_W_C // 2, PREVIEW_H_C // 2,
+            text="미리보기 로딩 중…",
+            fill=SUB_FG,
+            font=("맑은 고딕", 11),
+            anchor="center",
+            tags=("preview_content",),
+        )
+
+        def _open_chosen_zoom(_e=None):
+            _open_zoom_for_matched_ws(ws)
+        preview_inner_c.bind("<Button-1>", _open_chosen_zoom)
+
+        # 미리보기가 deferred paint 로 인해 첫 표시가 늦는 케이스를 대비해 안내 문구.
+        # 사용자가 회색 화면에서 무한정 기다리지 않게 — "창 한 번 클릭하면 보입니다".
+        tk.Label(
+            preview_card,
+            text="(미리보기가 안 보일 경우, 창을 한 번 클릭하면 보입니다)",
+            bg=BG_SOFT, fg=SUB_FG,
+            font=("맑은 고딕", 8),
+            anchor="center",
+            wraplength=PREVIEW_W_C,
+            justify="center",
+        ).pack(fill="x", padx=8, pady=(0, 4))
+
+        zoom_row_c = tk.Frame(preview_card, bg=BG_SOFT)
+        zoom_row_c.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(zoom_row_c, text="🔍  크게 보기",
+                  command=_open_chosen_zoom,
+                  font=("맑은 고딕", 9, "bold"),
+                  bg="#18181b", fg="white",
+                  activebackground="#27272a", activeforeground="white",
+                  relief="flat", padx=12, pady=5, bd=0, cursor="hand2",
+                  ).pack(side="right")
+
+        preview_result_q: queue.Queue = queue.Queue(maxsize=1)
+
+        def _force_chosen_preview_paint():
+            def _tick():
+                try:
+                    if preview_inner_c.winfo_exists():
+                        preview_inner_c.update_idletasks()
+                        preview_inner_c.update()
+                    if dlg.winfo_exists():
+                        dlg.lift()
+                        dlg.update_idletasks()
+                except Exception:
+                    pass
+                _force_dialog_redraw()
+            for delay in (0, 30, 120):
+                try:
+                    dlg.after(delay, _tick)
+                except Exception:
+                    pass
+
+        def _set_chosen_preview_message(msg: str):
+            try:
+                if preview_inner_c.winfo_exists():
+                    preview_inner_c.delete("preview_content")
+                    preview_inner_c.create_text(
+                        PREVIEW_W_C // 2, PREVIEW_H_C // 2,
+                        text=msg,
+                        fill=SUB_FG,
+                        font=("맑은 고딕", 11),
+                        anchor="center",
+                        width=PREVIEW_W_C - 24,
+                        tags=("preview_content",),
+                    )
+                _force_chosen_preview_paint()
+            except Exception:
+                pass
+
+        def _apply_chosen_preview(pil):
+            try:
+                if not preview_inner_c.winfo_exists():
+                    return
+                photo = ImageTk.PhotoImage(pil, master=preview_inner_c)
+                preview_inner_c.configure(bg="white")
+                preview_inner_c.delete("preview_content")
+                preview_inner_c.create_image(
+                    PREVIEW_W_C // 2, 0,
+                    image=photo,
+                    anchor="n",
+                    tags=("preview_content",),
+                )
+                preview_inner_c.image = photo  # GC 방지
+                _force_chosen_preview_paint()
+            except Exception:
+                pass
+
+        def _poll_chosen_preview():
+            try:
+                kind, payload = preview_result_q.get_nowait()
+            except queue.Empty:
+                try:
+                    if preview_inner_c.winfo_exists():
+                        dlg.after(60, _poll_chosen_preview)
+                except Exception:
+                    pass
+                return
+            if kind == "ok":
+                _apply_chosen_preview(payload)
+            else:
+                _set_chosen_preview_message(str(payload))
+
+        def _put_chosen_preview_result(kind: str, payload):
+            try:
+                preview_result_q.put_nowait((kind, payload))
+            except queue.Full:
+                pass
+
+        def _load_chosen_preview():
+            if fitz is None:
+                _put_chosen_preview_result("error", "미리보기 라이브러리(pymupdf) 없음")
+                return
+            order_num_local = (ws.get("orderNumber") or "").strip()
+            if not order_num_local:
+                _put_chosen_preview_result("error", "주문번호 없음")
+                return
+            pdf_url = f"{API_BASE}/api/public/worksheets/{quote(order_num_local, safe='')}/pdf"
+            try:
+                with urllib.request.urlopen(_safe_url(pdf_url), timeout=20) as resp:
+                    data = resp.read()
+                doc = fitz.open(stream=data, filetype="pdf")
+                try:
+                    page = doc[0]
+                    page_w = max(1.0, float(page.rect.width))
+                    zoom = PREVIEW_W_C / page_w
+                    mat = fitz.Matrix(zoom, zoom)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                finally:
+                    doc.close()
+            except Exception as e:
+                _put_chosen_preview_result("error", f"미리보기 실패: {e}")
+                return
+            _put_chosen_preview_result("ok", pil)
+
+        dlg.after(60, _poll_chosen_preview)
+        threading.Thread(target=_load_chosen_preview, daemon=True).start()
+
+    show_pick()  # 시작은 그리드 페이지
+
+    def _apply_qr_routing():
+        """QR 디코드 결과를 다이얼로그 초기 상태에 반영.
+        - existing_worksheets 매칭(=기존 변경): 모드 자동 진입 + 'content' 라디오 + 성공 배너.
+          (이전엔 매칭된 PDF 를 자동으로 큰 창으로 띄웠으나, 작업자가 [변경된 내용] 메모를
+           작성하려고 다이얼로그를 클릭하는 시점에 비동기로 줌 창이 떠올라 입력을 가리는
+           문제가 있어 자동 줌은 제거 — [🔍 크게 보기] 버튼으로만 연다.)
+        - QR 디코드는 됐지만 진행중 작업에서 매칭 실패: 신규 탭 + 실패 배너.
+        - QR 디코드 자체가 실패(잘림/누락): 신규 탭 + 실패 배너."""
+        if qr_matched_ws is not None:
+            try:
+                _show_qr_banner(
+                    "QR코드 매칭에 성공했습니다. 작업중인 지시서를 수정합니다.",
+                    kind="success",
+                )
+                notebook.select(modify_tab)
+                modify_state["selected_ws"] = qr_matched_ws
+                # 통합 폼이라 모드 분기 불필요 — _refresh_chosen 이 알아서 'combined' 로 세팅.
+                _refresh_chosen()
+                show_chosen()
+                _schedule_dialog_redraw()
+                target = chosen_widgets.get("mod_day_entry")
+                if target is not None:
+                    try:
+                        target.focus_set()
+                        target.select_range(0, "end")
+                        target.icursor("end")
+                    except Exception:
+                        pass
+            except Exception as e:
+                ui_log(f"QR 자동 라우팅(변경) 실패: {e}")
+        else:
+            # QR 디코드 실패(잘림/누락) 또는 디코드는 됐지만 진행중 작업에 없음 → 신규 작성 흐름.
+            try:
+                _show_qr_banner(
+                    "QR코드 매칭에 실패했습니다. 새로운 지시서를 작성합니다.",
+                    kind="warn",
+                )
+                notebook.select(new_tab)
+                _schedule_dialog_redraw()
+            except Exception:
+                pass
+
+    # 다이얼로그가 매핑/포커스 잡히고 _grab_focus 까지 끝난 뒤에 라우팅 — 너무 일찍 부르면
+    # notebook.select 가 첫 그리기 전에 호출돼 탭 전환이 보이지 않거나 _refresh_chosen 의
+    # 위젯들이 부모 사이즈 0 으로 잡히는 문제 회피.
+    dlg.after(200, _apply_qr_routing)
+
+    # ── 우측 패널: 분배함 사진(클릭으로 칸 토글) ────────────
+    photo_panel = tk.Frame(right, bg=BG_SOFT)
+    photo_panel.pack(fill="both", expand=True, padx=14, pady=14)
+
+    tk.Label(
+        photo_panel, text="③ 어느 분배함 칸에 꽂으시나요?",
+        bg=BG_SOFT, fg=TITLE_FG,
+        font=("맑은 고딕", 10, "bold"), anchor="w",
+    ).pack(fill="x")
+    tk.Label(
+        photo_panel,
+        text="사무실 분배함 그림입니다. 해당 칸을 클릭해 표시하세요. 여러 칸 동시 선택 가능.",
+        bg=BG_SOFT, fg=SUB_FG,
+        font=("맑은 고딕", 9), anchor="w", justify="left", wraplength=350,
+    ).pack(fill="x", pady=(2, 8))
+
+    PHOTO_DISPLAY_WIDTH = 360
+    src_w, src_h = SLOT_LAYOUT_PHOTO_SIZE
+    photo_scale = PHOTO_DISPLAY_WIDTH / src_w
+    display_h = int(src_h * photo_scale)
+
+    slot_active: dict[str, bool] = {label: False for label, _, _ in SLOT_BOXES}
+
+    photo_path = resource_path("assets/distribution.jpg")
+    tk_img = None
+    try:
+        pil_img = Image.open(photo_path).convert("RGB")
+        resample = getattr(Image, "Resampling", Image).LANCZOS
+        pil_img = pil_img.resize((PHOTO_DISPLAY_WIDTH, display_h), resample)
+        tk_img = ImageTk.PhotoImage(pil_img)
+    except Exception as e:
+        ui_log(f"분배함 사진 로드 실패({photo_path}): {e}")
+
+    canvas = tk.Canvas(
+        photo_panel, width=PHOTO_DISPLAY_WIDTH, height=display_h,
+        bg="white", highlightthickness=1, highlightbackground=BORDER,
+        cursor="hand2",
+    )
+    canvas.pack(pady=(4, 0))
+    if tk_img is not None:
+        canvas.create_image(0, 0, image=tk_img, anchor="nw")
+        canvas.image = tk_img
+    else:
+        canvas.create_text(
+            PHOTO_DISPLAY_WIDTH // 2, display_h // 2,
+            text="분배함 사진 없음\n(scripts/assets/distribution.jpg)",
+            fill=SUB_FG, font=("맑은 고딕", 10), justify="center",
+        )
+
+    overlay_ids: dict[str, list[int]] = {}
+
+    def _box_disp(box):
+        l, t, r, b = box
+        return (l * photo_scale, t * photo_scale, r * photo_scale, b * photo_scale)
+
+    def _redraw_slot(label, mapped_dept, box):
+        for oid in overlay_ids.get(label, []):
+            canvas.delete(oid)
+        overlay_ids[label] = []
+        if not mapped_dept or not slot_active.get(label):
+            return
+        dl, dt, dr, db = _box_disp(box)
+        rid = canvas.create_rectangle(
+            dl, dt, dr, db,
+            outline=ACCENT, width=3, fill=ACCENT, stipple="gray50",
+        )
+        cx = (dl + dr) / 2
+        cy = (dt + db) / 2
+        tid = canvas.create_text(
+            cx, cy, text="✓", fill="white",
+            font=("맑은 고딕", 14, "bold"),
+        )
+        overlay_ids[label] = [rid, tid]
+
+    def collect_dept_tags() -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for label, mapped_dept, _box in SLOT_BOXES:
+            if not mapped_dept:
+                continue
+            if slot_active.get(label) and mapped_dept not in seen:
+                seen.add(mapped_dept)
+                out.append(mapped_dept)
+        return out
+
+    summary_var = tk.StringVar(
+        value="선택된 부서 없음 — 모바일 뷰어에서는 \"전체보기\"에서만 노출됩니다."
+    )
+    tk.Label(
+        photo_panel, textvariable=summary_var,
+        bg=BG_SOFT, fg=SUB_FG,
+        font=("맑은 고딕", 9), anchor="w", justify="left", wraplength=350,
+    ).pack(fill="x", pady=(8, 0))
+
+    def _refresh_summary():
+        tags = collect_dept_tags()
+        if not tags:
+            summary_var.set("선택된 부서 없음 — 모바일 뷰어에서는 \"전체보기\"에서만 노출됩니다.")
+        else:
+            summary_var.set("배부 부서: " + " · ".join(tags))
+
+    def on_canvas_click(ev):
+        if tk_img is None:
+            return
+        src_x = ev.x / photo_scale
+        src_y = ev.y / photo_scale
+        for label, mapped_dept, box in SLOT_BOXES:
+            if not mapped_dept:
+                continue
+            l, t, r, b = box
+            if l <= src_x <= r and t <= src_y <= b:
+                slot_active[label] = not slot_active[label]
+                _redraw_slot(label, mapped_dept, box)
+                _refresh_summary()
+                return
+
+    canvas.bind("<Button-1>", on_canvas_click)
+
+    # ── confirm/cancel/skip 콜백 ───────────────────────────
+    # confirm 의 두 변종:
+    #   - 기본(_event 만): 웹 적용 + 종이 인쇄 (skip_print=False)
+    #   - skip_print=True: 웹 적용만, 종이 인쇄 생략
+    # Enter 키/녹색 버튼 모두 기본 변종을 부르고, "웹에만 적용하고 인쇄안하기" 버튼만
+    # skip_print=True 로 호출한다.
+    def confirm(_event=None, skip_print=False):
+        idx = notebook.index(notebook.select())
+        if idx == 0:
+            # [신규 작성] 탭
+            if most_recent is None:
+                return
+            s = (new_day_var.get() or "").strip()
+            if not s.isdigit():
+                return
+            d = int(s)
+            if d < 1 or d > 31:
+                return
+            delivery_ko = (new_delivery_var.get() or "").strip()
+            delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
+            result["value"] = {
+                "mode": "new",
+                "change_type": "delivery",  # 신규는 사실상 납기/배송 흐름과 동일
+                "order_number": most_recent["orderNumber"],
+                "day": d,
+                "current_due_iso": most_recent.get("dueDate") or "",
+                "delivery_method": delivery_enum,
+                "original_delivery_method": most_recent.get("deliveryMethod") or "",
+                "content_changed": False,
+                "change_note": "",
+                "department_tags": collect_dept_tags(),
+                "skip_print": bool(skip_print),
+            }
             dlg.destroy()
             return
-        s = day_var.get().strip()
+
+        # [기존 변경] 탭 — 통합 폼: 납기/배송 + 내용 메모를 한 번에.
+        # 납기는 입력=원본이면 resolve_new_due_date 가 같은 날짜를 돌려주므로 PATCH 가 멱등.
+        # 배송은 원본과 다를 때만 송신(_process_printed_pdf 단에서 비교).
+        # 내용 메모는 비어있으면 contentChanged=False 로 처리해 모바일 알림이 안 뜨도록.
+        ws = modify_state["selected_ws"]
+        if ws is None:
+            return
+        day_var_local = chosen_widgets.get("mod_day_var")
+        delivery_var_local = chosen_widgets.get("mod_delivery_var")
+        if day_var_local is None or delivery_var_local is None:
+            return
+        s = (day_var_local.get() or "").strip()
         if not s.isdigit():
             return
         d = int(s)
         if d < 1 or d > 31:
             return
-        delivery_ko = delivery_var.get().strip()
+        delivery_ko = (delivery_var_local.get() or "").strip()
         delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
-        for lbl, o in choices:
-            if lbl == sel and o is not None:
-                result["value"] = {
-                    "order_number": o["orderNumber"],
-                    "day": d,
-                    "current_due_iso": o.get("dueDate") or "",
-                    "delivery_method": delivery_enum,
-                    "original_delivery_method": o.get("deliveryMethod") or "",
-                    "content_changed": bool(content_changed_var.get()),
-                }
-                dlg.destroy()
-                return
+        note_widget = chosen_widgets.get("mod_note_text")
+        note = ""
+        if note_widget is not None:
+            try:
+                note = note_widget.get("1.0", "end-1c").strip()
+            except Exception:
+                note = ""
+        result["value"] = {
+            "mode": "modify",
+            "change_type": "combined",
+            "order_number": ws["orderNumber"],
+            "day": d,
+            "current_due_iso": ws.get("dueDate") or "",
+            "delivery_method": delivery_enum,
+            "original_delivery_method": ws.get("deliveryMethod") or "",
+            "content_changed": bool(note),
+            "change_note": note,
+            "department_tags": collect_dept_tags(),
+            "skip_print": bool(skip_print),
+        }
+        dlg.destroy()
+        return
+
+    def confirm_no_print(_event=None):
+        confirm(skip_print=True)
 
     def cancel(_event=None):
         result["value"] = None
         dlg.destroy()
 
-    # ── 버튼 ──────────────────────────────────────────────
-    tk.Frame(dlg, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(20, 0))
+    def skip_upload(_event=None):
+        # 종이 인쇄만 진행 — 웹에 안 올림.
+        result["value"] = {"order_number": None}
+        dlg.destroy()
 
-    button_row = tk.Frame(dlg, bg=BG)
+    # ── 버튼 ──────────────────────────────────────────────
+    tk.Frame(left, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(20, 0))
+
+    button_row = tk.Frame(left, bg=BG)
     button_row.pack(fill="x", padx=22, pady=(14, 16))
+
+    # 좌측: 두 가지 보조 액션. (1) 웹 안 올리고 종이만, (2) 웹만 올리고 인쇄 안 함.
+    tk.Button(
+        button_row, text="웹에 올리지 않고 종이만 인쇄",
+        command=skip_upload,
+        font=("맑은 고딕", 9),
+        bg="#f4f4f5", fg=SUB_FG,
+        activebackground=BORDER, activeforeground=TITLE_FG,
+        relief="flat", padx=12, pady=6, cursor="hand2", bd=0,
+    ).pack(side="left")
+    tk.Button(
+        button_row, text="웹에만 적용하고 인쇄 안 함",
+        command=confirm_no_print,
+        font=("맑은 고딕", 9),
+        bg="#f4f4f5", fg=SUB_FG,
+        activebackground=BORDER, activeforeground=TITLE_FG,
+        relief="flat", padx=12, pady=6, cursor="hand2", bd=0,
+    ).pack(side="left", padx=(6, 0))
 
     tk.Button(
         button_row, text="취소", command=cancel,
@@ -1089,7 +2262,7 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
         bd=0,
     ).pack(side="right", padx=(8, 0))
     tk.Button(
-        button_row, text="✓  웹에 적용하기", command=confirm,
+        button_row, text="✓  웹에 적용 & 인쇄하기", command=confirm,
         font=("맑은 고딕", 11, "bold"),
         bg=ACCENT, fg="white",
         activebackground=ACCENT_HOVER, activeforeground="white",
@@ -1100,8 +2273,8 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
     # Enter/Esc 는 다이얼로그 어디에 포커스가 있어도 동작하도록 위젯별로도 바인딩.
     dlg.bind("<Return>", confirm)
     dlg.bind("<Escape>", cancel)
-    day_entry.bind("<Return>", confirm)
-    combo.bind("<Return>", confirm)
+    if new_day_entry is not None:
+        new_day_entry.bind("<Return>", confirm)
     dlg.protocol("WM_DELETE_WINDOW", cancel)
 
     def _grab_focus():
@@ -1149,9 +2322,21 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
             pass
         try:
             dlg.focus_force()
-            day_entry.focus_set()
-            day_entry.select_range(0, "end")
-            day_entry.icursor("end")
+            target = None
+            try:
+                if notebook.select() == str(modify_tab):
+                    candidate = chosen_widgets.get("mod_day_entry")
+                    if candidate is not None and candidate.winfo_ismapped():
+                        target = candidate
+                elif new_day_entry is not None and new_day_entry.winfo_ismapped():
+                    target = new_day_entry
+            except Exception:
+                target = None
+            if target is not None:
+                target.focus_set()
+                target.select_range(0, "end")
+                target.icursor("end")
+            _schedule_dialog_redraw()
         except Exception:
             pass
 
@@ -1187,6 +2372,60 @@ def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 30):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def decode_pdf_qr(pdf_path: Path) -> str | None:
+    """인쇄된 PDF 1페이지에서 QR 을 디코드해 주문번호를 반환. 실패/미설치 시 None.
+
+    QR URL 은 워처가 박을 때 /p/{orderNumber} 형식 — 호스트는 무시하고 path 만 매칭한다
+    (스테이징/로컬 호스트로 바뀌어도 인식). pyzbar 없거나 PDF 가 깨졌으면 호출자는
+    QR 매칭 없이 평소 다이얼로그(수동 선택)로 폴백한다."""
+    if pyzbar_decode is None:
+        ui_log("QR 디코드 건너뜀: pyzbar 라이브러리 없음 (exe 빌드시 --collect-all pyzbar 필요)")
+        return None
+    if fitz is None:
+        ui_log("QR 디코드 건너뜀: pymupdf(fitz) 라이브러리 없음")
+        return None
+    if not pdf_path.exists():
+        return None
+    try:
+        doc = fitz.open(str(pdf_path))
+        try:
+            page = doc[0]
+            # 200dpi — 100pt 기본 QR 도 깔끔히 인식. 더 키우면 인식률 향상보다 메모리만 늘어남.
+            mat = fitz.Matrix(200 / 72, 200 / 72)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        finally:
+            doc.close()
+        # 그레이스케일이 zbar 인식률 가장 높음. FlexSign/PDF24 거치며 옅어진 셀도 거의 잡힌다.
+        gray = pil.convert("L")
+        results = pyzbar_decode(gray)
+        if not results:
+            ui_log(f"QR 디코드: PDF 안에서 QR 코드를 찾지 못함 ({pdf_path.name}, {pil.width}x{pil.height})")
+            return None
+        for r in results:
+            try:
+                data = r.data.decode("utf-8", errors="ignore")
+            except Exception:
+                continue
+            m = re.search(r"/p/([^/?#\s]+)", data)
+            if m:
+                # QR 박을 때 quote(order_number, safe="") 로 URL-인코딩되어 들어가므로
+                # 한글 주문번호("주문-260427-03" 등)면 %EC%A3%... 형태로 매치된다.
+                # existing_worksheets 의 orderNumber 는 원본 텍스트라 unquote 후 비교해야 매칭 성공.
+                try:
+                    order = unquote(m.group(1)).strip()
+                except Exception:
+                    order = m.group(1).strip()
+                if order:
+                    return order
+            else:
+                ui_log(f"QR 디코드: /p/ 패턴 불일치 — 내용: {data[:80]!r}")
+        return None
+    except Exception as e:
+        ui_log(f"QR 디코드 실패: {e}")
+        return None
+
+
 def _process_printed_pdf(pdf_path: Path):
     """인쇄 폴더에 새 PDF 가 떨어졌을 때 호출.
     드롭다운 다이얼로그로 어떤 주문에 매칭할지 직원이 선택.
@@ -1194,6 +2433,9 @@ def _process_printed_pdf(pdf_path: Path):
       - 취소(Esc/X): 아무것도 안 함 (종이도 X)
       - "매칭 안 함": 종이만 인쇄
       - 주문 선택 + 일자: 납기 PATCH + PDF 덮어쓰기 + 종이 인쇄
+
+    PDF 안의 QR 디코드에 성공하면 다이얼로그가 자동으로 매칭된 주문 탭/모드로 진입.
+    QR 실패 시(미설치/인식불가)에는 매칭 없이 평소 다이얼로그를 그대로 띄운다.
     """
     key = str(pdf_path.resolve())
     # check-and-add 를 락으로 원자화 — watchdog 이 동일 파일에 대해 on_created/on_moved 를
@@ -1216,11 +2458,27 @@ def _process_printed_pdf(pdf_path: Path):
         print_pdf_to_paper(pdf_path)
         return
 
+    # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
+    existing_worksheets = fetch_existing_worksheets()
+
+    # PDF 안의 QR 인식 시도 — 성공하면 다이얼로그가 자동 매칭/모드 분기.
+    # 실패해도 흐름은 그대로(평소 수동 선택). UI 스레드 차단 회피로 이 단계에서 미리 처리.
+    qr_order_number = decode_pdf_qr(pdf_path)
+    if qr_order_number:
+        ui_log(f"QR 인식: {qr_order_number}")
+
     holder: dict = {"value": None, "done": threading.Event()}
 
     def _ask_on_ui():
         try:
-            holder["value"] = _ask_print_match_blocking(orders)
+            holder["value"] = _ask_print_match_blocking(
+                orders, pdf_path, existing_worksheets,
+                qr_order_number=qr_order_number,
+            )
+        except Exception as e:
+            # 다이얼로그 자체가 터지면 사용자가 취소한 것처럼 조용히 묻혀 PDF24 인쇄가 무위로 끝나므로,
+            # UI 로그에 명시 — 'PDF24 보냈는데 왜 취소되지?' 류 디버깅을 위해 흔적 남김.
+            ui_log(f"인쇄 매칭 다이얼로그 오류: {e}")
         finally:
             holder["done"].set()
 
@@ -1243,11 +2501,20 @@ def _process_printed_pdf(pdf_path: Path):
     new_delivery = sel.get("delivery_method") or ""
     orig_delivery = sel.get("original_delivery_method") or ""
     delivery_to_send = new_delivery if (new_delivery and new_delivery != orig_delivery) else None
-    patch_due_date(order_number, new_due, delivery_to_send)
+    # 부서 태그는 다이얼로그에서 항상 결정(아무 칸도 클릭 안 했으면 빈 리스트) →
+    # patch 마다 함께 송신하여 "태그 비우기"도 명시적으로 표현.
+    dept_tags = list(sel.get("department_tags") or [])
+    patch_due_date(order_number, new_due, delivery_to_send, dept_tags)
     # 사용자가 다이얼로그에서 "지시서 내용 변경됨" 체크 시에만 contentChanged=true 송신.
+    # change_note 도 함께 — 모바일 뷰어 탭하면 노출된다.
     upload_ok = upload_worksheet_pdf(order_number, pdf_path,
-                                     content_changed=bool(sel.get("content_changed", False)))
-    print_pdf_to_paper(pdf_path)
+                                     content_changed=bool(sel.get("content_changed", False)),
+                                     change_note=sel.get("change_note") or "")
+    # "웹에만 적용하고 인쇄 안 함" 선택 시 종이 인쇄 단계를 건너뛴다 — 웹 적용만 끝.
+    if sel.get("skip_print"):
+        ui_log(f"인쇄 — '인쇄 안 함' 선택, 종이 인쇄 생략 ({pdf_path.name})")
+    else:
+        print_pdf_to_paper(pdf_path)
     # 업로드 성공 시 로컬 PDF 자동 삭제 — 웹(R2)에 보관됐으니 printed/ 누적 방지.
     # 종이 프린터(외부 리더)가 파일 핸들을 닫기 전에 지우면 인쇄 실패하므로 30초 지연.
     # 업로드 실패 시엔 보존 — 사용자가 수동 재업로드/검증할 수 있게.
@@ -1478,6 +2745,43 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "  var boxW = headerWidth + boxPadX * 2;"
         "  var minBoxW = bigFont * 6;"
         "  if (boxW < minBoxW) boxW = minBoxW;"
+        # ── 좌측 거래처명 폭 사전 측정 → 거래처명/헤더박스/QR 가 좁은 대지에서 겹치는 문제 회피.
+        # 측정만 하고 즉시 제거 — 실제 좌측 텍스트는 아래에서 다시 만들어 위치를 잡는다.
+        f'  var leftStr = "{left_js}";'
+        "  var leftWidth = bigFont * 4;"
+        "  var measLeft = layer.textFrames.add();"
+        "  measLeft.contents = leftStr;"
+        "  measLeft.textRange.characterAttributes.size = bigFont;"
+        "  if (malgun) measLeft.textRange.characterAttributes.textFont = malgun;"
+        "  measLeft.position = [0, 0];"
+        "  try {"
+        "    var mlbX = measLeft.geometricBounds;"
+        "    leftWidth = mlbX[2] - mlbX[0];"
+        "  } catch (e) {}"
+        "  try { measLeft.remove(); } catch (e) {}"
+        # 헤더박스는 캔버스 정중앙 정렬 — 좌(거래처)와 우(QR) 중 큰 쪽이 박스 한쪽 한계를 결정.
+        # 좌+박스/2+margin+gap > abWidth/2 이거나 우측이 그렇다면 글씨/박스/QR 모두 동일 비율 s 로 축소.
+        # margin·lineGap 은 sc 에 따라 자동으로 같이 줄어든다.
+        "  var minGap = bigFont * 0.5;"
+        "  var sideMax = (leftWidth > qrSize) ? leftWidth : qrSize;"
+        "  var totalNeed = boxW / 2 + sideMax + margin + minGap;"
+        "  if (totalNeed > abWidth / 2) {"
+        "    var s = (abWidth / 2) / totalNeed;"
+        "    if (s < 0.4) s = 0.4;"
+        "    bigFont = bigFont * s;"
+        "    noteFont = noteFont * s;"
+        "    qrSize = qrSize * s;"
+        "    sc = qrSize / 90.0;"
+        "    margin = 18 * sc;"
+        "    boxH = bigFont * 1.5;"
+        "    lineGap = 6 * sc;"
+        "    headerWidth = headerWidth * s;"
+        "    leftWidth = leftWidth * s;"
+        "    boxPadX = bigFont * 0.7;"
+        "    boxW = headerWidth + boxPadX * 2;"
+        "    minBoxW = bigFont * 6;"
+        "    if (boxW < minBoxW) boxW = minBoxW;"
+        "  }"
         # ── 노트 박스의 가로 위치 / 너비를 미리 결정해 두고, 텍스트 컨텐츠 높이도 사전 측정.
         # 이 값을 워크시트 전체 깊이 계산에 포함해야, 노트가 길어 도면을 침범할 때
         # 워크시트 폼을 충분히 위로 올릴 수 있다.
@@ -1715,6 +3019,39 @@ def process_header_only_to_v8(ai_app, dst_path: Path,
         "  var boxW = headerWidth + boxPadX * 2;"
         "  var minBoxW = bigFont * 6;"
         "  if (boxW < minBoxW) boxW = minBoxW;"
+        # 좌측 거래처명 폭 사전 측정 → 거래처/박스/QR 충돌 시 동일 비율 축소.
+        f'  var leftStr = "{left_js}";'
+        "  var leftWidth = bigFont * 4;"
+        "  var measLeft = layer.textFrames.add();"
+        "  measLeft.contents = leftStr;"
+        "  measLeft.textRange.characterAttributes.size = bigFont;"
+        "  if (malgun) measLeft.textRange.characterAttributes.textFont = malgun;"
+        "  measLeft.position = [0, 0];"
+        "  try {"
+        "    var mlbX = measLeft.geometricBounds;"
+        "    leftWidth = mlbX[2] - mlbX[0];"
+        "  } catch (e) {}"
+        "  try { measLeft.remove(); } catch (e) {}"
+        "  var minGap = bigFont * 0.5;"
+        "  var sideMax = (leftWidth > qrSize) ? leftWidth : qrSize;"
+        "  var totalNeed = boxW / 2 + sideMax + margin + minGap;"
+        "  if (totalNeed > abWidth / 2) {"
+        "    var s = (abWidth / 2) / totalNeed;"
+        "    if (s < 0.4) s = 0.4;"
+        "    bigFont = bigFont * s;"
+        "    noteFont = noteFont * s;"
+        "    qrSize = qrSize * s;"
+        "    sc = qrSize / 90.0;"
+        "    margin = 18 * sc;"
+        "    boxH = bigFont * 1.5;"
+        "    lineGap = 6 * sc;"
+        "    headerWidth = headerWidth * s;"
+        "    leftWidth = leftWidth * s;"
+        "    boxPadX = bigFont * 0.7;"
+        "    boxW = headerWidth + boxPadX * 2;"
+        "    minBoxW = bigFont * 6;"
+        "    if (boxW < minBoxW) boxW = minBoxW;"
+        "  }"
         # 노트 위치/크기 + 높이 사전 측정
         f'  var noteTextStr = "{note_js}";'
         "  var pad = 6 * sc;"
@@ -2019,13 +3356,16 @@ def compress_pdf_for_upload(src: Path) -> Path:
 
 
 def upload_worksheet_pdf(order_number: str, pdf_path: Path,
-                         content_changed: bool = False) -> bool:
+                         content_changed: bool = False,
+                         change_note: str = "") -> bool:
     """변환된 PDF를 백엔드에 업로드. 거래처 카드에 노출되는 단일 PDF로 덮어씀.
     업로드 직전 Ghostscript 로 다운샘플링해 용량을 줄인다 (텍스트는 벡터 유지).
     multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음).
 
     content_changed=True 면 contentChanged=true 폼 필드를 함께 보내서 백엔드가
-    "변경" 배지를 띄우게 한다. 사용자가 다이얼로그에서 체크박스 켰을 때만 True.
+    "변경" 배지를 띄우게 한다. 사용자가 다이얼로그에서 [지시서 내용 변경] 분기를 골랐을 때만 True.
+    change_note: 작업자가 입력한 변경 사항 텍스트. 모바일 뷰어에서 PDF 한번 탭 시 노출.
+                 content_changed=True 이고 비어있지 않을 때만 폼에 포함한다(빈 문자열은 백엔드에서 클리어).
     """
     if not order_number or not pdf_path.exists():
         return False
@@ -2046,15 +3386,24 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                 pass
         return False
 
-    # contentChanged 필드는 사용자가 체크박스 켰을 때만 포함. 안 보내면 백엔드가
+    # contentChanged 필드는 사용자가 [지시서 내용 변경] 분기를 골랐을 때만 포함. 안 보내면 백엔드가
     # 단순 재인쇄로 간주해 worksheetUpdatedAt 갱신 안 함.
     extra_field = b""
     if content_changed:
-        extra_field = (
+        extra_field += (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="contentChanged"\r\n\r\n'
             f"true\r\n"
         ).encode("utf-8")
+        # changeNote 는 contentChanged=true 일 때만 의미가 있다. 빈 문자열도 백엔드에서
+        # null 로 저장되도록 그대로 보낸다(=내용은 바뀌었지만 별도 메모는 비움).
+        note = (change_note or "").strip()
+        if note:
+            extra_field += (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="changeNote"\r\n\r\n'
+                f"{note}\r\n"
+            ).encode("utf-8")
 
     file_head = (
         f"--{boundary}\r\n"
@@ -2621,11 +3970,14 @@ def process_zip(zip_path: Path):
         # 인쇄 PDF 가 떨어지면 매칭할 수 있도록 큐에 등록.
         delivery_ko = (meta.get("deliveryMethod") or "").strip()
         delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
+        # 인쇄 매칭 다이얼로그 [신규 작성] 탭에서 표시할 원본 파일명. 다중 .ai 면 첫 파일 기준.
+        primary_name = ai_files[0].name if ai_files else ""
         remember_order_for_print(
             order_number,
             company,
             (str(meta.get("dueDate")).split("T")[0] if meta.get("dueDate") else ""),
             delivery_enum,
+            primary_name,
         )
 
     DONE_DIR.mkdir(exist_ok=True)

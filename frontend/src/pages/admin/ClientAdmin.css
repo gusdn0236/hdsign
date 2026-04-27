@@ -46,6 +46,7 @@
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
+    white-space: nowrap;
 }
 .ca-tab-btn.active {
     background: #f8fafc;
@@ -181,7 +182,16 @@
     border-radius: 6px;
 }
 
-.ca-actions { display: flex; gap: 6px; }
+.ca-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+/* 행 내 액션 버튼들은 한 줄로 — 좁은 컬럼에서 '비번 보기' 같은 라벨이 두 줄로 깨지는 걸 방지.
+   부모(.ca-actions)는 flex-wrap 으로 버튼 단위로만 줄바꿈되게 한다. */
+.ca-edit-btn,
+.ca-pw-btn,
+.ca-del-btn,
+.ca-approve-btn,
+.ca-reject-btn {
+    white-space: nowrap;
+}
 .ca-edit-btn {
     padding: 5px 12px;
     background: #eff6ff;

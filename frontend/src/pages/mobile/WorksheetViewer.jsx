@@ -11,7 +11,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const DEPT_KEY = 'hdsign_uploader_department';
-const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시부', '아크릴가공부(5층)', '배송팀', '도장부'];
+const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시부', '아크릴가공부(5층)', '배송팀', '도장부', '후레임부'];
 const MAX_DEPT_LEN = 100;
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
@@ -83,6 +83,9 @@ export default function WorksheetViewer() {
 
     // 시트 (탭하면 열림)
     const [sheetOpen, setSheetOpen] = useState(false);
+    // PDF 한 번 탭 → 변경사항 카드 토글. 더블탭(줌 토글)과 충돌 막으려고 280ms 디바운스.
+    const [changeNoteVisible, setChangeNoteVisible] = useState(false);
+    const stageTapTimerRef = useRef(null);
     const [department, setDepartment] = useState(() => getStoredDept());
     const [showDeptModal, setShowDeptModal] = useState(false);
     const [deptDraft, setDeptDraft] = useState('');
@@ -122,6 +125,29 @@ export default function WorksheetViewer() {
 
     useEffect(() => () => {
         if (renderScaleTimerRef.current) clearTimeout(renderScaleTimerRef.current);
+        if (stageTapTimerRef.current) clearTimeout(stageTapTimerRef.current);
+    }, []);
+
+    // PDF 영역 한 번 탭 → 변경사항/추가요청사항 오버레이 토글.
+    // react-zoom-pan-pinch 가 패닝/핀치 중에는 click 합성을 막아주므로 여기엔 단순 탭만 들어온다.
+    // 더블탭(줌 토글) 과 충돌하지 않도록 280ms 디바운스: 두 번째 탭이 빠르게 오면 단발 탭 액션은
+    // 취소(=라이브러리가 doubleClick 줌으로 처리하도록 양보).
+    const handleStageTap = useCallback((e) => {
+        // 페이저 등 자체 핸들러가 있는 자식은 stopPropagation 으로 이미 차단됨.
+        if (e?.target instanceof Element) {
+            const t = e.target;
+            // wsv-msg(불러오는 중 텍스트)나 페이저 영역이면 무시.
+            if (t.closest('.wsv-pager')) return;
+        }
+        if (stageTapTimerRef.current) {
+            clearTimeout(stageTapTimerRef.current);
+            stageTapTimerRef.current = null;
+            return;
+        }
+        stageTapTimerRef.current = setTimeout(() => {
+            stageTapTimerRef.current = null;
+            setChangeNoteVisible((v) => !v);
+        }, 280);
     }, []);
 
     // iOS PWA standalone 에서 click 이벤트가 안 발사되는 케이스를 보강.
@@ -165,30 +191,51 @@ export default function WorksheetViewer() {
         };
     }, []);
 
-    // 주문 상세
+    // 주문 상세 — 캐시버스터(_) + cache:'no-store' 로 워처가 방금 저장한 worksheetChangeNote
+    // 등이 모바일/CDN 캐시 때문에 옛 값으로 보이는 문제 방지. 백→포(visibilitychange) /
+    // 창 포커스 복귀에도 재조회 — 작업자가 뷰어를 띄워둔 상태에서 워처가 업데이트해도 곧 갱신.
     useEffect(() => {
         if (!orderNumber) return;
         let alive = true;
-        setLoadingDetail(true);
-        fetch(`${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}`)
-            .then(async (res) => {
+        const aliveCheck = () => alive;
+
+        const fetchDetail = async ({ initial = false } = {}) => {
+            if (initial) setLoadingDetail(true);
+            try {
+                const res = await fetch(
+                    `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}?_=${Date.now()}`,
+                    { cache: 'no-store' },
+                );
                 if (!res.ok) {
                     const body = await res.json().catch(() => ({}));
                     throw new Error(body.message || '지시서 정보를 가져오지 못했습니다.');
                 }
-                return res.json();
-            })
-            .then((data) => {
-                if (!alive) return;
+                const data = await res.json();
+                if (!aliveCheck()) return;
                 setDetail(data);
                 setDetailError('');
-            })
-            .catch((err) => {
-                if (!alive) return;
-                setDetailError(err.message || '오류가 발생했습니다.');
-            })
-            .finally(() => alive && setLoadingDetail(false));
-        return () => { alive = false; };
+            } catch (err) {
+                if (!aliveCheck()) return;
+                if (initial) setDetailError(err.message || '오류가 발생했습니다.');
+            } finally {
+                if (initial && aliveCheck()) setLoadingDetail(false);
+            }
+        };
+
+        fetchDetail({ initial: true });
+
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') fetchDetail();
+        };
+        const onFocus = () => fetchDetail();
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('focus', onFocus);
+
+        return () => {
+            alive = false;
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('focus', onFocus);
+        };
     }, [orderNumber]);
 
     // 미리보기 URL revoke
@@ -359,11 +406,10 @@ export default function WorksheetViewer() {
                 )}
             </header>
 
-            {/* stage 자체엔 onClick 없음 — 옛 버전엔 PDF 영역 탭 = 업로드 시트 열기
-                동작이 있었지만, 액션바에 명시적 사진찍기 버튼이 생긴 뒤로는 중복일 뿐
-                아니라 PWA 풀스크린에서 stage 가 화면 거의 전체를 덮어 어딜 눌러도
-                시트가 튀어나오는 버그처럼 동작했음. 시트 열기는 사진찍기 버튼 전용. */}
-            <div className="wsv-stage" ref={stageRef}>
+            {/* stage onClick — PDF 영역 한 번 탭 → 변경사항/추가요청사항 오버레이 토글.
+                옛 버전엔 stage 탭 = 업로드 시트 열기였으나 사진찍기 버튼으로 분리됐고,
+                지금은 워처에서 작업자가 입력한 변경 메모를 즉석에서 띄우는 데 쓴다. */}
+            <div className="wsv-stage" ref={stageRef} onClick={handleStageTap}>
                 {loadingDetail && <div className="wsv-msg">불러오는 중…</div>}
                 {!loadingDetail && detailError && <div className="wsv-msg error">{detailError}</div>}
                 {!loadingDetail && !detailError && !pdfFile && (
@@ -423,8 +469,12 @@ export default function WorksheetViewer() {
                                             setPdfReady(true);
                                             // Page 가 실제로 그려진 직후 한 번 더 가운데 정렬 — centerOnInit
                                             // 이 빈 콘텐츠 기준으로 계산돼 어긋나는 케이스 방지.
+                                            // resetTransform 만 부르면 일부 케이스에서 변환 좌표(0,0) 만
+                                            // 복원돼 가운데가 안 맞을 때가 있어 centerView 도 추가 호출.
                                             requestAnimationFrame(() => {
-                                                transformRef.current?.resetTransform?.(0);
+                                                const api = transformRef.current;
+                                                api?.resetTransform?.(0);
+                                                api?.centerView?.(1, 0);
                                             });
                                         }}
                                         loading={null}
@@ -436,6 +486,62 @@ export default function WorksheetViewer() {
                     </TransformWrapper>
                 )}
                 {pdfError && <div className="wsv-msg error">{pdfError}</div>}
+
+                {changeNoteVisible && (() => {
+                    const note = (detail?.note || '').trim();
+                    const items = (detail?.additionalItems || '').trim();
+                    const change = (detail?.worksheetChangeNote || '').trim();
+                    const dueDateLabel = (() => {
+                        if (!change || !detail?.dueDate) return '';
+                        const d = detail.dueDate;
+                        // YYYY-MM-DD → "M월 D일" + 시간 있으면 추가.
+                        const parts = d.split('-');
+                        if (parts.length === 3) {
+                            const m = parseInt(parts[1], 10);
+                            const day = parseInt(parts[2], 10);
+                            return `${m}월 ${day}일${detail.dueTime ? ` ${detail.dueTime}` : ''}`;
+                        }
+                        return d + (detail.dueTime ? ` ${detail.dueTime}` : '');
+                    })();
+                    const hasAny = note || items || change;
+                    return (
+                        <div className="wsv-change-overlay" aria-live="polite">
+                            <div className="wsv-change-card">
+                                {note && (
+                                    <div className="wsv-change-section">
+                                        <div className="wsv-change-key">거래처 추가요청사항</div>
+                                        <div className="wsv-change-text">{note}</div>
+                                    </div>
+                                )}
+                                {items && (
+                                    <div className="wsv-change-section">
+                                        <div className="wsv-change-key">추가물품</div>
+                                        <div className="wsv-change-text">{items}</div>
+                                    </div>
+                                )}
+                                {change && (
+                                    <div className="wsv-change-section">
+                                        <div className="wsv-change-key wsv-change-key-warn">변경사항</div>
+                                        <div className="wsv-change-text">{change}</div>
+                                    </div>
+                                )}
+                                {change && dueDateLabel && (
+                                    <div className="wsv-change-section">
+                                        <div className="wsv-change-key wsv-change-key-warn">납품날짜</div>
+                                        <div className="wsv-change-text">{dueDateLabel}</div>
+                                    </div>
+                                )}
+                                {!hasAny && (
+                                    <div className="wsv-change-section">
+                                        <div className="wsv-change-text wsv-change-empty">
+                                            추가요청사항이 없습니다.
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
 
                 {numPages > 1 && (
                     <div className="wsv-pager" onClick={(e) => e.stopPropagation()}>

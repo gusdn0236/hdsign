@@ -96,16 +96,16 @@ export default function ClientSignup() {
                 {step === 1 && (
                     <form className="client-login-form" onSubmit={handleSearch}>
                         <div className="form-group">
-                            <label htmlFor="query">거래처명 또는 이메일</label>
+                            <label htmlFor="query">상호명</label>
                             <input
                                 id="query" type="text"
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
-                                placeholder="예: 현대기업 또는 hdno88@daum.net"
+                                placeholder="예: 현대기업"
                                 required
                             />
                             <small className="signup-hint">
-                                관리자가 등록한 거래처명/이메일을 입력해주세요. 표기가 정확하지 않아도 비슷한 거래처를 후보로 보여드립니다.
+                                관리자가 등록한 상호명을 입력해주세요. 표기가 정확하지 않아도 비슷한 거래처를 후보로 보여드립니다.
                             </small>
                         </div>
                         <button type="submit" className="login-btn" disabled={loading || !query.trim()}>
