@@ -23,6 +23,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -53,7 +54,17 @@ public class ClientService {
         ClientUser user = clientUserRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("아이디 또는 비밀번호가 올바르지 않습니다."));
 
-        if (!user.getIsActive()) {
+        // status 별 메시지 차별화 — 가입 흐름 단계에서 거래처가 자기 상태를 알 수 있게.
+        String status = user.getStatus();
+        if ("PENDING_APPROVAL".equals(status)) {
+            throw new RuntimeException("가입 신청 후 관리자 승인 대기 중입니다. 사무실로 문의해주세요.");
+        }
+        if ("PENDING_SIGNUP".equals(status)) {
+            // 이 상태로 로그인 시도가 들어오는 건 비정상 — username 이 비어있어 위 findByUsername 에서 못 찾음.
+            // 방어적으로만 처리.
+            throw new RuntimeException("아직 가입이 완료되지 않은 계정입니다.");
+        }
+        if (!"ACTIVE".equals(status) || !user.getIsActive()) {
             throw new RuntimeException("비활성화된 계정입니다. 담당자에게 문의해주세요.");
         }
         if (!passwordEncoder.matches(password, user.getPassword())) {
@@ -127,6 +138,90 @@ public class ClientService {
                 .build();
 
         return saveRequest(order, client, files);
+    }
+
+    /** 가입 검색 — 거래처명 정규화 매칭 또는 이메일 정확 매칭. PENDING_SIGNUP 행만 대상. */
+    @Transactional(readOnly = true)
+    public ClientAuthDto.SignupSearchResponse signupSearch(String query) {
+        if (query == null || query.isBlank())
+            return new ClientAuthDto.SignupSearchResponse(List.of());
+        String trimmed = query.trim();
+        String byName = normalizeKey(trimmed);
+        String byEmail = trimmed.toLowerCase();
+
+        List<ClientAuthDto.SignupSearchMatch> matches = new ArrayList<>();
+        for (ClientUser u : clientUserRepository.findAll()) {
+            if (!"PENDING_SIGNUP".equals(u.getStatus())) continue;
+            boolean nameHit = u.getCompanyName() != null && normalizeKey(u.getCompanyName()).equals(byName);
+            boolean folderHit = u.getNetworkFolderName() != null && !u.getNetworkFolderName().isBlank()
+                    && normalizeKey(u.getNetworkFolderName()).equals(byName);
+            boolean emailHit = u.getEmail() != null && !u.getEmail().isBlank()
+                    && u.getEmail().equalsIgnoreCase(byEmail);
+            if (nameHit || folderHit || emailHit) {
+                matches.add(new ClientAuthDto.SignupSearchMatch(
+                        u.getId(),
+                        u.getCompanyName(),
+                        maskEmail(u.getEmail())
+                ));
+            }
+        }
+        return new ClientAuthDto.SignupSearchResponse(matches);
+    }
+
+    /** 가입 신청 — 검색 단계에서 받은 id 에 신청 정보 박고 PENDING_APPROVAL 전환.
+     *  방어: id 가 PENDING_SIGNUP 이 아니면 거부, username 중복도 거부. */
+    @Transactional
+    public void submitSignup(ClientAuthDto.SignupRequest req) {
+        if (req.getId() == null) throw new IllegalArgumentException("거래처 식별 정보가 없습니다.");
+        if (req.getUsername() == null || req.getUsername().isBlank())
+            throw new IllegalArgumentException("아이디를 입력해주세요.");
+        if (req.getPhone() == null || req.getPhone().isBlank())
+            throw new IllegalArgumentException("전화번호를 입력해주세요.");
+
+        ClientUser user = clientUserRepository.findById(req.getId())
+                .orElseThrow(() -> new IllegalArgumentException("거래처 정보를 찾을 수 없습니다."));
+        if (!"PENDING_SIGNUP".equals(user.getStatus()))
+            throw new IllegalArgumentException("이미 가입 신청 중이거나 활성 계정입니다.");
+
+        String username = req.getUsername().trim();
+        if (clientUserRepository.existsByUsername(username))
+            throw new IllegalArgumentException("이미 사용 중인 아이디입니다. 다른 아이디로 신청해주세요.");
+
+        user.setUsername(username);
+        user.setPhone(req.getPhone().trim());
+        if (req.getEmail() != null && !req.getEmail().isBlank()) {
+            String normalizedEmail = req.getEmail().trim().toLowerCase();
+            // 이메일 중복 — 이미 다른 거래처가 등록한 이메일이면 거부.
+            clientUserRepository.findByEmail(normalizedEmail).ifPresent(existing -> {
+                if (!existing.getId().equals(user.getId()))
+                    throw new IllegalArgumentException("이미 등록된 이메일입니다.");
+            });
+            user.setEmail(normalizedEmail);
+        }
+        user.setStatus("PENDING_APPROVAL");
+        user.setSignupRequestedAt(LocalDateTime.now());
+        clientUserRepository.save(user);
+    }
+
+    private static String normalizeKey(String s) {
+        if (s == null) return "";
+        String n = Normalizer.normalize(s, Normalizer.Form.NFC);
+        StringBuilder sb = new StringBuilder(n.length());
+        for (int i = 0; i < n.length(); i++) {
+            char c = n.charAt(i);
+            if (!Character.isWhitespace(c)) sb.append(c);
+        }
+        return sb.toString().toLowerCase();
+    }
+
+    private static String maskEmail(String email) {
+        if (email == null || email.isBlank()) return null;
+        int at = email.indexOf('@');
+        if (at <= 1) return email; // 너무 짧으면 그대로
+        String local = email.substring(0, at);
+        String domain = email.substring(at);
+        // 앞 2글자만 노출, 나머지는 *
+        return local.substring(0, Math.min(2, local.length())) + "***" + domain;
     }
 
     @Transactional(readOnly = true)

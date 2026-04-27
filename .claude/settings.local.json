@@ -54,7 +54,8 @@
       "Bash(npm install *)",
       "Bash(cmd //c \"gradlew.bat compileJava --no-daemon\")",
       "PowerShell(.\\\\gradlew.bat compileJava --no-daemon 2>&1 | Select-Object -Last 25)",
-      "PowerShell(.\\\\backend\\\\gradlew.bat -p backend compileJava --no-daemon 2>&1 | Select-Object -Last 8)"
+      "PowerShell(.\\\\backend\\\\gradlew.bat -p backend compileJava --no-daemon 2>&1 | Select-Object -Last 8)",
+      "Bash(npx vite *)"
     ]
   }
 }

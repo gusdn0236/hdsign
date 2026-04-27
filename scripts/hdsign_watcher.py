@@ -422,35 +422,47 @@ def _normalize_company_key(name: str) -> str:
     return n.lower()
 
 
-def resolve_customer_folder(network_base: Path, company_name: str) -> Path:
-    """네트워크 베이스 안에서 companyName 에 해당하는 거래처 폴더 결정.
-    공백/대소문자/NFC 무시 정확 일치 매칭만 신뢰 — 글자가 다르면(오타 등) 매칭 X.
-    기존 폴더 매칭되면 그 폴더 경로(이름 변형 없이) 반환,
-    아니면 '<companyName> (자동생성)' 신규 경로 반환 (실제 생성은 호출자).
+def resolve_customer_folder(network_base: Path, network_folder_name: str,
+                            company_name: str) -> Path:
+    """네트워크 베이스 안에서 거래처 폴더 결정.
+    1순위: networkFolderName (관리자가 거래처관리에서 명시 지정한 폴더명) 정확 일치
+    2순위: companyName 정확 일치 (공백/대소문자/NFC 무시)
+    매칭 실패 시 '<networkFolderName 또는 companyName> (자동생성)' 신규 경로 반환.
     스캔 실패(권한/네트워크 끊김) 시에도 자동생성 경로로 폴백."""
-    target_key = _normalize_company_key(company_name)
-    safe_company = _sanitize_folder_name(company_name) or "(미지정)"
-    fallback_new = network_base / f"{safe_company} (자동생성)"
-    if not target_key:
+    primary_key = _normalize_company_key(network_folder_name)
+    fallback_key = _normalize_company_key(company_name)
+    label = (network_folder_name or "").strip() or (company_name or "").strip()
+    safe_label = _sanitize_folder_name(label) or "(미지정)"
+    fallback_new = network_base / f"{safe_label} (자동생성)"
+    if not primary_key and not fallback_key:
         return fallback_new
     try:
+        primary_hit = None
+        fallback_hit = None
         for child in network_base.iterdir():
             if not child.is_dir():
                 continue
-            if _normalize_company_key(child.name) == target_key:
-                return child
+            child_key = _normalize_company_key(child.name)
+            if primary_key and child_key == primary_key:
+                primary_hit = child
+                break
+            if fallback_key and child_key == fallback_key:
+                fallback_hit = child
+        if primary_hit is not None:
+            return primary_hit
+        if fallback_hit is not None:
+            return fallback_hit
     except Exception as e:
         ui_log(f"거래처 폴더 스캔 실패({e}) — 자동생성 경로로 진행")
     return fallback_new
 
 
-def deliver_to_network_folder(meta: dict, original_ai: Path,
-                              v8_ai: Path) -> Path | None:
-    """원본 .ai + v8 .ai 를 네트워크 거래처 폴더의 주문별 하위폴더로 복사.
-    구조: <network_base>/<거래처폴더>/<MM-DD title>/{원본.ai, <stem>_v8.ai}
-    성공 시 네트워크 v8 .ai 경로 반환 — FlexSign 으로 그걸 열어야 [Save .fs] 가
-    같은 폴더에 떨어진다.
-    네트워크 미설정/접근실패/복사실패 시 None 반환 — 호출자가 로컬 converted/ 사용."""
+def resolve_network_order_folder(meta: dict, primary_ai_name: str | None) -> Path | None:
+    """네트워크 거래처 폴더 안에 주문별 하위폴더를 만들고 그 경로 반환.
+    구조: <network_base>/<거래처폴더>/<MM-DD<제목 또는 첫 .ai 파일명>>/
+    폴더명 규칙: title > 첫 .ai 파일 stem > '제목없음', MM-DD 와 공백 없이 결합.
+    한 주문에 .ai 가 여러 개여도 호출자가 이 폴더 한 곳에 모두 묶어 넣는다.
+    네트워크 미설정/접근실패 시 None — 호출자가 로컬 converted/ 사용."""
     config = _load_config()
     base_str = (config.get("network_customer_base") or "").strip()
     if not base_str:
@@ -465,23 +477,24 @@ def deliver_to_network_folder(meta: dict, original_ai: Path,
         return None
 
     company = (meta.get("companyName") or "").strip()
+    network_folder = (meta.get("networkFolderName") or "").strip()
     title = (meta.get("title") or "").strip()
-    order_number = (meta.get("orderNumber") or "").strip()
     md = _format_md(meta.get("createdAt"))
     if not md:
         today = date.today()
         md = f"{today.month:02d}-{today.day:02d}"
 
+    # 폴더명: title > 첫 .ai 파일 stem > '제목없음'. MM-DD 와는 공백 없이 결합.
     if title:
-        order_folder_raw = f"{md} {title}"
-    elif order_number:
-        # title 빈 케이스 폴백 — 주문번호로 식별 가능하게.
-        order_folder_raw = f"{md} {order_number}"
+        name_part = title
+    elif primary_ai_name:
+        name_part = Path(primary_ai_name).stem or "제목없음"
     else:
-        order_folder_raw = md
-    order_folder_name = _sanitize_folder_name(order_folder_raw) or md
+        name_part = "제목없음"
+    order_folder_raw = f"{md}{name_part}"
+    order_folder_name = _sanitize_folder_name(order_folder_raw) or f"{md}제목없음"
 
-    customer_folder = resolve_customer_folder(network_base, company)
+    customer_folder = resolve_customer_folder(network_base, network_folder, company)
     is_new_customer = customer_folder.name.endswith("(자동생성)") and not customer_folder.exists()
     order_folder = customer_folder / order_folder_name
     try:
@@ -491,7 +504,13 @@ def deliver_to_network_folder(meta: dict, original_ai: Path,
         return None
     if is_new_customer:
         ui_log(f"거래처 폴더 신규 생성: {customer_folder.name}")
+    return order_folder
 
+
+def copy_ai_pair_to_network(order_folder: Path, original_ai: Path,
+                            v8_ai: Path) -> Path | None:
+    """원본 .ai + v8 .ai 를 미리 만들어둔 주문 폴더에 복사. v8 경로 반환.
+    실패 시 None — 호출자가 로컬 v8 사용."""
     try:
         dst_orig = order_folder / original_ai.name
         shutil.copy2(str(original_ai), str(dst_orig))
@@ -500,9 +519,133 @@ def deliver_to_network_folder(meta: dict, original_ai: Path,
     except Exception as e:
         ui_log(f"네트워크 복사 실패: {e} — 로컬 v8 사용")
         return None
-
-    ui_log(f"네트워크 저장: {customer_folder.name} / {order_folder_name}")
+    ui_log(f"네트워크 저장: {order_folder.parent.name} / {order_folder.name} / {original_ai.name}")
     return dst_v8
+
+
+# ── Admin token + 거래처 폴더 목록 동기화 ────────────────────────────────────
+
+# admin_username/admin_password 는 config.json 에 둔다. 토큰은 24h 유효(JwtUtil 기본값).
+# 만료 30분 전부터 재로그인 — 시계 어긋남 보호.
+_admin_token_cache: dict = {"token": None, "exp_ts": 0.0}
+_admin_token_lock = threading.Lock()
+_ADMIN_TOKEN_REFRESH_BEFORE_SEC = 30 * 60
+
+
+def _admin_login(username: str, password: str) -> str | None:
+    """관리자 로그인 → JWT 반환. 실패 시 None."""
+    url = f"{API_BASE}/api/auth/login"
+    body = json.dumps({"username": username, "password": password}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("token")
+    except Exception as e:
+        ui_log(f"관리자 로그인 실패: {e}")
+        return None
+
+
+def _get_admin_token() -> str | None:
+    """캐시된 admin 토큰 반환. 없거나 곧 만료면 재로그인. config 미설정 시 None."""
+    config = _load_config()
+    username = (config.get("admin_username") or "").strip()
+    password = (config.get("admin_password") or "")
+    if not username or not password:
+        return None
+    now = time.time()
+    with _admin_token_lock:
+        token = _admin_token_cache.get("token")
+        exp = _admin_token_cache.get("exp_ts", 0.0)
+        if token and now < exp - _ADMIN_TOKEN_REFRESH_BEFORE_SEC:
+            return token
+        new_token = _admin_login(username, password)
+        if not new_token:
+            return None
+        # JwtUtil 기본 만료 24h. 정확한 exp 파싱 대신 여유있게 23h 로 캐시.
+        _admin_token_cache["token"] = new_token
+        _admin_token_cache["exp_ts"] = now + 23 * 3600
+        return new_token
+
+
+def _list_network_folder_names() -> list[str] | None:
+    """network_customer_base 디렉토리의 1단계 하위 폴더명 리스트.
+    (자동생성) 접미사 폴더는 제외 — 워처가 매칭 실패로 만든 것일 수 있음.
+    네트워크 미설정/접근실패 시 None."""
+    config = _load_config()
+    base_str = (config.get("network_customer_base") or "").strip()
+    if not base_str:
+        return None
+    base = Path(base_str)
+    try:
+        if not base.exists():
+            return None
+        names = []
+        for child in base.iterdir():
+            if not child.is_dir():
+                continue
+            name = child.name
+            if name.endswith("(자동생성)"):
+                continue
+            names.append(name)
+        return sorted(names, key=_normalize_company_key)
+    except Exception as e:
+        ui_log(f"거래처 폴더 리스팅 실패: {e}")
+        return None
+
+
+def sync_network_folders_to_backend() -> bool:
+    """현재 거래처 폴더 목록을 백엔드 캐시에 푸시. admin 인증 필요.
+    성공 시 True. 폴더 미설정/네트워크 다운/인증 미설정 시 조용히 False."""
+    folders = _list_network_folder_names()
+    if folders is None:
+        return False
+    token = _get_admin_token()
+    if not token:
+        return False
+    url = f"{API_BASE}/api/admin/network-folders/sync"
+    body = json.dumps({"folders": folders}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+        ui_log(f"거래처 폴더 동기화 완료: {len(folders)}개")
+        return True
+    except urllib.error.HTTPError as e:
+        # 401 이면 캐시된 토큰 무효 — 다음 호출에서 재로그인 유도.
+        if e.code in (401, 403):
+            with _admin_token_lock:
+                _admin_token_cache["token"] = None
+        ui_log(f"거래처 폴더 동기화 실패 ({e.code})")
+    except Exception as e:
+        ui_log(f"거래처 폴더 동기화 오류: {e}")
+    return False
+
+
+def start_folder_sync_loop():
+    """시작 시 1회 + 6시간 간격으로 거래처 폴더 동기화.
+    빈도가 낮은 이유: 폴더 신규 생성은 잦지 않고, 사용자가 즉시 반영하고 싶을 때
+    GUI [지금 동기화] 버튼으로 트리거할 수 있다."""
+    def _run():
+        while True:
+            try:
+                sync_network_folders_to_backend()
+            except Exception as e:
+                ui_log(f"폴더 동기화 루프 오류: {e}")
+            time.sleep(6 * 3600)
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def trigger_folder_sync_async():
+    """GUI [지금 동기화] 버튼에서 호출. 백그라운드 스레드에서 1회 동기화."""
+    def _run():
+        ok = sync_network_folders_to_backend()
+        if not ok:
+            ui_log("거래처 폴더 동기화 실패 — config.json admin 계정/네트워크 베이스 확인")
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
@@ -969,6 +1112,20 @@ def _ask_print_match_blocking(orders: list[dict]) -> dict | None:
     return result["value"]
 
 
+def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 30):
+    """종이 인쇄(ShellExecute)가 PDF 핸들을 닫을 시간을 벌고 백그라운드에서 unlink.
+    실패 시 조용히 로그만 — 다음 인쇄 때까지 남아있어도 동작에는 영향 없음."""
+    def _run():
+        time.sleep(delay_sec)
+        try:
+            if pdf_path.exists():
+                pdf_path.unlink()
+                ui_log(f"인쇄 PDF 정리: {pdf_path.name}")
+        except Exception as e:
+            ui_log(f"인쇄 PDF 정리 실패: {pdf_path.name} ({e})")
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _process_printed_pdf(pdf_path: Path):
     """인쇄 폴더에 새 PDF 가 떨어졌을 때 호출.
     드롭다운 다이얼로그로 어떤 주문에 매칭할지 직원이 선택.
@@ -1027,9 +1184,14 @@ def _process_printed_pdf(pdf_path: Path):
     delivery_to_send = new_delivery if (new_delivery and new_delivery != orig_delivery) else None
     patch_due_date(order_number, new_due, delivery_to_send)
     # 사용자가 다이얼로그에서 "지시서 내용 변경됨" 체크 시에만 contentChanged=true 송신.
-    upload_worksheet_pdf(order_number, pdf_path,
-                         content_changed=bool(sel.get("content_changed", False)))
+    upload_ok = upload_worksheet_pdf(order_number, pdf_path,
+                                     content_changed=bool(sel.get("content_changed", False)))
     print_pdf_to_paper(pdf_path)
+    # 업로드 성공 시 로컬 PDF 자동 삭제 — 웹(R2)에 보관됐으니 printed/ 누적 방지.
+    # 종이 프린터(외부 리더)가 파일 핸들을 닫기 전에 지우면 인쇄 실패하므로 30초 지연.
+    # 업로드 실패 시엔 보존 — 사용자가 수동 재업로드/검증할 수 있게.
+    if upload_ok:
+        _schedule_printed_pdf_cleanup(pdf_path)
 
 
 class PrintedPdfHandler(FileSystemEventHandler):
@@ -2364,6 +2526,11 @@ def process_zip(zip_path: Path):
     if not ai_files:
         ui_log(f"{order_number}: AI 파일 없음 — 확인 필요")
     else:
+        # 한 주문의 모든 .ai 를 같은 폴더에 묶기 위해 첫 파일 기준으로 폴더를 한 번만 결정.
+        primary_ai_name = ai_files[0].name
+        network_order_folder = resolve_network_order_folder(meta, primary_ai_name)
+        if network_order_folder is None:
+            all_network_ok = False
         for ai_file in ai_files:
             converted = convert_ai_file(Path(ai_file), qr_js,
                                         header_text, left_text, note_text)
@@ -2372,9 +2539,12 @@ def process_zip(zip_path: Path):
                 # 네트워크 거래처/주문 폴더에 원본 + v8 복사. 성공 시 그 v8 경로를
                 # FlexSign 에 열어주면 [Save .fs] 가 같은 폴더에 자동으로 떨어진다.
                 # 실패 시 None — 로컬 converted/ v8 로 폴백.
-                network_v8 = deliver_to_network_folder(meta, Path(ai_file), ai_out)
-                if network_v8 is None:
-                    all_network_ok = False
+                network_v8 = None
+                if network_order_folder is not None:
+                    network_v8 = copy_ai_pair_to_network(network_order_folder,
+                                                         Path(ai_file), ai_out)
+                    if network_v8 is None:
+                        all_network_ok = False
                 flex_target = network_v8 if network_v8 is not None else ai_out
                 launch_flexsign(flex_target)
                 any_converted = True
@@ -2494,6 +2664,20 @@ class App(tk.Tk):
         self._detail_lbl = tk.Label(col, text="", bg=self.CARD, fg="#71717a",
                                     font=("맑은 고딕", 9), anchor="w")
         self._detail_lbl.pack(anchor="w")
+
+        # Action row — 거래처 폴더 목록을 즉시 백엔드에 동기화 (관리자 모달 자동완성 용도)
+        act = tk.Frame(self._card, bg=self.CARD)
+        act.pack(fill="x", padx=24, pady=(12, 0))
+        sync_btn = tk.Button(
+            act, text="거래처 폴더 동기화",
+            bg="#f4f4f5", fg="#3f3f46",
+            activebackground="#e4e4e7",
+            font=("맑은 고딕", 9),
+            relief="flat", bd=0, highlightthickness=0,
+            cursor="hand2", padx=12, pady=6,
+            command=trigger_folder_sync_async,
+        )
+        sync_btn.pack(side="left")
 
         # Divider
         tk.Frame(self._card, bg="#e4e4e7", height=1).pack(fill="x", padx=24, pady=(20, 0))
@@ -2634,6 +2818,9 @@ class App(tk.Tk):
             self._observer.start()
 
             start_ping_server()
+
+            # 거래처 폴더 목록을 백엔드에 주기적으로 푸시 — 관리자 모달 자동완성용.
+            start_folder_sync_loop()
 
             ui_status("watching", "지시서가 도착하면 자동으로 열어드립니다")
 

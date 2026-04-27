@@ -110,3 +110,92 @@
     animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 회원가입 페이지 */
+.signup-link {
+    display: block;
+    text-align: center;
+    margin-top: 16px;
+    font-size: 13px;
+    color: #005f73;
+    font-weight: 600;
+    text-decoration: none;
+}
+.signup-link:hover { text-decoration: underline; }
+
+.signup-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    color: #888;
+}
+
+.signup-matches {
+    margin-top: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.signup-matches p {
+    font-size: 13px;
+    color: #555;
+    margin: 0 0 4px;
+}
+.signup-match-btn {
+    text-align: left;
+    padding: 12px 14px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.signup-match-btn:hover { border-color: #005f73; background: #f8fafc; }
+.signup-match-email { font-size: 11px; color: #888; }
+
+.signup-confirm {
+    background: #f0f9ff;
+    border: 1px solid #cce7f0;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 14px;
+    text-align: center;
+}
+.signup-confirm span { font-size: 12px; color: #555; display: block; margin-bottom: 4px; }
+.signup-confirm strong { font-size: 16px; color: #1a1a2e; font-weight: 700; }
+
+.signup-policy {
+    font-size: 12px;
+    color: #64748b;
+    background: #fffbeb;
+    border-left: 3px solid #f59e0b;
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin: 0 0 14px;
+    line-height: 1.6;
+}
+
+.signup-actions {
+    display: flex;
+    gap: 8px;
+}
+.signup-actions .login-btn { flex: 1; }
+.signup-back-btn {
+    flex: 1;
+    padding: 13px;
+    border: 1px solid #e0e0e0;
+    background: #fff;
+    color: #555;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.signup-back-btn:hover { background: #f5f5f5; }
+
+.signup-done { text-align: center; padding: 16px 0; }
+.signup-done h2 { font-size: 18px; font-weight: 700; color: #1a7f4b; margin: 0 0 12px; }
+.signup-done p { font-size: 14px; color: #555; margin: 0 0 8px; line-height: 1.6; }
+.signup-done-meta { font-size: 12px; color: #888; margin-bottom: 20px !important; }

@@ -114,6 +114,72 @@
 }
 .ca-status.active   { background: #ecfdf3; color: #166534; }
 .ca-status.inactive { background: #f1f5f9; color: #94a3b8; }
+.ca-status.pending-signup { background: #fef3c7; color: #92400e; }
+.ca-status.pending-approval { background: #dbeafe; color: #1e40af; }
+
+/* status 필터 탭 */
+.ca-status-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+
+/* 액션 버튼 추가 색상 */
+.ca-approve-btn {
+    padding: 5px 10px; border: none; border-radius: 6px;
+    background: #16a34a; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.ca-approve-btn:hover { background: #15803d; }
+.ca-reject-btn {
+    padding: 5px 10px; border: none; border-radius: 6px;
+    background: #fff; color: #dc2626; border: 1px solid #fecaca;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.ca-reject-btn:hover { background: #fef2f2; }
+
+/* credentials 카드 (평문 비번 표시) */
+.ca-cred-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.ca-cred-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.ca-cred-label {
+    width: 60px;
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 600;
+}
+.ca-cred-value {
+    flex: 1;
+    font-size: 14px;
+    color: #1a1a2e;
+    font-weight: 600;
+    word-break: break-all;
+}
+.ca-cred-password {
+    font-family: 'Consolas', 'Menlo', monospace;
+    font-size: 16px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+.ca-cred-copy-all { align-self: flex-start; margin-top: 4px; }
+.ca-cred-hint {
+    margin-top: 14px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.6;
+    background: #fffbeb;
+    border-left: 3px solid #f59e0b;
+    padding: 10px 12px;
+    border-radius: 6px;
+}
 
 .ca-actions { display: flex; gap: 6px; }
 .ca-edit-btn {
@@ -200,6 +266,94 @@
     box-shadow: 0 8px 40px rgba(0,0,0,0.18);
 }
 .ca-modal-sm { max-width: 360px; }
+.ca-modal-xl {
+    max-width: 1400px;
+    width: 96vw;
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    padding: 24px 24px 18px;
+}
+
+/* 헤더 액션 (거래처 추가 + 일괄 등록) */
+.ca-header-actions { display: flex; gap: 10px; align-items: center; }
+.ca-bulk-btn {
+    padding: 9px 16px;
+    background: #fff;
+    color: #1a1a2e;
+    border: 1.5px solid #1a1a2e;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.ca-bulk-btn:hover:not(:disabled) { background: #f4f4f5; }
+.ca-bulk-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 일괄 등록 모달 내부 */
+.ca-bulk-header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+.ca-bulk-header h3 { margin: 0; }
+.ca-bulk-meta { font-size: 12px; color: #71717a; }
+
+.ca-bulk-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #f8fafc;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.ca-bulk-checkbox { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #475569; cursor: pointer; }
+.ca-mini-btn {
+    padding: 5px 10px;
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #334155;
+    cursor: pointer;
+}
+.ca-mini-btn:hover { background: #f1f5f9; }
+.ca-bulk-spacer { flex: 1; }
+.ca-bulk-count { font-size: 12px; color: #1a1a2e; font-weight: 600; }
+
+.ca-bulk-table-wrap {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 14px;
+}
+.ca-bulk-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ca-bulk-table thead { position: sticky; top: 0; background: #f8fafc; z-index: 1; }
+.ca-bulk-table th {
+    padding: 8px 6px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    color: #475569;
+    border-bottom: 1px solid #e2e8f0;
+    white-space: nowrap;
+}
+.ca-bulk-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+.ca-bulk-table tr.has-error td { background: #fef2f2; }
+.ca-bulk-folder { font-weight: 600; color: #1a1a2e; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ca-bulk-table input {
+    width: 100%;
+    padding: 5px 7px;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    font-size: 12px;
+    outline: none;
+}
+.ca-bulk-table input:focus { border-color: #1a1a2e; }
+.ca-bulk-error { font-size: 11px; color: #dc2626; max-width: 160px; }
 .ca-modal h3 {
     font-size: 18px;
     font-weight: 700;
@@ -224,6 +378,11 @@
     transition: border-color 0.2s;
 }
 .ca-field input:focus { border-color: #1a1a2e; }
+.ca-field .ca-hint {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+}
 
 .ca-field-toggle { flex-direction: row; align-items: center; justify-content: space-between; }
 .ca-toggle {

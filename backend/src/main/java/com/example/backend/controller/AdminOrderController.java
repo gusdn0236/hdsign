@@ -245,6 +245,8 @@ public class AdminOrderController {
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("orderNumber", order.getOrderNumber());
         info.put("companyName", order.getClient().getCompanyName());
+        // 워처가 거래처 폴더 매칭에 우선 사용. 빈 값이면 워처가 companyName 으로 폴백.
+        info.put("networkFolderName", order.getClient().getNetworkFolderName());
         info.put("contactName", order.getClient().getContactName());
         info.put("phone", order.getClient().getPhone());
         info.put("title", order.getTitle());

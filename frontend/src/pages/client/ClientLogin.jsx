@@ -91,6 +91,7 @@ export default function ClientLogin() {
                     </button>
                 </form>
 
+                <Link to="/client/signup" className="signup-link">처음이세요? 회원가입 →</Link>
                 <Link to="/" className="back-link">← 메인 사이트로 돌아가기</Link>
             </div>
         </div>

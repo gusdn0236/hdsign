@@ -70,6 +70,7 @@ const NoticeAdmin      = lazyWithRetry(() => import('./pages/admin/NoticeAdmin.j
 const OrderAdmin       = lazyWithRetry(() => import('./pages/admin/OrderAdmin.jsx'))
 const ClientAdmin      = lazyWithRetry(() => import('./pages/admin/ClientAdmin.jsx'))
 const ClientLogin      = lazyWithRetry(() => import('./pages/client/ClientLogin.jsx'))
+const ClientSignup     = lazyWithRetry(() => import('./pages/client/ClientSignup.jsx'))
 const ClientLayout     = lazyWithRetry(() => import('./pages/client/ClientLayout.jsx'))
 const ClientRequest    = lazyWithRetry(() => import('./pages/client/ClientRequest.jsx'))
 const ClientQuoteRequest = lazyWithRetry(() => import('./pages/client/ClientQuoteRequest.jsx'))
@@ -143,6 +144,7 @@ function App() {
                         <Route path="/m/worksheets/:orderNumber" element={<WorksheetViewer />} />
 
                         <Route path="/client/login" element={<ClientLogin />} />
+                        <Route path="/client/signup" element={<ClientSignup />} />
                         <Route path="/client" element={<ClientLayout />}>
                             <Route index         element={<Navigate to="request" replace />} />
                             <Route path="request" element={<ClientRequest />} />
