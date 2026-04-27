@@ -96,7 +96,7 @@ export default function ClientSignup() {
                                 id="query" type="text"
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
-                                placeholder="예: 진성커뮤니티 또는 contact@company.com"
+                                placeholder="예: 현대기업 또는 hdno88@daum.net"
                                 required
                             />
                             <small className="signup-hint">
