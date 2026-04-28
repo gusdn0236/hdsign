@@ -1,19 +1,28 @@
 .oval-button {
+    /* inline-flex + center 로 수직/수평 모두 정확히 가운데.
+       inline-block + padding 방식은 한글 폰트의 ascent/descent 차이로
+       텍스트가 살짝 위로 떠 보이는 현상이 있어 flex 정렬로 통일. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     margin-top: 20px;
-    padding: 12px 32px;
+    height: 48px;
+    padding: 0 32px;
     border: 2px solid white;
     border-radius: 999px;
     background-color: transparent;
     color: white;
     font-size: 16px;
     font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0.01em;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: background-color 0.25s ease, transform 0.25s ease;
     text-align: center;
-
-    /* a 태그 기본값 제거 */
     text-decoration: none;
-    display: inline-block;
+    box-sizing: border-box;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .oval-button:hover {
@@ -23,8 +32,17 @@
 
 @media (max-width: 768px) {
     .oval-button {
-        min-height: 44px;
-        padding: 11px 24px;
+        height: 44px;
+        padding: 0 24px;
         font-size: 15px;
+        margin-top: 18px;
+    }
+}
+
+@media (max-width: 420px) {
+    .oval-button {
+        height: 42px;
+        padding: 0 20px;
+        font-size: 14px;
     }
 }

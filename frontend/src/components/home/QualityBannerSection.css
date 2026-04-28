@@ -26,17 +26,22 @@
 }
 
 .quality-text h2 {
-    font-size: clamp(34px, 4vw, 48px);
+    font-size: clamp(28px, 4vw, 48px);
     line-height: 1.18;
     font-weight: 800;
     margin: 0 0 10px;
+    letter-spacing: -0.02em;
+    word-break: keep-all;
+    overflow-wrap: break-word;
 }
 
 .quality-text p {
-    font-size: clamp(15px, 1.6vw, 18px);
+    font-size: clamp(14px, 1.6vw, 18px);
     font-weight: 300;
-    line-height: 1.5;
+    line-height: 1.55;
     margin: 0;
+    word-break: keep-all;
+    overflow-wrap: break-word;
 }
 
 @media (max-width: 768px) {
@@ -52,17 +57,32 @@
     .quality-text {
         left: 22px;
         right: 22px;
-        bottom: 64px;
+        bottom: 56px;
         top: auto;
         transform: none;
         width: auto;
     }
 
     .quality-text h2 {
-        font-size: clamp(30px, 8.4vw, 38px);
+        font-size: clamp(26px, 7.5vw, 38px);
     }
 
     .quality-text p {
-        font-size: 15px;
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 420px) {
+    .quality-banner-section {
+        min-height: 78vh;
+        min-height: 78svh;
+    }
+    .quality-text {
+        left: 16px;
+        right: 16px;
+        bottom: 44px;
+    }
+    .quality-text h2 {
+        font-size: 24px;
     }
 }

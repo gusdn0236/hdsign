@@ -1,4 +1,4 @@
-﻿.departments-page {
+.departments-page {
     max-width: 1100px;
     margin: 0 auto;
     padding: 5rem 2rem 6rem;
@@ -11,6 +11,7 @@
     font-weight: 700;
     color: #111;
     margin-bottom: 0.8rem;
+    letter-spacing: -0.02em;
 }
 
 .departments-subtitle {
@@ -26,7 +27,7 @@
     align-items: flex-start;
 }
 
-/* 왼쪽 건물 네비게이션 */
+/* 왼쪽 건물 네비게이션 (데스크톱) */
 .building-nav {
     display: flex;
     flex-direction: column;
@@ -39,11 +40,11 @@
     align-items: center;
     gap: 1rem;
     padding: 0.9rem 1.2rem;
-    border-left: 4px solid #ccc;
+    border-left: 4px solid var(--floor-color, #ccc);
     background-color: #f9f9f9;
     border-radius: 0 8px 8px 0;
     cursor: pointer;
-    transition: all 0.25s ease;
+    transition: transform 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .floor-btn:hover {
@@ -53,13 +54,17 @@
 
 .floor-btn.active {
     transform: translateX(4px);
-    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    /* color-mix 로 active 시 floor-color 의 약 9% tint 배경.
+       지원 안 되는 구형 브라우저는 기본 #f9f9f9 유지(grace degrade). */
+    background-color: color-mix(in srgb, var(--floor-color) 12%, #fff);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
 .floor-label {
     font-size: 0.85rem;
     font-weight: 700;
     min-width: 28px;
+    color: var(--floor-color);
 }
 
 .floor-name {
@@ -74,12 +79,12 @@
     border-top: 4px solid #ccc;
     background-color: #fff;
     border-radius: 0 0 12px 12px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.07);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.07);
     padding: 2.5rem;
     transition: border-top-color 0.3s ease;
-
     height: 500px;
-    overflow-y: auto;}
+    overflow-y: auto;
+}
 
 .floor-detail-header {
     margin-bottom: 2rem;
@@ -98,6 +103,7 @@
     font-weight: 700;
     color: #111;
     margin: 0.4rem 0 0.6rem;
+    letter-spacing: -0.01em;
 }
 
 .floor-detail-desc {
@@ -129,37 +135,136 @@
     background-color: #f0f0f0;
 }
 
+/* ---------- 모바일 ---------- */
 @media (max-width: 768px) {
+    .departments-page {
+        padding: 3.5rem 1rem 4rem;
+    }
+    .departments-title {
+        font-size: 1.6rem;
+    }
+    .departments-subtitle {
+        font-size: 0.92rem;
+        margin-bottom: 1.8rem;
+        word-break: keep-all;
+    }
     .departments-layout {
         flex-direction: column;
+        gap: 1.2rem;
     }
 
+    /* 가로 스크롤 슬림 칩 탭바 — flex:1/3 분할 grid 대신
+       OS 네이티브 탭바 같은 1줄 가로 스크롤. 층이 많아도 안 깨짐. */
     .building-nav {
-        min-width: unset;
-        width: 100%;
         flex-direction: row;
-        flex-wrap: wrap;
-        gap: 0.4rem;
+        flex-wrap: nowrap;
+        gap: 8px;
+        min-width: 0;
+        width: auto;
+        margin: 0 -1rem;
+        padding: 4px 1rem 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .building-nav::-webkit-scrollbar {
+        display: none;
     }
 
     .floor-btn {
-        flex: 1;
-        min-width: 80px;
-        flex-direction: column;
-        gap: 0.3rem;
-        border-left: none;
-        border-top: 4px solid #ccc;
-        border-radius: 0 0 8px 8px;
-        text-align: center;
-        padding: 0.7rem 0.5rem;
+        flex: 0 0 auto;
+        flex-direction: row;
+        gap: 8px;
+        height: 38px;
+        padding: 0 16px;
+        border: 1px solid #e4e4e7;
+        border-left: 1px solid #e4e4e7;
+        border-radius: 999px;
+        background: #fff;
+        white-space: nowrap;
+        align-items: center;
+        transition: background-color 0.18s ease, border-color 0.18s ease,
+                    color 0.18s ease, transform 0.18s ease;
     }
-
+    .floor-btn:hover,
     .floor-btn.active {
-        transform: translateY(4px);
+        transform: none;
+    }
+    .floor-btn.active {
+        background: var(--floor-color);
+        border-color: var(--floor-color);
+        color: #fff;
+        box-shadow: 0 4px 14px color-mix(in srgb, var(--floor-color) 35%, transparent);
     }
 
-    .floor-btn:hover {
-        transform: translateY(4px);
+    .floor-label {
+        font-size: 0.72rem;
+        font-weight: 800;
+        min-width: 0;
+        letter-spacing: 0.03em;
+        color: var(--floor-color);
+    }
+    .floor-btn.active .floor-label {
+        color: rgba(255, 255, 255, 0.78);
+    }
+    .floor-name {
+        font-size: 0.86rem;
+        font-weight: 700;
+        line-height: 1;
+        color: #3f3f46;
+    }
+    .floor-btn.active .floor-name {
+        color: #fff;
+    }
+
+    /* 상세 카드 — 모바일에선 자연 높이, 라운드 통일 */
+    .floor-detail {
+        height: auto;
+        max-height: none;
+        padding: 1.6rem 1.3rem;
+        border-radius: 12px;
+        border-top-width: 4px;
+    }
+    .floor-detail-header {
+        margin-bottom: 1.2rem;
+        padding-bottom: 1rem;
+    }
+    .floor-detail-floor {
+        font-size: 0.78rem;
+    }
+    .floor-detail-name {
+        font-size: 1.3rem;
+        margin: 0.3rem 0 0.5rem;
+    }
+    .floor-detail-desc {
+        font-size: 0.92rem;
+        line-height: 1.55;
+        word-break: keep-all;
+    }
+    .floor-detail-list {
+        gap: 0.55rem;
+    }
+    .floor-detail-list li {
+        padding: 0.78rem 1rem;
+        font-size: 0.88rem;
+        line-height: 1.45;
     }
 }
 
+@media (max-width: 420px) {
+    .departments-page {
+        padding: 3rem 0.8rem 3rem;
+    }
+    .floor-btn {
+        height: 36px;
+        padding: 0 14px;
+        gap: 7px;
+    }
+    .floor-label {
+        font-size: 0.7rem;
+    }
+    .floor-name {
+        font-size: 0.82rem;
+    }
+}

@@ -160,3 +160,67 @@
 .cert-modal-nav:disabled { opacity: 0.25; cursor: default; }
 .cert-modal-prev { left: 24px; }
 .cert-modal-next { right: 24px; }
+
+/* ----- 반응형 ----- */
+@media (max-width: 768px) {
+    .cert-page {
+        padding: 3.5rem 1.2rem 4rem;
+    }
+    .cert-title {
+        font-size: 1.6rem;
+        letter-spacing: -0.02em;
+    }
+    .cert-subtitle {
+        font-size: 0.92rem;
+        margin-bottom: 2rem;
+        word-break: keep-all;
+    }
+    .cert-modal-content {
+        max-width: 94vw;
+        max-height: 90vh;
+    }
+    .cert-modal-content img {
+        max-height: 76vh;
+    }
+    .cert-modal-close {
+        top: max(12px, env(safe-area-inset-top));
+        right: 14px;
+        font-size: 1.7rem;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .cert-modal-nav {
+        width: 44px;
+        height: 44px;
+        font-size: 2rem;
+    }
+    .cert-modal-prev { left: 10px; }
+    .cert-modal-next { right: 10px; }
+    .cert-modal-counter {
+        font-size: 0.78rem;
+    }
+}
+
+@media (max-width: 420px) {
+    .cert-page {
+        padding: 3rem 0.9rem 3rem;
+    }
+    .cert-title {
+        font-size: 1.4rem;
+    }
+    .cert-grid {
+        gap: 8px;
+    }
+    .cert-item-icon {
+        font-size: 1.5rem;
+    }
+}
+
+@media (max-width: 360px) {
+    .cert-grid {
+        grid-template-columns: 1fr;
+    }
+}

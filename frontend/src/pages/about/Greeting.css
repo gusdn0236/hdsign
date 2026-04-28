@@ -129,3 +129,115 @@
     margin: 30px auto;
     border-radius: 8px;
 }
+
+/* ----- 반응형 ----- */
+@media (max-width: 1024px) {
+    .greeting-page {
+        padding: 5rem 1rem;
+    }
+    .greeting-large {
+        font-size: 2.2rem;
+        margin-bottom: 2.2rem;
+    }
+    .greeting-medium {
+        font-size: 1.25rem;
+        margin-bottom: 3rem;
+    }
+    .greeting-slider img {
+        height: 320px;
+    }
+    .greeting-company-img {
+        width: 80%;
+    }
+}
+
+@media (max-width: 768px) {
+    .greeting-page {
+        padding: 4rem 1rem 3rem;
+        line-height: 1.55;
+    }
+    .greeting-large {
+        font-size: 1.7rem;
+        margin-bottom: 1.6rem;
+        word-break: keep-all;
+        overflow-wrap: break-word;
+        letter-spacing: -0.02em;
+    }
+    .greeting-medium {
+        font-size: 1.05rem;
+        margin-bottom: 2.4rem;
+        word-break: keep-all;
+    }
+    .greeting-small-text p,
+    .greeting-footer-text {
+        font-size: 0.95rem;
+        word-break: keep-all;
+        overflow-wrap: break-word;
+    }
+    .greeting-footer-text {
+        margin-top: 2.6rem;
+    }
+    .greeting-sign {
+        margin-top: 3.5rem;
+    }
+    .ceo-name {
+        font-size: 1.3rem;
+        padding: 0;
+    }
+    .greeting-slider {
+        margin: 1.6rem 0;
+    }
+    .greeting-slider img {
+        height: 220px;
+    }
+    .marquee-content {
+        gap: 1.2rem;
+    }
+    .marquee-content img {
+        width: 100px;
+    }
+    .slick-prev {
+        left: -16px;
+    }
+    .slick-next {
+        right: -16px;
+    }
+    .slick-prev,
+    .slick-next {
+        width: 32px;
+        height: 32px;
+    }
+    .slick-prev:before,
+    .slick-next:before {
+        font-size: 20px;
+    }
+    .greeting-company-img {
+        width: 92%;
+        margin: 20px auto;
+    }
+}
+
+@media (max-width: 420px) {
+    .greeting-page {
+        padding: 3.4rem 0.8rem 2.4rem;
+    }
+    .greeting-large {
+        font-size: 1.45rem;
+    }
+    .greeting-medium {
+        font-size: 0.98rem;
+    }
+    .greeting-small-text p,
+    .greeting-footer-text {
+        font-size: 0.88rem;
+    }
+    .ceo-name {
+        font-size: 1.15rem;
+    }
+    .greeting-slider img {
+        height: 180px;
+    }
+    .marquee-content img {
+        width: 84px;
+    }
+}

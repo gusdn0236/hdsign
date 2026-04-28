@@ -69,16 +69,10 @@ const Departments = () => {
                 className={
                   'floor-btn' + (activeFloor === realIdx ? ' active' : '')
                 }
-                style={{
-                  borderLeftColor: floor.color,
-                  backgroundColor:
-                    activeFloor === realIdx ? floor.color + '18' : '',
-                }}
+                style={{ '--floor-color': floor.color }}
                 onClick={() => setActiveFloor(realIdx)}
               >
-                <span className="floor-label" style={{ color: floor.color }}>
-                  {floor.floor}
-                </span>
+                <span className="floor-label">{floor.floor}</span>
                 <span className="floor-name">{floor.name}</span>
               </div>
             );

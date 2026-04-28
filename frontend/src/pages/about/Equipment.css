@@ -1,4 +1,4 @@
-﻿.equipment-page {
+.equipment-page {
     max-width: 1100px;
     margin: 0 auto;
     padding: 5rem 2rem 6rem;
@@ -11,6 +11,7 @@
     font-weight: 700;
     color: #111;
     margin-bottom: 0.8rem;
+    letter-spacing: -0.02em;
 }
 
 .equipment-subtitle {
@@ -26,7 +27,7 @@
     align-items: flex-start;
 }
 
-/* 왼쪽 네비 */
+/* 왼쪽 네비 (데스크톱) */
 .equipment-nav {
     display: flex;
     flex-direction: column;
@@ -39,11 +40,11 @@
     align-items: center;
     gap: 1rem;
     padding: 0.9rem 1.2rem;
-    border-left: 4px solid #ccc;
+    border-left: 4px solid var(--floor-color, #ccc);
     background-color: #f9f9f9;
     border-radius: 0 8px 8px 0;
     cursor: pointer;
-    transition: all 0.25s ease;
+    transition: transform 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .equip-floor-btn:hover {
@@ -53,13 +54,15 @@
 
 .equip-floor-btn.active {
     transform: translateX(4px);
-    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    background-color: color-mix(in srgb, var(--floor-color) 12%, #fff);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
 .equip-floor-label {
     font-size: 0.85rem;
     font-weight: 700;
     min-width: 28px;
+    color: var(--floor-color);
 }
 
 .equip-floor-name {
@@ -70,17 +73,15 @@
 
 /* 오른쪽 상세 */
 .equipment-detail {
-    min-height: 420px;
     flex: 1;
     border-top: 4px solid #ccc;
     background-color: #fff;
     border-radius: 0 0 12px 12px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.07);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.07);
     padding: 2.5rem;
     transition: border-top-color 0.3s ease;
-
     min-height: 300px;
-    }
+}
 
 .equipment-detail-header {
     margin-bottom: 2rem;
@@ -99,6 +100,7 @@
     font-weight: 700;
     color: #111;
     margin: 0.4rem 0 0;
+    letter-spacing: -0.01em;
 }
 
 /* 장비 카드 */
@@ -117,7 +119,7 @@
 }
 
 .equip-card:hover {
-    box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
 }
 
 .equip-card-header {
@@ -132,6 +134,7 @@
     font-weight: 700;
     color: #222;
     margin: 0;
+    letter-spacing: -0.01em;
 }
 
 .equip-card-maker {
@@ -150,42 +153,6 @@
     margin: 0;
 }
 
-@media (max-width: 768px) {
-    .equipment-layout {
-        flex-direction: column;
-    }
-
-    .equipment-nav {
-        min-width: unset;
-        width: 100%;
-        flex-direction: row;
-        flex-wrap: wrap;
-        gap: 0.4rem;
-    }
-
-    .equip-floor-btn {
-        flex: 1;
-        min-width: 80px;
-        flex-direction: column;
-        gap: 0.3rem;
-        border-left: none;
-        border-top: 4px solid #ccc;
-        border-radius: 0 0 8px 8px;
-        text-align: center;
-        padding: 0.7rem 0.5rem;
-    }
-
-    .equip-floor-btn.active {
-        transform: translateY(4px);
-    }
-
-    .equip-floor-btn:hover {
-        transform: translateY(4px);
-    }
-}
-
-
-
 /* 장비 카드 이미지 레이아웃 */
 .equip-card-body {
     display: flex;
@@ -200,6 +167,8 @@
     border-radius: 6px;
     overflow: hidden;
     background-color: #eee;
+    position: relative;
+    cursor: pointer;
 }
 
 .equip-card-img {
@@ -211,6 +180,7 @@
 
 .equip-card-info {
     flex: 1;
+    min-width: 0;
 }
 
 .equip-card-tags {
@@ -230,16 +200,6 @@
     background-color: #f5f5f5;
 }
 
-@media (max-width: 640px) {
-    .equip-card-body {
-        flex-direction: column;
-    }
-    .equip-card-img-wrap {
-        width: 100%;
-        height: 200px;
-    }
-}
-
 /* 이미지 2장 레이아웃 */
 .equip-card-images {
     display: flex;
@@ -253,14 +213,7 @@
     height: 160px;
 }
 
-
-
 /* 이미지 호버 오버레이 */
-.equip-card-img-wrap {
-    position: relative;
-    cursor: pointer;
-}
-
 .equip-img-overlay {
     position: absolute;
     inset: 0;
@@ -279,7 +232,7 @@
 
 .equip-img-overlay span {
     font-size: 1.8rem;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
 }
 
 /* 모달 */
@@ -324,4 +277,178 @@
     z-index: 3001;
 }
 
-.equip-modal-close:hover { color: #fff; }
+.equip-modal-close:hover {
+    color: #fff;
+}
+
+/* ---------- 모바일 ---------- */
+@media (max-width: 768px) {
+    .equipment-page {
+        padding: 3.5rem 1rem 4rem;
+    }
+    .equipment-title {
+        font-size: 1.6rem;
+    }
+    .equipment-subtitle {
+        font-size: 0.92rem;
+        margin-bottom: 1.8rem;
+        word-break: keep-all;
+    }
+    .equipment-layout {
+        flex-direction: column;
+        gap: 1.2rem;
+    }
+
+    /* 슬림 칩 탭바 — Departments 와 동일 룩 */
+    .equipment-nav {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 8px;
+        min-width: 0;
+        width: auto;
+        margin: 0 -1rem;
+        padding: 4px 1rem 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .equipment-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .equip-floor-btn {
+        flex: 0 0 auto;
+        flex-direction: row;
+        gap: 8px;
+        height: 38px;
+        padding: 0 16px;
+        border: 1px solid #e4e4e7;
+        border-left: 1px solid #e4e4e7;
+        border-radius: 999px;
+        background: #fff;
+        white-space: nowrap;
+        align-items: center;
+        transition: background-color 0.18s ease, border-color 0.18s ease,
+                    color 0.18s ease, transform 0.18s ease;
+    }
+    .equip-floor-btn:hover,
+    .equip-floor-btn.active {
+        transform: none;
+    }
+    .equip-floor-btn.active {
+        background: var(--floor-color);
+        border-color: var(--floor-color);
+        color: #fff;
+        box-shadow: 0 4px 14px color-mix(in srgb, var(--floor-color) 35%, transparent);
+    }
+
+    .equip-floor-label {
+        font-size: 0.72rem;
+        font-weight: 800;
+        min-width: 0;
+        letter-spacing: 0.03em;
+        color: var(--floor-color);
+    }
+    .equip-floor-btn.active .equip-floor-label {
+        color: rgba(255, 255, 255, 0.78);
+    }
+    .equip-floor-name {
+        font-size: 0.86rem;
+        font-weight: 700;
+        line-height: 1;
+        color: #3f3f46;
+    }
+    .equip-floor-btn.active .equip-floor-name {
+        color: #fff;
+    }
+
+    /* 상세 카드 */
+    .equipment-detail {
+        min-height: 0;
+        padding: 1.6rem 1.3rem;
+        border-radius: 12px;
+    }
+    .equipment-detail-header {
+        margin-bottom: 1.3rem;
+        padding-bottom: 1rem;
+    }
+    .equip-detail-floor {
+        font-size: 0.78rem;
+    }
+    .equip-detail-name {
+        font-size: 1.3rem;
+        margin-top: 0.3rem;
+    }
+
+    /* 장비 카드 */
+    .equip-card {
+        padding: 1.1rem 1.2rem;
+        border-radius: 10px;
+    }
+    .equip-card-body {
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .equip-card-img-wrap,
+    .equip-card-images .equip-card-img-wrap {
+        width: 100%;
+        height: 200px;
+    }
+    .equip-card-images {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    .equip-card-header {
+        gap: 0.6rem;
+        margin-bottom: 0.6rem;
+        flex-wrap: wrap;
+    }
+    .equip-card-name {
+        font-size: 1rem;
+    }
+    .equip-card-maker {
+        font-size: 0.68rem;
+        padding: 0.15rem 0.55rem;
+    }
+    .equip-card-desc {
+        font-size: 0.86rem;
+        line-height: 1.6;
+    }
+    .equip-card-model {
+        font-size: 0.68rem;
+        padding: 0.15rem 0.6rem;
+    }
+
+    /* 모달 */
+    .equip-modal-content {
+        max-width: 94vw;
+        max-height: 90vh;
+    }
+    .equip-modal-close {
+        top: max(12px, env(safe-area-inset-top));
+        right: 14px;
+        font-size: 1.7rem;
+    }
+}
+
+@media (max-width: 420px) {
+    .equipment-page {
+        padding: 3rem 0.8rem 3rem;
+    }
+    .equip-floor-btn {
+        height: 36px;
+        padding: 0 14px;
+        gap: 7px;
+    }
+    .equip-floor-label {
+        font-size: 0.7rem;
+    }
+    .equip-floor-name {
+        font-size: 0.82rem;
+    }
+    .equip-card-img-wrap,
+    .equip-card-images .equip-card-img-wrap {
+        height: 180px;
+    }
+}

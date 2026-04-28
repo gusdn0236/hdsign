@@ -96,4 +96,81 @@
 .contact-value {
     font-size: 15px;
     color: #222;
+    word-break: keep-all;
+    overflow-wrap: break-word;
+}
+
+/* ----- 반응형 ----- */
+@media (max-width: 768px) {
+    .contact-page {
+        margin: 32px auto;
+        padding: 0 14px;
+    }
+    .contact-card {
+        padding: 28px 22px;
+        border-radius: 10px;
+    }
+    .contact-title {
+        font-size: 20px;
+        letter-spacing: -0.01em;
+    }
+    .contact-desc {
+        font-size: 14px;
+        margin-bottom: 22px;
+    }
+    .contact-email-wrap {
+        gap: 6px 12px;
+        padding: 14px 16px;
+        margin-bottom: 28px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    .contact-email {
+        font-size: 15px;
+        flex: 1 1 100%;
+        order: 3;
+        word-break: break-all;
+    }
+    .contact-email-label {
+        order: 1;
+        flex: 1 1 auto;
+    }
+    .copy-btn {
+        order: 2;
+        flex-shrink: 0;
+        padding: 7px 14px;
+        min-height: 34px;
+    }
+    .contact-item {
+        flex-direction: column;
+        gap: 4px;
+        padding-bottom: 16px;
+    }
+    .contact-info-list {
+        gap: 16px;
+    }
+    .contact-label {
+        min-width: 0;
+        font-size: 12px;
+        letter-spacing: 0.02em;
+    }
+    .contact-value {
+        font-size: 14px;
+        line-height: 1.5;
+    }
+}
+
+@media (max-width: 420px) {
+    .contact-page {
+        padding: 0 10px;
+    }
+    .contact-card {
+        padding: 22px 18px;
+    }
+    .contact-title {
+        font-size: 18px;
+    }
+    .contact-email {
+        font-size: 14px;
+    }
 }
