@@ -16,7 +16,7 @@ const TrustBannerSection = () => {
 
     return (
         <div className="trust-banner-section">
-            <img src={trustImg} alt="신뢰" className="trust-bg"/>
+            <img src={trustImg} alt="신뢰" className="trust-bg" loading="lazy" decoding="async"/>
             <div className="trust-text">
                 <h2 className={'title'} ref={titleRef}>믿음, 그 이상의 가치</h2>
                 <p className={'subtitle'} ref={subtitleRef}> 고객의 기대를 뛰어넘는 'HDSIGN' 의 책임과 신뢰</p>

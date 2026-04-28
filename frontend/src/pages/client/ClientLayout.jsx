@@ -27,7 +27,7 @@ const ClientLayout = () => {
     ];
 
     return (
-        <div>
+        <div className="client-layout-shell">
             <Banner
                 image={supportBannerImg}
                 title="거래처 포털"

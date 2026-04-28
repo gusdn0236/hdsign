@@ -14,7 +14,7 @@ const QualityBannerSection = () => {
 
     return (
         <div className="quality-banner-section">
-            <img src={qualityImg} alt="품질" className="quality-bg"/>
+            <img src={qualityImg} alt="품질" className="quality-bg" loading="lazy" decoding="async"/>
             <div className="quality-text">
                 <h2 className={'title'} ref={titleRef}>품질, 선택이 아닌 필수입니다</h2>
                 <p className={'subtitle'} ref={subtitleRef}>우리는 매 순간 최고의 품질을 고민합니다.</p>

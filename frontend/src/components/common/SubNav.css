@@ -1,10 +1,10 @@
 /* SubNav.css */
 .sub-nav {
-    position: sticky;
-    top: 0; /* 화면 최상단에 고정 */
-    z-index: 1000; /* 다른 요소보다 위에 오도록 */
+    position: static;
+    top: auto;
+    z-index: auto;
     background-color: #fff;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); /* 옵션: 살짝 그림자 주기 */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
     border-bottom: 1px solid #e5e5e5;
     padding: 1rem 0;
     display: flex;
@@ -57,5 +57,28 @@
 
 .sub-nav li a.active::after {
     width: 100%;
+}
+
+@media (max-width: 860px) {
+    .sub-nav {
+        justify-content: flex-start;
+        overflow-x: auto;
+        padding: 0.85rem 1rem;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .sub-nav ul {
+        gap: 1.2rem;
+        min-width: max-content;
+    }
+
+    .sub-nav li a {
+        font-size: 0.92rem;
+        white-space: nowrap;
+    }
+
+    body.mobile-menu-lock .sub-nav {
+        z-index: 1;
+    }
 }
 

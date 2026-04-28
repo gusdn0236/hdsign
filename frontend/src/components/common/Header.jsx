@@ -1,32 +1,55 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './Header.css';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 function Header() {
     const [hovered, setHovered]         = useState(false);
     const [isVisible, setIsVisible]     = useState(true);
-    const [lastScrollY, setLastScrollY] = useState(0);
     const [activeSubMenu, setActiveSubMenu] = useState(null);
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const lastScrollY = useRef(0);
+    const location = useLocation();
     const { clientUser, clientLogout }  = useAuth();
 
     const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 
     const handleScroll = () => {
         const cur = window.scrollY;
-        if (cur <= 0)                          { setIsVisible(true);  setHovered(false); }
-        else if (cur > lastScrollY && cur > 80){ setIsVisible(false); setHovered(false); }
-        else                                   { setIsVisible(true); }
-        setLastScrollY(cur);
+        if (cur <= 0)                                   { setIsVisible(true);  setHovered(false); }
+        else if (cur > lastScrollY.current && cur > 80) { setIsVisible(false); setHovered(false); }
+        else                                            { setIsVisible(true); }
+        lastScrollY.current = cur;
     };
 
     useEffect(() => {
-        window.addEventListener('scroll', handleScroll);
+        window.addEventListener('scroll', handleScroll, { passive: true });
         return () => window.removeEventListener('scroll', handleScroll);
-    }, [lastScrollY]);
+    }, []);
+
+    useEffect(() => {
+        setIsMobileMenuOpen(false);
+        setActiveSubMenu(null);
+    }, [location.pathname, location.search]);
+
+    useEffect(() => {
+        document.body.classList.toggle('mobile-menu-lock', isMobileMenuOpen);
+        return () => document.body.classList.remove('mobile-menu-lock');
+    }, [isMobileMenuOpen]);
+
+    const closeMobileMenu = () => {
+        setIsMobileMenuOpen(false);
+        setHovered(false);
+        setActiveSubMenu(null);
+    };
+
+    const handleMobileLinkClick = (onClick) => {
+        if (onClick) onClick();
+        closeMobileMenu();
+    };
 
     const menuItems = [
-        { name: '홈', path: '/' },
+        { name: '홈', path: '/', onClick: scrollToTop },
         { name: '회사 소개', path: '/About/Greeting', subMenu: [
             { name: '인사말',    path: '/About/Greeting'      },
             { name: '인증서',    path: '/About/Certification'  },
@@ -82,13 +105,29 @@ function Header() {
 
     return (
         <header
-            className={'header' + (hovered ? ' hovered' : '') + (isVisible ? '' : ' hidden')}
+            className={
+                'header' +
+                (hovered || isMobileMenuOpen ? ' hovered' : '') +
+                (isVisible || isMobileMenuOpen ? '' : ' hidden') +
+                (isMobileMenuOpen ? ' mobile-menu-open' : '')
+            }
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => { setHovered(false); setActiveSubMenu(null); }}
         >
             <div className="logo">
                 <Link to="/" onClick={scrollToTop}>HDSIGN</Link>
             </div>
+            <button
+                type="button"
+                className={'mobile-menu-button' + (isMobileMenuOpen ? ' active' : '')}
+                aria-label={isMobileMenuOpen ? '메뉴 닫기' : '메뉴 열기'}
+                aria-expanded={isMobileMenuOpen}
+                onClick={() => setIsMobileMenuOpen((open) => !open)}
+            >
+                <span />
+                <span />
+                <span />
+            </button>
             <nav className="nav">
                 {menuItems.map(item => (
                     <div key={item.name} className="nav-item"
@@ -124,6 +163,49 @@ function Header() {
                 ))}
             </nav>
             <Link to="/admin/login" className="admin-link">관리자</Link>
+            {isMobileMenuOpen && (
+                <button
+                    type="button"
+                    className="mobile-menu-backdrop"
+                    aria-label="메뉴 닫기"
+                    onClick={closeMobileMenu}
+                />
+            )}
+            <nav className={'mobile-nav' + (isMobileMenuOpen ? ' open' : '')} aria-label="모바일 메뉴">
+                {menuItems.map(item => (
+                    <div key={item.name} className="mobile-nav-group">
+                        <Link
+                            to={item.path}
+                            className="mobile-nav-primary"
+                            onClick={() => handleMobileLinkClick(item.onClick)}
+                        >
+                            {item.name}
+                            {item.name === '거래처' && clientUser && <span className="client-dot" />}
+                        </Link>
+                        {item.subMenu && (
+                            <div className="mobile-sub-menu">
+                                {item.subMenu.map(sub => (
+                                    <div key={sub.name} className="mobile-sub-group">
+                                        <Link to={sub.path} onClick={() => handleMobileLinkClick(sub.onClick)}>
+                                            {sub.name}
+                                        </Link>
+                                        {sub.subSubMenu && (
+                                            <div className="mobile-sub-sub-menu">
+                                                {sub.subSubMenu.map(s => (
+                                                    <Link key={s.name} to={s.path} onClick={closeMobileMenu}>
+                                                        {s.name}
+                                                    </Link>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ))}
+                <Link to="/admin/login" className="mobile-admin-link" onClick={closeMobileMenu}>관리자</Link>
+            </nav>
         </header>
     );
 }

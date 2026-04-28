@@ -14,6 +14,8 @@ export const useGsapFadeUp = (refs) => {
                 ease: "power3.out"
             }, index === 0 ? 0 : `-=${0.5 - index * 0.1}`);
         });
+        return () => tl.kill();
+    // refs are stable React ref objects; rerunning this on every render would replay the intro animation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 };
-

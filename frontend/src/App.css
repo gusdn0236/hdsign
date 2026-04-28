@@ -26,3 +26,14 @@ html, body, #root {
 html {
     scroll-behavior: smooth;
 }
+
+@media (max-width: 860px) {
+    * {
+        scrollbar-width: auto;
+        -ms-overflow-style: auto;
+    }
+
+    *::-webkit-scrollbar {
+        display: initial;
+    }
+}

@@ -1,18 +1,18 @@
-﻿.header {
+.header {
     position: fixed;
     top: 0;
     width: 100%;
     height: 80px;
     padding: 0 40px;
+    box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: center;
     background-color: transparent;
     color: white;
     transition: transform 0.3s ease-out, opacity 0.3s ease-out, background-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
-    z-index: 1000; /* ⭐ z-index를 높여 다른 콘텐츠 위에 표시되도록 함 ⭐ */
+    z-index: 1000;
 }
-
 
 .header.hidden {
     transform: translateY(-100%);
@@ -48,18 +48,17 @@
 .nav {
     display: flex;
     gap: 40px;
-    height: 100%; /* nav도 높이를 가져야 자식 요소 위치 잡기 편함 */
+    height: 100%;
 }
 
-/* ⭐ 1차 내비게이션 아이템 컨테이너 ⭐ */
 .nav-item {
-    position: relative; /* 2차 메뉴의 absolute 기준점 */
+    position: relative;
     display: flex;
     align-items: center;
-    height: 100%; /* 부모와 동일한 높이 */
+    height: 100%;
 }
 
-.nav-item > a { /* 1차 메뉴 링크 */
+.nav-item > a {
     text-decoration: none;
     color: inherit;
     font-weight: 600;
@@ -74,57 +73,53 @@
     color: #555;
 }
 
-/* ⭐ 2차 내비게이션 메뉴 (드롭다운) ⭐ */
 .sub-menu {
     position: absolute;
-    top: 100%; /* 1차 메뉴 바로 아래 */
-    left: 50%; /* 중앙 정렬을 위해 */
-    transform: translateX(-50%); /* 중앙 정렬 */
-    background-color: white; /* 헤더 호버 색상과 동일 */
+    top: 100%;
+    left: 50%;
+    background-color: white;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     border-radius: 4px;
-    min-width: 160px; /* 최소 너비 */
+    min-width: 160px;
     padding: 10px 0;
     display: flex;
     flex-direction: column;
-    z-index: 100; /* 헤더 위로 */
-    opacity: 0; /* 초기 숨김 */
-    visibility: hidden; /* 초기 숨김 */
-    transform: translateX(-50%) translateY(10px); /* 드롭다운 애니메이션 초기 위치 */
+    z-index: 100;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(-50%) translateY(10px);
     transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
 }
 
 .nav-item:hover .sub-menu {
-    opacity: 1; /* 호버 시 보임 */
-    visibility: visible; /* 호버 시 보임 */
-    transform: translateX(-50%) translateY(0); /* 제자리로 이동 */
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
 }
 
-/* ⭐ 2차 메뉴 아이템 ⭐ */
 .sub-menu-item {
-    position: relative; /* 3차 메뉴의 absolute 기준점 */
+    position: relative;
 }
 
 .sub-menu-item a {
     padding: 8px 20px;
-    color: black; /* 텍스트 색상 */
+    color: black;
     text-decoration: none;
-    display: block; /* 전체 영역 클릭 가능 */
-    white-space: nowrap; /* 줄 바꿈 방지 */
+    display: block;
+    white-space: nowrap;
     font-size: 15px;
     transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .sub-menu-item a:hover {
-    background-color: #f0f0f0; /* 호버 배경색 */
-    color: #005f73; /* 호버 시 강조 색상 */
+    background-color: #f0f0f0;
+    color: #005f73;
 }
 
-/* ⭐ 3차 내비게이션 메뉴 (서브-서브 메뉴) ⭐ */
 .sub-sub-menu {
     position: absolute;
-    top: 0; /* 2차 메뉴 아이템과 같은 높이 */
-    left: 100%; /* 2차 메뉴 아이템 바로 옆 */
+    top: 0;
+    left: 100%;
     background-color: white;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     border-radius: 4px;
@@ -134,24 +129,23 @@
     flex-direction: column;
     opacity: 0;
     visibility: hidden;
-    transform: translateX(10px); /* 슬라이드 애니메이션 초기 위치 */
+    transform: translateX(10px);
     transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
 }
 
 .sub-menu-item:hover .sub-sub-menu {
     opacity: 1;
     visibility: visible;
-    transform: translateX(0); /* 제자리로 이동 */
+    transform: translateX(0);
 }
 
-/* ⭐ 3차 메뉴 아이템 ⭐ */
 .sub-sub-menu a {
     padding: 8px 20px;
     color: black;
     text-decoration: none;
     display: block;
     white-space: nowrap;
-    font-size: 14px; /* 폰트 사이즈 살짝 작게 */
+    font-size: 14px;
     transition: background-color 0.2s ease, color 0.2s ease;
 }
 
@@ -160,24 +154,216 @@
     color: #ff7f50;
 }
 
+.admin-link {
+    font-size: 11px;
+    color: inherit;
+    text-decoration: none;
+    margin-left: 24px;
+    opacity: 0.6;
+}
 
+.admin-link:hover {
+    opacity: 1;
+}
 
-
-
-
-
-
-
-
-.admin-link { font-size: 11px; color: inherit; text-decoration: none; margin-left: 24px; opacity: 0.6; } .admin-link:hover { opacity: 1; }
-
-/* 거래처 로그인 상태 표시 */
 .client-dot {
     display: inline-block;
-    width: 6px; height: 6px;
+    width: 6px;
+    height: 6px;
     background: #005f73;
     border-radius: 50%;
     margin-left: 5px;
     vertical-align: middle;
     margin-bottom: 2px;
+}
+
+.mobile-menu-button,
+.mobile-menu-backdrop,
+.mobile-nav {
+    display: none;
+}
+
+body.mobile-menu-lock {
+    overflow: hidden;
+}
+
+@media (max-width: 860px) {
+    .header {
+        height: 64px;
+        padding: 0 18px;
+        justify-content: space-between;
+        background-color: rgba(18, 18, 20, 0.34);
+        color: white;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+    }
+
+    .header.hovered,
+    .header.mobile-menu-open {
+        background-color: white;
+        color: #111;
+    }
+
+    .logo {
+        position: static;
+        z-index: 1003;
+    }
+
+    .logo a {
+        font-size: 21px;
+    }
+
+    .nav,
+    .admin-link {
+        display: none;
+    }
+
+    .mobile-menu-button {
+        display: inline-flex;
+        width: 44px;
+        height: 44px;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 5px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        z-index: 1003;
+        padding: 0;
+    }
+
+    .mobile-menu-button span {
+        width: 24px;
+        height: 2px;
+        border-radius: 999px;
+        background: currentColor;
+        transition: transform 0.24s ease, opacity 0.2s ease;
+    }
+
+    .mobile-menu-button.active span:nth-child(1) {
+        transform: translateY(7px) rotate(45deg);
+    }
+
+    .mobile-menu-button.active span:nth-child(2) {
+        opacity: 0;
+    }
+
+    .mobile-menu-button.active span:nth-child(3) {
+        transform: translateY(-7px) rotate(-45deg);
+    }
+
+    .mobile-menu-backdrop {
+        display: block;
+        position: fixed;
+        inset: 64px 0 0;
+        border: 0;
+        padding: 0;
+        background: rgba(0, 0, 0, 0.38);
+        z-index: 1001;
+    }
+
+    .mobile-nav {
+        display: flex;
+        position: fixed;
+        top: 64px;
+        right: 0;
+        bottom: auto;
+        width: min(88vw, 390px);
+        height: calc(100vh - 64px);
+        height: calc(100dvh - 64px);
+        max-width: 100vw;
+        box-sizing: border-box;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+        padding: 22px 20px calc(28px + env(safe-area-inset-bottom));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        background: #fff;
+        color: #111;
+        box-shadow: -12px 0 28px rgba(0, 0, 0, 0.18);
+        transform: translateX(100%);
+        transition: transform 0.26s ease;
+        z-index: 1002;
+    }
+
+    .mobile-nav.open {
+        transform: translateX(0);
+    }
+
+    .mobile-nav a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .mobile-nav-group {
+        flex: 0 0 auto;
+        padding-bottom: 14px;
+        border-bottom: 1px solid #ececec;
+    }
+
+    .mobile-nav-primary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 18px;
+        font-weight: 800;
+        min-height: 42px;
+    }
+
+    .mobile-sub-menu {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    .mobile-sub-group > a {
+        display: block;
+        padding: 9px 0;
+        color: #3f3f46;
+        font-size: 15px;
+        font-weight: 650;
+    }
+
+    .mobile-sub-sub-menu {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin: 0 0 7px;
+    }
+
+    .mobile-sub-sub-menu a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 32px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #f4f4f5;
+        color: #52525b;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .mobile-admin-link {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: center;
+        min-height: 40px;
+        margin-top: 2px;
+        border: 1px solid #e4e4e7;
+        border-radius: 999px;
+        color: #52525b;
+        font-size: 13px;
+        font-weight: 700;
+    }
+}
+
+@media (max-width: 420px) {
+    .mobile-nav {
+        width: 100vw;
+    }
 }

@@ -1,14 +1,58 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import './GalleryPage.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+const staticGalleryModules = import.meta.glob('../../assets/img/gallery/**/*.{jpg,jpeg,png,webp}', {
+    eager: true,
+    import: 'default',
+});
+
+const STATIC_SUB_CATEGORY_BY_PATH = [
+    ['/gallery/galva/halo/', 'galva', '갈바 전/후광'],
+    ['/gallery/galva/osai/', 'galva', '갈바 오사이'],
+    ['/gallery/galva/cap/', 'galva', '갈바 측광'],
+    ['/gallery/galva/integrated/', 'aluminum', '일체형채널'],
+    ['/gallery/stainless/halo/', 'stainless', '스텐 전/후광'],
+    ['/gallery/stainless/osai/', 'stainless', '스텐 오사이'],
+    ['/gallery/stainless/cap/', 'stainless', '스텐 측광'],
+    ['/gallery/stainless/gold/', 'stainless', '골드스텐'],
+    ['/gallery/epoxy/galva/', 'epoxy', '갈바 에폭시'],
+    ['/gallery/epoxy/stainless/', 'epoxy', '스텐에폭시'],
+    ['/gallery/special/acrylic/', 'special', '아크릴/포맥스'],
+    ['/gallery/special/foamex/', 'special', '아크릴/포맥스'],
+    ['/gallery/special/rubber/', 'special', '고무스카시'],
+];
+
+const staticGalleryImages = Object.entries(staticGalleryModules).reduce((items, entry, index) => {
+    const [path, imageUrl] = entry;
+    const normalizedPath = path.replaceAll('\\', '/');
+    const match = STATIC_SUB_CATEGORY_BY_PATH.find(([segment]) => normalizedPath.includes(segment));
+    if (!match) return items;
+
+    const [, category, subCategory] = match;
+    const originalName = decodeURIComponent(normalizedPath.split('/').pop() || 'gallery-image');
+    items.push({
+        id: `static-${index}`,
+        category,
+        subCategory,
+        imageUrl,
+        originalName,
+    });
+    return items;
+}, []);
+
+function getStaticGalleryImages(category) {
+    return staticGalleryImages.filter(function(img) {
+        return img.category === category;
+    });
+}
 
 const GalleryPage = ({ category, categoryTabs }) => {
     const [searchParams, setSearchParams] = useSearchParams();
     const tabParam = parseInt(searchParams.get('tab')) || 0;
     const [activeTab, setActiveTab] = useState(tabParam);
-    const [images, setImages] = useState([]);
+    const [images, setImages] = useState(function() { return getStaticGalleryImages(category); });
     const [loading, setLoading] = useState(false);
     const [selectedIndex, setSelectedIndex] = useState(null);
     const scrollRef = useRef(null);
@@ -20,14 +64,29 @@ const GalleryPage = ({ category, categoryTabs }) => {
     }, [searchParams]);
 
     useEffect(() => {
-        setLoading(true);
+        const staticImages = getStaticGalleryImages(category);
+        const shouldFetchRemote = !import.meta.env.DEV || !BASE_URL.includes('localhost');
+
+        setImages(staticImages);
+        if (!shouldFetchRemote) {
+            setLoading(false);
+            return;
+        }
+
+        setLoading(staticImages.length === 0);
         fetch(BASE_URL + '/api/gallery?category=' + category)
-            .then(function(res) { return res.json(); })
+            .then(function(res) {
+                if (!res.ok) throw new Error('이미지 목록을 불러오지 못했습니다.');
+                return res.json();
+            })
             .then(function(data) {
-                setImages(data);
+                setImages(Array.isArray(data) && data.length > 0 ? data : staticImages);
                 setLoading(false);
             })
-            .catch(function() { setLoading(false); });
+            .catch(function() {
+                setImages(staticImages);
+                setLoading(false);
+            });
     }, [category]);
 
     const currentSubCategory = categoryTabs[activeTab] ? categoryTabs[activeTab].subCategory : null;
@@ -37,9 +96,13 @@ const GalleryPage = ({ category, categoryTabs }) => {
 
     const totalImages = currentImages.length;
     const openModal = function(index) { setSelectedIndex(index); };
-    const closeModal = function() { setSelectedIndex(null); };
-    const goPrev = function() { if (selectedIndex > 0) setSelectedIndex(selectedIndex - 1); };
-    const goNext = function() { if (selectedIndex < totalImages - 1) setSelectedIndex(selectedIndex + 1); };
+    const closeModal = useCallback(function() { setSelectedIndex(null); }, []);
+    const goPrev = useCallback(function() {
+        if (selectedIndex > 0) setSelectedIndex(selectedIndex - 1);
+    }, [selectedIndex]);
+    const goNext = useCallback(function() {
+        if (selectedIndex < totalImages - 1) setSelectedIndex(selectedIndex + 1);
+    }, [selectedIndex, totalImages]);
 
     const handleTabClick = function(index) {
         const scrollY = window.scrollY;
@@ -58,7 +121,7 @@ const GalleryPage = ({ category, categoryTabs }) => {
         };
         window.addEventListener('keydown', handleKey);
         return function() { window.removeEventListener('keydown', handleKey); };
-    }, [selectedIndex]);
+    }, [selectedIndex, goPrev, goNext, closeModal]);
 
     return (
         React.createElement('div', { className: 'gallery-page', ref: scrollRef },

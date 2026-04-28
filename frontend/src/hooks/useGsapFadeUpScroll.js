@@ -7,9 +7,10 @@ gsap.registerPlugin(ScrollTrigger);
 
 export const useGsapFadeUpOnScroll = (refs) => {
     useEffect(() => {
-        refs.forEach((ref, index) => {
+        const animations = [];
+        refs.forEach((ref) => {
             if (ref.current) {
-                gsap.fromTo(
+                const animation = gsap.fromTo(
                     ref.current,
                     {y: 50, opacity: 0},
                     {
@@ -24,7 +25,14 @@ export const useGsapFadeUpOnScroll = (refs) => {
                         },
                     }
                 );
+                animations.push(animation);
             }
         });
+        return () => {
+            animations.forEach((animation) => {
+                animation.scrollTrigger?.kill();
+                animation.kill();
+            });
+        };
     }, [refs]);
 };

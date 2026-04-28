@@ -1,9 +1,10 @@
 .trust-banner-section {
-    position: relative; /* ✅ 가능하면 이걸로 */
-    z-index: auto; /* 또는 명시 안 해도 됨 */
+    position: relative;
+    z-index: auto;
     width: 100%;
-    height: 100vh;
-    /*overflow: hidden;*/
+    min-height: 100vh;
+    min-height: 100svh;
+    overflow: hidden;
 }
 
 .trust-bg {
@@ -11,6 +12,8 @@
     height: 100%;
     object-fit: cover;
     filter: brightness(50%);
+    position: absolute;
+    inset: 0;
 }
 
 .trust-text {
@@ -20,16 +23,47 @@
     transform: translateY(-50%);
     color: white;
     z-index: 1;
+    width: min(560px, 60vw);
 }
 
 .trust-text h2 {
-    font-size: 48px;
+    font-size: clamp(34px, 4vw, 48px);
+    line-height: 1.18;
     font-weight: 800;
-    margin-bottom: 10px;
+    margin: 0 0 10px;
 }
 
 .trust-text p {
-    font-size: 18px;
+    font-size: clamp(15px, 1.6vw, 18px);
     font-weight: 300;
     line-height: 1.5;
+    margin: 0;
+}
+
+@media (max-width: 768px) {
+    .trust-banner-section {
+        min-height: 82vh;
+        min-height: 82svh;
+    }
+
+    .trust-bg {
+        filter: brightness(45%);
+    }
+
+    .trust-text {
+        left: 22px;
+        right: 22px;
+        bottom: 64px;
+        top: auto;
+        transform: none;
+        width: auto;
+    }
+
+    .trust-text h2 {
+        font-size: clamp(30px, 8.4vw, 38px);
+    }
+
+    .trust-text p {
+        font-size: 15px;
+    }
 }

@@ -13,7 +13,7 @@ const ContactBannerSection = () => {
 
     return (
         <div className="contact-banner-section">
-            <img src={contactImg} alt="견적" className="contact-bg"/>
+            <img src={contactImg} alt="견적" className="contact-bg" loading="lazy" decoding="async"/>
             <div className="contact-text">
                 <h2 className="title" ref={titleRef}>지금, 디자인을 현실로</h2>
                 <p className="subtitle" ref={subtitleRef}>지금 바로 간편하게 견적 받아보세요.</p>
