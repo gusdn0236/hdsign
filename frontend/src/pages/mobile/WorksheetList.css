@@ -1,24 +1,33 @@
+/* ================================================================
+   모바일 작업 지시서 목록 — 폰 단말 우선 디자인
+   토큰: zinc 9-step 그레이스케일, 라디우스 8/10/12/16/999,
+        버튼 높이 36/44, 폰트 11/12/13/14/16/18/20
+   ================================================================ */
+
 .ws-list-page {
     min-height: 100vh;
     background: #f4f4f5;
     /* iOS PWA standalone(black-translucent) + viewport-fit=cover 환경에서 상단
        상태바(시간/와이파이/배터리) 가 페이지 콘텐츠 위로 겹친다. safe-area-inset-top
        만큼 더 띄워 헤더 카드가 상태바 아래에 정렬되도록. */
-    padding: calc(14px + env(safe-area-inset-top)) 12px 80px;
+    padding: calc(12px + env(safe-area-inset-top)) 12px 80px;
     max-width: 720px;
     margin: 0 auto;
     box-sizing: border-box;
     -webkit-tap-highlight-color: transparent;
+    font-feature-settings: 'tnum' 1;
 }
 
+/* 헤더 카드 ------------------------------------------------------- */
 .ws-list-header {
     background: #18181b;
     color: #fff;
     border-radius: 16px;
-    padding: 16px 18px 14px;
+    padding: 16px 16px 14px;
     margin-bottom: 14px;
-    box-shadow: 0 6px 18px rgba(24, 24, 27, 0.18);
+    box-shadow: 0 8px 24px rgba(24, 24, 27, 0.18);
 }
+
 .ws-list-title-row {
     display: flex;
     align-items: center;
@@ -29,7 +38,8 @@
     font-size: 20px;
     font-weight: 800;
     margin: 0;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
 }
 .ws-list-meta {
     display: flex;
@@ -39,6 +49,7 @@
     font-size: 12px;
     color: #a1a1aa;
     margin: 6px 0 0;
+    line-height: 1.4;
 }
 .ws-list-meta-count {
     color: #fafafa;
@@ -52,32 +63,44 @@
     font-weight: 500;
 }
 
+/* 새로고침 버튼 — 헤더 우측. 아이콘 + 텍스트, 베이스라인 정확. */
 .ws-refresh-btn {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
+    height: 36px;
+    padding: 0 14px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fafafa;
     border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
+    line-height: 1;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease;
 }
 .ws-refresh-btn:active {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.14);
 }
 .ws-refresh-btn:disabled {
-    opacity: 0.7;
+    opacity: 0.65;
     cursor: default;
 }
 .ws-refresh-icon {
-    display: inline-block;
-    font-size: 14px;
-    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+}
+.ws-refresh-icon svg {
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 .ws-refresh-btn.spinning .ws-refresh-icon {
     animation: ws-spin 0.9s linear infinite;
@@ -87,33 +110,35 @@
     to   { transform: rotate(360deg); }
 }
 
-/* 납기일자 + 거래처 두 selectbox 만 들어있는 필터 폼. 다크 배경 색조. */
+/* 필터 폼 — 납기일자 + 거래처 두 셀렉트 ----------------------------- */
 .ws-filter-form {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-top: 12px;
+    gap: 10px;
+    margin-top: 14px;
 }
 .ws-filter-field {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
     min-width: 0;
 }
 .ws-filter-label {
     font-size: 11px;
     font-weight: 700;
     color: #a1a1aa;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 .ws-filter-select {
     appearance: none;
     -webkit-appearance: none;
-    background-color: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 8px;
-    color: #fff;
-    padding: 9px 30px 9px 12px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px;
+    color: #fafafa;
+    height: 40px;
+    padding: 0 32px 0 12px;
     font-size: 13px;
     font-weight: 600;
     width: 100%;
@@ -121,14 +146,16 @@
     text-overflow: ellipsis;
     overflow: hidden;
     white-space: nowrap;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%23ffffff' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M3 4.5l3 3 3-3' stroke='%23a1a1aa' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
     background-repeat: no-repeat;
     background-position: right 10px center;
     background-size: 12px;
+    transition: border-color 0.12s ease, background-color 0.12s ease;
 }
 .ws-filter-select:focus {
     outline: none;
-    border-color: rgba(255, 255, 255, 0.4);
+    border-color: rgba(255, 255, 255, 0.45);
+    background-color: rgba(255, 255, 255, 0.1);
 }
 /* 드롭다운 자체는 OS 가 그리는 시스템 메뉴 — 다크 헤더 위에서도 옵션이 흰 배경으로 보이게 강제. */
 .ws-filter-select option {
@@ -136,18 +163,114 @@
     background: #fff;
 }
 
+/* "내 지시서만" 토글 + 부서 칩 한 줄 -------------------------------- */
+.ws-personal-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ws-mine-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    min-width: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+.ws-mine-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    border: 1.5px solid rgba(255, 255, 255, 0.35);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ws-mine-checkbox:checked {
+    background: #22c55e;
+    border-color: #22c55e;
+}
+.ws-mine-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 6px;
+    width: 5px;
+    height: 10px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+.ws-mine-text {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fafafa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+.ws-mine-count {
+    color: #a1a1aa;
+    font-weight: 500;
+    margin-left: 2px;
+}
+.ws-dept-chip-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    max-width: 180px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fafafa;
+    border-radius: 999px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease;
+}
+.ws-dept-chip-btn:active {
+    background: rgba(255, 255, 255, 0.14);
+}
+.ws-dept-chip-prefix {
+    color: #a1a1aa;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.ws-dept-chip-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* 그룹(납기 일자별) ----------------------------------------------- */
 .ws-group {
-    margin-bottom: 20px;
+    margin-bottom: 22px;
 }
 .ws-group-head {
     display: flex;
     align-items: baseline;
-    gap: 6px;
+    gap: 8px;
     font-size: 13px;
     font-weight: 700;
     color: #18181b;
-    margin: 0 2px 10px;
-    letter-spacing: 0.01em;
+    margin: 0 4px 10px;
+    letter-spacing: -0.01em;
 }
 .ws-group-count {
     color: #71717a;
@@ -155,6 +278,7 @@
     font-size: 12px;
 }
 
+/* 카드 그리드 ----------------------------------------------------- */
 .ws-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -171,7 +295,7 @@
     min-width: 0;
 }
 .ws-grid-card:active .ws-thumb-frame {
-    transform: scale(0.98);
+    transform: scale(0.97);
 }
 
 /* A4 세로형 비율(1 : √2). 거의 모든 지시서가 A4 세로라 고정 — 가로형이 들어와도
@@ -181,10 +305,10 @@
     background: #ffffff;
     border-radius: 10px;
     overflow: hidden;
-    box-shadow: 0 2px 6px rgba(24, 24, 27, 0.06);
+    box-shadow: 0 2px 8px rgba(24, 24, 27, 0.08);
     border: 1px solid #e4e4e7;
     position: relative;
-    transition: transform 0.05s ease;
+    transition: transform 0.08s ease;
 }
 /* Document/Page 모두 flex center — 렌더된 canvas 가 프레임(1:1.414) 보다 크면
    위·아래(또는 좌·우) 가 균등하게 잘려 가운데 콘텐츠가 보이고, 작으면 가운데에
@@ -226,7 +350,7 @@
 }
 
 .ws-thumb-company {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     color: #3f3f46;
     text-align: center;
@@ -235,157 +359,89 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     padding: 0 2px;
+    letter-spacing: -0.01em;
 }
 
+/* 빈 상태 -------------------------------------------------------- */
 .ws-empty {
     background: #fff;
     border-radius: 12px;
-    padding: 30px 16px;
+    padding: 36px 16px;
     text-align: center;
     color: #71717a;
     font-size: 14px;
+    border: 1px solid #e4e4e7;
 }
 .ws-empty.error {
     color: #b91c1c;
+    background: #fef2f2;
+    border-color: #fecaca;
 }
 
-/* "내 지시서만 보기" 체크박스 + 부서 chip 한 줄. 헤더 하단에 분리 라인. */
-.ws-personal-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-.ws-mine-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    cursor: pointer;
-    flex: 1;
-    min-width: 0;
-    -webkit-tap-highlight-color: transparent;
-}
-.ws-mine-checkbox {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    margin: 0;
-    border: 1.5px solid rgba(255, 255, 255, 0.4);
-    border-radius: 5px;
-    background: rgba(255, 255, 255, 0.06);
-    position: relative;
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background 0.12s ease, border-color 0.12s ease;
-}
-.ws-mine-checkbox:checked {
-    background: #22c55e;
-    border-color: #22c55e;
-}
-.ws-mine-checkbox:checked::after {
-    content: '';
-    position: absolute;
-    top: 1px;
-    left: 5px;
-    width: 4px;
-    height: 9px;
-    border: solid #fff;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
-}
-.ws-mine-text {
-    font-size: 13px;
-    font-weight: 700;
-    color: #fafafa;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.ws-mine-count {
-    color: #a1a1aa;
-    font-weight: 500;
-}
-.ws-dept-chip-btn {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.08);
-    color: #fafafa;
-    border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-    max-width: 60%;
-}
-.ws-dept-chip-btn:active {
-    background: rgba(255, 255, 255, 0.16);
-}
-.ws-dept-chip-prefix {
-    color: #a1a1aa;
-    font-weight: 600;
-}
-.ws-dept-chip-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-}
-
-/* 부서 선택 모달 — WorksheetViewer 의 wsv-modal 과 동일 UX, 별도 클래스. */
+/* 부서 선택 모달 -------------------------------------------------- */
 .ws-dept-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.55);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 100;
     padding: 16px;
+    animation: ws-fade-in 0.15s ease;
+}
+@keyframes ws-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
 }
 .ws-dept-modal {
     background: #fff;
-    border-radius: 14px;
+    border-radius: 16px;
     padding: 22px 20px 18px;
     width: 100%;
     max-width: 420px;
     box-sizing: border-box;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+    animation: ws-pop-in 0.18s ease;
+}
+@keyframes ws-pop-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .ws-dept-modal h2 {
     font-size: 18px;
     font-weight: 800;
     margin: 0 0 6px;
     color: #18181b;
+    letter-spacing: -0.02em;
 }
 .ws-dept-modal-desc {
     font-size: 13px;
     color: #71717a;
-    margin: 0 0 14px;
-    line-height: 1.5;
+    margin: 0 0 16px;
+    line-height: 1.55;
 }
 .ws-dept-quick-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
 }
 .ws-dept-quick-chip {
-    border: 1px solid #d4d4d8;
+    border: 1px solid #e4e4e7;
     background: #fafafa;
     color: #3f3f46;
     border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 12px;
+    height: 34px;
+    padding: 0 14px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.ws-dept-quick-chip:active {
+    background: #f4f4f5;
 }
 .ws-dept-quick-chip.active {
     background: #18181b;
@@ -394,12 +450,14 @@
 }
 .ws-dept-modal-input {
     width: 100%;
-    padding: 10px 12px;
+    height: 44px;
+    padding: 0 14px;
     border: 1px solid #d4d4d8;
-    border-radius: 8px;
+    border-radius: 10px;
     font-size: 14px;
     box-sizing: border-box;
     margin-bottom: 14px;
+    transition: border-color 0.12s ease;
 }
 .ws-dept-modal-input:focus {
     outline: none;
@@ -407,28 +465,50 @@
 }
 .ws-dept-modal-actions {
     display: flex;
-    justify-content: flex-end;
     gap: 8px;
 }
 .ws-dept-modal-cancel,
 .ws-dept-modal-confirm {
-    padding: 9px 18px;
-    border-radius: 8px;
-    font-size: 13px;
+    flex: 1;
+    height: 44px;
+    border-radius: 10px;
+    font-size: 14px;
     font-weight: 700;
     cursor: pointer;
     border: 1px solid transparent;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease;
 }
 .ws-dept-modal-cancel {
     background: #f4f4f5;
     color: #3f3f46;
     border-color: #e4e4e7;
 }
+.ws-dept-modal-cancel:active {
+    background: #e4e4e7;
+}
 .ws-dept-modal-confirm {
     background: #18181b;
     color: #fff;
 }
+.ws-dept-modal-confirm:active {
+    background: #000;
+}
 .ws-dept-modal-confirm:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
     cursor: not-allowed;
+}
+
+/* 좁은 폰(아이폰 SE/미니, ~360px) 대응 ---------------------------- */
+@media (max-width: 360px) {
+    .ws-list-page {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+    .ws-grid {
+        gap: 8px;
+    }
+    .ws-thumb-company {
+        font-size: 11px;
+    }
 }

@@ -67,7 +67,10 @@
       "Bash(\"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe\" -c \"import pymupdf; print\\('pymupdf OK', pymupdf.__version__\\)\")",
       "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\('C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\build_exe.bat'\\); $bytes[0..30] | ForEach-Object { '{0:X2}' -f $_ })",
       "PowerShell($path = 'C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\scripts\\\\build_exe.bat'; $content = [System.IO.File]::ReadAllText\\($path\\); $content = $content -replace \"`r`n\", \"`n\" -replace \"`n\", \"`r`n\"; [System.IO.File]::WriteAllText\\($path, $content, [System.Text.Encoding]::ASCII\\); $bytes = [System.IO.File]::ReadAllBytes\\($path\\); $bytes[0..30] | ForEach-Object { '{0:X2}' -f $_ })",
-      "PowerShell(Test-Path *)"
+      "PowerShell(Test-Path *)",
+      "Bash(npx --no-install eslint src/pages/gallery src/App.jsx src/components/common/Header.jsx src/pages/admin/GalleryUpload.jsx)",
+      "Bash(npx --no-install eslint src/App.jsx src/components/gallery/GalleryPage.jsx)",
+      "Bash(npm.cmd run *)"
     ]
   }
 }

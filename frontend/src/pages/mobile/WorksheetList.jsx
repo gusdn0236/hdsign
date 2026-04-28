@@ -15,6 +15,7 @@ const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const DEPT_KEY = 'hdsign_uploader_department';
 const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시부', '아크릴가공부(5층)', '배송팀', '도장부', '후레임부'];
 const MAX_DEPT_LEN = 100;
+const THUMB_ROOT_MARGIN = '160px 0px';
 
 function getStoredDept() {
     try {
@@ -63,7 +64,9 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({ pdfUrl }) {
     const ref = useRef(null);
     const [width, setWidth] = useState(0);
     const [visible, setVisible] = useState(false);
+    const [canRender, setCanRender] = useState(false);
     const [errored, setErrored] = useState(false);
+    const renderTimerRef = useRef(null);
 
     useEffect(() => {
         if (!ref.current) return undefined;
@@ -90,17 +93,47 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({ pdfUrl }) {
                 }
             },
             // 화면 위/아래 400px 까지 미리 로딩 — 스크롤 시 빈 칸이 잠깐 보이는 걸 줄임.
-            { rootMargin: '400px 0px' },
+            { rootMargin: THUMB_ROOT_MARGIN },
         );
         io.observe(ref.current);
         return () => io.disconnect();
     }, [visible]);
 
+    useEffect(() => {
+        setCanRender(false);
+    }, [pdfUrl]);
+
+    useEffect(() => {
+        if (!visible || canRender) return undefined;
+        const run = () => {
+            renderTimerRef.current = null;
+            setCanRender(true);
+        };
+        if (typeof window !== 'undefined' && window.requestIdleCallback) {
+            renderTimerRef.current = {
+                kind: 'idle',
+                id: window.requestIdleCallback(run, { timeout: 1200 }),
+            };
+        } else {
+            renderTimerRef.current = { kind: 'timeout', id: setTimeout(run, 120) };
+        }
+        return () => {
+            const timer = renderTimerRef.current;
+            if (!timer) return;
+            if (timer.kind === 'idle' && typeof window !== 'undefined' && window.cancelIdleCallback) {
+                window.cancelIdleCallback(timer.id);
+            } else {
+                clearTimeout(timer.id);
+            }
+            renderTimerRef.current = null;
+        };
+    }, [canRender, visible]);
+
     const file = useMemo(() => (pdfUrl ? { url: pdfUrl } : null), [pdfUrl]);
 
     return (
         <div className="ws-thumb-frame" ref={ref}>
-            {visible && file && width > 0 && !errored && (
+            {visible && canRender && file && width > 0 && !errored && (
                 <Document
                     file={file}
                     loading={null}
@@ -321,7 +354,12 @@ export default function WorksheetList() {
                         disabled={refreshing}
                         aria-label="새로고침"
                     >
-                        <span className="ws-refresh-icon" aria-hidden="true">⟳</span>
+                        <span className="ws-refresh-icon" aria-hidden="true">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M13.5 8a5.5 5.5 0 1 1-1.611-3.889" />
+                                <path d="M13.5 2.5v3h-3" />
+                            </svg>
+                        </span>
                         <span>{refreshing ? '갱신 중…' : '새로고침'}</span>
                     </button>
                 </div>

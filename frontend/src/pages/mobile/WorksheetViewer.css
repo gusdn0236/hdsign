@@ -1,3 +1,9 @@
+/* ================================================================
+   모바일 작업 지시서 뷰어 — 풀스크린 PDF + 사진 업로드 시트
+   토큰: zinc 9-step, 라디우스 8/10/12/14/16/999,
+        버튼 높이 36/44/52, 폰트 11/12/13/14/15/16/18
+   ================================================================ */
+
 .wsv-page,
 :root:has(.wsv-page),
 body:has(.wsv-page) {
@@ -15,10 +21,11 @@ body:has(.wsv-page) {
     overscroll-behavior: none;
     /* 명시적 stacking context — 외부 요소가 z-index 로 위에 올라오지 못하게 */
     isolation: isolate;
-    /* 부모에서 pointer-events 차단된 적 없는지 명시 */
     pointer-events: auto;
+    font-feature-settings: 'tnum' 1;
 }
 
+/* 상단바 -------------------------------------------------------- */
 .wsv-topbar {
     flex-shrink: 0;
     position: relative;
@@ -41,11 +48,9 @@ body:has(.wsv-page) {
     height: 38px;
     border-radius: 10px;
     background: #27272a;
-    color: #fff;
+    color: #fafafa;
     border: none;
     text-decoration: none;
-    font-size: 24px;
-    line-height: 1;
     flex-shrink: 0;
     cursor: pointer;
     padding: 0;
@@ -56,38 +61,59 @@ body:has(.wsv-page) {
     touch-action: manipulation;
     user-select: none;
     -webkit-user-select: none;
+    transition: background 0.12s ease;
 }
 .wsv-back:active {
     background: #3f3f46;
 }
+.wsv-back svg {
+    width: 20px;
+    height: 20px;
+    display: block;
+}
 .wsv-topbar-text {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 .wsv-topbar-company {
     font-size: 11px;
     color: #a1a1aa;
     font-weight: 600;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
 }
 .wsv-topbar-title {
     font-size: 14px;
     font-weight: 700;
-    color: #fff;
+    color: #fafafa;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
 }
 .wsv-topbar-due {
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
     font-size: 12px;
     font-weight: 700;
     color: #fbbf24;
     background: rgba(251, 191, 36, 0.12);
-    padding: 6px 10px;
+    padding: 0 10px;
     border-radius: 8px;
+    line-height: 1;
+    letter-spacing: -0.01em;
 }
 
+/* PDF 스테이지 ---------------------------------------------------- */
 .wsv-stage {
     flex: 1;
     min-height: 0;
@@ -98,7 +124,6 @@ body:has(.wsv-page) {
     overflow: hidden;
     position: relative;
 }
-
 .wsv-msg {
     color: #d4d4d8;
     font-size: 14px;
@@ -106,6 +131,7 @@ body:has(.wsv-page) {
     padding: 60px 20px;
     align-self: center;
     margin: auto;
+    line-height: 1.5;
 }
 .wsv-msg.error {
     color: #fca5a5;
@@ -127,10 +153,8 @@ body:has(.wsv-page) {
     height: 100% !important;
     background: #18181b;
     touch-action: none !important;
-    /* 라이브러리가 변환한 콘텐츠가 wrapper 안에서 가운데 정렬되도록.
-       wrapper 자체는 grid 컨테이너로 두고 콘텐츠(트랜스폼된 div) 가 한 자리. */
-    display: grid !important;
-    place-items: center !important;
+    /* 라이브러리가 좌상단 기준 transform 으로 중앙 정렬을 계산하므로 wrapper 자체는 정렬하지 않는다. */
+    display: block !important;
 }
 .wsv-pdf-content {
     /* width:100% 제거 — 콘텐츠가 자식(Page) 의 자연 크기로 잡혀야 라이브러리의
@@ -144,15 +168,16 @@ body:has(.wsv-page) {
 }
 .wsv-page-canvas {
     background: #fff;
-    border-radius: 4px;
+    border-radius: 6px;
     overflow: hidden;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .wsv-page-canvas canvas {
     display: block;
     max-width: 100%;
     height: auto !important;
 }
+
 /* PDF 한 번 탭 시 떠오르는 변경사항/추가요청사항 카드.
    pointer-events:none — 카드는 입력을 흡수하지 않고, 다음 탭이 stage onClick 으로 흘러
    들어가 오버레이를 닫는다. (핀치/패닝도 그대로 통과) */
@@ -177,11 +202,12 @@ body:has(.wsv-page) {
     overflow-y: auto;
     background: rgba(24, 24, 27, 0.94);
     color: #f4f4f5;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
     padding: 14px 16px;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -215,53 +241,71 @@ body:has(.wsv-page) {
 }
 .wsv-change-empty {
     color: #a1a1aa;
-    font-style: normal;
 }
 
+/* 페이저(다중 페이지) -------------------------------------------- */
 .wsv-pager {
     position: absolute;
     left: 50%;
-    bottom: 12px;
+    bottom: 14px;
     transform: translateX(-50%);
     z-index: 20;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     background: rgba(24, 24, 27, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 999px;
     padding: 4px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
 }
 .wsv-pager-btn {
-    width: 34px;
-    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
     border-radius: 999px;
     border: none;
     background: transparent;
-    color: #fff;
-    font-size: 22px;
-    line-height: 1;
+    color: #fafafa;
     cursor: pointer;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease;
+}
+.wsv-pager-btn:active {
+    background: rgba(255, 255, 255, 0.1);
 }
 .wsv-pager-btn:disabled {
     color: #52525b;
+    cursor: not-allowed;
+}
+.wsv-pager-btn svg {
+    width: 18px;
+    height: 18px;
+    display: block;
 }
 .wsv-pager-text {
     color: #e4e4e7;
     font-size: 13px;
     font-weight: 700;
-    padding: 0 8px;
-    min-width: 40px;
+    padding: 0 10px;
+    min-width: 48px;
     text-align: center;
+    line-height: 1;
+    letter-spacing: 0.02em;
 }
+
+/* 액션바(하단 고정) ---------------------------------------------- */
 .wsv-actionbar {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 14px max(10px, env(safe-area-inset-bottom));
+    gap: 10px;
+    padding: 10px 12px max(10px, env(safe-area-inset-bottom));
     background: #18181b;
     border-top: 1px solid #27272a;
     /* z-index 최상위 — PDF stage 내부의 어떤 절대위치 오버레이도 actionbar 위에
@@ -270,66 +314,68 @@ body:has(.wsv-page) {
     z-index: 200;
     pointer-events: auto;
 }
-.wsv-action-reset {
-    flex-shrink: 0;
+.wsv-action-reset,
+.wsv-action-camera {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 52px;
     border: none;
-    height: 48px;
-    padding: 0 18px;
-    border-radius: 12px;
-    background: #27272a;
-    color: #e4e4e7;
-    font-size: 14px;
+    border-radius: 14px;
+    font-size: 15px;
     font-weight: 800;
+    line-height: 1;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     pointer-events: auto !important;
     touch-action: manipulation;
     user-select: none;
     -webkit-user-select: none;
+    letter-spacing: -0.01em;
+    transition: background 0.12s ease, transform 0.06s ease;
+}
+.wsv-action-reset {
+    flex-shrink: 0;
+    padding: 0 16px;
+    background: #27272a;
+    color: #e4e4e7;
 }
 .wsv-action-reset:active {
     transform: translateY(1px);
     background: #3f3f46;
 }
 .wsv-action-camera {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border: none;
-    height: 56px;
-    padding: 0 22px;
-    border-radius: 999px;
+    flex: 1;
+    padding: 0 18px;
     background: #2563eb;
     color: #fff;
-    font-size: 15px;
-    font-weight: 800;
-    cursor: pointer;
-    box-shadow: 0 8px 22px rgba(37, 99, 235, 0.45);
-    -webkit-tap-highlight-color: transparent;
-    pointer-events: auto !important;
-    touch-action: manipulation;
-    user-select: none;
-    -webkit-user-select: none;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.4);
 }
 .wsv-action-camera:active {
     transform: translateY(1px);
     background: #1d4ed8;
 }
-.wsv-action-camera-emoji,
-.wsv-action-camera-text {
+.wsv-action-camera-icon,
+.wsv-action-reset-icon {
     /* 자식 span 이 클릭 이벤트를 가로채지 않도록 — 탭은 항상 부모 button 으로 */
     pointer-events: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
-.wsv-action-camera-emoji {
-    font-size: 22px;
-    line-height: 1;
+.wsv-action-camera-icon svg,
+.wsv-action-reset-icon svg {
+    display: block;
+    width: 20px;
+    height: 20px;
 }
-.wsv-action-camera-text {
-    letter-spacing: 0.02em;
+.wsv-action-camera-text,
+.wsv-action-reset-text {
+    pointer-events: none;
 }
 
-/* 시트 ----------------------------------------------------------- */
+/* 바닥 시트(사진 업로드) ---------------------------------------- */
 .wsv-sheet-backdrop {
     position: fixed;
     inset: 0;
@@ -351,10 +397,11 @@ body:has(.wsv-page) {
     background: #fff;
     border-radius: 18px 18px 0 0;
     padding: 8px 18px max(20px, env(safe-area-inset-bottom));
-    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.3);
     max-height: 86vh;
     overflow-y: auto;
     animation: wsv-slide-up 0.22s ease;
+    box-sizing: border-box;
 }
 @keyframes wsv-slide-up {
     from { transform: translateY(100%); }
@@ -362,106 +409,162 @@ body:has(.wsv-page) {
 }
 
 .wsv-sheet-handle {
-    width: 38px;
+    width: 40px;
     height: 4px;
     background: #d4d4d8;
     border-radius: 999px;
-    margin: 6px auto 12px;
+    margin: 6px auto 14px;
 }
 
 .wsv-sheet-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    margin-bottom: 14px;
+    gap: 10px;
+    margin-bottom: 16px;
 }
 .wsv-sheet-title {
     font-size: 17px;
     font-weight: 800;
     color: #18181b;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
 }
 .wsv-sheet-sub {
     font-size: 12px;
     color: #71717a;
     font-weight: 600;
-    margin-top: 2px;
+    margin-top: 3px;
+    letter-spacing: 0.01em;
 }
 .wsv-sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: #f4f4f5;
-    color: #3f3f46;
-    width: 32px;
-    height: 32px;
+    color: #52525b;
+    width: 36px;
+    height: 36px;
     border-radius: 999px;
-    font-size: 20px;
-    line-height: 1;
     cursor: pointer;
+    padding: 0;
+    flex-shrink: 0;
+    transition: background 0.12s ease;
+}
+.wsv-sheet-close:active {
+    background: #e4e4e7;
+}
+.wsv-sheet-close svg {
+    width: 16px;
+    height: 16px;
+    display: block;
 }
 
+/* 부서 row -------------------------------------------------------- */
 .wsv-dept-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 10px;
-    background: #f9fafb;
-    border-radius: 10px;
+    background: #f4f4f5;
+    border: 1px solid #e4e4e7;
+    border-radius: 12px;
     padding: 12px 14px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
 }
 .wsv-dept-label {
     font-size: 12px;
     color: #71717a;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
 }
 .wsv-dept-value {
-    flex: 1;
     font-size: 14px;
     color: #18181b;
     font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: -0.01em;
 }
 .wsv-dept-change {
-    border: none;
-    background: #e4e4e7;
+    flex-shrink: 0;
+    border: 1px solid #d4d4d8;
+    background: #fff;
     color: #3f3f46;
     border-radius: 8px;
-    padding: 6px 12px;
+    height: 32px;
+    padding: 0 12px;
     font-size: 12px;
+    font-weight: 700;
     cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease;
+}
+.wsv-dept-change:active {
+    background: #f4f4f5;
 }
 
+/* 카메라 버튼 ----------------------------------------------------- */
 .wsv-camera-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
     width: 100%;
     background: #2563eb;
     color: #fff;
     border: none;
-    border-radius: 12px;
-    padding: 18px 16px;
+    border-radius: 14px;
+    height: 56px;
+    padding: 0 16px;
     font-size: 16px;
     font-weight: 700;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.3);
+    -webkit-tap-highlight-color: transparent;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    transition: background 0.12s ease;
+}
+.wsv-camera-btn:active {
+    background: #1d4ed8;
 }
 .wsv-camera-btn:disabled {
     background: #94a3b8;
     box-shadow: none;
+    cursor: not-allowed;
+}
+.wsv-camera-btn svg {
+    width: 22px;
+    height: 22px;
+    display: block;
 }
 
+/* 큐(선택된 사진 목록) ------------------------------------------- */
 .wsv-queue {
     margin-top: 14px;
     background: #f9fafb;
-    border-radius: 10px;
+    border: 1px solid #e4e4e7;
+    border-radius: 12px;
     padding: 12px 14px;
 }
 .wsv-queue-head {
     display: flex;
     justify-content: space-between;
+    align-items: baseline;
     font-size: 13px;
-    color: #3f3f46;
-    font-weight: 600;
-    margin-bottom: 8px;
+    color: #18181b;
+    font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
 }
 .wsv-queue-size {
     color: #71717a;
     font-weight: 500;
+    font-size: 12px;
 }
 .wsv-thumbs {
     display: grid;
@@ -472,7 +575,7 @@ body:has(.wsv-page) {
 .wsv-thumb {
     position: relative;
     aspect-ratio: 1 / 1;
-    border-radius: 8px;
+    border-radius: 10px;
     overflow: hidden;
     background: #e4e4e7;
 }
@@ -483,72 +586,108 @@ body:has(.wsv-page) {
     display: block;
 }
 .wsv-thumb-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     position: absolute;
     top: 4px;
     right: 4px;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border-radius: 999px;
     border: none;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.65);
     color: #fff;
-    font-size: 14px;
-    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+.wsv-thumb-x svg {
+    width: 12px;
+    height: 12px;
+    display: block;
 }
 .wsv-upload-btn {
     width: 100%;
     background: #16a34a;
     color: #fff;
     border: none;
-    border-radius: 10px;
-    padding: 12px;
+    border-radius: 12px;
+    height: 48px;
+    padding: 0 16px;
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    transition: background 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.wsv-upload-btn:active {
+    background: #15803d;
 }
 .wsv-upload-btn:disabled {
     background: #86efac;
     cursor: not-allowed;
 }
 
+/* 피드백 ---------------------------------------------------------- */
 .wsv-feedback {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-top: 12px;
-    padding: 10px 12px;
-    border-radius: 8px;
+    padding: 12px 14px;
+    border-radius: 10px;
     font-size: 13px;
     font-weight: 600;
+    line-height: 1.4;
+}
+.wsv-feedback svg {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: block;
 }
 .wsv-feedback.success {
     background: #dcfce7;
     color: #166534;
+    border: 1px solid #bbf7d0;
 }
 .wsv-feedback.error {
     background: #fee2e2;
     color: #991b1b;
+    border: 1px solid #fecaca;
 }
 
+/* 정보 라인/블록 ------------------------------------------------- */
 .wsv-info-line {
     margin-top: 14px;
     font-size: 13px;
     color: #52525b;
+    line-height: 1.4;
 }
 .wsv-info-block {
     margin-top: 14px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     background: #f9fafb;
-    border-radius: 8px;
+    border: 1px solid #e4e4e7;
+    border-radius: 10px;
 }
 .wsv-info-key {
     font-size: 11px;
     color: #71717a;
     font-weight: 700;
     margin-bottom: 4px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 .wsv-info-value {
     font-size: 13px;
     color: #18181b;
-    line-height: 1.5;
+    line-height: 1.55;
     white-space: pre-wrap;
+    word-break: break-word;
 }
 
 /* 부서 모달 ------------------------------------------------------ */
@@ -561,40 +700,56 @@ body:has(.wsv-page) {
     justify-content: center;
     padding: 16px;
     z-index: 120;
+    animation: wsv-fade-in 0.18s ease;
 }
 .wsv-modal {
     background: #fff;
     border-radius: 16px;
-    padding: 22px 20px;
+    padding: 22px 20px 18px;
     width: 100%;
-    max-width: 380px;
+    max-width: 420px;
+    box-sizing: border-box;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+    animation: wsv-pop-in 0.2s ease;
+}
+@keyframes wsv-pop-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .wsv-modal h2 {
-    font-size: 17px;
-    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 800;
+    margin: 0 0 6px;
     color: #18181b;
+    letter-spacing: -0.02em;
 }
 .wsv-modal-desc {
-    font-size: 12px;
-    color: #52525b;
+    font-size: 13px;
+    color: #71717a;
     line-height: 1.55;
-    margin: 0 0 14px;
+    margin: 0 0 16px;
 }
 .wsv-quick-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
 }
 .wsv-chip {
     border: 1px solid #e4e4e7;
-    background: #fff;
+    background: #fafafa;
     color: #3f3f46;
     border-radius: 999px;
-    padding: 7px 12px;
-    font-size: 12px;
+    height: 34px;
+    padding: 0 14px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.wsv-chip:active {
+    background: #f4f4f5;
 }
 .wsv-chip.active {
     background: #18181b;
@@ -604,11 +759,13 @@ body:has(.wsv-page) {
 .wsv-dept-input {
     width: 100%;
     box-sizing: border-box;
-    padding: 11px 13px;
+    height: 44px;
+    padding: 0 14px;
     border: 1px solid #d4d4d8;
     border-radius: 10px;
     font-size: 14px;
     margin-bottom: 14px;
+    transition: border-color 0.12s ease;
 }
 .wsv-dept-input:focus {
     outline: none;
@@ -617,26 +774,60 @@ body:has(.wsv-page) {
 .wsv-modal-actions {
     display: flex;
     gap: 8px;
-    justify-content: flex-end;
 }
 .wsv-modal-cancel,
 .wsv-modal-confirm {
-    border: none;
+    flex: 1;
+    border: 1px solid transparent;
     border-radius: 10px;
-    padding: 9px 16px;
-    font-size: 13px;
+    height: 44px;
+    padding: 0 16px;
+    font-size: 14px;
     font-weight: 700;
     cursor: pointer;
+    line-height: 1;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease;
 }
 .wsv-modal-cancel {
     background: #f4f4f5;
     color: #3f3f46;
+    border-color: #e4e4e7;
+}
+.wsv-modal-cancel:active {
+    background: #e4e4e7;
 }
 .wsv-modal-confirm {
     background: #2563eb;
     color: #fff;
 }
+.wsv-modal-confirm:active {
+    background: #1d4ed8;
+}
 .wsv-modal-confirm:disabled {
     background: #93c5fd;
     cursor: not-allowed;
+}
+
+/* 좁은 폰(아이폰 SE/미니, ~360px) 대응 ---------------------------- */
+@media (max-width: 360px) {
+    .wsv-action-reset,
+    .wsv-action-camera {
+        font-size: 14px;
+        height: 48px;
+        gap: 6px;
+    }
+    .wsv-action-reset {
+        padding: 0 12px;
+    }
+    .wsv-action-camera {
+        padding: 0 14px;
+    }
+    .wsv-camera-btn {
+        font-size: 15px;
+        height: 52px;
+    }
+    .wsv-topbar-title {
+        font-size: 13px;
+    }
 }

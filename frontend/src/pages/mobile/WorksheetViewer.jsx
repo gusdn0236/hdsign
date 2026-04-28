@@ -16,6 +16,9 @@ const MAX_DEPT_LEN = 100;
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
+const FAST_PDF_DPR = 1.5;
+const SHARP_PDF_BASE_DPR = 2.5;
+const SHARP_PDF_MAX_DPR = 6;
 
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
@@ -80,6 +83,7 @@ export default function WorksheetViewer() {
     const [pageRatio, setPageRatio] = useState(DEFAULT_PAGE_RATIO);
     const [pdfReady, setPdfReady] = useState(false);
     const [pdfError, setPdfError] = useState('');
+    const [sharpPdfRender, setSharpPdfRender] = useState(false);
 
     // 시트 (탭하면 열림)
     const [sheetOpen, setSheetOpen] = useState(false);
@@ -101,15 +105,45 @@ export default function WorksheetViewer() {
     const [renderScale, setRenderScale] = useState(1);
     const transformRef = useRef(null);
     const renderScaleTimerRef = useRef(null);
+    const sharpRenderTimerRef = useRef(null);
+
+    const clearSharpRenderTimer = useCallback(() => {
+        const timer = sharpRenderTimerRef.current;
+        if (!timer) return;
+        if (timer.kind === 'idle' && typeof window !== 'undefined' && window.cancelIdleCallback) {
+            window.cancelIdleCallback(timer.id);
+        } else {
+            clearTimeout(timer.id);
+        }
+        sharpRenderTimerRef.current = null;
+    }, []);
+
+    const scheduleSharpRender = useCallback(() => {
+        if (sharpPdfRender || sharpRenderTimerRef.current) return;
+        const run = () => {
+            sharpRenderTimerRef.current = null;
+            setSharpPdfRender(true);
+        };
+        if (typeof window !== 'undefined' && window.requestIdleCallback) {
+            sharpRenderTimerRef.current = {
+                kind: 'idle',
+                id: window.requestIdleCallback(run, { timeout: 900 }),
+            };
+        } else {
+            sharpRenderTimerRef.current = { kind: 'timeout', id: setTimeout(run, 450) };
+        }
+    }, [sharpPdfRender]);
 
     const resetPdfView = useCallback((e) => {
         e?.stopPropagation?.();
         if (transformRef.current?.resetTransform) {
             transformRef.current.resetTransform(0);
             setRenderScale(1);
+            setSharpPdfRender(false);
             return;
         }
         setPdfReady(false);
+        setSharpPdfRender(false);
         setPdfViewKey((key) => key + 1);
     }, []);
 
@@ -126,7 +160,8 @@ export default function WorksheetViewer() {
     useEffect(() => () => {
         if (renderScaleTimerRef.current) clearTimeout(renderScaleTimerRef.current);
         if (stageTapTimerRef.current) clearTimeout(stageTapTimerRef.current);
-    }, []);
+        clearSharpRenderTimer();
+    }, [clearSharpRenderTimer]);
 
     // PDF 영역 한 번 탭 → 변경사항/추가요청사항 오버레이 토글.
     // react-zoom-pan-pinch 가 패닝/핀치 중에는 click 합성을 막아주므로 여기엔 단순 탭만 들어온다.
@@ -253,9 +288,11 @@ export default function WorksheetViewer() {
         setCurrentPage(1);
         setPageRatio(DEFAULT_PAGE_RATIO);
         setPdfReady(false);
+        setSharpPdfRender(false);
         setPdfError('');
+        clearSharpRenderTimer();
         setPdfViewKey((key) => key + 1);
-    }, [detail?.worksheetPdfUrl]);
+    }, [clearSharpRenderTimer, detail?.worksheetPdfUrl]);
 
     const pageWidth = useMemo(() => {
         if (!stageSize.width || !stageSize.height) return 0;
@@ -282,6 +319,19 @@ export default function WorksheetViewer() {
         }, 60);
         return () => clearTimeout(t);
     }, [pdfReady, pageWidth, stageSize.width, stageSize.height]);
+
+    useEffect(() => {
+        setSharpPdfRender(false);
+        clearSharpRenderTimer();
+    }, [clearSharpRenderTimer, currentPage, pageWidth]);
+
+    const pdfDevicePixelRatio = useMemo(() => {
+        if (!sharpPdfRender) {
+            const deviceDpr = typeof window !== 'undefined' ? window.devicePixelRatio || FAST_PDF_DPR : FAST_PDF_DPR;
+            return Math.min(FAST_PDF_DPR, Math.max(1, deviceDpr));
+        }
+        return Math.min(SHARP_PDF_MAX_DPR, Math.max(SHARP_PDF_BASE_DPR, Math.ceil(SHARP_PDF_BASE_DPR * renderScale)));
+    }, [renderScale, sharpPdfRender]);
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
@@ -407,7 +457,11 @@ export default function WorksheetViewer() {
                     onTouchEnd={tapHandler(() => navigate('/m/worksheets'))}
                     className="wsv-back"
                     aria-label="뒤로"
-                >‹</Link>
+                >
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M12.5 4.5L7 10l5.5 5.5" />
+                    </svg>
+                </Link>
                 <div className="wsv-topbar-text">
                     <div className="wsv-topbar-company">
                         {detail?.companyName || (loadingDetail ? '…' : '거래처 미상')}
@@ -444,6 +498,7 @@ export default function WorksheetViewer() {
                         minScale={1}
                         maxScale={5}
                         centerOnInit
+                        centerZoomedOut
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
                         wheel={{
                             step: 0.18,
@@ -456,7 +511,8 @@ export default function WorksheetViewer() {
                             // 탭이 흘러들어가면 preventDefault 가 click 합성을 막을 수 있음.
                             // 명시적으로 제외해 라이브러리가 절대 가로채지 못하게.
                             excluded: ['wsv-back', 'wsv-action-reset', 'wsv-action-camera',
-                                       'wsv-action-camera-emoji', 'wsv-action-camera-text',
+                                       'wsv-action-reset-icon', 'wsv-action-reset-text',
+                                       'wsv-action-camera-icon', 'wsv-action-camera-text',
                                        'wsv-pager-btn'],
                         }}
                         onTransformed={handleTransformed}
@@ -477,14 +533,14 @@ export default function WorksheetViewer() {
                                     <Page
                                         pageNumber={currentPage}
                                         width={pageWidth}
-                                        // 줌 안 한 상태에선 DPR 3 으로 빠르게, 핀치줌하면 디바운스 후
-                                        // renderScale 이 올라가며 DPR 도 비례 증가(상한 8) → 글씨 선명.
-                                        devicePixelRatio={Math.min(8, Math.max(3, Math.ceil(3 * renderScale)))}
+                                        // 첫 표시는 낮은 DPR 로 빠르게, idle 이후와 핀치줌 정지 후에는 선명하게 재렌더.
+                                        devicePixelRatio={pdfDevicePixelRatio}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
                                         onLoadSuccess={onPageLoad}
                                         onRenderSuccess={() => {
                                             setPdfReady(true);
+                                            scheduleSharpRender();
                                             // Page 가 실제로 그려진 직후 가운데 정렬 — centerOnInit 이 빈 콘텐츠
                                             // 기준으로 계산돼 어긋나는 케이스 방지. RAF 두 번(레이아웃 사이클 한 바퀴
                                             // 보장) 후 호출 — 첫 RAF 시점엔 onPageLoad 의 pageRatio 변경이 아직
@@ -576,7 +632,11 @@ export default function WorksheetViewer() {
                             }}
                             disabled={currentPage <= 1}
                             aria-label="이전 페이지"
-                        >‹</button>
+                        >
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M11 4L6 9l5 5" />
+                            </svg>
+                        </button>
                         <span className="wsv-pager-text">{currentPage} / {numPages}</span>
                         <button
                             type="button"
@@ -587,7 +647,11 @@ export default function WorksheetViewer() {
                             }}
                             disabled={currentPage >= numPages}
                             aria-label="다음 페이지"
-                        >›</button>
+                        >
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M7 4l5 5-5 5" />
+                            </svg>
+                        </button>
                     </div>
                 )}
             </div>
@@ -599,7 +663,15 @@ export default function WorksheetViewer() {
                     onClick={resetPdfView}
                     onTouchEnd={tapHandler(resetPdfView)}
                 >
-                    ⟲ 전체보기
+                    <span className="wsv-action-reset-icon" aria-hidden="true">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 7V3h4" />
+                            <path d="M17 7V3h-4" />
+                            <path d="M3 13v4h4" />
+                            <path d="M17 13v4h-4" />
+                        </svg>
+                    </span>
+                    <span className="wsv-action-reset-text">전체보기</span>
                 </button>
                 <button
                     type="button"
@@ -608,7 +680,12 @@ export default function WorksheetViewer() {
                     onTouchEnd={tapHandler(() => setSheetOpen(true))}
                     aria-label="사진찍기"
                 >
-                    <span className="wsv-action-camera-emoji" aria-hidden="true">📷</span>
+                    <span className="wsv-action-camera-icon" aria-hidden="true">
+                        <svg viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 7.5h2.5l1.5-2h6l1.5 2H18a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 18 18.5H4A1.5 1.5 0 0 1 2.5 17V9A1.5 1.5 0 0 1 4 7.5z" />
+                            <circle cx="11" cy="13" r="3.2" />
+                        </svg>
+                    </span>
                     <span className="wsv-action-camera-text">사진찍기</span>
                 </button>
             </div>
@@ -637,7 +714,11 @@ export default function WorksheetViewer() {
                                 className="wsv-sheet-close"
                                 onClick={() => setSheetOpen(false)}
                                 aria-label="닫기"
-                            >×</button>
+                            >
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M4 4l8 8M12 4l-8 8" />
+                                </svg>
+                            </button>
                         </div>
 
                         <div className="wsv-dept-row">
@@ -654,7 +735,17 @@ export default function WorksheetViewer() {
                             onClick={triggerCamera}
                             disabled={uploading || compressing}
                         >
-                            {compressing ? '사진 처리 중…' : '📷 사진 찍기 / 선택하기'}
+                            {compressing ? (
+                                <span>사진 처리 중…</span>
+                            ) : (
+                                <>
+                                    <svg viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <path d="M4 7.5h2.5l1.5-2h6l1.5 2H18a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 18 18.5H4A1.5 1.5 0 0 1 2.5 17V9A1.5 1.5 0 0 1 4 7.5z" />
+                                        <circle cx="11" cy="13" r="3.2" />
+                                    </svg>
+                                    <span>사진 찍기 / 선택하기</span>
+                                </>
+                            )}
                         </button>
 
                         {queued.length > 0 && (
@@ -673,7 +764,11 @@ export default function WorksheetViewer() {
                                                 onClick={() => removeQueued(idx)}
                                                 disabled={uploading}
                                                 aria-label="삭제"
-                                            >×</button>
+                                            >
+                                                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                    <path d="M3 3l6 6M9 3l-6 6" />
+                                                </svg>
+                                            </button>
                                         </div>
                                     ))}
                                 </div>
@@ -691,7 +786,10 @@ export default function WorksheetViewer() {
                         {uploadError && <div className="wsv-feedback error">{uploadError}</div>}
                         {uploadResult && (
                             <div className="wsv-feedback success">
-                                ✓ {uploadResult.count}장 업로드 완료
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M3 8l3.5 3.5L13 5" />
+                                </svg>
+                                <span>{uploadResult.count}장 업로드 완료</span>
                             </div>
                         )}
 
