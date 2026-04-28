@@ -148,7 +148,7 @@ missing module named numpy._core.arcsin - imported by numpy._core (conditional),
 missing module named numpy._core.arccosh - imported by numpy._core (conditional), numpy (conditional)
 missing module named numpy._core.arccos - imported by numpy._core (conditional), numpy (conditional)
 missing module named numpy._typing._ufunc - imported by numpy._typing (conditional)
-missing module named pwd - imported by shutil (optional), tarfile (optional), pathlib (delayed, conditional, optional), subprocess (optional), posixpath (delayed, conditional), netrc (delayed, conditional), getpass (delayed), http.server (delayed, optional), webbrowser (delayed)
+missing module named pwd - imported by posixpath (delayed, conditional), shutil (optional), tarfile (optional), pathlib (delayed, conditional, optional), subprocess (optional), netrc (delayed, conditional), getpass (delayed), http.server (delayed, optional), webbrowser (delayed)
 missing module named termios - imported by getpass (optional), tty (top-level)
 missing module named threadpoolctl - imported by numpy.lib._utils_impl (delayed, optional)
 missing module named psutil - imported by numpy.testing._private.utils (delayed, optional)

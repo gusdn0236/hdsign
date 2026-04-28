@@ -880,10 +880,11 @@ export default function OrderAdmin() {
                 ? new Date(order.worksheetUpdatedAt).getTime()
                 : 0;
               const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
-              // 변경 배지: 워처에서 "지시서 내용 변경" 분기로 PDF 를 재저장하면 worksheetChangeNote 가 채워진다.
-              // 관리자가 한 번 봤다고 사라지지 않고, 다음 안정 재인쇄(내용변경 미체크)로 노트가 비워질 때까지 유지.
-              const hasNewWorksheet =
-                !isTrash && (worksheetAt > viewedAt || !!order.worksheetChangeNote);
+              // 변경 배지: worksheetUpdatedAt 가 마지막 관리자 열람보다 늦을 때만 노출.
+              // worksheetChangeNote 는 워처 다이얼로그에서 다음 회차에 prefill 하기 위해 영속되므로
+              // "노트 존재"만으로 배지를 트리거하면 한 번 변경 노트가 생긴 주문은 영구히 배지가 남는다.
+              // 관리자가 한 번 보면 깨끗이 사라지고, 새 변경으로 타임스탬프가 갱신될 때만 다시 뜸.
+              const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
 
               return (
                 <tr

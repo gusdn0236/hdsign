@@ -1845,6 +1845,12 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                             highlightthickness=0)
         note_text.pack(fill="x")
         chosen_widgets["mod_note_text"] = note_text
+        # 이전에 저장한 변경사항 메모 복원 — 분배함 ✓ 와 같은 UX("불러오면 이전 입력 그대로").
+        # 직원이 그대로 두면 동일 노트가 재업로드돼 모바일 변경 배지/뷰어 노트가 유지되고,
+        # 수정/삭제하면 그 변경분이 새로 반영된다.
+        saved_note = (ws.get("worksheetChangeNote") or "").strip()
+        if saved_note:
+            note_text.insert("1.0", saved_note)
 
         # 진입 시 포커스는 납기 입력 — 가장 자주 만지는 필드.
         day_e.focus_set()
@@ -2274,6 +2280,13 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 note = note_widget.get("1.0", "end-1c").strip()
             except Exception:
                 note = ""
+        # 다이얼로그 진입 시 prefill 된 이전 메모 — confirm 시점에 사용자가 손댔는지 비교한다.
+        original_note = (ws.get("worksheetChangeNote") or "").strip()
+        # 사용자가 prefill 된 이전 메모를 그대로 두고 confirm 했으면 단순 재인쇄로 본다 —
+        # 백엔드가 DB 노트를 비우지 않고(=다음 회차 prefill 보존), worksheetUpdatedAt 도 갱신 안 함.
+        # 메모를 수정/추가했거나 비웠으면 의미 있는 변경으로 처리(기존 로직).
+        note_unchanged = bool(note) and note == original_note
+        content_changed = bool(note) and not note_unchanged
         result["value"] = {
             "mode": "modify",
             "change_type": "combined",
@@ -2282,8 +2295,9 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             "current_due_iso": ws.get("dueDate") or "",
             "delivery_method": delivery_enum,
             "original_delivery_method": ws.get("deliveryMethod") or "",
-            "content_changed": bool(note),
+            "content_changed": content_changed,
             "change_note": note,
+            "preserve_note": note_unchanged,
             "department_tags": collect_dept_tags(),
             "department_slots": collect_dept_slots(),
             "skip_print": bool(skip_print),
@@ -2631,11 +2645,13 @@ def _process_printed_pdf(pdf_path: Path):
     dept_tags = list(sel.get("department_tags") or [])
     dept_slots = list(sel.get("department_slots") or [])
     patch_due_date(order_number, new_due, delivery_to_send, dept_tags, dept_slots)
-    # 사용자가 다이얼로그에서 "지시서 내용 변경됨" 체크 시에만 contentChanged=true 송신.
-    # change_note 도 함께 — 모바일 뷰어 탭하면 노출된다.
+    # 사용자가 메모를 새로 입력/수정했을 때만 contentChanged=true. prefill 된 이전 메모를
+    # 그대로 두고 confirm 한 단순 재인쇄는 preserve_note=True 로 보내 DB 의 메모만 보존
+    # (worksheetUpdatedAt 도 갱신 안 됨 → 모바일/관리자 변경 배지 트리거 X).
     upload_ok = upload_worksheet_pdf(order_number, pdf_path,
                                      content_changed=bool(sel.get("content_changed", False)),
-                                     change_note=sel.get("change_note") or "")
+                                     change_note=sel.get("change_note") or "",
+                                     preserve_note=bool(sel.get("preserve_note", False)))
     # "웹에만 적용하고 인쇄 안 함" 선택 시 종이 인쇄 단계를 건너뛴다 — 웹 적용만 끝.
     if sel.get("skip_print"):
         ui_log(f"인쇄 — '인쇄 안 함' 선택, 종이 인쇄 생략 ({pdf_path.name})")
@@ -3474,16 +3490,19 @@ def compress_pdf_for_upload(src: Path) -> Path:
 
 def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                          content_changed: bool = False,
-                         change_note: str = "") -> bool:
+                         change_note: str = "",
+                         preserve_note: bool = False) -> bool:
     """변환된 PDF를 백엔드에 업로드. 거래처 카드에 노출되는 단일 PDF로 덮어씀.
     업로드 직전 Ghostscript 로 다운샘플링해 용량을 줄인다 (텍스트는 벡터 유지).
     multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음).
 
     content_changed=True 면 contentChanged=true 폼 필드를 함께 보내서 백엔드가
-    "변경" 배지를 띄우게 한다. 사용자가 다이얼로그에서 [지시서 내용 변경] 분기를 골랐을 때만 True.
+    "변경" 배지를 띄우게 한다. 사용자가 다이얼로그에서 새 메모를 입력했을 때만 True.
     change_note: 작업자가 입력한 변경 사항 텍스트. 모바일 뷰어에서 PDF 한번 탭 시 노출.
                  content_changed=True 이고 비어있지 않을 때만 폼에 포함한다(빈 문자열은 백엔드에서 클리어).
-    """
+    preserve_note=True: 다이얼로그에 prefill 된 이전 메모를 그대로 두고 confirm 한 경우.
+                 백엔드가 DB 의 worksheetChangeNote 를 건드리지 않아 다음 회차에 또 prefill 되도록 영속.
+                 content_changed 와 동시 True 일 일은 없음(상호 배타) — 다이얼로그가 그렇게 분기."""
     if not order_number or not pdf_path.exists():
         return False
 
@@ -3503,8 +3522,8 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                 pass
         return False
 
-    # contentChanged 필드는 사용자가 [지시서 내용 변경] 분기를 골랐을 때만 포함. 안 보내면 백엔드가
-    # 단순 재인쇄로 간주해 worksheetUpdatedAt 갱신 안 함.
+    # contentChanged 필드는 사용자가 새 메모를 입력했을 때만 포함. 안 보내면 백엔드는
+    # 단순 재인쇄로 간주해 worksheetUpdatedAt 갱신 안 함. preserveChangeNote=true 와 상호 배타.
     extra_field = b""
     if content_changed:
         extra_field += (
@@ -3521,6 +3540,13 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                 f'Content-Disposition: form-data; name="changeNote"\r\n\r\n'
                 f"{note}\r\n"
             ).encode("utf-8")
+    elif preserve_note:
+        # 사용자가 prefill 된 이전 메모를 그대로 두고 confirm — 백엔드가 DB 의 메모를 보존.
+        extra_field += (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="preserveChangeNote"\r\n\r\n'
+            f"true\r\n"
+        ).encode("utf-8")
 
     file_head = (
         f"--{boundary}\r\n"

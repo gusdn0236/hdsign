@@ -160,6 +160,9 @@ public class PublicWorksheetController {
         // 워처가 다이얼로그에서 "이전 클릭 슬롯 그대로" 복원하기 위한 라벨 단위 저장본.
         // 모바일 뷰어는 사용 안 함(부서 필터는 위 departmentTags 만 본다).
         item.put("departmentSlots", splitTags(o.getDepartmentSlots()));
+        // 워처 다이얼로그에서 "변경된 내용" 텍스트 박스를 이전에 입력한 메모로 그대로 복원하기 위함.
+        // 모바일 뷰어는 detail 엔드포인트에서 별도로 받아 PDF 탭 시 노출 — list 와 detail 양쪽에 노출.
+        item.put("worksheetChangeNote", o.getWorksheetChangeNote());
         return item;
     }
 

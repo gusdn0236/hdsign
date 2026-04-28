@@ -280,13 +280,17 @@ public class PublicEvidenceController {
     public ResponseEntity<?> uploadWorksheetPdf(
             @PathVariable String orderNumber,
             @RequestParam("file") MultipartFile file,
-            // 워처 인쇄 다이얼로그에서 사용자가 "지시서 내용 변경됨" 체크박스를 켰을 때 true.
-            // 단순 재인쇄(동일 내용)로 인한 PDF 재업로드는 false → 배지 안 띄움.
+            // 워처 인쇄 다이얼로그에서 사용자가 "지시서 내용 변경" 분기로 진입했을 때 true
+            // (= 텍스트 박스에 새 메모를 입력해 의미 있는 변경이 발생). 단순 재인쇄는 false.
             @RequestParam(value = "contentChanged", required = false) Boolean contentChanged,
-            // 작업자가 "지시서 내용 변경" 분기에서 입력한 변경 메모.
-            // 모바일 뷰어에서 PDF 한 번 탭하면 이 텍스트가 떠서 작업자가 즉시 확인.
-            // contentChanged=true 일 때만 저장하고, 그 외(신규/납기단순변경)에는 비운다.
-            @RequestParam(value = "changeNote", required = false) String changeNote
+            // 작업자가 입력한 변경 메모. 모바일 뷰어에서 PDF 한 번 탭하면 노출.
+            // contentChanged=true 일 때만 새 값으로 갱신. 그 외엔 preserveChangeNote 에 따라 분기.
+            @RequestParam(value = "changeNote", required = false) String changeNote,
+            // 단순 재인쇄(작업자가 텍스트 박스에 미리 채워진 이전 메모를 그대로 둔 채 confirm).
+            // true 면 DB 의 기존 worksheetChangeNote 를 건드리지 않는다(다음 다이얼로그 호출 시
+            // 동일 메모가 또 prefill 되도록 영속). 미전송/false 면 기존 동작(메모 비우기) 유지 —
+            // 구버전 워처 호환.
+            @RequestParam(value = "preserveChangeNote", required = false) Boolean preserveChangeNote
     ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null) {
@@ -323,22 +327,25 @@ public class PublicEvidenceController {
                 : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
         String url = normalizedPublicUrl + key;
 
-        // 첫 부착(이전 URL 이 없었음) 또는 사용자가 "지시서 내용 변경됨" 체크박스를 켰을 때만
-        // "변경" 배지 트리거. 단순 재인쇄(동일 내용)는 배지 안 띄움.
+        // 첫 부착(이전 URL 이 없었음) 또는 사용자가 새 메모를 입력했을 때만 "변경" 배지 트리거.
+        // 단순 재인쇄(동일 내용)와 메모 보존(preserveChangeNote) 은 배지 안 띄움.
         // 납기/배송 실제 변경은 /due-date 에서 별도로 잡는다.
         boolean firstAttachment = order.getWorksheetPdfUrl() == null || order.getWorksheetPdfUrl().isBlank();
         boolean userMarkedChanged = Boolean.TRUE.equals(contentChanged);
+        boolean preserveNote = Boolean.TRUE.equals(preserveChangeNote);
         order.setWorksheetPdfUrl(url);
         if (firstAttachment || userMarkedChanged) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
         }
-        // changeNote 는 "최신 변경분만" 보이도록 매 업로드마다 다시 산출한다.
-        // 내용변경(체크박스 ON) 일 때만 새 메모를 저장하고, 그 외(신규작성·단순 재인쇄)는 비운다.
+        // changeNote 처리 분기:
+        //   - userMarkedChanged: 새 메모로 갱신 (빈 값이면 null 로 클리어)
+        //   - preserveNote: 기존 DB 메모 그대로 유지 — 다음 다이얼로그에서 또 prefill 되도록 영속
+        //   - 둘 다 아님: 기존 동작(메모 비우기) — 구버전 워처/명시적 클리어 의도
         if (userMarkedChanged) {
             String trimmed = changeNote == null ? "" : changeNote.trim();
             if (trimmed.length() > 2000) trimmed = trimmed.substring(0, 2000);
             order.setWorksheetChangeNote(trimmed.isEmpty() ? null : trimmed);
-        } else {
+        } else if (!preserveNote) {
             order.setWorksheetChangeNote(null);
         }
         orderRepository.save(order);
