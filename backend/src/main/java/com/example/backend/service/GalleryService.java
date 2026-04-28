@@ -45,10 +45,12 @@ public class GalleryService {
             String ext = (originalFilename != null && originalFilename.contains("."))
                     ? originalFilename.substring(originalFilename.lastIndexOf(".")) : "";
             String savedFilename = category + "/" + UUID.randomUUID() + ext;
-            s3Client.putObject(
-                    PutObjectRequest.builder().bucket(bucket).key(savedFilename)
-                            .contentType(file.getContentType()).build(),
-                    RequestBody.fromBytes(file.getBytes()));
+            try (java.io.InputStream in = file.getInputStream()) {
+                s3Client.putObject(
+                        PutObjectRequest.builder().bucket(bucket).key(savedFilename)
+                                .contentType(file.getContentType()).build(),
+                        RequestBody.fromInputStream(in, file.getSize()));
+            }
             String imageUrl = publicUrl + "/" + savedFilename;
             GalleryImage image = GalleryImage.builder()
                     .category(category).subCategory(subCategory)

@@ -348,14 +348,16 @@ public class ClientService {
                         : "";
                 String key = "orders/" + saved.getOrderNumber() + "/" + UUID.randomUUID() + extension;
 
-                s3Client.putObject(
-                        PutObjectRequest.builder()
-                                .bucket(bucket)
-                                .key(key)
-                                .contentType(file.getContentType())
-                                .build(),
-                        RequestBody.fromBytes(file.getBytes())
-                );
+                try (java.io.InputStream in = file.getInputStream()) {
+                    s3Client.putObject(
+                            PutObjectRequest.builder()
+                                    .bucket(bucket)
+                                    .key(key)
+                                    .contentType(file.getContentType())
+                                    .build(),
+                            RequestBody.fromInputStream(in, file.getSize())
+                    );
+                }
 
                 String normalizedPublicUrl = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
                 String fileUrl = normalizedPublicUrl + key;

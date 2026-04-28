@@ -102,14 +102,14 @@ public class PublicEvidenceController {
                     : ".jpg";
             String key = "orders/" + order.getOrderNumber() + "/evidence/" + UUID.randomUUID() + extension;
 
-            try {
+            try (java.io.InputStream in = file.getInputStream()) {
                 s3Client.putObject(
                         PutObjectRequest.builder()
                                 .bucket(bucket)
                                 .key(key)
                                 .contentType(file.getContentType() != null ? file.getContentType() : "image/jpeg")
                                 .build(),
-                        RequestBody.fromBytes(file.getBytes())
+                        RequestBody.fromInputStream(in, file.getSize())
                 );
             } catch (Exception e) {
                 log.warn("증거 사진 업로드 실패 [{}/{}]: {}", order.getOrderNumber(), originalName, e.getMessage());
@@ -176,12 +176,14 @@ public class PublicEvidenceController {
         String dueRaw = body.get("dueDate") instanceof String s ? s : null;
         String deliveryRaw = body.get("deliveryMethod") instanceof String s ? s : null;
         Object tagsObj = body.get("departmentTags");
+        Object slotsObj = body.get("departmentSlots");
         boolean hasDue = dueRaw != null && !dueRaw.isBlank();
         boolean hasDelivery = deliveryRaw != null && !deliveryRaw.isBlank();
-        // tagsObj 가 List 면 명시적 갱신 의도(빈 배열도 "태그 비우기" 의도). 키 자체가 없으면 갱신 안 함.
+        // tagsObj/slotsObj 가 List 면 명시적 갱신 의도(빈 배열도 "비우기" 의도). 키 자체가 없으면 갱신 안 함.
         boolean hasTags = tagsObj instanceof List<?>;
-        if (!hasDue && !hasDelivery && !hasTags) {
-            return ResponseEntity.badRequest().body(Map.of("message", "dueDate / deliveryMethod / departmentTags 중 하나는 있어야 합니다."));
+        boolean hasSlots = slotsObj instanceof List<?>;
+        if (!hasDue && !hasDelivery && !hasTags && !hasSlots) {
+            return ResponseEntity.badRequest().body(Map.of("message", "dueDate / deliveryMethod / departmentTags / departmentSlots 중 하나는 있어야 합니다."));
         }
 
         // 실제로 값이 바뀌었는지 비교 — 같은 값으로 PATCH 가 와도 "변경" 배지를 띄우지 않기 위해.
@@ -229,6 +231,22 @@ public class PublicEvidenceController {
             }
         }
 
+        // 분배함 슬롯 라벨 갱신 — 워처 다이얼로그에서 "이전 클릭 위치 그대로" 복원할 때 사용.
+        // departmentTags 와 별도 — 부서가 같아도 슬롯이 다른 케이스를 구분하기 위함.
+        if (hasSlots) {
+            String csv = ((List<?>) slotsObj).stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(Object::toString)
+                    .map(String::trim)
+                    .filter(t -> !t.isEmpty())
+                    .distinct()
+                    .collect(java.util.stream.Collectors.joining(","));
+            String oldCsv = order.getDepartmentSlots() == null ? "" : order.getDepartmentSlots();
+            if (!csv.equals(oldCsv)) {
+                order.setDepartmentSlots(csv.isEmpty() ? null : csv);
+            }
+        }
+
         // 실제 변경이 발생했을 때만 배지 트리거. (태그 변경은 changed 에 포함하지 않음)
         if (changed) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
@@ -240,6 +258,7 @@ public class PublicEvidenceController {
         resp.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);
         resp.put("deliveryMethod", order.getDeliveryMethod() != null ? order.getDeliveryMethod().name() : null);
         resp.put("departmentTags", splitTags(order.getDepartmentTags()));
+        resp.put("departmentSlots", splitTags(order.getDepartmentSlots()));
         return ResponseEntity.ok(resp);
     }
 
@@ -284,14 +303,14 @@ public class PublicEvidenceController {
         String oldWorksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
 
         String key = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
-        try {
+        try (java.io.InputStream in = file.getInputStream()) {
             s3Client.putObject(
                     PutObjectRequest.builder()
                             .bucket(bucket)
                             .key(key)
                             .contentType("application/pdf")
                             .build(),
-                    RequestBody.fromBytes(file.getBytes())
+                    RequestBody.fromInputStream(in, file.getSize())
             );
         } catch (Exception e) {
             log.warn("지시서 PDF 업로드 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());

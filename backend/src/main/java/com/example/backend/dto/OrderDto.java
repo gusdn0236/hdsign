@@ -34,6 +34,7 @@ public class OrderDto {
         private String worksheetPdfUrl;
         private LocalDateTime evidenceLastUploadedAt;
         private LocalDateTime worksheetUpdatedAt;
+        private String worksheetChangeNote;
         private LocalDateTime adminViewedAt;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
@@ -96,6 +97,7 @@ public class OrderDto {
                 .worksheetPdfUrl(order.getWorksheetPdfUrl())
                 .evidenceLastUploadedAt(order.getEvidenceLastUploadedAt())
                 .worksheetUpdatedAt(order.getWorksheetUpdatedAt())
+                .worksheetChangeNote(order.getWorksheetChangeNote())
                 .adminViewedAt(order.getAdminViewedAt())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())

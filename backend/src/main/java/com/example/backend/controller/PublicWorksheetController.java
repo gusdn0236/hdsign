@@ -157,6 +157,9 @@ public class PublicWorksheetController {
         }
         // 모바일 뷰어 부서 필터용 태그. 워처 인쇄 다이얼로그에서 분배함 칸 클릭으로 지정.
         item.put("departmentTags", splitTags(o.getDepartmentTags()));
+        // 워처가 다이얼로그에서 "이전 클릭 슬롯 그대로" 복원하기 위한 라벨 단위 저장본.
+        // 모바일 뷰어는 사용 안 함(부서 필터는 위 departmentTags 만 본다).
+        item.put("departmentSlots", splitTags(o.getDepartmentSlots()));
         return item;
     }
 

@@ -135,7 +135,7 @@ _CONFIG_FILE = WATCH_DIR / "state" / "config.json"
 # 비율 유지로 축소하면서 클릭 좌표를 원본 픽셀 좌표로 역변환해 어떤 칸인지 판정한다.
 #
 # 좌표가 실제 사진과 어긋나면 빌드 후 여기 숫자만 조정하면 됨. 칸 라벨 옆 mapped_dept 가
-# 빈 문자열인 칸(배송2팀, 홍철웅팀장)은 사용 안 함 — 클릭해도 토글되지 않는다.
+# 빈 문자열인 칸은 비활성 — 모든 칸을 사용한다면 mapped_dept 만 채워주면 즉시 클릭 가능.
 SLOT_LAYOUT_PHOTO_SIZE = (3510, 5613)  # distribution.jpg 원본 (가로, 세로)
 
 # (slot_label, mapped_dept, (left, top, right, bottom))
@@ -152,8 +152,8 @@ SLOT_BOXES: list[tuple[str, str, tuple[int, int, int, int]]] = [
     ("조립부", "완조립부", (183, 3472, 950, 4488)),
     ("아크릴부(레이져)", "아크릴가공부(5층)", (976, 3458, 1702, 4474)),
     ("배송1팀", "배송팀", (1717, 3451, 2500, 4467)),
-    ("배송2팀", "", (2509, 3444, 3300, 4460)),
-    ("홍철웅팀장", "", (232, 4533, 967, 5480)),
+    ("배송2팀", "배송팀", (2509, 3444, 3300, 4460)),
+    ("홍철웅팀장", "완조립부", (232, 4533, 967, 5480)),
     ("LED조립", "LED조립부", (990, 4533, 1716, 5480)),
     ("고무스카시(CNC)", "CNC가공부", (1745, 4519, 2485, 5466)),
     ("이휘원실장", "완조립부", (2502, 4519, 3249, 5466)),
@@ -167,6 +167,21 @@ def resource_path(rel: str) -> Path:
     if base:
         return Path(base) / rel
     return Path(__file__).resolve().parent / rel
+
+
+# Windows 파일명 금지문자 + 제어문자. PDF24 가 출력 파일명을 도큐먼트 제목에서 가져가는데
+# 거래처 AI 파일명에 이런 문자가 섞여 있으면 PDF24 가 ErrorCode=123 (ERROR_INVALID_NAME) 으로 실패.
+# 끝 공백·점도 Windows 가 허용 안 함. 길이도 NTFS 컴포넌트 한계(255) 보다 훨씬 보수적으로 80 자로 제한.
+_BAD_FILENAME_CHARS_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def safe_filename_stem(stem: str, max_len: int = 80) -> str:
+    """Windows / PDF24 안전 파일명(stem) 생성. 비어 있거나 모두 잘려나가면 'file' 폴백."""
+    s = _BAD_FILENAME_CHARS_RE.sub("_", stem)
+    s = s.strip().rstrip(". ")
+    if len(s) > max_len:
+        s = s[:max_len].rstrip(". ")
+    return s if s else "file"
 
 
 # ── UI helpers (thread-safe) ────────────────────────────────────────────────
@@ -358,12 +373,17 @@ def notify_worksheet_acknowledged(order_number: str):
 
 def patch_due_date(order_number: str, new_due: date,
                    delivery_enum: str | None = None,
-                   department_tags: list[str] | None = None) -> bool:
-    """다이얼로그에서 확정한 최종 납기 일자(+선택적으로 배송방법/부서 태그)를 백엔드에 전달.
+                   department_tags: list[str] | None = None,
+                   department_slots: list[str] | None = None) -> bool:
+    """다이얼로그에서 확정한 최종 납기 일자(+선택적으로 배송방법/부서 태그/슬롯 라벨)를 백엔드에 전달.
     delivery_enum: 백엔드 enum 명(CARGO/QUICK/DIRECT/PICKUP/LOCAL_CARGO). None/빈값이면 송신 생략.
     department_tags: 분배함 사진에서 직원이 클릭한 칸 → 매핑된 모바일 부서 태그(중복 제거).
         None 이면 키 자체를 송신하지 않아 백엔드는 기존 태그 유지. 빈 리스트 [] 는 명시적
-        "태그 비우기" — 분배함을 모두 비활성으로 두고 적용한 경우."""
+        "태그 비우기" — 분배함을 모두 비활성으로 두고 적용한 경우.
+    department_slots: 직원이 실제 클릭한 분배함 슬롯 라벨. 부서 단위로는 같지만 슬롯이 다른
+        경우(예: '시트/도안실' vs '캡/일체형작업실' 모두 완조립부)를 구분하기 위해 라벨 그대로
+        저장해둔다 — 다음에 같은 지시서를 다이얼로그에 다시 띄울 때 정확히 그 슬롯에만 ✓
+        복원하기 위함. tags 와 동일 시맨틱(None=미송신, []=비우기)."""
     if not order_number:
         return False
     url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/due-date"
@@ -372,6 +392,8 @@ def patch_due_date(order_number: str, new_due: date,
         payload["deliveryMethod"] = delivery_enum
     if department_tags is not None:
         payload["departmentTags"] = list(department_tags)
+    if department_slots is not None:
+        payload["departmentSlots"] = list(department_slots)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -383,6 +405,8 @@ def patch_due_date(order_number: str, new_due: date,
             parts.append(f"배송 {delivery_enum}")
         if department_tags is not None:
             parts.append("태그 " + (", ".join(department_tags) if department_tags else "(없음)"))
+        if department_slots is not None:
+            parts.append("슬롯 " + (", ".join(department_slots) if department_slots else "(없음)"))
         ui_log(f"{order_number} {' / '.join(parts)} 로 업데이트")
         return True
     except urllib.error.HTTPError as e:
@@ -636,9 +660,12 @@ def copy_ai_pair_to_network(order_folder: Path, original_ai: Path,
     """원본 .ai + v8 .ai 를 미리 만들어둔 주문 폴더에 복사. v8 경로 반환.
     실패 시 None — 호출자가 로컬 v8 사용."""
     try:
-        dst_orig = order_folder / original_ai.name
+        # 네트워크 폴더에 떨어지는 사본도 동일하게 위생화 — 거래처가 PC에서 더블클릭해 열 때 안전.
+        # v8 사본은 언더스코어 없이 "...v8.ai" 로 — 직원 식별성 + 파일명 짧게.
+        safe_orig_stem = safe_filename_stem(original_ai.stem)
+        dst_orig = order_folder / f"{safe_orig_stem}{original_ai.suffix}"
         shutil.copy2(str(original_ai), str(dst_orig))
-        dst_v8 = order_folder / f"{original_ai.stem}_v8.ai"
+        dst_v8 = order_folder / f"{safe_orig_stem}v8.ai"
         shutil.copy2(str(v8_ai), str(dst_v8))
     except Exception as e:
         ui_log(f"네트워크 복사 실패: {e} — 로컬 v8 사용")
@@ -1139,7 +1166,8 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         "original_delivery_method": str,
         "content_changed": bool,           # content 분기 = True
         "change_note": str,                # content 분기에서 사용자가 입력한 변경 메모
-        "department_tags": list[str],      # 분배함 클릭으로 결정
+        "department_tags": list[str],      # 분배함 클릭으로 결정된 모바일 부서(중복 제거)
+        "department_slots": list[str],     # 직원이 클릭한 슬롯 라벨(부서가 같아도 슬롯이 다른 경우 구분용)
       }
     """
     BG = "#ffffff"
@@ -1184,7 +1212,13 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     dlg.attributes("-topmost", True)
     # 좌측: 탭 영역(신규/기존) / 우측: 분배함 사진. 기존 720h → 880h 로 확장하여 그리드가
     # 한 화면에 6장 정도 들어오도록.
-    dlg.geometry("1320x880")
+    # 화면 왼쪽 가장자리에 붙이고 세로는 중앙 정렬 — 우측에 분배함 사진을 띄워두고
+    # 다이얼로그를 왼쪽에서 클릭/입력하기 위함.
+    DLG_W, DLG_H = 1320, 880
+    dlg.update_idletasks()
+    sh = dlg.winfo_screenheight()
+    dlg_y = max(0, (sh - DLG_H) // 2)
+    dlg.geometry(f"{DLG_W}x{DLG_H}+0+{dlg_y}")
 
     # ── 줌 토플레벨 공통 헬퍼 ───────────────────────────────────────
     # 인쇄 PDF / 매칭된 기존 지시서 둘 다 같은 패닝·스크롤·z-order 처리를 공유.
@@ -1201,18 +1235,17 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             except Exception:
                 pass
 
-            # 창 크기 = PDF 렌더 이미지 크기 + 스크롤바 한 줄. 화면을 꽉 채우는
-            # 85%×90% 고정 창은 PDF A4 비율 대비 좌우 여백이 너무 넓어서 분배함 옆에
-            # 살짝 띄워놓고 보기가 어려움 → PDF 에 딱 맞춰 작게 띄우고, 사용자가 직접
-            # 크기/위치를 조정해서 옆 자리에 놓을 수 있게 한다.
+            # 창 크기 = PDF 렌더 이미지 크기 + 스크롤바 한 줄. 메인 다이얼로그가 좌측에 붙어
+            # 있고 우측은 분배함 사진이 떠 있으므로, 줌도 화면 좌측 가장자리에 붙여 띄운다 —
+            # 메인 다이얼로그 위에 살짝 겹치더라도 우측의 분배함 사진을 가리지 않도록.
             sw = zoom_dlg.winfo_screenwidth()
             sh = zoom_dlg.winfo_screenheight()
             # 스크롤바(약 18px) + 윈도우 보더(약 16px). 안 맞아도 스크롤로 보이므로 여유는 작게.
             CHROME_W = 22
             CHROME_H = 22
-            ww = min(int(sw * 0.95), pil_img.width + CHROME_W)
+            ww = min(int(sw * 0.65), pil_img.width + CHROME_W)
             wh = min(int(sh * 0.92), pil_img.height + CHROME_H)
-            zoom_dlg.geometry(f"{ww}x{wh}+{(sw-ww)//2}+{(sh-wh)//2}")
+            zoom_dlg.geometry(f"{ww}x{wh}+0+{max(0, (sh-wh)//2)}")
 
             canvas_frame = tk.Frame(zoom_dlg, bg=BG)
             canvas_frame.pack(fill="both", expand=True)
@@ -1457,9 +1490,8 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
 
         # ── 인쇄된 PDF 미리보기(우측) ──────────────────────────
         # 클릭하거나 [확대] 누르면 별도 Toplevel 에서 더 크게(스크롤 가능) 본다.
-        # 이전(420×594) 보다 살짝 작게 — 다이얼로그 880px 안에서 하단 [확인]/[취소]
-        # 버튼이 잘리지 않도록 세로 약 50px 절약.
-        PREVIEW_W = 380
+        # 작게 보고 싶으면 PREVIEW_W 만 조정 — 세로는 A4 비율(1.414) 로 자동.
+        PREVIEW_W = 320
         PREVIEW_H = int(PREVIEW_W * 1.414)
         preview_card = tk.Frame(new_right_col, bg=BG_SOFT,
                                 highlightbackground=BORDER, highlightthickness=1)
@@ -1494,7 +1526,9 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 return
             try:
                 sw = dlg.winfo_screenwidth()
-                target_w = max(900, int(sw * 0.85) - 80)
+                # 우측 분배함 사진을 가리지 않도록 화면 폭의 ~50% 만 사용. 더 크게 보고 싶으면
+                # 줌 창에서 휠/드래그로 패닝/스크롤 가능 — 렌더 자체를 키우진 않는다.
+                target_w = max(600, int(sw * 0.5))
                 doc = fitz.open(str(pdf_path))
                 try:
                     page = doc[0]
@@ -1655,6 +1689,9 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             modify_state["change_type"] = None
             _refresh_chosen()
             show_chosen()
+            # 카드 클릭으로 지시서를 고르면 그 지시서에 저장돼 있던 분배함 ✓ 도 같이 복원.
+            # (QR 자동 라우팅과 동일한 UX — '불러오면 이전 분배 그대로 보임'.)
+            _restore_dept_tags(ws)
 
         for idx, ws in enumerate(existing_worksheets):
             r = idx // cols
@@ -1993,6 +2030,8 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 # 통합 폼이라 모드 분기 불필요 — _refresh_chosen 이 알아서 'combined' 로 세팅.
                 _refresh_chosen()
                 show_chosen()
+                # 이전에 저장한 분배함 ✓ 복원 — 직원이 다시 칸을 안 누르면 동일 분배 유지.
+                _restore_dept_tags(qr_matched_ws)
                 _schedule_dialog_redraw()
                 target = chosen_widgets.get("mod_day_entry")
                 if target is not None:
@@ -2106,6 +2145,15 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 out.append(mapped_dept)
         return out
 
+    def collect_dept_slots() -> list[str]:
+        """직원이 클릭한 슬롯 라벨 그대로(예: '시트/도안실'). 같은 부서 매핑 슬롯이 여러 개일 때
+        '어느 칸에 꽂았는지' 까지 보존해 다음 회차에 정확 복원하기 위해 별도 수집."""
+        out: list[str] = []
+        for label, mapped_dept, _box in SLOT_BOXES:
+            if mapped_dept and slot_active.get(label):
+                out.append(label)
+        return out
+
     summary_var = tk.StringVar(
         value="선택된 부서 없음 — 모바일 뷰어에서는 \"전체보기\"에서만 노출됩니다."
     )
@@ -2121,6 +2169,30 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             summary_var.set("선택된 부서 없음 — 모바일 뷰어에서는 \"전체보기\"에서만 노출됩니다.")
         else:
             summary_var.set("배부 부서: " + " · ".join(tags))
+
+    def _restore_dept_tags(ws):
+        """선택된 작업지시서의 저장된 분배 선택을 분배함 그림에 ✓ 로 복원.
+        우선순위:
+          1) departmentSlots (라벨 단위) — 직원이 실제 클릭한 칸만 정확히 켠다.
+          2) departmentTags (부서 단위) — 구버전 데이터(slots 미저장)에서만 폴백.
+             부서 매핑 슬롯이 여러 개면 모두 켜져 보일 수 있으므로 직원이 필요 시 토글.
+        다른 카드를 다시 골랐을 때 잔상이 남지 않도록 모든 슬롯을 먼저 끄고 다시 그린다."""
+        ws = ws or {}
+        saved_slots = ws.get("departmentSlots") or []
+        saved_tags = ws.get("departmentTags") or []
+        # slots 가 한 개라도 저장돼 있으면 그것만 신뢰 — tags 폴백은 신규 슬롯 도입 전 데이터 전용.
+        use_slots = bool(saved_slots)
+        slot_set = set(saved_slots)
+        tag_set = set(saved_tags)
+        for label, mapped_dept, box in SLOT_BOXES:
+            if not mapped_dept:
+                slot_active[label] = False
+            elif use_slots:
+                slot_active[label] = label in slot_set
+            else:
+                slot_active[label] = mapped_dept in tag_set
+            _redraw_slot(label, mapped_dept, box)
+        _refresh_summary()
 
     def on_canvas_click(ev):
         if tk_img is None:
@@ -2170,6 +2242,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 "content_changed": False,
                 "change_note": "",
                 "department_tags": collect_dept_tags(),
+                "department_slots": collect_dept_slots(),
                 "skip_print": bool(skip_print),
             }
             dlg.destroy()
@@ -2212,6 +2285,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             "content_changed": bool(note),
             "change_note": note,
             "department_tags": collect_dept_tags(),
+            "department_slots": collect_dept_slots(),
             "skip_print": bool(skip_print),
         }
         dlg.destroy()
@@ -2373,11 +2447,18 @@ def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 30):
 
 
 def decode_pdf_qr(pdf_path: Path) -> str | None:
-    """인쇄된 PDF 1페이지에서 QR 을 디코드해 주문번호를 반환. 실패/미설치 시 None.
+    """인쇄된 PDF 에서 QR 을 디코드해 주문번호를 반환. 실패/미설치 시 None.
 
     QR URL 은 워처가 박을 때 /p/{orderNumber} 형식 — 호스트는 무시하고 path 만 매칭한다
     (스테이징/로컬 호스트로 바뀌어도 인식). pyzbar 없거나 PDF 가 깨졌으면 호출자는
-    QR 매칭 없이 평소 다이얼로그(수동 선택)로 폴백한다."""
+    QR 매칭 없이 평소 다이얼로그(수동 선택)로 폴백한다.
+
+    인식 보강 (FlexSign→PDF24 경로에서 셀 경계가 흐려져 pyzbar 가 놓치는 케이스 대응):
+      - 전 페이지 순회 (PDF24 가 빈 표지/안내 페이지를 추가해도 안전)
+      - 200 → 300 → 400 dpi 순으로 재시도
+      - 각 dpi 마다 그레이스케일 + 임계 이진화 두 변형으로 pyzbar 호출
+      - 모든 변형 실패 시 첫 렌더 이미지를 state/qr_debug/<stem>.png 로 덤프 →
+        다음 실패 때 PNG 한 장만 열면 잘림/누락/흐림 중 어느 케이스인지 즉시 판별."""
     if pyzbar_decode is None:
         ui_log("QR 디코드 건너뜀: pyzbar 라이브러리 없음 (exe 빌드시 --collect-all pyzbar 필요)")
         return None
@@ -2386,44 +2467,88 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
         return None
     if not pdf_path.exists():
         return None
+
+    # 200dpi 가 표준. 안 잡히면 300/400 으로 재렌더 — PDF 안에 raster 로 박힌 QR 도
+    # 같은 원본을 다른 보간으로 다시 만들어 pyzbar 가 셀 격자를 잡을 확률을 높인다.
+    DPIS = (200, 300, 400)
+
     try:
         doc = fitz.open(str(pdf_path))
-        try:
-            page = doc[0]
-            # 200dpi — 100pt 기본 QR 도 깔끔히 인식. 더 키우면 인식률 향상보다 메모리만 늘어남.
-            mat = fitz.Matrix(200 / 72, 200 / 72)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        finally:
-            doc.close()
-        # 그레이스케일이 zbar 인식률 가장 높음. FlexSign/PDF24 거치며 옅어진 셀도 거의 잡힌다.
-        gray = pil.convert("L")
-        results = pyzbar_decode(gray)
-        if not results:
-            ui_log(f"QR 디코드: PDF 안에서 QR 코드를 찾지 못함 ({pdf_path.name}, {pil.width}x{pil.height})")
-            return None
-        for r in results:
-            try:
-                data = r.data.decode("utf-8", errors="ignore")
-            except Exception:
-                continue
-            m = re.search(r"/p/([^/?#\s]+)", data)
-            if m:
-                # QR 박을 때 quote(order_number, safe="") 로 URL-인코딩되어 들어가므로
-                # 한글 주문번호("주문-260427-03" 등)면 %EC%A3%... 형태로 매치된다.
-                # existing_worksheets 의 orderNumber 는 원본 텍스트라 unquote 후 비교해야 매칭 성공.
-                try:
-                    order = unquote(m.group(1)).strip()
-                except Exception:
-                    order = m.group(1).strip()
-                if order:
-                    return order
-            else:
-                ui_log(f"QR 디코드: /p/ 패턴 불일치 — 내용: {data[:80]!r}")
-        return None
     except Exception as e:
-        ui_log(f"QR 디코드 실패: {e}")
+        ui_log(f"QR 디코드 실패(PDF 열기): {e}")
         return None
+
+    debug_image: Image.Image | None = None
+    last_size: tuple[int, int] | None = None
+    try:
+        for page_idx in range(doc.page_count):
+            try:
+                page = doc[page_idx]
+            except Exception as e:
+                ui_log(f"QR 디코드 페이지 로드 실패(p{page_idx}): {e}")
+                continue
+            for dpi in DPIS:
+                try:
+                    mat = fitz.Matrix(dpi / 72, dpi / 72)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                except Exception as e:
+                    ui_log(f"QR 디코드 렌더 실패(p{page_idx} {dpi}dpi): {e}")
+                    continue
+                last_size = (pil.width, pil.height)
+                if debug_image is None:
+                    # 가장 사람 눈에 익숙한 200dpi 1페이지를 디버그 후보로 잡아둔다.
+                    debug_image = pil
+                gray = pil.convert("L")
+                # 안티얼라이싱으로 옅어진 셀 경계를 또렷하게 — 임계 128 이하는 검정으로 강제.
+                # pyzbar 가 회색 그라데이션을 셀로 못 보는 케이스를 흡수한다.
+                bw = gray.point(lambda v: 255 if v >= 128 else 0, mode="L")
+                for variant, img in (("gray", gray), ("threshold", bw)):
+                    try:
+                        results = pyzbar_decode(img)
+                    except Exception as e:
+                        ui_log(f"QR 디코드 pyzbar 실패(p{page_idx} {dpi}dpi {variant}): {e}")
+                        continue
+                    if not results:
+                        continue
+                    for r in results:
+                        try:
+                            data = r.data.decode("utf-8", errors="ignore")
+                        except Exception:
+                            continue
+                        m = re.search(r"/p/([^/?#\s]+)", data)
+                        if m:
+                            # QR 박을 때 quote(order_number, safe="") 로 URL-인코딩되어 들어가므로
+                            # 한글 주문번호("주문-260427-03" 등)면 %EC%A3%... 형태로 매치된다.
+                            # existing_worksheets 의 orderNumber 는 원본 텍스트라 unquote 후 비교해야 매칭 성공.
+                            try:
+                                order = unquote(m.group(1)).strip()
+                            except Exception:
+                                order = m.group(1).strip()
+                            if order:
+                                return order
+                        else:
+                            ui_log(f"QR 디코드: /p/ 패턴 불일치 (p{page_idx} {dpi}dpi {variant}) — 내용: {data[:80]!r}")
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+    # 모든 페이지/DPI/변형에서 실패 — 디버그 이미지를 남겨 사용자가 직접 검증할 수 있게 한다.
+    size_str = f"{last_size[0]}x{last_size[1]}" if last_size else "?"
+    if debug_image is not None:
+        try:
+            debug_dir = WATCH_DIR / "state" / "qr_debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_path = debug_dir / f"{pdf_path.stem}.png"
+            debug_image.save(debug_path, "PNG")
+            ui_log(f"QR 디코드: PDF 안에서 QR 코드를 찾지 못함 ({pdf_path.name}, {size_str}). 디버그: {debug_path}")
+        except Exception as e:
+            ui_log(f"QR 디코드: PDF 안에서 QR 코드를 찾지 못함 ({pdf_path.name}, {size_str}). 디버그 저장 실패: {e}")
+    else:
+        ui_log(f"QR 디코드: PDF 안에서 QR 코드를 찾지 못함 ({pdf_path.name})")
+    return None
 
 
 def _process_printed_pdf(pdf_path: Path):
@@ -2501,10 +2626,11 @@ def _process_printed_pdf(pdf_path: Path):
     new_delivery = sel.get("delivery_method") or ""
     orig_delivery = sel.get("original_delivery_method") or ""
     delivery_to_send = new_delivery if (new_delivery and new_delivery != orig_delivery) else None
-    # 부서 태그는 다이얼로그에서 항상 결정(아무 칸도 클릭 안 했으면 빈 리스트) →
-    # patch 마다 함께 송신하여 "태그 비우기"도 명시적으로 표현.
+    # 부서 태그(모바일 필터용)와 슬롯 라벨(다이얼로그 ✓ 정확 복원용)을 항상 함께 송신.
+    # 빈 리스트도 명시적 "비우기" 의도라 None 이 아니라 list() 로 강제.
     dept_tags = list(sel.get("department_tags") or [])
-    patch_due_date(order_number, new_due, delivery_to_send, dept_tags)
+    dept_slots = list(sel.get("department_slots") or [])
+    patch_due_date(order_number, new_due, delivery_to_send, dept_tags, dept_slots)
     # 사용자가 다이얼로그에서 "지시서 내용 변경됨" 체크 시에만 contentChanged=true 송신.
     # change_note 도 함께 — 모바일 뷰어 탭하면 노출된다.
     upload_ok = upload_worksheet_pdf(order_number, pdf_path,
@@ -2674,6 +2800,8 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "  var abWidth = abRight - abLeft;"
         "  var hasArt = doc.pageItems.length > 0;"
         "  var artLeft = abLeft, artTop = abTop, artRight = abRight, artBottom = abBottom, artWidth = abWidth;"
+        # doc.geometricBounds 는 대지 안/밖을 가리지 않고 도큐먼트 내 모든 visible art 의 외곽을 돌려준다.
+        # → 거래처가 대지 밖에 그려둔 컨텐츠도 자동으로 폼 사이즈 산출에 반영된다.
         "  if (hasArt) {"
         "    try {"
         "      var dbnd = doc.geometricBounds;"  # [left, top, right, bottom]
@@ -2682,28 +2810,17 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "      if (artWidth <= 0) artWidth = abWidth;"
         "    } catch (e) { hasArt = false; }"
         "  }"
-        # 도면이 대지를 벗어나 있으면 대지를 도면 전체를 포함하도록 확장.
-        # 이유: 워크시트가 대지 폭 기준으로 그려지므로, 대지 밖에 컨텐츠가 있는
-        # 거래처 파일에서 그 부분이 누락되어 보이는 문제를 막기 위함.
-        # (Illustrator 좌표계: top > bottom, left < right)
-        "  if (hasArt) {"
-        "    var needLeft = (artLeft < abLeft) ? artLeft : abLeft;"
-        "    var needTop = (artTop > abTop) ? artTop : abTop;"
-        "    var needRight = (artRight > abRight) ? artRight : abRight;"
-        "    var needBottom = (artBottom < abBottom) ? artBottom : abBottom;"
-        "    if (needLeft != abLeft || needTop != abTop || needRight != abRight || needBottom != abBottom) {"
-        "      try {"
-        "        doc.artboards[0].artboardRect = [needLeft, needTop, needRight, needBottom];"
-        "        ab = doc.artboards[0].artboardRect;"
-        "        abLeft = ab[0]; abTop = ab[1]; abRight = ab[2]; abBottom = ab[3];"
-        "        abWidth = abRight - abLeft;"
-        "      } catch (e) {}"
-        "    }"
-        "  }"
-        # 워크시트가 대지 상단 폭을 꽉 채우도록 대지 폭(abWidth) 기준 10%.
-        # 도면 크기와 무관하게 대지 기준으로 비례시켜야 작은 간판이든 큰 간판이든
-        # 워크시트(QR/박스/거래처명)가 일관되게 상단을 차지한다.
-        "  var qrSize = abWidth * 0.10;"
+        # 폼 사이즈·위치의 기준은 "실제 도면 bounds" — 거래처가 큰 대지(예: 2874mm) 안에
+        # 작은 도면(예: 1119mm)만 올려도 폼이 도면 폭에 맞춰진다. hasArt=false(빈 도큐먼트)
+        # 면 대지로 폴백. 마지막에 대지를 ref* + 폼 footprint 로 다시 잡아 살짝 큰 사각으로 맞춘다.
+        "  var refLeft = hasArt ? artLeft : abLeft;"
+        "  var refTop = hasArt ? artTop : abTop;"
+        "  var refRight = hasArt ? artRight : abRight;"
+        "  var refBottom = hasArt ? artBottom : abBottom;"
+        "  var refWidth = hasArt ? artWidth : abWidth;"
+        # 워크시트가 도면 상단 폭을 꽉 채우도록 도면 폭 기준 10%.
+        # 도면 크기와 무관하게 비례시켜야 작은 간판이든 큰 간판이든 폼이 일관되게 상단을 차지.
+        "  var qrSize = refWidth * 0.10;"
         "  if (qrSize < 60) qrSize = 60;"
         "  if (qrSize > 1500) qrSize = 1500;"
         "  var sc = qrSize / 90.0;"
@@ -2759,14 +2876,14 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "    leftWidth = mlbX[2] - mlbX[0];"
         "  } catch (e) {}"
         "  try { measLeft.remove(); } catch (e) {}"
-        # 헤더박스는 캔버스 정중앙 정렬 — 좌(거래처)와 우(QR) 중 큰 쪽이 박스 한쪽 한계를 결정.
-        # 좌+박스/2+margin+gap > abWidth/2 이거나 우측이 그렇다면 글씨/박스/QR 모두 동일 비율 s 로 축소.
+        # 헤더박스는 도면 정중앙 정렬 — 좌(거래처)와 우(QR) 중 큰 쪽이 박스 한쪽 한계를 결정.
+        # 좌+박스/2+margin+gap > refWidth/2 이거나 우측이 그렇다면 글씨/박스/QR 모두 동일 비율 s 로 축소.
         # margin·lineGap 은 sc 에 따라 자동으로 같이 줄어든다.
         "  var minGap = bigFont * 0.5;"
         "  var sideMax = (leftWidth > qrSize) ? leftWidth : qrSize;"
         "  var totalNeed = boxW / 2 + sideMax + margin + minGap;"
-        "  if (totalNeed > abWidth / 2) {"
-        "    var s = (abWidth / 2) / totalNeed;"
+        "  if (totalNeed > refWidth / 2) {"
+        "    var s = (refWidth / 2) / totalNeed;"
         "    if (s < 0.4) s = 0.4;"
         "    bigFont = bigFont * s;"
         "    noteFont = noteFont * s;"
@@ -2787,11 +2904,11 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         # 워크시트 폼을 충분히 위로 올릴 수 있다.
         f'  var noteTextStr = "{note_js}";'
         "  var pad = 6 * sc;"
-        "  var qrOriginX = abRight - margin - qrSize;"
+        "  var qrOriginX = refRight - margin - qrSize;"
         "  var noteW = qrSize * 1.9;"
         "  var noteRight = qrOriginX + qrSize;"
         "  var noteLeft = noteRight - noteW;"
-        "  if (noteLeft < abLeft + margin + boxW / 2) {"
+        "  if (noteLeft < refLeft + margin + boxW / 2) {"
         "    noteLeft = qrOriginX;"
         "    noteW = qrSize;"
         "  }"
@@ -2822,13 +2939,12 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "  if (noteH > 0) rightDepth += lineGap + noteH;"
         "  var overlayDepth = (rightDepth > boxH) ? rightDepth : boxH;"
         "  var overlayHeight = overlayDepth + margin * 2;"
-        "  var topY = abTop;"
-        "  if (hasArt && artTop > abTop - overlayHeight) {"
-        "    topY = artTop + overlayHeight + margin;"
-        "  }"
-        "  var needAbTop = (topY > abTop) ? (topY + margin) : abTop;"
-        "  var needAbBottom = abBottom;"
-        # 노트가 너무 길어 대지 하단을 넘어가면 그만큼 대지를 키운다.
+        # 폼은 항상 도면 위쪽에 얹힌다 (도면 ref* 기준). hasArt=false 면 빈 도큐먼트 대지 상단부터.
+        "  var topY = hasArt ? (refTop + overlayHeight + margin) : abTop;"
+        # 새 대지 = 도면(또는 폴백 시 대지) + 폼 footprint + 살짝 여유. 폼 위·도면 좌우/하단을 모두 감싼다.
+        "  var needAbTop = topY + margin;"
+        "  var needAbBottom = hasArt ? (refBottom - margin) : abBottom;"
+        # 노트가 너무 길어 도면 하단을 넘어가면 그만큼 새 대지 하단을 키운다.
         "  if (noteH > 0) {"
         "    var preNoteBot = topY - margin - qrSize - lineGap - noteH;"
         "    if (preNoteBot - margin < needAbBottom) needAbBottom = preNoteBot - margin;"
@@ -2842,11 +2958,11 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "  if (malgun) leftTf.textRange.characterAttributes.textFont = malgun;"
         "  leftTf.position = [0, 0];"
         "  var lb = leftTf.geometricBounds;"  # [left, top, right, bottom]
-        "  var leftTargetX = abLeft + margin;"
+        "  var leftTargetX = refLeft + margin;"
         "  var leftTargetTop = topY - margin;"
         "  leftTf.position = [leftTargetX - lb[0], leftTargetTop - lb[1]];"
         # ── 중앙 상단: 박스 + 발주/배송 텍스트 ──
-        "  var centerX = (abLeft + abRight) / 2;"
+        "  var centerX = (refLeft + refRight) / 2;"
         "  var boxLeft = centerX - boxW / 2;"
         "  var boxTop = topY - margin;"
         "  var box = layer.pathItems.rectangle(boxTop, boxLeft, boxW, boxH);"
@@ -2907,11 +3023,12 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         "    noteBox.strokeColor = boxStroke;"
         "    noteBox.strokeWidth = 0.5 * sc;"
         "  }"
-        # 워크시트 요소들이 원래 대지 밖으로 밀려난 경우 대지를 그만큼 확장.
-        # 위/아래 양쪽 변동을 한 번에 반영한다.
-        "  if (needAbTop > abTop || needAbBottom < abBottom) {"
-        "    try { doc.artboards[0].artboardRect = [abLeft, needAbTop, abRight, needAbBottom]; } catch (e) {}"
-        "  }"
+        # 새 대지: 도면(ref*) + 폼 footprint 를 모두 감싸도록 사방에 margin 만큼 여유.
+        # 거래처가 실제 도면보다 큰 대지에 작업했어도 출력 대지는 도면 + 살짝 여유로 줄어든다.
+        # hasArt=false 인 빈 도큐먼트는 원래 대지 좌우를 그대로 사용.
+        "  var newAbLeft = hasArt ? (refLeft - margin) : abLeft;"
+        "  var newAbRight = hasArt ? (refRight + margin) : abRight;"
+        "  try { doc.artboards[0].artboardRect = [newAbLeft, needAbTop, newAbRight, needAbBottom]; } catch (e) {}"
         # FlexSign 이 v8 AI 의 글자 메트릭을 다르게 해석해서 자모 사이가 벌어지는
         # 문제를 막기 위해 모든 텍스트(좌측, 헤더, 노트)를 윤곽선으로 변환한다.
         # 헤더 박스도 outline 하지 않으면 FlexSign 이 슬래시 양옆에 공백을 끼워넣어
@@ -3201,8 +3318,8 @@ def convert_header_only(order_number: str, qr_js_matrix: str,
 
         out_dir = WATCH_DIR / "converted"
         out_dir.mkdir(exist_ok=True)
-        ts = time.strftime("%y%m%d_%H%M%S")
-        out_path = out_dir / f"{order_number}_헤더_{ts}.ai"
+        # 사용자 요청: 파일명에 타임스탬프 안 붙임.
+        out_path = out_dir / f"{safe_filename_stem(order_number)}_헤더.ai"
 
         if not process_header_only_to_v8(ai_app, out_path, qr_js_matrix,
                                          header_text, left_text, note_text):
@@ -3229,14 +3346,14 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str,
 
         out_dir = WATCH_DIR / "converted"
         out_dir.mkdir(exist_ok=True)
-        # FlexSign이 같은 파일명을 캐시해서 이전 버전을 다시 띄우는 일을 막기 위해
-        # 변환 파일명에 타임스탬프를 붙여 매번 새 경로로 만든다.
         # 확장자 .ai (Illustrator v8): FlexSign 으로 임포트 시 화면 표시는 정상.
         # 직원이 회사 네트워크 폴더에 저장할 때 [다른 이름으로 저장 → FlexiSIGN(.fs)]
         # 한 번 클릭으로 .fs 로 저장한다.
-        ts = time.strftime("%y%m%d_%H%M%S")
-        out_path = out_dir / f"{ai_path.stem}_{ts}.ai"
-        pdf_path = out_dir / f"{ai_path.stem}_{ts}.pdf"
+        # 사용자 요청: 파일명에 타임스탬프 안 붙임 — 같은 주문 재변환 시 FlexSign 캐시로
+        # 이전 버전이 뜰 수 있는 가능성은 감수. 거래처 원본 AI 파일명의 Windows 금지문자만 위생화.
+        safe_stem = safe_filename_stem(ai_path.stem)
+        out_path = out_dir / f"{safe_stem}.ai"
+        pdf_path = out_dir / f"{safe_stem}.pdf"
 
         if not process_ai_to_v8(ai_app, ai_path, out_path, pdf_path, qr_js_matrix,
                                 header_text, left_text, note_text):

@@ -103,6 +103,7 @@ export default function OrderAdmin() {
   const [regeneratingHeaderId, setRegeneratingHeaderId] = useState(null);
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
+  const [bulkCompleting, setBulkCompleting] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [sortMode, setSortMode] = useState("DEFAULT");
@@ -444,6 +445,56 @@ export default function OrderAdmin() {
     }
   };
 
+  const bulkCompleteOverdue = async () => {
+    const pad = (n) => String(n).padStart(2, "0");
+    const now = new Date();
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const overdue = orders.filter(
+      (o) =>
+        o.dueDate &&
+        String(o.dueDate).split("T")[0] < today &&
+        o.status !== "COMPLETED"
+    );
+    if (overdue.length === 0) {
+      setFeedback({ type: "error", msg: "지연된 요청이 없습니다." });
+      return;
+    }
+    if (!window.confirm(`지연된 요청 ${overdue.length}건을 모두 완료 처리하시겠습니까?`)) {
+      return;
+    }
+    setBulkCompleting(true);
+    try {
+      const results = await Promise.allSettled(
+        overdue.map((order) =>
+          fetch(`${BASE_URL}/api/admin/orders/${order.id}/status`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ status: "COMPLETED" }),
+          }).then(async (res) => {
+            if (!res.ok) throw new Error(String(order.id));
+            return res.json();
+          })
+        )
+      );
+      const updated = results
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value);
+      const updatedMap = new Map(updated.map((o) => [o.id, o]));
+      setOrders((prev) => prev.map((o) => updatedMap.get(o.id) || o));
+      const failed = results.length - updated.length;
+      if (failed === 0) {
+        setFeedback({ type: "success", msg: `${updated.length}건을 완료 처리했습니다.` });
+      } else {
+        setFeedback({ type: "error", msg: `${updated.length}건 완료, ${failed}건 실패` });
+      }
+    } finally {
+      setBulkCompleting(false);
+    }
+  };
+
   const restoreFromTrash = async (order) => {
     setRestoringOrderId(order.id);
     try {
@@ -752,6 +803,21 @@ export default function OrderAdmin() {
           </button>
         </div>
       )}
+      {sortMode === "BY_DUE_DATE" && dueDateRange === "OVERDUE" && filteredOrders.length > 0 && (
+        <div className="bulk-action-row bulk-action-row--complete">
+          <span className="bulk-action-text bulk-action-text--complete">
+            지연 요청 {filteredOrders.length}건
+          </span>
+          <button
+            type="button"
+            className="bulk-complete-btn"
+            onClick={bulkCompleteOverdue}
+            disabled={bulkCompleting}
+          >
+            {bulkCompleting ? "처리 중..." : "전부 완료 처리"}
+          </button>
+        </div>
+      )}
       {activeFilter === "TRASH" && trashOrders.length > 0 && (
         <div className="bulk-action-row">
           <span className="bulk-action-text">휴지통 {trashOrders.length}건</span>
@@ -814,7 +880,10 @@ export default function OrderAdmin() {
                 ? new Date(order.worksheetUpdatedAt).getTime()
                 : 0;
               const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
-              const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
+              // 변경 배지: 워처에서 "지시서 내용 변경" 분기로 PDF 를 재저장하면 worksheetChangeNote 가 채워진다.
+              // 관리자가 한 번 봤다고 사라지지 않고, 다음 안정 재인쇄(내용변경 미체크)로 노트가 비워질 때까지 유지.
+              const hasNewWorksheet =
+                !isTrash && (worksheetAt > viewedAt || !!order.worksheetChangeNote);
 
               return (
                 <tr

@@ -101,6 +101,14 @@ public class Order {
     @Column(columnDefinition = "TEXT")
     private String departmentTags;
 
+    // 워처가 직원이 클릭한 분배함 슬롯 라벨 자체를 CSV 로 저장(예: "시트/도안실,도장실").
+    // departmentTags 는 mapped_dept(부서) 단위라 같은 부서에 여러 슬롯이 매핑된 경우
+    // 어느 슬롯을 클릭했는지 정보가 사라진다 — 다이얼로그에서 지시서를 다시 불러올 때
+    // 정확히 그 슬롯에만 ✓ 를 복원하기 위해 라벨 단위로 별도 보관.
+    // 모바일 뷰어 필터는 여전히 departmentTags(부서) 를 사용하므로 모바일 동작은 변화 없음.
+    @Column(columnDefinition = "TEXT")
+    private String departmentSlots;
+
     // 작업자가 QR로 evidence 사진 업로드한 가장 최근 시각.
     // 관리자 모달에서 adminViewedAt 보다 이 시각이 늦으면 행에 "신규 사진" 배지 표시.
     @Column

@@ -185,6 +185,32 @@
   cursor: default;
 }
 
+.bulk-action-row--complete {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+.bulk-action-text--complete {
+  color: #065f46;
+}
+.bulk-complete-btn {
+  border: 1px solid #059669;
+  background: #059669;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.2s ease;
+}
+.bulk-complete-btn:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+.bulk-complete-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .filter-tab {
   border: 1px solid #d4d4d4;
   background: #fff;
