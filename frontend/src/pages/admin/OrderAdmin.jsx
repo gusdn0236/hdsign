@@ -803,7 +803,7 @@ export default function OrderAdmin() {
           </button>
         </div>
       )}
-      {sortMode === "BY_DUE_DATE" && dueDateRange === "OVERDUE" && filteredOrders.length > 0 && (
+      {activeFilter !== "TRASH" && sortMode === "BY_DUE_DATE" && dueDateRange === "OVERDUE" && filteredOrders.length > 0 && (
         <div className="bulk-action-row bulk-action-row--complete">
           <span className="bulk-action-text bulk-action-text--complete">
             지연 요청 {filteredOrders.length}건
