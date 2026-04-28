@@ -7,11 +7,12 @@ import SubNav from "../../components/common/SubNav.jsx";
 const GalleryLayout = () => {
 
     const galleryMenu = [
-        {name: '갈바 간판류', path: '/Gallery/Galva'},
-        {name: '스텐 간판류', path: '/Gallery/Stainless'},
-        {name: '에폭시 간판류', path: '/Gallery/Epoxy'},
+        {name: '갈바채널', path: '/Gallery/Galva'},
+        {name: '스텐채널', path: '/Gallery/Stainless'},
+        {name: '에폭시채널', path: '/Gallery/Epoxy'},
+        {name: '알미늄채널', path: '/Gallery/Aluminum'},
+        {name: '아트네온', path: '/Gallery/ArtNeon'},
         {name: '특수/기타 가공물', path: '/Gallery/Special'},
-
     ];
 
     return (

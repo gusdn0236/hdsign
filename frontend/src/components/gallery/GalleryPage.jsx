@@ -84,7 +84,14 @@ const GalleryPage = ({ category, categoryTabs }) => {
                                 className: 'gallery-item',
                                 onClick: function() { openModal(index); }
                             },
-                                React.createElement('img', { src: img.imageUrl, alt: img.originalName }),
+                                React.createElement('img', {
+                                    src: img.imageUrl,
+                                    alt: img.originalName,
+                                    // 뷰포트 진입 시에만 다운로드 — 한 탭에 100장 깔려 있어도
+                                    // 첫 화면에 보이는 ~12장만 즉시 로드, 나머지는 스크롤 시 로드.
+                                    loading: 'lazy',
+                                    decoding: 'async'
+                                }),
                                 React.createElement('div', { className: 'gallery-item-overlay' },
                                     React.createElement('span', { className: 'gallery-item-icon' }, '\uD83D\uDD0D')
                                 )

@@ -35,27 +35,34 @@ function Header() {
             { name: '오시는 길', path: '/About/Directions'     },
         ]},
         { name: '제품 사진', path: '/Gallery/Galva', subMenu: [
-            { name: '갈바 간판류', path: '/Gallery/Galva', subSubMenu: [
-                { name: '갈바 후광',  path: '/Gallery/Galva?tab=0' },
-                { name: '갈바 오사이',path: '/Gallery/Galva?tab=1' },
-                { name: '갈바 캡',   path: '/Gallery/Galva?tab=2' },
-                { name: '일체형',    path: '/Gallery/Galva?tab=3' },
+            { name: '갈바채널', path: '/Gallery/Galva', subSubMenu: [
+                { name: '갈바 전/후광', path: '/Gallery/Galva?tab=0' },
+                { name: '갈바 오사이',  path: '/Gallery/Galva?tab=1' },
+                { name: '갈바 측광',    path: '/Gallery/Galva?tab=2' },
             ]},
-            { name: '스텐 간판류', path: '/Gallery/Stainless', subSubMenu: [
-                { name: '스텐 캡',   path: '/Gallery/Stainless?tab=0' },
-                { name: '스텐 오사이',path: '/Gallery/Stainless?tab=1' },
-                { name: '스텐 후광', path: '/Gallery/Stainless?tab=2' },
-                { name: '골드 스텐', path: '/Gallery/Stainless?tab=3' },
+            { name: '스텐채널', path: '/Gallery/Stainless', subSubMenu: [
+                { name: '스텐 전/후광', path: '/Gallery/Stainless?tab=0' },
+                { name: '스텐 오사이',  path: '/Gallery/Stainless?tab=1' },
+                { name: '스텐 측광',    path: '/Gallery/Stainless?tab=2' },
+                { name: '골드스텐',     path: '/Gallery/Stainless?tab=3' },
             ]},
-            { name: '에폭시 간판류', path: '/Gallery/Epoxy', subSubMenu: [
+            { name: '에폭시채널', path: '/Gallery/Epoxy', subSubMenu: [
                 { name: '갈바 에폭시', path: '/Gallery/Epoxy?tab=0' },
-                { name: '스텐 에폭시', path: '/Gallery/Epoxy?tab=1' },
+                { name: '스텐에폭시',  path: '/Gallery/Epoxy?tab=1' },
+            ]},
+            { name: '알미늄채널', path: '/Gallery/Aluminum', subSubMenu: [
+                { name: '타카채널',   path: '/Gallery/Aluminum?tab=0' },
+                { name: '일체형채널', path: '/Gallery/Aluminum?tab=1' },
+            ]},
+            { name: '아트네온', path: '/Gallery/ArtNeon', subSubMenu: [
+                { name: '아크릴네온',     path: '/Gallery/ArtNeon?tab=0' },
+                { name: '아크릴조각사인', path: '/Gallery/ArtNeon?tab=1' },
             ]},
             { name: '특수/기타 가공물', path: '/Gallery/Special', subSubMenu: [
-                { name: '아크릴',    path: '/Gallery/Special?tab=0' },
-                { name: '포맥스',    path: '/Gallery/Special?tab=1' },
-                { name: '고무 스카시',path: '/Gallery/Special?tab=2' },
-                { name: '시트 커팅', path: '/Gallery/Special?tab=3' },
+                { name: '프레임간판',    path: '/Gallery/Special?tab=0' },
+                { name: '지주간판',      path: '/Gallery/Special?tab=1' },
+                { name: '아크릴/포맥스', path: '/Gallery/Special?tab=2' },
+                { name: '고무스카시',    path: '/Gallery/Special?tab=3' },
             ]},
         ]},
         { name: '고객 지원', path: '/Support/Notice', subMenu: [

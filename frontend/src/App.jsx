@@ -4,20 +4,6 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Header from './components/common/Header.jsx'
 import Footer from './components/common/Footer.jsx'
 import Home from './pages/Home.jsx'
-import AboutLayout from './pages/about/AboutLayout.jsx'
-import Greeting from './pages/about/Greeting.jsx'
-import Certification from './pages/about/Certification.jsx'
-import Departments from './pages/about/Departments.jsx'
-import Equipment from './pages/about/Equipment.jsx'
-import Directions from './pages/about/Directions.jsx'
-import GalleryLayout from './pages/gallery/GalleryLayout.jsx'
-import Galva from './pages/gallery/Galva.jsx'
-import Stainless from './pages/gallery/Stainless.jsx'
-import Epoxy from './pages/gallery/Epoxy.jsx'
-import Special from './pages/gallery/Special.jsx'
-import SupportLayout from './pages/support/SupportLayout.jsx'
-import Notice from './pages/support/Notice.jsx'
-import Contact from './pages/support/Contact.jsx'
 import ScrollToTop from './components/common/ScrollToTop.jsx'
 import { AuthProvider } from './context/AuthContext'
 import PrivateRoute from './components/common/PrivateRoute.jsx'
@@ -98,6 +84,26 @@ const lazyWithRetry = (factory) =>
         }
     })
 
+// 공개(About / Gallery / Support) 페이지 — Home 만 즉시 번들에 포함하고 나머지는
+// 라우트 진입 시 청크 다운로드 → 첫 페이지 로딩 시간 단축. react-pdf / gsap 등은 자연스럽게
+// 해당 페이지(예: WorksheetViewer, Home) 청크에만 들어가서 메인 번들이 가벼워진다.
+const AboutLayout      = lazyWithRetry(() => import('./pages/about/AboutLayout.jsx'))
+const Greeting         = lazyWithRetry(() => import('./pages/about/Greeting.jsx'))
+const Certification    = lazyWithRetry(() => import('./pages/about/Certification.jsx'))
+const Departments      = lazyWithRetry(() => import('./pages/about/Departments.jsx'))
+const Equipment        = lazyWithRetry(() => import('./pages/about/Equipment.jsx'))
+const Directions       = lazyWithRetry(() => import('./pages/about/Directions.jsx'))
+const GalleryLayout    = lazyWithRetry(() => import('./pages/gallery/GalleryLayout.jsx'))
+const Galva            = lazyWithRetry(() => import('./pages/gallery/Galva.jsx'))
+const Stainless        = lazyWithRetry(() => import('./pages/gallery/Stainless.jsx'))
+const Epoxy            = lazyWithRetry(() => import('./pages/gallery/Epoxy.jsx'))
+const Aluminum         = lazyWithRetry(() => import('./pages/gallery/Aluminum.jsx'))
+const ArtNeon          = lazyWithRetry(() => import('./pages/gallery/ArtNeon.jsx'))
+const Special          = lazyWithRetry(() => import('./pages/gallery/Special.jsx'))
+const SupportLayout    = lazyWithRetry(() => import('./pages/support/SupportLayout.jsx'))
+const Notice           = lazyWithRetry(() => import('./pages/support/Notice.jsx'))
+const Contact          = lazyWithRetry(() => import('./pages/support/Contact.jsx'))
+
 const AdminLogin       = lazyWithRetry(() => import('./pages/admin/AdminLogin.jsx'))
 const AdminLayout      = lazyWithRetry(() => import('./pages/admin/AdminLayout.jsx'))
 const GalleryUpload    = lazyWithRetry(() => import('./pages/admin/GalleryUpload.jsx'))
@@ -153,6 +159,8 @@ function App() {
                             <Route path="galva"     element={<Galva />} />
                             <Route path="stainless" element={<Stainless />} />
                             <Route path="epoxy"     element={<Epoxy />} />
+                            <Route path="aluminum"  element={<Aluminum />} />
+                            <Route path="artneon"   element={<ArtNeon />} />
                             <Route path="special"   element={<Special />} />
                         </Route>
 

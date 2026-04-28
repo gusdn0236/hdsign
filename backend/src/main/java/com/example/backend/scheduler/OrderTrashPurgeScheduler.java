@@ -32,8 +32,10 @@ public class OrderTrashPurgeScheduler {
     @Value("${r2.public-url}")
     private String publicUrl;
 
-    // 매일 새벽 3시: 휴지통에서 30일 이상 경과한 작업을 영구 삭제
-    @Scheduled(cron = "0 0 3 * * *")
+    // 매일 한국시간 새벽 3시: 휴지통에서 30일 이상 경과한 작업을 영구 삭제.
+    // zone 미지정 시 Railway 컨테이너의 시스템 타임존(UTC) 기준으로 실행 → 한국시간 정오에
+    // 도는 셈이라 발주 피크 타임에 R2 삭제 트래픽 발생. Asia/Seoul 명시로 새벽 시간대에 고정.
+    @Scheduled(cron = "0 0 3 * * *", zone = "Asia/Seoul")
     @Transactional
     public void purgeExpiredTrash() {
         LocalDateTime cutoff = LocalDateTime.now().minusDays(RETENTION_DAYS);

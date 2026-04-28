@@ -265,6 +265,24 @@ export default function WorksheetViewer() {
         return Math.floor(Math.min(maxWidth, maxHeight * pageRatio));
     }, [pageRatio, stageSize.height, stageSize.width]);
 
+    // PDF 가 처음 그려진 후라도 stage 크기/페이지 비율/페이지 폭이 비동기로 늦게 도착하면
+    // 라이브러리의 transform 좌표가 옛 크기 기준에 머물러 한쪽으로 치우친 채 보일 수 있다.
+    // (모바일 회전, 화면 가상키보드 닫힘, onPageLoad 의 pageRatio 후속 갱신 등)
+    // 사용자가 줌/이동을 하지 않은 상태(스케일 ≈ 1)일 때만 자동 가운데 재정렬 — 사용자가
+    // 일부러 확대/패닝해둔 상태를 가로채지 않도록.
+    useEffect(() => {
+        if (!pdfReady || !pageWidth) return;
+        const t = setTimeout(() => {
+            const api = transformRef.current;
+            if (!api) return;
+            const currentScale = api.instance?.transformState?.scale ?? 1;
+            if (currentScale > 1.05) return;
+            api.resetTransform?.(0);
+            api.centerView?.(1, 0);
+        }, 60);
+        return () => clearTimeout(t);
+    }, [pdfReady, pageWidth, stageSize.width, stageSize.height]);
+
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
         setCurrentPage((page) => Math.min(Math.max(1, page), n || 1));
@@ -467,14 +485,18 @@ export default function WorksheetViewer() {
                                         onLoadSuccess={onPageLoad}
                                         onRenderSuccess={() => {
                                             setPdfReady(true);
-                                            // Page 가 실제로 그려진 직후 한 번 더 가운데 정렬 — centerOnInit
-                                            // 이 빈 콘텐츠 기준으로 계산돼 어긋나는 케이스 방지.
+                                            // Page 가 실제로 그려진 직후 가운데 정렬 — centerOnInit 이 빈 콘텐츠
+                                            // 기준으로 계산돼 어긋나는 케이스 방지. RAF 두 번(레이아웃 사이클 한 바퀴
+                                            // 보장) 후 호출 — 첫 RAF 시점엔 onPageLoad 의 pageRatio 변경이 아직
+                                            // 반영 안 됐을 수 있어 한쪽으로 치우치던 산발적 증상 잡음.
                                             // resetTransform 만 부르면 일부 케이스에서 변환 좌표(0,0) 만
                                             // 복원돼 가운데가 안 맞을 때가 있어 centerView 도 추가 호출.
                                             requestAnimationFrame(() => {
-                                                const api = transformRef.current;
-                                                api?.resetTransform?.(0);
-                                                api?.centerView?.(1, 0);
+                                                requestAnimationFrame(() => {
+                                                    const api = transformRef.current;
+                                                    api?.resetTransform?.(0);
+                                                    api?.centerView?.(1, 0);
+                                                });
                                             });
                                         }}
                                         loading={null}

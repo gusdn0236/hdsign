@@ -5,20 +5,28 @@ import "./GalleryUpload.css";
 
 const CATEGORIES = {
   galva: {
-    label: "갈바 간판류",
-    subCategories: ["갈바 후광", "갈바 오사이", "갈바 캡", "일체형"],
+    label: "갈바채널",
+    subCategories: ["갈바 전/후광", "갈바 오사이", "갈바 측광"],
   },
   stainless: {
-    label: "스텐 간판류",
-    subCategories: ["스텐 캡", "스텐 오사이", "스텐 후광", "골드 스텐"],
+    label: "스텐채널",
+    subCategories: ["스텐 전/후광", "스텐 오사이", "스텐 측광", "골드스텐"],
   },
   epoxy: {
-    label: "에폭시 간판류",
-    subCategories: ["갈바 에폭시", "스텐 에폭시"],
+    label: "에폭시채널",
+    subCategories: ["갈바 에폭시", "스텐에폭시"],
+  },
+  aluminum: {
+    label: "알미늄채널",
+    subCategories: ["타카채널", "일체형채널"],
+  },
+  artneon: {
+    label: "아트네온",
+    subCategories: ["아크릴네온", "아크릴조각사인"],
   },
   special: {
     label: "특수/기타 가공물",
-    subCategories: ["아크릴", "포맥스", "고무 스카시", "시트 커팅"],
+    subCategories: ["프레임간판", "지주간판", "아크릴/포맥스", "고무스카시"],
   },
 };
 

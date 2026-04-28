@@ -4,7 +4,7 @@
     padding: 0 20px 80px;
 }
 
-/* ── 50MB 초과 안내 모달 ── */
+/* ── 용량 한도 초과 안내 모달 ── */
 .oversize-overlay {
     position: fixed; inset: 0; z-index: 10000;
     background: rgba(15, 23, 42, 0.55);

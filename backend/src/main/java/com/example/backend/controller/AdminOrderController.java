@@ -12,11 +12,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 
-import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -166,45 +167,52 @@ public class AdminOrderController {
     }
 
     @GetMapping("/{id}/worksheet-package")
-    public ResponseEntity<byte[]> downloadWorksheetPackage(@PathVariable Long id) {
+    public ResponseEntity<StreamingResponseBody> downloadWorksheetPackage(@PathVariable Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+
+        // ZIP 빌드 시작 전에 트랜잭션 안에서 메타/파일 컬렉션을 모두 확정한다.
+        // StreamingResponseBody 람다는 핸들러 리턴 후 별도 스레드에서 실행 — LAZY 컬렉션 직접
+        // 접근 시 LazyInitializationException 발생하므로, files 를 ArrayList 로 분리해 캡처.
+        Map<String, Object> info = buildWorksheetInfo(order);
+        byte[] jsonBytes;
         try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ZipOutputStream zos = new ZipOutputStream(baos, StandardCharsets.UTF_8);
+            jsonBytes = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(info);
+        } catch (Exception e) {
+            throw new RuntimeException("지시서 정보 직렬화 실패: " + e.getMessage());
+        }
+        String orderNumber = order.getOrderNumber();
+        List<OrderFile> files = new ArrayList<>(order.getFiles());
 
-            Map<String, Object> info = buildWorksheetInfo(order);
+        // R2 객체별로 InputStream 을 받아 ZipOutputStream 으로 transferTo — 8KB 청크 흐름.
+        // 거래처 원본 파일 합이 수백 MB 가 돼도 메모리 사용은 청크 한 개분(수 KB) 만 점유.
+        StreamingResponseBody body = output -> {
+            try (ZipOutputStream zos = new ZipOutputStream(output, StandardCharsets.UTF_8)) {
+                zos.putNextEntry(new ZipEntry(orderNumber + ".json"));
+                zos.write(jsonBytes);
+                zos.closeEntry();
 
-            byte[] jsonBytes = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(info);
-            zos.putNextEntry(new ZipEntry(order.getOrderNumber() + ".json"));
-            zos.write(jsonBytes);
-            zos.closeEntry();
-
-            for (OrderFile file : order.getFiles()) {
-                if (file.getStoredName() == null || file.getStoredName().isBlank()) continue;
-                try {
-                    byte[] fileBytes = s3Client.getObjectAsBytes(
-                            GetObjectRequest.builder().bucket(bucket).key(file.getStoredName()).build()
-                    ).asByteArray();
+                for (OrderFile file : files) {
+                    if (file.getStoredName() == null || file.getStoredName().isBlank()) continue;
                     String name = file.getOriginalName() != null ? file.getOriginalName() : file.getStoredName();
                     zos.putNextEntry(new ZipEntry(name));
-                    zos.write(fileBytes);
+                    try (InputStream in = s3Client.getObject(
+                            GetObjectRequest.builder().bucket(bucket).key(file.getStoredName()).build())) {
+                        in.transferTo(zos);
+                    } catch (Exception ignored) {
+                        // 한 파일 실패는 best-effort — 다음 파일 계속 진행. 이미 putNextEntry 한 상태라
+                        // closeEntry 로 빈 엔트리 마무리.
+                    }
                     zos.closeEntry();
-                } catch (Exception ignored) {}
+                }
             }
+        };
 
-            zos.finish();
-            zos.close();
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-            headers.set("Content-Disposition",
-                    "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(order.getOrderNumber() + "_지시서.zip", "UTF-8").replace("+", "%20"));
-            return ResponseEntity.ok().headers(headers).body(baos.toByteArray());
-
-        } catch (Exception e) {
-            throw new RuntimeException("지시서 패키지 생성 실패: " + e.getMessage());
-        }
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        headers.set("Content-Disposition",
+                "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(orderNumber + "_지시서.zip", StandardCharsets.UTF_8).replace("+", "%20"));
+        return ResponseEntity.ok().headers(headers).body(body);
     }
 
     // 자동지시서작성이 실패해 거래처 원본만 받아진 경우의 폴백.
@@ -212,33 +220,33 @@ public class AdminOrderController {
     // 빈 캔버스에 헤더(QR + 박스 + 좌측텍스트 + 노트박스)만 그린 작은 AI 를 만들어 FlexSign 에 띄움.
     // 사용자는 그 헤더를 복사해 거래처 원본 캔버스에 붙여 인쇄 → PDF24 → 매칭 으로 동일 흐름 복귀.
     @GetMapping("/{id}/worksheet-header-package")
-    public ResponseEntity<byte[]> downloadWorksheetHeaderPackage(@PathVariable Long id) {
+    public ResponseEntity<StreamingResponseBody> downloadWorksheetHeaderPackage(@PathVariable Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+
+        Map<String, Object> info = buildWorksheetInfo(order);
+        info.put("headerOnly", true);
+        byte[] jsonBytes;
         try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ZipOutputStream zos = new ZipOutputStream(baos, StandardCharsets.UTF_8);
-
-            Map<String, Object> info = buildWorksheetInfo(order);
-            info.put("headerOnly", true);
-
-            byte[] jsonBytes = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(info);
-            zos.putNextEntry(new ZipEntry(order.getOrderNumber() + ".json"));
-            zos.write(jsonBytes);
-            zos.closeEntry();
-
-            zos.finish();
-            zos.close();
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-            headers.set("Content-Disposition",
-                    "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(order.getOrderNumber() + "_지시서_헤더만.zip", "UTF-8").replace("+", "%20"));
-            return ResponseEntity.ok().headers(headers).body(baos.toByteArray());
-
+            jsonBytes = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsBytes(info);
         } catch (Exception e) {
-            throw new RuntimeException("헤더 패키지 생성 실패: " + e.getMessage());
+            throw new RuntimeException("헤더 정보 직렬화 실패: " + e.getMessage());
         }
+        String orderNumber = order.getOrderNumber();
+
+        StreamingResponseBody body = output -> {
+            try (ZipOutputStream zos = new ZipOutputStream(output, StandardCharsets.UTF_8)) {
+                zos.putNextEntry(new ZipEntry(orderNumber + ".json"));
+                zos.write(jsonBytes);
+                zos.closeEntry();
+            }
+        };
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        headers.set("Content-Disposition",
+                "attachment; filename*=UTF-8''" + java.net.URLEncoder.encode(orderNumber + "_지시서_헤더만.zip", StandardCharsets.UTF_8).replace("+", "%20"));
+        return ResponseEntity.ok().headers(headers).body(body);
     }
 
     private Map<String, Object> buildWorksheetInfo(Order order) {
