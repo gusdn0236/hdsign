@@ -4,11 +4,22 @@ html, body, #root {
     margin: 0;
 }
 
-/* App 전체 레이아웃을 Flex column으로 */
+/* App 전체 레이아웃을 Flex column으로.
+   overflow-x: hidden 은 여기에만 — html/body 에 걸면 Lenis 스무스 스크롤이 깨진다
+   (브라우저가 스크롤 체이닝을 끊어 휠 이벤트가 Lenis 까지 전달 안 됨). */
 .app-wrapper {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* 모바일에서만 dvh 사용 — 카톡 인앱 URL바 변화에 wrapper 가 자연스럽게 추적.
+   PC 에는 영향 없음. */
+@media (max-width: 768px) {
+    .app-wrapper {
+        min-height: 100dvh;
+    }
 }
 
 /* 콘텐츠는 늘어나고, footer는 아래로 밀려남 */

@@ -88,6 +88,14 @@
 }
 
 @media (max-width: 768px) {
+  /* 모바일(카톡 인앱브라우저) 사이즈 고정. svh 미지원 환경 대비, main.jsx 가
+     진입 시 측정해 박은 --app-vh px 값을 우선 사용. */
+  .hero-section {
+    height: 100vh;
+    height: 100svh;
+    height: var(--app-vh, 100svh);
+  }
+
   .overlay-text {
     top: 42%;
     width: min(100% - 32px, 520px);

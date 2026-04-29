@@ -47,8 +47,9 @@
 
 @media (max-width: 768px) {
     .trust-banner-section {
-        min-height: 82vh;
-        min-height: 82svh;
+        height: 82vh;
+        height: 82svh;
+        height: calc(var(--app-vh, 100svh) * 0.82);
     }
 
     .trust-bg {
@@ -75,8 +76,9 @@
 
 @media (max-width: 420px) {
     .trust-banner-section {
-        min-height: 78vh;
-        min-height: 78svh;
+        height: 78vh;
+        height: 78svh;
+        height: calc(var(--app-vh, 100svh) * 0.78);
     }
     .trust-text {
         left: 16px;

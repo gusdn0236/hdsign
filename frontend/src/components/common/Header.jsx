@@ -16,7 +16,15 @@ function Header() {
 
     const handleScroll = () => {
         const cur = window.scrollY;
+        const delta = cur - lastScrollY.current;
+        // 모바일(카톡 인앱브라우저)은 URL바 애니메이션 중 scrollY 가 미세하게
+        // 튄다. 모바일에서만 8px 미만 변화를 무시해 헤더 jitter 를 막는다.
+        // PC 는 기존 동작 그대로 유지.
+        const isMobile = typeof window !== 'undefined'
+            && window.matchMedia('(max-width: 768px)').matches;
+
         if (cur <= 0)                                   { setIsVisible(true);  setHovered(false); }
+        else if (isMobile && Math.abs(delta) < 8)       { /* jitter ignore */ }
         else if (cur > lastScrollY.current && cur > 80) { setIsVisible(false); setHovered(false); }
         else                                            { setIsVisible(true); }
         lastScrollY.current = cur;
