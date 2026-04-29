@@ -56,7 +56,16 @@ function formatDateWithDay(value) {
 
 function formatDueDate(dueDate, deliveryMethod) {
   if (!dueDate) return "-";
-  const base = formatDateWithDay(dueDate);
+  // 표 컬럼이 좁아 연도는 생략 — 접수일/삭제일과 달리 납기는 보통 2~3주 이내라 월-일로 충분.
+  const dateStr = String(dueDate).split("T")[0];
+  const [y, m, d] = dateStr.split("-").map(Number);
+  let base = dateStr;
+  if (y && m && d) {
+    const dt = new Date(y, m - 1, d);
+    const pad = (n) => String(n).padStart(2, "0");
+    const md = `${pad(m)}-${pad(d)}`;
+    base = Number.isNaN(dt.getTime()) ? md : `${md} (${WEEKDAY_KO[dt.getDay()]})`;
+  }
   const delivery = DELIVERY_SHORT_LABELS[deliveryMethod];
   return delivery ? `${base} ${delivery}` : base;
 }

@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HD Sign · 빠른 발주 (시안)</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --line: #e6e8ec;
+    --line-strong: #d2d6dc;
+    --ink: #1b1f24;
+    --ink-2: #4a5560;
+    --ink-3: #7a8593;
+    --brand: #0a6cff;
+    --brand-soft: #e8f1ff;
+    --ok: #18a957;
+    --warn: #c25b00;
+    --danger: #d23a3a;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo",
+                 "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 28px 20px 80px;
+  }
+
+  /* 헤더 */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .brand .logo {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #0a6cff, #6aa0ff);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .who {
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+  .who b { color: var(--ink-2); font-weight: 600; }
+
+  /* 안내 배너 */
+  .hello {
+    background: var(--brand-soft);
+    border: 1px solid #cfe1ff;
+    color: #0a3a8a;
+    padding: 12px 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    margin-bottom: 16px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .hello .icon {
+    flex: 0 0 auto;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: #0a6cff;
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+  }
+  .hello b { color: #0a3a8a; }
+
+  /* 패널 */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 0 rgba(20,30,50,0.02), 0 8px 30px rgba(20,30,50,0.04);
+  }
+  .panel + .panel { margin-top: 14px; }
+
+  .panel-head {
+    padding: 16px 20px 8px;
+  }
+  .panel-head .title {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0 0 2px;
+  }
+  .panel-head .sub {
+    font-size: 13px;
+    color: var(--ink-3);
+    margin: 0;
+  }
+  .panel-body {
+    padding: 12px 20px 20px;
+  }
+
+  /* 재주문 칩 */
+  .reorder-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 20px 16px;
+  }
+  .reorder-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #f3f6fb;
+    border: 1px solid #e1e7f0;
+    border-radius: 999px;
+    padding: 7px 12px 7px 10px;
+    font-size: 13px;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: 0.15s;
+  }
+  .reorder-chip:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+    background: #fff;
+  }
+  .reorder-chip .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok);
+  }
+  .reorder-chip small { color: var(--ink-3); font-size: 12px; }
+
+  /* 드롭존 */
+  .drop {
+    border: 2px dashed #c7d0db;
+    border-radius: 12px;
+    background: #fafbfc;
+    padding: 28px 18px;
+    text-align: center;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: 0.18s;
+  }
+  .drop:hover {
+    border-color: var(--brand);
+    background: #f5f9ff;
+    color: var(--brand);
+  }
+  .drop .big {
+    font-size: 28px;
+    margin-bottom: 6px;
+    opacity: 0.85;
+  }
+  .drop .ttl {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 2px;
+  }
+  .drop .desc {
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+
+  .files {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    background: #f7f9fc;
+    border: 1px solid #e6ebf2;
+    border-radius: 10px;
+    font-size: 13.5px;
+  }
+  .file-row .ext {
+    flex: 0 0 auto;
+    background: #0a6cff;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 7px;
+    border-radius: 6px;
+  }
+  .file-row .ext.pdf { background: #d23a3a; }
+  .file-row .ext.jpg { background: #18a957; }
+  .file-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+  .file-row .size { color: var(--ink-3); font-size: 12.5px; flex: 0 0 auto; }
+  .file-row .x {
+    border: 0; background: transparent; color: var(--ink-3);
+    cursor: pointer; padding: 4px 6px; font-size: 16px; line-height: 1;
+  }
+
+  /* 한 줄 입력 */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .field + .field { margin-top: 14px; }
+  .field label {
+    font-size: 13px;
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .field label .opt {
+    font-weight: 400;
+    color: var(--ink-3);
+    margin-left: 4px;
+    font-size: 12px;
+  }
+  .input, .textarea, .select {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    background: #fff;
+    border-radius: 10px;
+    padding: 11px 12px;
+    font-size: 14.5px;
+    color: var(--ink);
+    font-family: inherit;
+    outline: none;
+    transition: 0.15s;
+  }
+  .input:focus, .textarea:focus, .select:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(10,108,255,0.12);
+  }
+  .textarea { min-height: 78px; resize: vertical; }
+
+  .row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  @media (max-width: 520px) {
+    .row2 { grid-template-columns: 1fr; }
+  }
+
+  /* 납기 빠른 선택 */
+  .quick {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .quick button {
+    border: 1px solid var(--line-strong);
+    background: #fff;
+    border-radius: 999px;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: 0.15s;
+  }
+  .quick button:hover { border-color: var(--brand); color: var(--brand); }
+  .quick button.active {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  /* 자세히 토글 */
+  details.more {
+    margin-top: 18px;
+    border-top: 1px dashed var(--line);
+    padding-top: 14px;
+  }
+  details.more summary {
+    font-size: 13.5px;
+    color: var(--ink-3);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  details.more summary::-webkit-details-marker { display: none; }
+  details.more summary::before {
+    content: "▸";
+    transition: transform 0.15s;
+    color: var(--ink-3);
+    font-size: 12px;
+  }
+  details.more[open] summary::before { transform: rotate(90deg); }
+  details.more summary:hover { color: var(--ink); }
+  details.more .more-body { padding-top: 12px; }
+
+  /* 제출 영역 */
+  .submit-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 18px;
+    padding: 14px 18px;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 1px 0 rgba(20,30,50,0.02), 0 8px 30px rgba(20,30,50,0.04);
+  }
+  .submit-bar .left { font-size: 13px; color: var(--ink-3); }
+  .submit-bar .left b { color: var(--ink); }
+
+  .btn {
+    border: 0;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 12px 22px;
+    cursor: pointer;
+    transition: 0.15s;
+    font-family: inherit;
+  }
+  .btn.primary {
+    background: var(--brand);
+    color: #fff;
+  }
+  .btn.primary:hover { background: #0a5fe0; }
+  .btn.ghost {
+    background: #fff;
+    color: var(--ink-2);
+    border: 1px solid var(--line-strong);
+  }
+  .btn.ghost:hover { color: var(--brand); border-color: var(--brand); }
+
+  .footnote {
+    margin-top: 14px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--ink-3);
+  }
+  .footnote a { color: var(--ink-2); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo">HD</div>
+        <span>HD Sign · 빠른 발주</span>
+      </div>
+      <div class="who">
+        <b>대성광고</b> 김기사 님
+      </div>
+    </div>
+
+    <!-- 안내 배너: 메일처럼 보내도 된다는 안심 -->
+    <div class="hello">
+      <div class="icon">i</div>
+      <div>
+        <b>파일만 올리셔도 접수됩니다.</b> 자세한 내용은 평소처럼 도면/메모에 적어주시면 됩니다.
+        보내신 뒤에는 <b>진행 현황·납기·견적</b>이 실시간으로 보여요.
+      </div>
+    </div>
+
+    <!-- 재주문 -->
+    <div class="panel">
+      <div class="panel-head">
+        <p class="title">최근 주문에서 가져오기</p>
+        <p class="sub">버튼 한 번이면 같은 조건으로 다시 보내드려요.</p>
+      </div>
+      <div class="reorder-row">
+        <button class="reorder-chip" type="button">
+          <span class="dot"></span>
+          <span><b>스타벅스 강남점</b> 채널간판 <small>· 4/12</small></span>
+        </button>
+        <button class="reorder-chip" type="button">
+          <span class="dot"></span>
+          <span><b>이마트24 시흥</b> 전면 LED <small>· 4/08</small></span>
+        </button>
+        <button class="reorder-chip" type="button">
+          <span class="dot"></span>
+          <span><b>현대모터스튜디오</b> 픽토 <small>· 3/30</small></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 본 폼 -->
+    <div class="panel">
+      <div class="panel-head">
+        <p class="title">새 발주</p>
+        <p class="sub">파일 1개만 있으면 보낼 수 있어요.</p>
+      </div>
+      <div class="panel-body">
+
+        <!-- 파일 -->
+        <div class="drop">
+          <div class="big">⬆</div>
+          <div class="ttl">도면·시안 파일을 끌어다 놓으세요</div>
+          <div class="desc">또는 클릭해서 선택 · ai, pdf, jpg, png 등 (최대 60MB)</div>
+        </div>
+
+        <div class="files">
+          <div class="file-row">
+            <span class="ext">AI</span>
+            <span class="name">스타벅스_강남점_전면도면_v3.ai</span>
+            <span class="size">4.2 MB</span>
+            <button class="x" type="button">×</button>
+          </div>
+          <div class="file-row">
+            <span class="ext pdf">PDF</span>
+            <span class="name">현장실측_치수표.pdf</span>
+            <span class="size">680 KB</span>
+            <button class="x" type="button">×</button>
+          </div>
+        </div>
+
+        <!-- 작업명 + 수량 -->
+        <div class="field" style="margin-top:18px;">
+          <label>작업명 <span class="opt">파일에 적혀있다면 비워두셔도 돼요</span></label>
+          <input class="input" type="text" placeholder="예) 스타벅스 강남점 채널간판" />
+        </div>
+
+        <div class="row2" style="margin-top:14px;">
+          <div class="field" style="margin-top:0;">
+            <label>수량</label>
+            <input class="input" type="text" value="1 SET" />
+          </div>
+          <div class="field" style="margin-top:0;">
+            <label>납기 <span class="opt">대략적으로 골라주세요</span></label>
+            <div class="quick">
+              <button type="button">오늘 중</button>
+              <button type="button" class="active">내일까지</button>
+              <button type="button">이번 주</button>
+              <button type="button">급하지 않음</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 메모 -->
+        <div class="field">
+          <label>메모 <span class="opt">선택</span></label>
+          <textarea class="textarea" placeholder="평소 통화로 말씀하시던 내용을 적어주세요. (예: 색상 빨강 좀 더 어둡게, 후면 마감 같이)"></textarea>
+        </div>
+
+        <!-- 자세히 (옵션 숨김) -->
+        <details class="more">
+          <summary>자세히 입력하기 (배송·부속·견적 요청 등)</summary>
+          <div class="more-body">
+
+            <div class="field" style="margin-top:0;">
+              <label>배송 방법</label>
+              <select class="select">
+                <option>화물 발송</option>
+                <option>퀵 발송</option>
+                <option>직접 배송</option>
+                <option selected>직접 수령</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>추가 부속</label>
+              <div class="quick">
+                <button type="button">파워기(SMPS)</button>
+                <button type="button">종이도안</button>
+                <button type="button">시트 현도</button>
+                <button type="button">볼트&amp;너트</button>
+                <button type="button">여분 페인트</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>견적 먼저 받기</label>
+              <div class="quick">
+                <button type="button" class="active">바로 작업</button>
+                <button type="button">견적 먼저 확인 후 진행</button>
+              </div>
+            </div>
+
+          </div>
+        </details>
+
+      </div>
+    </div>
+
+    <!-- 제출 -->
+    <div class="submit-bar">
+      <div class="left">
+        첨부 <b>2개</b> · 4.9 MB / 60 MB
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn ghost" type="button">임시저장</button>
+        <button class="btn primary" type="button">발주 보내기</button>
+      </div>
+    </div>
+
+    <p class="footnote">
+      파일 용량이 60MB를 넘는다면 <a href="mailto:hdno88@daum.net">hdno88@daum.net</a> 으로 보내주세요. 동일하게 접수됩니다.
+    </p>
+
+  </div>
+</body>
+</html>

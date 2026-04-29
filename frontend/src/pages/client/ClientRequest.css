@@ -385,6 +385,7 @@
     justify-content: center; flex-shrink: 0; letter-spacing: 0.3px;
 }
 .request-page .req-section-title { font-size: 15px; font-weight: 700; color: #111; margin: 0; }
+.request-page .req-section-title-opt { font-size: 12px; font-weight: 400; color: #9aa3ad; margin-left: 6px; }
 
 /* ── Drop zone ── */
 .request-page .drop-zone {

@@ -16,6 +16,7 @@ const ADDITIONAL_ITEMS = [
     { id: 'smps', label: '파워기(SMPS)' },
     { id: 'paper_draft', label: '종이도안' },
     { id: 'sheet_template', label: '시트 현도' },
+    { id: 'acrylic_template', label: '아크릴가다' },
     { id: 'bolts_nuts', label: '볼트&너트' },
     { id: 'extra_paint', label: '여분 페인트' },
 ];
@@ -649,7 +650,7 @@ export default function ClientRequest() {
         e.preventDefault();
         setError('');
 
-        if (!title.trim()) return setError('작업 요청 제목을 입력해 주세요.');
+        if (!title.trim()) return setError('작업명을 입력해 주세요.');
         if (!files.length) return setError('작업 파일을 1개 이상 업로드해 주세요.');
 
         const totalSize = files.reduce((sum, file) => sum + (file?.size || 0), 0);
@@ -757,7 +758,7 @@ export default function ClientRequest() {
                             <ImagePreview files={files} />
                             <div className="title-input-wrap">
                                 <label className="req-label">
-                                    작업 요청 제목
+                                    작업명
                                     <span className="title-label-sub">담당자에게 전달되는 메일 제목입니다</span>
                                 </label>
                                 <input
@@ -765,7 +766,7 @@ export default function ClientRequest() {
                                     className={`req-input${titleAutoFilled ? ' req-input--suggested' : ''}`}
                                     value={title}
                                     onChange={handleTitleChange}
-                                    placeholder="예) 푸드케어 내부 아크릴, 행복치과의원 외부사인"
+                                    placeholder="예) 스타벅스 강남점 채널간판"
                                     maxLength={100}
                                 />
                                 {titleAutoFilled && (
@@ -774,7 +775,10 @@ export default function ClientRequest() {
                             </div>
                         </Section>
 
-                        <Section number="02" title="추가 요청사항">
+                        <Section
+                            number="02"
+                            title={<>추가 요청사항 <span className="req-section-title-opt">(선택)</span></>}
+                        >
                             {itemsPreviewLines.length > 0 && (
                                 <div className="req-items-preview">
                                     <div className="req-items-preview-title">추가 물품</div>
@@ -820,7 +824,7 @@ export default function ClientRequest() {
                                 className="req-textarea"
                                 value={note}
                                 onChange={(e) => setNote(e.target.value)}
-                                placeholder="색상, 자재, 크기, 수량, 특이사항 등을 자유롭게 적어 주세요."
+                                placeholder="평소 통화로 말씀하시던 내용을 적어주세요. (예: LED 촘촘하게 부착, 번호별로 포장 등)"
                                 rows={5}
                             />
                             <div className="note-actions">
@@ -882,7 +886,7 @@ export default function ClientRequest() {
                                     <AddressInput
                                         value={cargoPoint}
                                         onChange={setCargoPoint}
-                                        placeholder="예: CJ대한통운 구포대리점, 서진항공 안양점"
+                                        placeholder="예) 경동택배 군포금정214영업소, 대신택배 의왕오전점"
                                         savedKey={`hd_cargo_${username}`}
                                         withSearch={false}
                                     />

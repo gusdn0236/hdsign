@@ -18,6 +18,10 @@ import threading
 import time
 import tkinter as tk
 import unicodedata
+try:
+    import winsound  # Windows 표준 — 새 주문 알림음 재생. 다른 OS 에서 import 단계에서 죽지 않게 가드.
+except Exception:
+    winsound = None  # type: ignore
 from datetime import date, timedelta
 from tkinter import filedialog, messagebox, ttk
 import urllib.error
@@ -862,6 +866,157 @@ def change_tracked_folder_async(initial_dir: str | None = None):
         trigger_folder_sync_async()
 
     _ui_queue.put(("run", _ask))
+
+
+# ── 새 발주/견적 알림 ───────────────────────────────────────────────────────
+# 백엔드 /api/admin/orders 를 30초 간격으로 폴링해 새 주문(발주/견적)이 들어오면
+# 작업장 PC 에서 사운드 + 창 raise + 빨간 배너로 즉시 인지하게 한다.
+# 첫 실행 시 baseline 만 잡아서 과거 주문이 한꺼번에 알림으로 쏟아지지 않도록.
+_ORDER_ALERT_STATE_FILE = WATCH_DIR / "state" / "order_alert.json"
+_ORDER_ALERT_INTERVAL_SEC = 30
+
+
+def _load_alert_state() -> dict:
+    try:
+        return json.loads(_ORDER_ALERT_STATE_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        ui_log(f"order_alert state 로드 실패: {e}")
+        return {}
+
+
+def _save_alert_state(state: dict) -> None:
+    try:
+        _ORDER_ALERT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _ORDER_ALERT_STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(_ORDER_ALERT_STATE_FILE)
+    except Exception as e:
+        ui_log(f"order_alert state 저장 실패: {e}")
+
+
+def _get_notify_enabled() -> bool:
+    val = _load_config().get("notify_orders")
+    return True if val is None else bool(val)
+
+
+def _set_notify_enabled(enabled: bool) -> None:
+    cfg = _load_config()
+    cfg["notify_orders"] = bool(enabled)
+    _save_config(cfg)
+
+
+def _get_notify_sound_enabled() -> bool:
+    val = _load_config().get("notify_sound")
+    return True if val is None else bool(val)
+
+
+def _set_notify_sound_enabled(enabled: bool) -> None:
+    cfg = _load_config()
+    cfg["notify_sound"] = bool(enabled)
+    _save_config(cfg)
+
+
+def _fetch_admin_orders() -> list[dict] | None:
+    """admin 토큰으로 /api/admin/orders 호출. 실패 시 None.
+    백엔드가 createdAt 내림차순으로 반환하므로 첫 항목이 최신."""
+    token = _get_admin_token()
+    if not token:
+        return None
+    url = f"{API_BASE}/api/admin/orders"
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data if isinstance(data, list) else None
+    except urllib.error.HTTPError as e:
+        # 401 이면 토큰 캐시 무효화 → 다음 호출에서 재로그인.
+        if e.code in (401, 403):
+            with _admin_token_lock:
+                _admin_token_cache["token"] = None
+        return None
+    except Exception:
+        return None
+
+
+def play_alert_sound() -> None:
+    """시스템 알림음 비동기 재생. winsound 없는 환경(예: 다른 OS)에서는 무시."""
+    if winsound is None:
+        return
+    try:
+        winsound.PlaySound("SystemExclamation",
+                           winsound.SND_ALIAS | winsound.SND_ASYNC)
+    except Exception:
+        pass
+
+
+def _request_type_label(req_type: str | None) -> str:
+    return {
+        "QUOTE": "견적요청",
+        "ORDER": "발주",
+    }.get((req_type or "").upper(), "신규 작업")
+
+
+def format_order_alert(order: dict) -> tuple[str, str]:
+    """주문 dict → (배너 제목, 본문) 튜플.
+    제목엔 발주/견적 구분, 본문엔 거래처 · 작업명 · 주문번호."""
+    rt = _request_type_label(order.get("requestType"))
+    company = (order.get("clientCompanyName") or "").strip() or "(거래처 미상)"
+    title_text = (order.get("title") or "").strip()
+    order_no = (order.get("orderNumber") or "").strip()
+    parts = [company]
+    if title_text:
+        parts.append(title_text)
+    if order_no:
+        parts.append(f"#{order_no}")
+    return f"새 {rt}", " · ".join(parts)
+
+
+def start_order_alert_loop():
+    """30초 간격으로 admin orders 폴링 → 새 주문 감지 시 UI 큐로 알림 전달.
+    config 의 admin_username/password 가 없으면 조용히 대기. 설정 추가 후 자동 활성."""
+    def _run():
+        # baseline: state 파일이 비어 있으면 첫 폴링에서 현재 최신 id 만 잡고 알림은 생략.
+        state = _load_alert_state()
+        last_seen_id = state.get("last_seen_id")
+        first_pass = last_seen_id is None
+
+        while True:
+            try:
+                if not _get_notify_enabled():
+                    time.sleep(_ORDER_ALERT_INTERVAL_SEC)
+                    continue
+                orders = _fetch_admin_orders()
+                if not orders:
+                    time.sleep(_ORDER_ALERT_INTERVAL_SEC)
+                    continue
+
+                # createdAt 내림차순 — orders[0] 이 최신.
+                top_id = orders[0].get("id") or 0
+                if first_pass:
+                    last_seen_id = top_id
+                    _save_alert_state({"last_seen_id": last_seen_id})
+                    first_pass = False
+                else:
+                    new_orders = [
+                        o for o in orders
+                        if (o.get("id") or 0) > (last_seen_id or 0)
+                        and not o.get("deletedAt")
+                    ]
+                    if new_orders:
+                        # 오래된 → 최신 순으로 알림(작업 흐름이 자연스럽도록).
+                        for o in reversed(new_orders):
+                            title_text, body = format_order_alert(o)
+                            _ui_queue.put(("notify_order", title_text, body))
+                        last_seen_id = top_id
+                        _save_alert_state({"last_seen_id": last_seen_id})
+            except Exception as e:
+                ui_log(f"새 주문 알림 루프 오류: {e}")
+            time.sleep(_ORDER_ALERT_INTERVAL_SEC)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
@@ -4170,12 +4325,17 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("HD사인 지시서 프로그램")
-        self.geometry("420x500")
+        self.geometry("420x620")
         self.resizable(False, False)
         self.configure(bg=self.BG)
         self._observer = None
         self._has_logs = False
         self._log_count = 0
+        self._alert_banner: tk.Frame | None = None
+        self._alert_banner_after_id: str | None = None
+        # 최근 도착한 발주/견적 5건 — newest first. 자동지시서 처리 로그와 분리해
+        # 작업이 활발해도 가려지지 않게 별도 섹션에 표시한다.
+        self._alert_history: list[dict] = []
         self._build_ui()
         self.after(100, self._poll_queue)
 
@@ -4254,8 +4414,76 @@ class App(tk.Tk):
         self._tracked_lbl.pack(fill="x", padx=24, pady=(6, 0))
         self._refresh_tracked_label()
 
+        # 새 발주/견적 알림 토글 — config.json 에 영속. 폴러 스레드가 매 사이클 _get_notify_enabled 를 읽어
+        # 즉시 반영된다. 테스트 버튼은 사운드/배너 동작을 한 번 확인할 때 쓴다.
+        notify_cfg = _load_config()
+        self._notify_orders_var = tk.BooleanVar(
+            value=True if notify_cfg.get("notify_orders") is None
+            else bool(notify_cfg.get("notify_orders")))
+        self._notify_sound_var = tk.BooleanVar(
+            value=True if notify_cfg.get("notify_sound") is None
+            else bool(notify_cfg.get("notify_sound")))
+
+        notify_row = tk.Frame(self._card, bg=self.CARD)
+        notify_row.pack(fill="x", padx=24, pady=(10, 0))
+
+        tk.Checkbutton(
+            notify_row, text="🔔 새 주문 알림",
+            variable=self._notify_orders_var,
+            bg=self.CARD, fg="#3f3f46",
+            activebackground=self.CARD,
+            selectcolor=self.CARD,
+            font=("맑은 고딕", 9),
+            bd=0, highlightthickness=0,
+            command=self._on_toggle_notify,
+        ).pack(side="left")
+
+        tk.Checkbutton(
+            notify_row, text="알림음",
+            variable=self._notify_sound_var,
+            bg=self.CARD, fg="#3f3f46",
+            activebackground=self.CARD,
+            selectcolor=self.CARD,
+            font=("맑은 고딕", 9),
+            bd=0, highlightthickness=0,
+            command=self._on_toggle_sound,
+        ).pack(side="left", padx=(12, 0))
+
+        tk.Button(
+            notify_row, text="테스트",
+            bg=self.CARD, fg="#71717a",
+            activebackground="#f4f4f5",
+            font=("맑은 고딕", 8),
+            relief="flat", bd=0, highlightthickness=0,
+            cursor="hand2", padx=8, pady=2,
+            command=self._test_alert,
+        ).pack(side="right")
+
         # Divider
         tk.Frame(self._card, bg="#e4e4e7", height=1).pack(fill="x", padx=24, pady=(20, 0))
+
+        # 최근 도착 — 새 발주/견적이 자동지시서 처리 로그에 묻히지 않도록 별도 섹션.
+        alert_hdr = tk.Frame(self._card, bg=self.CARD)
+        alert_hdr.pack(fill="x", padx=24, pady=(14, 0))
+        self._alert_section_lbl = tk.Label(
+            alert_hdr, text="최근 도착",
+            bg=self.CARD, fg="#a1a1aa",
+            font=("맑은 고딕", 8, "bold"),
+        )
+        self._alert_section_lbl.pack(side="left")
+        self._alert_clear_btn = tk.Button(
+            alert_hdr, text="전체 지우기",
+            bg=self.CARD, fg="#a1a1aa",
+            activebackground="#f4f4f5",
+            font=("맑은 고딕", 8),
+            relief="flat", bd=0, highlightthickness=0,
+            cursor="hand2", padx=4, pady=0,
+            command=self._clear_alert_history,
+        )
+
+        self._alert_list = tk.Frame(self._card, bg=self.CARD)
+        self._alert_list.pack(fill="x", padx=24, pady=(6, 0))
+        self._refresh_alert_history()
 
         # Log header
         tk.Label(self._card, text="최근 활동", bg=self.CARD, fg="#a1a1aa",
@@ -4352,6 +4580,149 @@ class App(tk.Tk):
         finally:
             self._log_menu.grab_release()
 
+    # ── 새 주문 알림 ──
+
+    def _on_toggle_notify(self):
+        _set_notify_enabled(self._notify_orders_var.get())
+
+    def _on_toggle_sound(self):
+        _set_notify_sound_enabled(self._notify_sound_var.get())
+
+    def _test_alert(self):
+        """[테스트] 버튼 — 실제 폴러를 거치지 않고 알림 표시만 즉시 확인."""
+        self._handle_order_alert("새 발주 (테스트)",
+                                  "테스트 거래처 · 알림 동작 확인 · #TEST-000")
+
+    def _handle_order_alert(self, title_text: str, body: str):
+        """새 주문 폴러가 큐로 보낸 알림을 처리. 사운드 + 창 raise + 배너 + 별도 도착 섹션."""
+        if _get_notify_sound_enabled():
+            play_alert_sound()
+        self._raise_window()
+        self._show_alert_banner(title_text, body)
+        self._push_alert_to_history(title_text, body)
+
+    def _push_alert_to_history(self, title_text: str, body: str):
+        entry = {"time": time.strftime("%H:%M"),
+                 "title": title_text, "body": body}
+        self._alert_history.insert(0, entry)
+        if len(self._alert_history) > 5:
+            self._alert_history = self._alert_history[:5]
+        self._refresh_alert_history()
+
+    def _refresh_alert_history(self):
+        for child in self._alert_list.winfo_children():
+            child.destroy()
+
+        n = len(self._alert_history)
+        if n == 0:
+            self._alert_section_lbl.config(text="최근 도착")
+            self._alert_clear_btn.pack_forget()
+            tk.Label(
+                self._alert_list,
+                text="새 발주/견적이 들어오면 여기에 표시됩니다.",
+                bg=self.CARD, fg="#a1a1aa",
+                font=("맑은 고딕", 9), anchor="w",
+            ).pack(anchor="w")
+            return
+
+        self._alert_section_lbl.config(text=f"최근 도착 ({n})")
+        self._alert_clear_btn.pack(side="right")
+        for idx, entry in enumerate(self._alert_history):
+            self._render_alert_row(idx, entry)
+
+    def _render_alert_row(self, idx: int, entry: dict):
+        row = tk.Frame(self._alert_list, bg=self.CARD)
+        row.pack(fill="x", pady=(2, 0))
+
+        tk.Label(
+            row, text=entry["time"],
+            bg=self.CARD, fg="#a1a1aa",
+            font=("맑은 고딕", 8), width=5, anchor="w",
+        ).pack(side="left")
+
+        close_lbl = tk.Label(
+            row, text="✕",
+            bg=self.CARD, fg="#a1a1aa",
+            activebackground="#f4f4f5", activeforeground="#dc2626",
+            font=("맑은 고딕", 9), cursor="hand2", padx=4,
+        )
+        close_lbl.pack(side="right")
+        close_lbl.bind("<Button-1>", lambda _e, i=idx: self._dismiss_alert(i))
+
+        # body 가 길면 wrap. 폭은 카드 폭 - 좌측 시간 - 우측 X 대략 280px.
+        tk.Label(
+            row, text=entry["body"],
+            bg=self.CARD, fg="#3f3f46",
+            font=("맑은 고딕", 9),
+            anchor="w", justify="left",
+            wraplength=280,
+        ).pack(side="left", padx=(4, 0), fill="x", expand=True)
+
+    def _dismiss_alert(self, idx: int):
+        if 0 <= idx < len(self._alert_history):
+            self._alert_history.pop(idx)
+        self._refresh_alert_history()
+
+    def _clear_alert_history(self):
+        self._alert_history.clear()
+        self._refresh_alert_history()
+
+    def _raise_window(self):
+        """최소화 해제 + 맨 앞으로 + 잠시 topmost 후 해제. 작업 중 거슬리지 않도록 짧게."""
+        try:
+            if self.state() == "iconic":
+                self.deiconify()
+            self.lift()
+            self.attributes("-topmost", True)
+            self.focus_force()
+            self.after(500, lambda: self.attributes("-topmost", False))
+        except Exception:
+            pass
+
+    def _show_alert_banner(self, title_text: str, body: str):
+        """헤더와 카드 사이에 빨간 배너를 8초간 띄움. 클릭(또는 X)으로 즉시 닫기.
+        이미 떠 있는 배너가 있으면 교체 — 같은 시간대에 새 알림이 또 오면 최신 정보 우선."""
+        if self._alert_banner is not None and self._alert_banner.winfo_exists():
+            self._alert_banner.destroy()
+        if self._alert_banner_after_id is not None:
+            try:
+                self.after_cancel(self._alert_banner_after_id)
+            except Exception:
+                pass
+            self._alert_banner_after_id = None
+
+        banner = tk.Frame(self, bg="#dc2626")
+        # before=self._card — 카드가 expand=True 라 명시적으로 카드 위에 끼워야 함.
+        banner.pack(fill="x", before=self._card)
+
+        inner = tk.Frame(banner, bg="#dc2626")
+        inner.pack(fill="x", padx=20, pady=(8, 8))
+
+        tk.Label(
+            inner, text=f"🔔  {title_text}",
+            bg="#dc2626", fg="white",
+            font=("맑은 고딕", 11, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            inner, text=body,
+            bg="#dc2626", fg="#fee2e2",
+            font=("맑은 고딕", 9),
+            wraplength=360, justify="left",
+        ).pack(anchor="w")
+
+        close_btn = tk.Label(
+            banner, text="✕",
+            bg="#dc2626", fg="white",
+            font=("맑은 고딕", 11, "bold"),
+            cursor="hand2",
+        )
+        close_btn.place(relx=1.0, y=4, anchor="ne", x=-8)
+        close_btn.bind("<Button-1>", lambda _e: banner.destroy())
+
+        self._alert_banner = banner
+        self._alert_banner_after_id = self.after(
+            8000, lambda b=banner: b.destroy() if b.winfo_exists() else None)
+
     # ── queue polling ──
 
     def _poll_queue(self):
@@ -4371,6 +4742,8 @@ class App(tk.Tk):
                     self.after(0, fn)
                 elif item[0] == "refresh_tracked":
                     self.after(0, self._refresh_tracked_label)
+                elif item[0] == "notify_order":
+                    self._handle_order_alert(item[1], item[2])
         except Exception:
             pass
         self.after(100, self._poll_queue)
@@ -4406,6 +4779,10 @@ class App(tk.Tk):
 
             # 거래처 폴더 목록을 백엔드에 주기적으로 푸시 — 관리자 모달 자동완성용.
             start_folder_sync_loop()
+
+            # 새 발주/견적 도착 시 사운드+창 raise+배너 알림 (30초 폴링).
+            # admin_username/password 가 config 에 없으면 폴러는 조용히 무동작 → 설정 추가 시 자동 활성.
+            start_order_alert_loop()
 
             ui_status("watching", "지시서가 도착하면 자동으로 열어드립니다")
 
