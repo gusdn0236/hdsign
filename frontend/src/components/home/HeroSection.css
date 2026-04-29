@@ -94,6 +94,7 @@
     height: 100vh;
     height: 100svh;
     height: var(--app-vh, 100svh);
+    min-height: var(--app-vh, 100svh);
   }
 
   .overlay-text {

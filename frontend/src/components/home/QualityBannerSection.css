@@ -49,6 +49,7 @@
         height: 82vh;
         height: 82svh;
         height: calc(var(--app-vh, 100svh) * 0.82);
+        min-height: calc(var(--app-vh, 100svh) * 0.82);
     }
 
     .quality-bg {
@@ -78,6 +79,7 @@
         height: 78vh;
         height: 78svh;
         height: calc(var(--app-vh, 100svh) * 0.78);
+        min-height: calc(var(--app-vh, 100svh) * 0.78);
     }
     .quality-text {
         left: 16px;

@@ -50,6 +50,7 @@
         height: 82vh;
         height: 82svh;
         height: calc(var(--app-vh, 100svh) * 0.82);
+        min-height: calc(var(--app-vh, 100svh) * 0.82);
     }
 
     .contact-bg {
@@ -79,6 +80,7 @@
         height: 78vh;
         height: 78svh;
         height: calc(var(--app-vh, 100svh) * 0.78);
+        min-height: calc(var(--app-vh, 100svh) * 0.78);
     }
     .contact-text {
         left: 16px;
