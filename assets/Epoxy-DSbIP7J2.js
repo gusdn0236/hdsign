@@ -1,1 +1,0 @@
-import{j as o}from"./index-DW7eZw6w.js";import{G as e}from"./GalleryPage-rXV-Jsdk.js";const t=[{name:"갈바 에폭시",subCategory:"갈바 에폭시",description:"갈바 위에 에폭시 코팅 처리된 채널 간판입니다."},{name:"스텐에폭시",subCategory:"스텐에폭시",description:"스테인리스 위에 에폭시 코팅 처리된 채널 간판입니다."}],s=()=>o.jsx(e,{category:"epoxy",categoryTabs:t});export{s as default};
