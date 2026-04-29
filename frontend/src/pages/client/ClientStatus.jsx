@@ -106,12 +106,15 @@ function OrderCard({ order }) {
     );
 
     return (
-        <div className={`order-card ${open ? 'expanded' : ''}`}>
+        <div className={`order-card ${open ? 'expanded' : ''} ${isQuote ? 'order-card--quote' : 'order-card--order'}`}>
             <div className="order-card-header" onClick={() => setOpen((prev) => !prev)}>
                 <div className="order-card-main">
                     <div className="order-top-row">
+                        <span className={`type-chip ${isQuote ? 'type-chip--quote' : 'type-chip--order'}`}>
+                            {isQuote ? '견적 요청' : '작업 요청'}
+                        </span>
                         <span className="order-id">{order.orderNumber}</span>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 'auto' }}>
                             {photoFiles.length > 0 && (
                                 <span
                                     className="photo-indicator"

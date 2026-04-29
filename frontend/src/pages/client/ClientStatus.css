@@ -23,12 +23,24 @@
 .order-card {
     background: #fff; border: 1px solid #e0e0e0; border-radius: 12px;
     overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: box-shadow 0.2s;
+    border-left-width: 4px; border-left-style: solid;
 }
+.order-card--order { border-left-color: #005f73; }
+.order-card--quote { border-left-color: #7c3aed; }
 .order-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
 .order-card-header { padding: 20px 24px; cursor: pointer; display: flex; align-items: center; gap: 16px; user-select: none; }
 .order-card-main { flex: 1; min-width: 0; }
-.order-top-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.order-top-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .order-id    { font-size: 11px; color: #aaa; font-weight: 600; }
+
+.type-chip {
+    display: inline-flex; align-items: center;
+    padding: 3px 10px; border-radius: 6px;
+    font-size: 12px; font-weight: 700; line-height: 1.4;
+    letter-spacing: -0.2px;
+}
+.type-chip--order { background: #ccfbf1; color: #005f73; }
+.type-chip--quote { background: #ede9fe; color: #6d28d9; }
 .order-title { margin: 0 0 6px; font-size: 15px; font-weight: 700; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .order-dates { margin: 0; font-size: 12px; color: #aaa; }
 .chevron { font-size: 20px; color: #aaa; transition: transform 0.25s; flex-shrink: 0; }

@@ -239,22 +239,9 @@ export default function OrderAdmin() {
     return slides;
   }, [selectedOrder, selectedFiles.evidence]);
 
-  // 좌/우 화살표 키로 캐러셀 이동. lightbox 가 열려 있을 땐 lightbox 가 우선 처리.
-  useEffect(() => {
-    if (!selectedOrderId || lightboxIndex !== null) return;
-    if (carouselSlides.length <= 1) return;
-    const handler = (e) => {
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        setCarouselIndex((i) => (i - 1 + carouselSlides.length) % carouselSlides.length);
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        setCarouselIndex((i) => (i + 1) % carouselSlides.length);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [selectedOrderId, lightboxIndex, carouselSlides.length]);
+  // 모달 열린 상태에서 ←/→ 로 이전·다음 주문 이동. lightbox 가 열려 있으면 lightbox 가 우선 처리하고,
+  // input/textarea/select 에 포커스가 있으면 그쪽 키 입력을 방해하지 않는다.
+  // 캐러셀(PDF·작업사진) 키 이동은 화면의 ‹ › 버튼으로 갈음.
 
   const statusCounts = useMemo(() => {
     const counts = { RECEIVED: 0, IN_PROGRESS: 0, COMPLETED: 0 };
@@ -334,6 +321,46 @@ export default function OrderAdmin() {
 
     return result;
   }, [statusFilteredOrders, sortMode, clientFilter, dueDateRange, activeFilter]);
+
+  const currentOrderIndex = useMemo(() => {
+    if (!selectedOrderId) return -1;
+    return filteredOrders.findIndex((o) => o.id === selectedOrderId);
+  }, [filteredOrders, selectedOrderId]);
+
+  const hasPrevOrder = currentOrderIndex > 0;
+  const hasNextOrder = currentOrderIndex >= 0 && currentOrderIndex < filteredOrders.length - 1;
+  const goToPrevOrder = () => {
+    if (hasPrevOrder) setSelectedOrderId(filteredOrders[currentOrderIndex - 1].id);
+  };
+  const goToNextOrder = () => {
+    if (hasNextOrder) setSelectedOrderId(filteredOrders[currentOrderIndex + 1].id);
+  };
+
+  useEffect(() => {
+    if (!selectedOrderId) return;
+    const handler = (e) => {
+      const tag = (e.target?.tagName || "").toLowerCase();
+      const inField = tag === "input" || tag === "textarea" || tag === "select";
+      // ESC — lightbox 가 열려 있으면 lightbox 가 먼저 닫힘. 모달만 열려 있으면 모달 닫기.
+      if (e.key === "Escape") {
+        if (lightboxIndex !== null) return;
+        e.preventDefault();
+        setSelectedOrderId(null);
+        return;
+      }
+      if (lightboxIndex !== null) return;
+      if (inField) return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        goToPrevOrder();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        goToNextOrder();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedOrderId, lightboxIndex, currentOrderIndex, filteredOrders]);
 
   const filterTabs = [
     { key: "ALL", label: "전체", count: orders.length },
@@ -886,10 +913,11 @@ export default function OrderAdmin() {
               // 관리자가 한 번 보면 깨끗이 사라지고, 새 변경으로 타임스탬프가 갱신될 때만 다시 뜸.
               const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
 
+              const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
               return (
                 <tr
                   key={order.id}
-                  className={`order-row ${isTrash ? "trash-row" : ""}`}
+                  className={`order-row ${isTrash ? "trash-row" : ""} order-row--${typeKey}`}
                   onClick={() => setSelectedOrderId(order.id)}
                   role="button"
                   tabIndex={0}
@@ -918,7 +946,11 @@ export default function OrderAdmin() {
                     )}
                   </td>
                   <td>{order.clientCompanyName || "-"}</td>
-                  <td>{requestLabel(order.requestType)}</td>
+                  <td>
+                    <span className={`type-chip type-chip--${typeKey}`}>
+                      {requestLabel(order.requestType)}
+                    </span>
+                  </td>
                   <td className="order-title">{order.title || requestLabel(order.requestType)}</td>
                   <td>{formatDueDate(order.dueDate, order.deliveryMethod)}</td>
                   <td>
@@ -1144,8 +1176,40 @@ export default function OrderAdmin() {
                 {selectedOrder.title || requestLabel(selectedOrder.requestType)}
               </h3>
 
+              {(hasPrevOrder || hasNextOrder) && (
+                <div className="modal-order-nav-row">
+                  <button
+                    type="button"
+                    className="modal-order-nav-btn"
+                    onClick={goToPrevOrder}
+                    disabled={!hasPrevOrder}
+                    title="이전 주문 (←)"
+                  >
+                    <span className="modal-order-nav-arrow">‹</span>
+                    <span>이전 주문</span>
+                  </button>
+                  {currentOrderIndex >= 0 && filteredOrders.length > 1 && (
+                    <span className="modal-order-nav-position">
+                      {currentOrderIndex + 1} / {filteredOrders.length}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="modal-order-nav-btn"
+                    onClick={goToNextOrder}
+                    disabled={!hasNextOrder}
+                    title="다음 주문 (→)"
+                  >
+                    <span>다음 주문</span>
+                    <span className="modal-order-nav-arrow">›</span>
+                  </button>
+                </div>
+              )}
+
               <div className="file-chips" style={{ marginBottom: 16 }}>
-                <span className="file-chip">{requestLabel(selectedOrder.requestType)}</span>
+                <span className={`type-chip type-chip--${selectedOrder.requestType === "QUOTE" ? "quote" : "order"}`}>
+                  {requestLabel(selectedOrder.requestType)}
+                </span>
               </div>
 
               <div className="modal-status-block">

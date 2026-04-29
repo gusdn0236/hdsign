@@ -5,13 +5,14 @@ html, body, #root {
 }
 
 /* App 전체 레이아웃을 Flex column으로.
-   overflow-x: hidden 은 여기에만 — html/body 에 걸면 Lenis 스무스 스크롤이 깨진다
-   (브라우저가 스크롤 체이닝을 끊어 휠 이벤트가 Lenis 까지 전달 안 됨). */
+   가로 넘침은 clip 으로 잘라낸다 — hidden 은 스크롤 컨테이너가 돼서
+   내부 position: sticky 가 죽고 (예: 거래처 작업요청 추가물품 사이드바),
+   html/body 에 걸면 Lenis 스무스 스크롤이 깨진다. clip 은 둘 다 안 건드림. */
 .app-wrapper {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
-    overflow-x: hidden;
+    overflow-x: clip;
 }
 
 /* 모바일에서만 dvh 사용 — 카톡 인앱 URL바 변화에 wrapper 가 자연스럽게 추적.

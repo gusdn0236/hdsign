@@ -123,6 +123,57 @@ const GalleryPage = ({ category, categoryTabs }) => {
         return function() { window.removeEventListener('keydown', handleKey); };
     }, [selectedIndex, goPrev, goNext, closeModal]);
 
+    // 모달이 열려있는 동안 배경(body) 스크롤을 잠근다.
+    // iOS Safari 에서는 overflow:hidden 만으로 부족하므로 position:fixed + 스크롤 좌표 복원.
+    React.useEffect(function() {
+        if (selectedIndex === null) return undefined;
+        const scrollY = window.scrollY;
+        const body = document.body;
+        const prev = {
+            position: body.style.position,
+            top: body.style.top,
+            left: body.style.left,
+            right: body.style.right,
+            width: body.style.width,
+            overflow: body.style.overflow,
+        };
+        body.style.position = 'fixed';
+        body.style.top = '-' + scrollY + 'px';
+        body.style.left = '0';
+        body.style.right = '0';
+        body.style.width = '100%';
+        body.style.overflow = 'hidden';
+        return function() {
+            body.style.position = prev.position;
+            body.style.top = prev.top;
+            body.style.left = prev.left;
+            body.style.right = prev.right;
+            body.style.width = prev.width;
+            body.style.overflow = prev.overflow;
+            window.scrollTo(0, scrollY);
+        };
+    }, [selectedIndex]);
+
+    // 모바일에서 사진 영역을 좌우로 스와이프하면 이전/다음 사진으로 이동.
+    const touchStartRef = useRef(null);
+    const handleTouchStart = function(e) {
+        const t = e.touches[0];
+        touchStartRef.current = { x: t.clientX, y: t.clientY };
+    };
+    const handleTouchEnd = function(e) {
+        const start = touchStartRef.current;
+        if (!start) return;
+        touchStartRef.current = null;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        // 수평 이동이 50px 넘고, 세로보다 가로가 더 크게 움직였을 때만 스와이프로 인정.
+        if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+            if (dx < 0) goNext();
+            else goPrev();
+        }
+    };
+
     return (
         React.createElement('div', { className: 'gallery-page', ref: scrollRef },
             React.createElement('div', { className: 'gallery-tabs' },
@@ -163,7 +214,12 @@ const GalleryPage = ({ category, categoryTabs }) => {
                     )
                     : React.createElement('div', { className: 'gallery-empty' }, React.createElement('p', null, '\uC900\uBE44 \uC911\uC785\uB2C8\uB2E4.')),
             selectedIndex !== null
-                ? React.createElement('div', { className: 'gallery-modal', onClick: closeModal },
+                ? React.createElement('div', {
+                    className: 'gallery-modal',
+                    onClick: closeModal,
+                    onTouchStart: handleTouchStart,
+                    onTouchEnd: handleTouchEnd
+                },
                     React.createElement('button', { className: 'modal-close', onClick: closeModal }, '\u2715'),
                     React.createElement('button', {
                         className: 'modal-nav modal-prev',

@@ -16,6 +16,9 @@ export default function PdfViewer({ url }) {
     const stageRef = useRef(null);
     const scaleRef = useRef(1);
     const [stageWidth, setStageWidth] = useState(0);
+    const [stageHeight, setStageHeight] = useState(0);
+    // 첫 페이지 비율 (h/w) — 처음에 페이지 전체가 stage 안에 들어가도록 baseWidth 계산에 사용.
+    const [pageAspect, setPageAspect] = useState(null);
 
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
@@ -29,7 +32,10 @@ export default function PdfViewer({ url }) {
 
     useEffect(() => {
         const measure = () => {
-            if (stageRef.current) setStageWidth(stageRef.current.clientWidth);
+            if (stageRef.current) {
+                setStageWidth(stageRef.current.clientWidth);
+                setStageHeight(stageRef.current.clientHeight);
+            }
         };
         measure();
         window.addEventListener('resize', measure);
@@ -40,9 +46,21 @@ export default function PdfViewer({ url }) {
         setNumPages(0);
         setCurrentPage(1);
         setScale(1);
+        setPageAspect(null);
         setDocLoading(true);
         setError('');
     }, [url]);
+
+    // scale=1 일 때 페이지 전체가 stage 안에 들어가도록 — 폭·높이 중 작은 쪽에 맞춤.
+    // pageAspect 가 아직 없으면 (첫 렌더 직전) stageWidth 폴백 — 캔버스 그리기 전에
+    // onLoadSuccess 가 먼저 와 곧바로 정확한 값으로 갱신됨.
+    const baseWidth = useMemo(() => {
+        if (!stageWidth) return 0;
+        if (pageAspect && stageHeight) {
+            return Math.min(stageWidth, stageHeight / pageAspect);
+        }
+        return stageWidth;
+    }, [stageWidth, stageHeight, pageAspect]);
 
     const renderDpr = useMemo(() => {
         const native = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -224,11 +242,16 @@ export default function PdfViewer({ url }) {
                                        width prop 만 갱신해 부드럽게 재렌더. */
                                     key={`p-${currentPage}`}
                                     pageNumber={currentPage}
-                                    width={stageWidth * scale}
+                                    width={baseWidth * scale}
                                     devicePixelRatio={renderDpr}
                                     renderMode="canvas"
                                     renderTextLayer={false}
                                     renderAnnotationLayer={false}
+                                    onLoadSuccess={(page) => {
+                                        const w = page.originalWidth;
+                                        const h = page.originalHeight;
+                                        if (w && h) setPageAspect(h / w);
+                                    }}
                                     onRenderStart={() => setPageRendering(true)}
                                     onRenderSuccess={() => setPageRendering(false)}
                                     onRenderError={() => setPageRendering(false)}

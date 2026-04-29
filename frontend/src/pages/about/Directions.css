@@ -66,30 +66,19 @@
     font-weight: 600;
     letter-spacing: -0.01em;
 }
-.directions-map-overlay-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: center;
-}
-.directions-map-overlay-actions a {
-    display: inline-flex;
-    align-items: center;
-    height: 36px;
-    padding: 0 16px;
-    border-radius: 999px;
-    background: #18181b;
-    color: #fff;
-    text-decoration: none;
-    font-size: 0.85rem;
-    font-weight: 700;
+.directions-map-overlay-diag {
+    max-width: 90%;
+    font-size: 0.78rem;
+    color: #b91c1c;
+    background: rgba(254, 226, 226, 0.7);
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 6px 10px;
+    line-height: 1.45;
+    word-break: break-word;
+    text-align: center;
     letter-spacing: -0.01em;
-    transition: background-color 0.18s ease;
 }
-.directions-map-overlay-actions a:hover {
-    background: #000;
-}
-
 /* 정보 영역 ------------------------------------------------------ */
 .directions-info {
     flex: 1;
@@ -167,45 +156,6 @@
     border-bottom-color: #18181b;
 }
 
-/* 외부 지도 CTA ---------------------------------------------------- */
-.directions-cta-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 0.4rem;
-}
-.directions-cta {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 44px;
-    border-radius: 10px;
-    text-decoration: none;
-    font-size: 0.9rem;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    transition: transform 0.15s ease, box-shadow 0.18s ease, background-color 0.18s ease;
-}
-.directions-cta.naver {
-    background: #03c75a;
-    color: #fff;
-}
-.directions-cta.naver:hover {
-    background: #02b552;
-    box-shadow: 0 4px 14px rgba(3, 199, 90, 0.35);
-}
-.directions-cta.kakao {
-    background: #fee500;
-    color: #18181b;
-}
-.directions-cta.kakao:hover {
-    background: #f5dc00;
-    box-shadow: 0 4px 14px rgba(254, 229, 0, 0.4);
-}
-.directions-cta:active {
-    transform: translateY(1px);
-}
-
 /* ---------- 모바일 ---------- */
 @media (max-width: 768px) {
     .directions-page {
@@ -222,6 +172,16 @@
     .directions-layout {
         flex-direction: column;
         gap: 1.2rem;
+        align-items: stretch;
+    }
+    /* 데스크톱의 flex:1.5 / flex:1 이 column 방향에서 flex-basis:0 으로 동작해
+       높이가 0 이 돼버린다(지도 컨테이너 0×0 → Naver SDK 측정 실패).
+       모바일에선 자연 높이를 그대로 쓰도록 flex 리셋 + 너비 100% 명시. */
+    .directions-map-wrap,
+    .directions-info {
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
     }
     .directions-map {
         height: 280px;
@@ -257,14 +217,6 @@
     }
     .directions-info-sub {
         font-size: 0.8rem;
-    }
-    .directions-cta-row {
-        margin-top: 0.6rem;
-        gap: 8px;
-    }
-    .directions-cta {
-        height: 46px;
-        font-size: 0.92rem;
     }
 }
 

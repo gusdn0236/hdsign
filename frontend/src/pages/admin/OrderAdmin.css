@@ -305,6 +305,29 @@
   border-bottom: none;
 }
 
+/* 요청 유형별 좌측 컬러 스트라이프 — 첫 셀에 inset box-shadow 로 처리해야
+   <tr>·<td> 의 border-collapse 환경에서도 깔끔히 표현된다. */
+.order-row--order > td:first-child {
+  box-shadow: inset 4px 0 0 #005f73;
+}
+.order-row--quote > td:first-child {
+  box-shadow: inset 4px 0 0 #7c3aed;
+}
+
+/* 요청 유형 칩 — 작업현황 페이지와 동일한 톤. */
+.type-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.2px;
+}
+.type-chip--order { background: #ccfbf1; color: #005f73; }
+.type-chip--quote { background: #ede9fe; color: #6d28d9; }
+
 .order-num {
   font-size: 12px;
   color: #6b7280;
@@ -534,6 +557,58 @@
   line-height: 1;
   cursor: pointer;
   z-index: 2;
+}
+
+/* 모달 제목 아래 — 이전/다음 주문 네비게이션 (인라인 형태). */
+.modal-order-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.modal-order-nav-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: -0.2px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.modal-order-nav-btn:hover:not(:disabled) {
+  background: #f0fdfa;
+  border-color: #005f73;
+  color: #005f73;
+}
+.modal-order-nav-btn:disabled {
+  color: #cbd5e1;
+  background: #fafafa;
+  cursor: not-allowed;
+}
+.modal-order-nav-arrow {
+  font-size: 18px;
+  line-height: 1;
+  color: #005f73;
+}
+.modal-order-nav-btn:disabled .modal-order-nav-arrow {
+  color: #cbd5e1;
+}
+.modal-order-nav-position {
+  font-size: 12px;
+  font-weight: 700;
+  color: #71717a;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
 }
 
 .order-preview-left {

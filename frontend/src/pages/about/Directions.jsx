@@ -1,42 +1,43 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './Directions.css';
 
-const TMAP_SCRIPT_ID = 'tmap-sdk-script';
-const TMAP_SCRIPT_SRC =
-    'https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=tJhy9OC93A7TbwHIpW4DN9ACAP0Jaw9T55zZtBv3';
+const NAVER_CLIENT_ID = import.meta.env.VITE_NAVER_MAP_CLIENT_ID || '';
+const NAVER_SCRIPT_ID = 'naver-maps-sdk-script';
 const COMPANY_LATLNG = { lat: 37.3622577, lng: 126.9488549 };
 const COMPANY_ADDRESS = '경기 군포시 공단로 193';
 
-function loadTmapSdk() {
+function loadNaverMapsSdk() {
     if (typeof window === 'undefined') return Promise.reject(new Error('NO_WINDOW'));
-    if (window.Tmapv2?.Map) {
-        return Promise.resolve();
-    }
+    if (window.naver?.maps?.Map) return Promise.resolve();
+    if (!NAVER_CLIENT_ID) return Promise.reject(new Error('NO_CLIENT_ID'));
 
     return new Promise((resolve, reject) => {
-        const existingScript = document.getElementById(TMAP_SCRIPT_ID);
-        if (existingScript) {
-            if (window.Tmapv2?.Map) {
-                resolve();
-                return;
-            }
-            existingScript.addEventListener('load', () => resolve(), { once: true });
-            existingScript.addEventListener('error', () => reject(new Error('TMAP_LOAD_FAILED')), { once: true });
+        const existing = document.getElementById(NAVER_SCRIPT_ID);
+        if (existing) {
+            if (window.naver?.maps?.Map) { resolve(); return; }
+            existing.addEventListener('load', () => resolve(), { once: true });
+            existing.addEventListener('error', () => reject(new Error('NAVER_LOAD_FAILED')), { once: true });
             return;
         }
 
         const script = document.createElement('script');
-        script.id = TMAP_SCRIPT_ID;
-        script.src = TMAP_SCRIPT_SRC;
+        script.id = NAVER_SCRIPT_ID;
+        // NCP Maps 가 최근 일부 신규 키에서 파라미터 이름을 ncpClientId → ncpKeyId 로
+        // 변경하는 케이스가 있어 두 이름 모두 동봉. SDK 가 매칭되는 것 하나만 사용.
+        const id = encodeURIComponent(NAVER_CLIENT_ID);
+        script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=${id}&ncpKeyId=${id}`;
         script.async = true;
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error('TMAP_LOAD_FAILED'));
+        script.onload = () => {
+            // SDK 가 로드되어도 ncpClientId 가 잘못되면 window.naver.maps 가 안 뜨거나
+            // 인증 실패 콜백이 호출됨. 둘 다 캐치.
+            if (window.naver?.maps?.Map) resolve();
+            else reject(new Error('NAVER_SDK_INVALID'));
+        };
+        script.onerror = () => reject(new Error('NAVER_LOAD_FAILED'));
         document.head.appendChild(script);
     });
 }
 
-// 컨테이너가 실제 픽셀 크기를 잡을 때까지 기다림. mount 직후엔 0 인 경우가 있어
-// Tmap 이 빈 캔버스(흰 화면)를 만든다.
 async function waitForLayout(el, isCancelled) {
     for (let i = 0; i < 20; i++) {
         if (isCancelled()) return false;
@@ -50,67 +51,89 @@ const Directions = () => {
     const containerRef = useRef(null);
     const mapRef = useRef(null);
     const [mapState, setMapState] = useState('loading'); // loading | ready | failed
+    const [mapDiag, setMapDiag] = useState('');
 
     useEffect(() => {
         let cancelled = false;
         const isCancelled = () => cancelled;
 
+        const fail = (where, err) => {
+            const msg = err?.message || String(err) || 'unknown';
+            console.error('[NaverMap]', where, err);
+            setMapDiag(`${where}: ${msg}`);
+            setMapState('failed');
+        };
+
+        // 인증 실패 전역 콜백 — 네이버 SDK 가 키 거부 시 호출.
+        // 도메인 미등록이 가장 흔한 케이스.
+        window.navermap_authFailure = function () {
+            fail('네이버지도 인증 실패 (도메인 미등록 또는 Client ID 오류)', new Error('AUTH_FAILED'));
+        };
+
         const initMap = async () => {
+            if (!NAVER_CLIENT_ID) {
+                fail('VITE_NAVER_MAP_CLIENT_ID 환경변수 비어있음', new Error('NO_CLIENT_ID'));
+                return;
+            }
             try {
-                await loadTmapSdk();
-                if (cancelled || !window.Tmapv2?.Map) {
-                    setMapState('failed');
-                    return;
-                }
+                await loadNaverMapsSdk();
+            } catch (err) {
+                fail('SDK 로드 실패 (네트워크/스크립트 차단)', err);
+                return;
+            }
+            if (cancelled) return;
+            if (!window.naver?.maps?.Map) {
+                fail('SDK 로드됨, 하지만 naver.maps.Map 정의되지 않음', new Error('NO_NAVER_MAP'));
+                return;
+            }
 
-                const container = containerRef.current;
-                if (!container) return;
+            const container = containerRef.current;
+            if (!container) return;
 
-                // 컨테이너 크기가 0 이면 Tmap 캔버스가 비어버린다 — 레이아웃 대기.
-                const ok = await waitForLayout(container, isCancelled);
-                if (cancelled) return;
-                if (!ok) {
-                    setMapState('failed');
-                    return;
-                }
-                if (container.firstChild) return;
+            const ok = await waitForLayout(container, isCancelled);
+            if (cancelled) return;
+            if (!ok) {
+                fail('컨테이너 크기 측정 실패(0×0)', new Error('NO_LAYOUT'));
+                return;
+            }
+            if (container.firstChild) return;
 
-                const w = container.offsetWidth;
-                const h = container.offsetHeight;
-
-                const map = new window.Tmapv2.Map(container, {
-                    center: new window.Tmapv2.LatLng(COMPANY_LATLNG.lat, COMPANY_LATLNG.lng),
-                    width: w + 'px',
-                    height: h + 'px',
+            try {
+                const center = new window.naver.maps.LatLng(COMPANY_LATLNG.lat, COMPANY_LATLNG.lng);
+                const map = new window.naver.maps.Map(container, {
+                    center,
                     zoom: 16,
+                    minZoom: 8,
+                    zoomControl: true,
+                    zoomControlOptions: {
+                        position: window.naver.maps.Position.TOP_RIGHT,
+                    },
+                    scaleControl: false,
+                    logoControl: true,
+                    mapDataControl: false,
                 });
                 mapRef.current = map;
 
-                new window.Tmapv2.Marker({
-                    position: new window.Tmapv2.LatLng(COMPANY_LATLNG.lat, COMPANY_LATLNG.lng),
+                new window.naver.maps.Marker({
+                    position: center,
                     map,
                     title: '(주)에이치디사인',
                 });
 
                 setMapState('ready');
-            } catch {
-                setMapState('failed');
+            } catch (err) {
+                fail('Map/Marker 생성 실패', err);
             }
         };
 
         initMap();
 
-        // 회전·리사이즈 시 Tmap 캔버스가 옛 폭에 머물러 한쪽이 흰 띠로 남는 케이스 방지.
+        // 회전·리사이즈 시 캔버스 크기 갱신.
         const onResize = () => {
             const map = mapRef.current;
-            const container = containerRef.current;
-            if (!map || !container) return;
+            if (!map) return;
             try {
-                if (typeof map.resize === 'function') {
-                    map.resize(container.offsetWidth, container.offsetHeight);
-                } else if (typeof map.setSize === 'function') {
-                    map.setSize(new window.Tmapv2.Size(container.offsetWidth, container.offsetHeight));
-                }
+                if (typeof map.refresh === 'function') map.refresh(true);
             } catch { /* ignore */ }
         };
         window.addEventListener('resize', onResize);
@@ -120,13 +143,10 @@ const Directions = () => {
             cancelled = true;
             window.removeEventListener('resize', onResize);
             window.removeEventListener('orientationchange', onResize);
+            // 전역 콜백 정리 — 다른 페이지에서 재진입할 때 옛 fail() 가 호출되는 것 방지.
+            try { delete window.navermap_authFailure; } catch { /* ignore */ }
         };
     }, []);
-
-    const naverMapHref =
-        `https://map.naver.com/v5/search/${encodeURIComponent(COMPANY_ADDRESS)}`;
-    const kakaoMapHref =
-        `https://map.kakao.com/?q=${encodeURIComponent(COMPANY_ADDRESS)}`;
 
     return (
         <div className="directions-page">
@@ -138,7 +158,6 @@ const Directions = () => {
             <div className="directions-layout">
                 <div className="directions-map-wrap">
                     <div
-                        id="tmap"
                         ref={containerRef}
                         className="directions-map"
                         aria-label="회사 위치 지도"
@@ -152,10 +171,9 @@ const Directions = () => {
                                     <span className="directions-map-overlay-text">
                                         지도를 표시할 수 없습니다.
                                     </span>
-                                    <div className="directions-map-overlay-actions">
-                                        <a href={naverMapHref} target="_blank" rel="noreferrer">네이버 지도</a>
-                                        <a href={kakaoMapHref} target="_blank" rel="noreferrer">카카오 지도</a>
-                                    </div>
+                                    {mapDiag && (
+                                        <span className="directions-map-overlay-diag">{mapDiag}</span>
+                                    )}
                                 </>
                             )}
                         </div>
@@ -213,15 +231,6 @@ const Directions = () => {
                             <p className="directions-info-value">평일 09:00 - 18:30</p>
                             <p className="directions-info-sub">토·일·공휴일 휴무</p>
                         </div>
-                    </div>
-
-                    <div className="directions-cta-row">
-                        <a href={naverMapHref} target="_blank" rel="noreferrer" className="directions-cta naver">
-                            네이버 지도
-                        </a>
-                        <a href={kakaoMapHref} target="_blank" rel="noreferrer" className="directions-cta kakao">
-                            카카오 지도
-                        </a>
                     </div>
                 </div>
             </div>

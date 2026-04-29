@@ -3,6 +3,8 @@
     margin: 0 auto;
     padding: 5rem 2rem 6rem;
     font-family: 'Noto Sans KR', sans-serif;
+    /* 내부 가로 스크롤 영역(슬림 칩 탭바)이 절대로 페이지/문서 레벨로 새지 않도록 안전망. */
+    overflow-x: hidden;
 }
 
 .equipment-title {
@@ -299,15 +301,16 @@
         gap: 1.2rem;
     }
 
-    /* 슬림 칩 탭바 — Departments 와 동일 룩 */
+    /* 슬림 칩 탭바 — Departments 와 동일 룩.
+       페이지 좌우 padding 안에서만 스크롤. breakout(-margin) 제거. */
     .equipment-nav {
         flex-direction: row;
         flex-wrap: nowrap;
         gap: 8px;
         min-width: 0;
-        width: auto;
-        margin: 0 -1rem;
-        padding: 4px 1rem 8px;
+        width: 100%;
+        margin: 0;
+        padding: 4px 0 8px;
         overflow-x: auto;
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
