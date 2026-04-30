@@ -242,26 +242,30 @@ public class ClientService {
                     .thenComparing(s -> s.user.getCompanyName(), Comparator.nullsLast(String::compareTo)));
         }
 
-        // 3단계: 자모 유사도 — 후보별 최저 거리/비율. 통과: 자모거리 ≤ 3 OR 비율 ≤ 0.4 OR 4자모 이상 substring.
+        // 3단계: 자모 유사도 — 정확/접두 후보가 하나도 없을 때만 동작.
+        // 같은 회사의 변형(예: 준디자인 vs 준디자인(디온에이소개))은 접두 단계에서 다 잡히므로,
+        // 자모 유사도까지 가는 케이스는 "오타"로 한정한다. 거리 ≤ 2 AND 비율 ≤ 0.25 — 타이트.
+        // (이전엔 거리 ≤ 3 / 비율 ≤ 0.4 / 자모 substring 까지 OR 로 통과시켜 '준디자인' 입력에
+        //  '반디자인'/'윈디자인'/'오주디자인' 같이 무관한 거래처가 노출되는 문제가 있었음 — privacy.)
         List<Scored> fuzzyScored = new ArrayList<>();
-        for (ClientUser u : pending) {
-            if (seen.contains(u.getId())) continue;
-            double bestRatio = 1.0;
-            int bestDist = Integer.MAX_VALUE;
-            boolean anyContains = false;
-            for (String cand : candidatesOf(u)) {
-                if (cand == null || cand.isBlank()) continue;
-                int d = HangulSimilarity.jamoDistance(trimmed, cand);
-                double r = HangulSimilarity.similarityRatio(trimmed, cand);
-                if (d < bestDist) bestDist = d;
-                if (r < bestRatio) bestRatio = r;
-                if (HangulSimilarity.containsAsJamo(trimmed, cand)) anyContains = true;
+        if (exactUsers.isEmpty() && prefixScored.isEmpty()) {
+            for (ClientUser u : pending) {
+                if (seen.contains(u.getId())) continue;
+                double bestRatio = 1.0;
+                int bestDist = Integer.MAX_VALUE;
+                for (String cand : candidatesOf(u)) {
+                    if (cand == null || cand.isBlank()) continue;
+                    int d = HangulSimilarity.jamoDistance(trimmed, cand);
+                    double r = HangulSimilarity.similarityRatio(trimmed, cand);
+                    if (d < bestDist) bestDist = d;
+                    if (r < bestRatio) bestRatio = r;
+                }
+                if (bestDist <= 2 && bestRatio <= 0.25) {
+                    fuzzyScored.add(new Scored(u, bestRatio, bestDist));
+                }
             }
-            if (bestDist <= 3 || bestRatio <= 0.4 || anyContains) {
-                fuzzyScored.add(new Scored(u, bestRatio, bestDist));
-            }
+            fuzzyScored.sort(Comparator.<Scored>comparingDouble(s -> s.ratio).thenComparingInt(s -> s.dist));
         }
-        fuzzyScored.sort(Comparator.<Scored>comparingDouble(s -> s.ratio).thenComparingInt(s -> s.dist));
 
         // 합치기: 정확 → 접두 → 유사도, 합계 최대 10
         final int LIMIT = 10;
