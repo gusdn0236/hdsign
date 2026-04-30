@@ -10,7 +10,9 @@ const AdminLayout = () => {
     const { logout } = useAuth();
 
     const adminMenu = [
-        { name: '작업 관리', path: '/admin/orders' },
+        { name: '발주 관리', path: '/admin/orders' },
+        { name: '견적 관리', path: '/admin/quotes' },
+        { name: '대리 발주', path: '/admin/proxy-order' },
         { name: '거래처 관리', path: '/admin/clients' },
         { name: '이미지 관리', path: '/admin/gallery-upload' },
         { name: '공지사항 관리', path: '/admin/notices' },

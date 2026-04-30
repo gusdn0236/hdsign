@@ -30,7 +30,9 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
@@ -93,7 +95,40 @@ public class ClientService {
             String deliveryAddress,
             List<MultipartFile> files
     ) {
-        ClientUser client = findClient(username);
+        return submitOrderForClient(findClient(username), title, additionalItems, note,
+                dueDate, dueTime, deliveryMethod, deliveryAddress, files);
+    }
+
+    /** 관리자 대리 발주 — 거래처 ID 로 직접 발주 생성. 메일발주 받은 건을 관리자가 일괄 처리할 때 사용. */
+    @Transactional
+    public OrderDto.Response submitOrderByClientId(
+            Long clientId,
+            String title,
+            String additionalItems,
+            String note,
+            String dueDate,
+            String dueTime,
+            String deliveryMethod,
+            String deliveryAddress,
+            List<MultipartFile> files
+    ) {
+        ClientUser client = clientUserRepository.findById(clientId)
+                .orElseThrow(() -> new RuntimeException("거래처를 찾을 수 없습니다."));
+        return submitOrderForClient(client, title, additionalItems, note,
+                dueDate, dueTime, deliveryMethod, deliveryAddress, files);
+    }
+
+    private OrderDto.Response submitOrderForClient(
+            ClientUser client,
+            String title,
+            String additionalItems,
+            String note,
+            String dueDate,
+            String dueTime,
+            String deliveryMethod,
+            String deliveryAddress,
+            List<MultipartFile> files
+    ) {
         String orderNumber = generateOrderNumber(RequestType.ORDER);
 
         Order order = Order.builder()
@@ -143,9 +178,14 @@ public class ClientService {
     }
 
     /** 가입 검색 — PENDING_SIGNUP 행만 대상.
-     *  1단계 정확일치 (companyName/networkFolderName/aliases 정규화 일치 OR 이메일 일치) → 그것만 반환.
-     *  정확일치가 없으면 2단계 자모 유사도 후보 최대 5개.
-     *  이메일성 쿼리(@ 포함)는 정확일치만, 유사도 단계는 건너뜀 — 이메일은 오타 허용 위험 큼. */
+     *  1단계 정확일치 (companyName/networkFolderName/aliases 정규화 일치 OR 이메일 일치)
+     *  2단계 접두일치 (정확일치가 아닌데 후보 키가 입력으로 시작 — 예: "진성커뮤니티" 입력 →
+     *               "진성커뮤니티(김성미팀장님)", "진성커뮤니티(김연숙팀장님)" 등 한 거래처의 담당자별 분리 엔트리)
+     *  3단계 자모 유사도 (오타/표기 차이)
+     *  최종 정렬: 정확 → 접두(키 길이 가까운 순) → 유사도(거리 짧은 순). 합계 최대 10개.
+     *  이메일성 쿼리(@ 포함)는 정확일치만 — 이메일은 오타 허용 위험 큼.
+     *  exact 플래그: 정확일치가 1개 이상일 때 true. 프론트가 단일 정확일치이면 자동 진입,
+     *  아니면 "여러 거래처 매칭 / 비슷한 거래처" 카드로 본인 선택을 받는다. */
     @Transactional(readOnly = true)
     public ClientAuthDto.SignupSearchResponse signupSearch(String query) {
         if (query == null || query.isBlank())
@@ -161,20 +201,51 @@ public class ClientService {
         }
 
         // 1단계: 정확일치
-        List<ClientAuthDto.SignupSearchMatch> exact = new ArrayList<>();
+        List<ClientUser> exactUsers = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
         for (ClientUser u : pending) {
             if (matchesExact(u, byName, byEmail)) {
-                exact.add(toMatch(u));
+                exactUsers.add(u);
+                seen.add(u.getId());
             }
         }
-        if (!exact.isEmpty() || emailQuery) {
-            return new ClientAuthDto.SignupSearchResponse(exact, true);
+        if (emailQuery) {
+            // 이메일 쿼리는 정확일치만 신뢰. 자모 유사도는 위험.
+            List<ClientAuthDto.SignupSearchMatch> r = new ArrayList<>();
+            for (ClientUser u : exactUsers) r.add(toMatch(u));
+            return new ClientAuthDto.SignupSearchResponse(r, true);
         }
 
-        // 2단계: 자모 유사도 — 후보별 최저 거리/비율 계산 후 상위 5개.
-        // 후보 텍스트 = companyName + networkFolderName + aliases 토큰들.
-        List<Scored> scored = new ArrayList<>();
+        // 2단계: 접두일치 (정확일치 제외) — 입력이 비어있지 않을 때만.
+        // 후보 키 (정규화) 가 입력으로 시작하거나, 입력이 후보 키로 시작 → "진성커뮤니티" 같은
+        // 짧은 입력으로 "진성커뮤니티(...)" 류 모두 잡기 위함.
+        List<Scored> prefixScored = new ArrayList<>();
+        if (!byName.isEmpty()) {
+            for (ClientUser u : pending) {
+                if (seen.contains(u.getId())) continue;
+                int bestPrefixDelta = Integer.MAX_VALUE;
+                for (String cand : candidatesOf(u)) {
+                    if (cand == null || cand.isBlank()) continue;
+                    String k = normalizeKey(cand);
+                    if (k.isEmpty()) continue;
+                    if (k.startsWith(byName) || byName.startsWith(k)) {
+                        int delta = Math.abs(k.length() - byName.length());
+                        if (delta < bestPrefixDelta) bestPrefixDelta = delta;
+                    }
+                }
+                if (bestPrefixDelta != Integer.MAX_VALUE) {
+                    prefixScored.add(new Scored(u, 0.0, bestPrefixDelta));
+                    seen.add(u.getId());
+                }
+            }
+            prefixScored.sort(Comparator.<Scored>comparingInt(s -> s.dist)
+                    .thenComparing(s -> s.user.getCompanyName(), Comparator.nullsLast(String::compareTo)));
+        }
+
+        // 3단계: 자모 유사도 — 후보별 최저 거리/비율. 통과: 자모거리 ≤ 3 OR 비율 ≤ 0.4 OR 4자모 이상 substring.
+        List<Scored> fuzzyScored = new ArrayList<>();
         for (ClientUser u : pending) {
+            if (seen.contains(u.getId())) continue;
             double bestRatio = 1.0;
             int bestDist = Integer.MAX_VALUE;
             boolean anyContains = false;
@@ -186,18 +257,28 @@ public class ClientService {
                 if (r < bestRatio) bestRatio = r;
                 if (HangulSimilarity.containsAsJamo(trimmed, cand)) anyContains = true;
             }
-            // 통과 조건: 자모거리 ≤ 3 OR 비율 ≤ 0.4 OR 4자모 이상 substring 일치
             if (bestDist <= 3 || bestRatio <= 0.4 || anyContains) {
-                scored.add(new Scored(u, bestRatio, bestDist));
+                fuzzyScored.add(new Scored(u, bestRatio, bestDist));
             }
         }
-        scored.sort(Comparator.<Scored>comparingDouble(s -> s.ratio).thenComparingInt(s -> s.dist));
+        fuzzyScored.sort(Comparator.<Scored>comparingDouble(s -> s.ratio).thenComparingInt(s -> s.dist));
 
-        List<ClientAuthDto.SignupSearchMatch> fuzzy = new ArrayList<>();
-        for (int i = 0; i < Math.min(5, scored.size()); i++) {
-            fuzzy.add(toMatch(scored.get(i).user));
+        // 합치기: 정확 → 접두 → 유사도, 합계 최대 10
+        final int LIMIT = 10;
+        List<ClientAuthDto.SignupSearchMatch> result = new ArrayList<>();
+        for (ClientUser u : exactUsers) {
+            if (result.size() >= LIMIT) break;
+            result.add(toMatch(u));
         }
-        return new ClientAuthDto.SignupSearchResponse(fuzzy, false);
+        for (Scored s : prefixScored) {
+            if (result.size() >= LIMIT) break;
+            result.add(toMatch(s.user));
+        }
+        for (Scored s : fuzzyScored) {
+            if (result.size() >= LIMIT) break;
+            result.add(toMatch(s.user));
+        }
+        return new ClientAuthDto.SignupSearchResponse(result, !exactUsers.isEmpty());
     }
 
     private boolean matchesExact(ClientUser u, String byNameNormalized, String byEmailLower) {

@@ -6,7 +6,7 @@ import PhotoLightbox from '../../components/common/PhotoLightbox.jsx';
 import './ClientStatus.css';
 
 const STATUS_MAP = {
-    RECEIVED: { label: '접수완료', className: 'badge-received', step: 1 },
+    RECEIVED: { label: '접수', className: 'badge-received', step: 1 },
     IN_PROGRESS: { label: '작업중', className: 'badge-in-progress', step: 2 },
     COMPLETED: { label: '완료', className: 'badge-completed', step: 3 },
 };
@@ -49,7 +49,7 @@ function StatusBadge({ status }) {
 
 function StepTracker({ status }) {
     const currentStep = STATUS_MAP[status]?.step || 1;
-    const steps = ['접수완료', '작업중', '완료'];
+    const steps = ['접수', '작업중', '완료'];
 
     return (
         <div className="step-tracker">
@@ -278,7 +278,7 @@ export default function ClientStatus() {
 
     const filters = [
         { value: 'ALL', label: '전체' },
-        { value: 'RECEIVED', label: '접수완료' },
+        { value: 'RECEIVED', label: '접수' },
         { value: 'IN_PROGRESS', label: '작업중' },
         { value: 'COMPLETED', label: '완료' },
     ];

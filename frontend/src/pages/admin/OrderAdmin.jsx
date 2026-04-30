@@ -2,12 +2,29 @@
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import PdfViewer from "../../components/common/PdfViewer.jsx";
+import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import "./OrderAdmin.css";
+
+const VIEW_MODE_KEY = "hdsign_admin_orders_view_mode";
+
+function getStoredViewMode() {
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    return v === "cards" ? "cards" : "table";
+  } catch {
+    return "table";
+  }
+}
+function setStoredViewMode(value) {
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, value);
+  } catch { /* ignore */ }
+}
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 const STATUS_META = {
-  RECEIVED: { label: "접수완료", className: "status-received" },
+  RECEIVED: { label: "접수", className: "status-received" },
   IN_PROGRESS: { label: "작업중", className: "status-in-progress" },
   COMPLETED: { label: "완료", className: "status-completed" },
 };
@@ -70,6 +87,24 @@ function formatDueDate(dueDate, deliveryMethod) {
   return delivery ? `${base} ${delivery}` : base;
 }
 
+// 카드 그리드의 납기 그룹 헤더 라벨 — 오늘/내일을 사람말로, 그 외엔 M월 D일 (요일).
+function formatGroupLabel(dateStr) {
+  if (!dateStr || dateStr === "none") return "납기 미정";
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return dateStr;
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return dateStr;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((dt.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+  const md = `${m}월 ${d}일`;
+  const dow = WEEKDAY_KO[dt.getDay()];
+  if (diffDays === 0) return `오늘 · ${md} (${dow})`;
+  if (diffDays === 1) return `내일 · ${md} (${dow})`;
+  if (diffDays < 0) return `지연 · ${md} (${dow})`;
+  return `${md} (${dow})`;
+}
+
 function formatDateTime(value) {
   if (!value) return "-";
   const d = new Date(value);
@@ -95,8 +130,14 @@ function getNextStatus(status) {
   return STATUS_ORDER[currentIndex + 1];
 }
 
-export default function OrderAdmin() {
+// requestType prop 으로 한 페이지 = 한 요청유형. /admin/orders → ORDER, /admin/quotes → QUOTE.
+// 둘 다 같은 백엔드 API(/api/admin/orders) 를 쓰지만 클라이언트에서 fetch 직후 한 번 필터링.
+// 이렇게 하면 statusCounts/summary/filteredOrders/bulk 액션 등 하위 로직이 자동으로 해당 유형
+// 으로 좁혀져 분기 코드를 최소화할 수 있다.
+export default function OrderAdmin({ requestType = "ORDER" }) {
   const { token } = useAuth();
+  const isOrderPage = requestType === "ORDER";
+  const pageTitle = isOrderPage ? "발주 관리" : "견적 관리";
   const [orders, setOrders] = useState([]);
   const [trashOrders, setTrashOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -118,6 +159,12 @@ export default function OrderAdmin() {
   const [sortMode, setSortMode] = useState("DEFAULT");
   const [clientFilter, setClientFilter] = useState("");
   const [dueDateRange, setDueDateRange] = useState("ALL");
+  const [viewMode, setViewMode] = useState(() => getStoredViewMode());
+
+  const switchViewMode = (mode) => {
+    setViewMode(mode);
+    setStoredViewMode(mode);
+  };
 
   const loadOrders = async () => {
     setLoading(true);
@@ -134,8 +181,10 @@ export default function OrderAdmin() {
       if (!trashRes.ok) throw new Error("휴지통을 불러오지 못했습니다.");
       const activeData = await activeRes.json();
       const trashData = await trashRes.json();
-      setOrders(Array.isArray(activeData) ? activeData : []);
-      setTrashOrders(Array.isArray(trashData) ? trashData : []);
+      const filterByType = (arr) =>
+        Array.isArray(arr) ? arr.filter((o) => o.requestType === requestType) : [];
+      setOrders(filterByType(activeData));
+      setTrashOrders(filterByType(trashData));
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "주문 목록 조회 중 오류가 발생했습니다." });
     } finally {
@@ -146,7 +195,8 @@ export default function OrderAdmin() {
   useEffect(() => {
     if (!token) return;
     loadOrders();
-  }, [token]);
+    // requestType 이 바뀌면(/admin/orders ↔ /admin/quotes 전환) 다시 가져와서 필터링.
+  }, [token, requestType]);
 
   useEffect(() => {
     if (!feedback) return;
@@ -330,6 +380,28 @@ export default function OrderAdmin() {
 
     return result;
   }, [statusFilteredOrders, sortMode, clientFilter, dueDateRange, activeFilter]);
+
+  // 카드 보기 — 납기별 정렬일 때만 dueDate 로 그룹핑(모바일 /m/worksheets 와 동일).
+  // 그 외 모드(기본/거래처별/휴지통)에선 단일 그룹 한 덩어리로 보여 시각적 산만함을 줄인다.
+  const cardGroups = useMemo(() => {
+    const useDateGroups = activeFilter !== "TRASH" && sortMode === "BY_DUE_DATE";
+    if (!useDateGroups) {
+      return [{ key: "_all", label: null, list: filteredOrders }];
+    }
+    const map = new Map();
+    filteredOrders.forEach((o) => {
+      const key = o.dueDate ? String(o.dueDate).split("T")[0] : "none";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(o);
+    });
+    return Array.from(map.entries())
+      .sort(([a], [b]) => {
+        if (a === "none") return 1;
+        if (b === "none") return -1;
+        return a.localeCompare(b);
+      })
+      .map(([key, list]) => ({ key, label: formatGroupLabel(key), list }));
+  }, [filteredOrders, sortMode, activeFilter]);
 
   const currentOrderIndex = useMemo(() => {
     if (!selectedOrderId) return -1;
@@ -741,7 +813,7 @@ export default function OrderAdmin() {
       <div className="order-summary">
         <div className="summary-card summary-received">
           <span className="summary-count">{statusCounts.RECEIVED}</span>
-          <span className="summary-label">접수완료</span>
+          <span className="summary-label">접수</span>
         </div>
         <div className="summary-card summary-in-progress">
           <span className="summary-count">{statusCounts.IN_PROGRESS}</span>
@@ -767,64 +839,96 @@ export default function OrderAdmin() {
         ))}
       </div>
 
-      {activeFilter !== "TRASH" && (
-        <div className="order-sort-row">
-          <div className="sort-buttons">
-            <button
-              type="button"
-              className={`sort-btn ${sortMode === "DEFAULT" ? "active" : ""}`}
-              onClick={() => {
-                setSortMode("DEFAULT");
-                setClientFilter("");
-                setDueDateRange("ALL");
-              }}
-            >
-              기본
-            </button>
-            <button
-              type="button"
-              className={`sort-btn ${sortMode === "BY_CLIENT" ? "active" : ""}`}
-              onClick={() => setSortMode("BY_CLIENT")}
-            >
-              거래처별
-            </button>
-            <button
-              type="button"
-              className={`sort-btn ${sortMode === "BY_DUE_DATE" ? "active" : ""}`}
-              onClick={() => setSortMode("BY_DUE_DATE")}
-            >
-              납기별
-            </button>
-          </div>
-          {sortMode === "BY_CLIENT" && (
-            <select
-              className="sort-select"
-              value={clientFilter}
-              onChange={(e) => setClientFilter(e.target.value)}
-            >
-              <option value="">전체 거래처 (이름순)</option>
-              {availableClients.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          )}
-          {sortMode === "BY_DUE_DATE" && (
-            <select
-              className="sort-select"
-              value={dueDateRange}
-              onChange={(e) => setDueDateRange(e.target.value)}
-            >
-              <option value="ALL">전체 (가까운 납기순)</option>
-              <option value="TODAY">오늘 납기</option>
-              <option value="WEEK">7일 이내</option>
-              <option value="OVERDUE">지연 (완료 제외)</option>
-            </select>
-          )}
-          {(sortMode !== "DEFAULT") && (
-            <span className="sort-result-count">{filteredOrders.length}건</span>
-          )}
+      <div className="order-sort-row">
+        {activeFilter !== "TRASH" && (
+          <>
+            <div className="sort-buttons">
+              <button
+                type="button"
+                className={`sort-btn ${sortMode === "DEFAULT" ? "active" : ""}`}
+                onClick={() => {
+                  setSortMode("DEFAULT");
+                  setClientFilter("");
+                  setDueDateRange("ALL");
+                }}
+              >
+                기본
+              </button>
+              <button
+                type="button"
+                className={`sort-btn ${sortMode === "BY_CLIENT" ? "active" : ""}`}
+                onClick={() => setSortMode("BY_CLIENT")}
+              >
+                거래처별
+              </button>
+              <button
+                type="button"
+                className={`sort-btn ${sortMode === "BY_DUE_DATE" ? "active" : ""}`}
+                onClick={() => setSortMode("BY_DUE_DATE")}
+              >
+                납기별
+              </button>
+            </div>
+            {sortMode === "BY_CLIENT" && (
+              <select
+                className="sort-select"
+                value={clientFilter}
+                onChange={(e) => setClientFilter(e.target.value)}
+              >
+                <option value="">전체 거래처 (이름순)</option>
+                {availableClients.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            )}
+            {sortMode === "BY_DUE_DATE" && (
+              <select
+                className="sort-select"
+                value={dueDateRange}
+                onChange={(e) => setDueDateRange(e.target.value)}
+              >
+                <option value="ALL">전체 (가까운 납기순)</option>
+                <option value="TODAY">오늘 납기</option>
+                <option value="WEEK">7일 이내</option>
+                <option value="OVERDUE">지연 (완료 제외)</option>
+              </select>
+            )}
+            {(sortMode !== "DEFAULT") && (
+              <span className="sort-result-count">{filteredOrders.length}건</span>
+            )}
+          </>
+        )}
+        <div className="view-mode-toggle">
+          <button
+            type="button"
+            className={`view-mode-btn ${viewMode === "table" ? "active" : ""}`}
+            onClick={() => switchViewMode("table")}
+            title="표 보기"
+            aria-label="표 보기"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <rect x="2" y="3" width="12" height="10" rx="1.5" />
+              <path d="M2 7h12M2 10h12M6 3v10" />
+            </svg>
+            <span>표</span>
+          </button>
+          <button
+            type="button"
+            className={`view-mode-btn ${viewMode === "cards" ? "active" : ""}`}
+            onClick={() => switchViewMode("cards")}
+            title="카드 보기"
+            aria-label="카드 보기"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <rect x="2" y="2" width="5.5" height="5.5" rx="1" />
+              <rect x="8.5" y="2" width="5.5" height="5.5" rx="1" />
+              <rect x="2" y="8.5" width="5.5" height="5.5" rx="1" />
+              <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1" />
+            </svg>
+            <span>카드</span>
+          </button>
         </div>
-      )}
+      </div>
 
       {activeFilter === "COMPLETED" && statusCounts.COMPLETED > 0 && (
         <div className="bulk-action-row">
@@ -873,28 +977,28 @@ export default function OrderAdmin() {
         </p>
       )}
 
+      {viewMode === "table" ? (
       <table className="order-admin-table">
         <thead>
           <tr>
             <th>요청번호</th>
             <th>거래처</th>
-            <th>요청유형</th>
             <th>제목</th>
-            <th>납기</th>
+            {isOrderPage && <th>납기</th>}
             <th>{activeFilter === "TRASH" ? "남은 일수" : "상태"}</th>
             <th>{activeFilter === "TRASH" ? "삭제일" : "등록일"}</th>
             <th>상태변경</th>
-            <th>프로그램실행</th>
+            {isOrderPage && <th>프로그램실행</th>}
           </tr>
         </thead>
         <tbody>
           {loading ? (
             <tr>
-              <td colSpan={9} className="order-empty">요청 목록을 불러오는 중입니다.</td>
+              <td colSpan={isOrderPage ? 8 : 6} className="order-empty">요청 목록을 불러오는 중입니다.</td>
             </tr>
           ) : filteredOrders.length === 0 ? (
             <tr>
-              <td colSpan={9} className="order-empty">
+              <td colSpan={isOrderPage ? 8 : 6} className="order-empty">
                 {activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "표시할 요청이 없습니다."}
               </td>
             </tr>
@@ -955,13 +1059,8 @@ export default function OrderAdmin() {
                     )}
                   </td>
                   <td>{order.clientCompanyName || "-"}</td>
-                  <td>
-                    <span className={`type-chip type-chip--${typeKey}`}>
-                      {requestLabel(order.requestType)}
-                    </span>
-                  </td>
                   <td className="order-title">{order.title || requestLabel(order.requestType)}</td>
-                  <td>{formatDueDate(order.dueDate, order.deliveryMethod)}</td>
+                  {isOrderPage && <td>{formatDueDate(order.dueDate, order.deliveryMethod)}</td>}
                   <td>
                     {isTrash ? (
                       <span className="status-badge status-trash">
@@ -1031,34 +1130,221 @@ export default function OrderAdmin() {
                       </button>
                     )}
                   </td>
-                  <td>
-                    {!isTrash && nextStatus && order.requestType === "ORDER" && order.status === "RECEIVED" ? (
-                      <button
-                        type="button"
-                        className="next-status-btn action-worksheet"
-                        onClick={(e) => downloadWorksheet(e, order)}
-                        disabled={downloadingId === order.id}
-                      >
-                        {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
-                      </button>
-                    ) : !isTrash && nextStatus && order.requestType === "ORDER" && order.status === "IN_PROGRESS" ? (
-                      <button
-                        type="button"
-                        className="next-status-btn action-worksheet"
-                        onClick={(e) => regenerateHeader(e, order)}
-                        disabled={regeneratingHeaderId === order.id}
-                        title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더(QR+주문정보) 만 다시 생성"
-                      >
-                        {regeneratingHeaderId === order.id ? "준비 중..." : "QR재생성"}
-                      </button>
-                    ) : null}
-                  </td>
+                  {isOrderPage && (
+                    <td>
+                      {!isTrash && nextStatus && order.status === "RECEIVED" ? (
+                        <button
+                          type="button"
+                          className="next-status-btn action-worksheet"
+                          onClick={(e) => downloadWorksheet(e, order)}
+                          disabled={downloadingId === order.id}
+                        >
+                          {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
+                        </button>
+                      ) : !isTrash && nextStatus && order.status === "IN_PROGRESS" ? (
+                        <button
+                          type="button"
+                          className="next-status-btn action-worksheet"
+                          onClick={(e) => regenerateHeader(e, order)}
+                          disabled={regeneratingHeaderId === order.id}
+                          title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더(QR+주문정보) 만 다시 생성"
+                        >
+                          {regeneratingHeaderId === order.id ? "준비 중..." : "QR재생성"}
+                        </button>
+                      ) : null}
+                    </td>
+                  )}
                 </tr>
               );
             })
           )}
         </tbody>
       </table>
+      ) : (
+        <div className="order-card-view">
+          {loading ? (
+            <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
+          ) : filteredOrders.length === 0 ? (
+            <div className="order-empty">
+              {activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "표시할 요청이 없습니다."}
+            </div>
+          ) : (
+            cardGroups.map((group) => (
+              <section className="order-card-group" key={group.key}>
+                {group.label && (
+                  <h2 className="order-card-group-head">
+                    <span>{group.label}</span>
+                    <span className="order-card-group-count">{group.list.length}건</span>
+                  </h2>
+                )}
+                <div className="order-card-grid">
+                  {group.list.map((order) => {
+                    const isTrash = activeFilter === "TRASH";
+                    const statusMeta = STATUS_META[order.status] || STATUS_META.RECEIVED;
+                    const nextStatus = getNextStatus(order.status);
+                    const updating = statusUpdatingId === order.id;
+                    const trashing = trashingOrderId === order.id;
+                    const restoring = restoringOrderId === order.id;
+                    const deleting = deletingOrderId === order.id;
+                    const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
+                    const viewedAt = order.adminViewedAt ? new Date(order.adminViewedAt).getTime() : 0;
+                    const evidenceAt = order.evidenceLastUploadedAt
+                      ? new Date(order.evidenceLastUploadedAt).getTime()
+                      : 0;
+                    const worksheetAt = order.worksheetUpdatedAt
+                      ? new Date(order.worksheetUpdatedAt).getTime()
+                      : 0;
+                    const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
+                    const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
+                    const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
+                    const isOrderType = order.requestType === "ORDER";
+
+                    return (
+                      <div
+                        key={order.id}
+                        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""}`}
+                        onClick={() => setSelectedOrderId(order.id)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedOrderId(order.id);
+                          }
+                        }}
+                      >
+                        <div className="order-card-thumb-wrap">
+                          <WorksheetThumbnail
+                            pdfUrl={order.worksheetPdfUrl || null}
+                            fallback={
+                              <div className="order-card-thumb-empty">
+                                <span className="order-card-thumb-empty-title">
+                                  {order.title || (isOrderPage ? "지시서 없음" : "견적 문의")}
+                                </span>
+                              </div>
+                            }
+                          />
+                          <div className="order-card-thumb-top">
+                            <span aria-hidden="true" />
+                            {isTrash ? (
+                              <span className="status-badge status-trash">
+                                {daysLeft === null ? "휴지통" : `${daysLeft}일 남음`}
+                              </span>
+                            ) : (
+                              <span className={`status-badge ${statusMeta.className}`}>
+                                {statusMeta.label}
+                              </span>
+                            )}
+                          </div>
+                          {(hasNewEvidence || hasNewWorksheet) && (
+                            <div className="order-card-thumb-badges">
+                              {hasNewEvidence && (
+                                <span className="row-badge badge-evidence" title="새 작업 사진이 올라왔습니다">사진</span>
+                              )}
+                              {hasNewWorksheet && (
+                                <span className="row-badge badge-worksheet" title="지시서/납기가 변경되었습니다">변경</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="order-card-body">
+                          <div className="order-card-meta-row">
+                            <span className="order-card-company">{order.clientCompanyName || "-"}</span>
+                            <span className="order-card-due">
+                              {formatDueDate(order.dueDate, order.deliveryMethod)}
+                            </span>
+                          </div>
+                          <h3 className="order-card-title">
+                            {order.title || requestLabel(order.requestType)}
+                          </h3>
+                          <div className="order-card-foot">
+                            <span className="order-card-num">{order.orderNumber}</span>
+                            <span className="order-card-date">
+                              {formatDateWithDay(isTrash ? order.deletedAt : order.createdAt)}
+                            </span>
+                          </div>
+
+                          <div className="order-card-actions" onClick={(e) => e.stopPropagation()}>
+                            {isTrash ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="next-status-btn action-restore"
+                                  onClick={() => restoreFromTrash(order)}
+                                  disabled={restoring || deleting}
+                                >
+                                  {restoring ? "복원 중..." : "복원"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="next-status-btn action-delete"
+                                  onClick={() => deletePermanently(order)}
+                                  disabled={deleting || restoring}
+                                >
+                                  {deleting ? "삭제 중..." : "영구삭제"}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {isOrderType && order.status === "RECEIVED" && (
+                                  <button
+                                    type="button"
+                                    className="next-status-btn action-worksheet"
+                                    onClick={(e) => downloadWorksheet(e, order)}
+                                    disabled={downloadingId === order.id}
+                                  >
+                                    {downloadingId === order.id ? "준비 중..." : "지시서 자동작성"}
+                                  </button>
+                                )}
+                                {isOrderType && order.status === "IN_PROGRESS" && (
+                                  <button
+                                    type="button"
+                                    className="next-status-btn action-worksheet"
+                                    onClick={(e) => regenerateHeader(e, order)}
+                                    disabled={regeneratingHeaderId === order.id}
+                                    title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더만 재생성"
+                                  >
+                                    {regeneratingHeaderId === order.id ? "준비 중..." : "QR재생성"}
+                                  </button>
+                                )}
+                                {nextStatus && !(isOrderType && order.status === "RECEIVED") && (
+                                  <button
+                                    type="button"
+                                    className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
+                                    onClick={() => updateOrderStatus(order.id, nextStatus)}
+                                    disabled={updating}
+                                  >
+                                    {updating
+                                      ? "변경 중..."
+                                      : order.status === "IN_PROGRESS"
+                                        ? "작업완료"
+                                        : "다음 단계"}
+                                  </button>
+                                )}
+                                {!nextStatus && (
+                                  <button
+                                    type="button"
+                                    className="next-status-btn action-trash"
+                                    onClick={() => moveCompletedToTrash(order)}
+                                    disabled={trashing}
+                                  >
+                                    {trashing ? "이동 중..." : "휴지통으로"}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ))
+          )}
+        </div>
+      )}
 
       <PhotoLightbox
         photos={evidencePhotos}

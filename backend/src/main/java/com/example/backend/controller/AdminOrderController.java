@@ -4,6 +4,7 @@ import com.example.backend.dto.OrderDto;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderRepository;
+import com.example.backend.service.ClientService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
@@ -33,6 +35,7 @@ import java.util.zip.ZipOutputStream;
 public class AdminOrderController {
 
     private final OrderRepository orderRepository;
+    private final ClientService clientService;
     private final S3Client s3Client;
 
     @Value("${r2.bucket}")
@@ -40,6 +43,28 @@ public class AdminOrderController {
 
     @Value("${r2.public-url}")
     private String publicUrl;
+
+    // 관리자 대리 발주 — 메일/전화로 들어온 거래처 발주를 관리자가 직접 등록.
+    // 거래처 로그인을 거치지 않고 clientId 만으로 동일한 발주 흐름을 태운다.
+    @PostMapping("/proxy")
+    public ResponseEntity<OrderDto.Response> proxyOrder(
+            @RequestParam Long clientId,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String additionalItems,
+            @RequestParam(required = false) String note,
+            @RequestParam String dueDate,
+            @RequestParam(required = false) String dueTime,
+            @RequestParam String deliveryMethod,
+            @RequestParam(required = false) String deliveryAddress,
+            @RequestParam(required = false) List<MultipartFile> files
+    ) {
+        return ResponseEntity.ok(
+                clientService.submitOrderByClientId(
+                        clientId, title, additionalItems, note,
+                        dueDate, dueTime, deliveryMethod, deliveryAddress, files
+                )
+        );
+    }
 
     // 전체 작업 목록 조회 (휴지통 제외, 최신순)
     @GetMapping

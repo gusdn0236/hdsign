@@ -76,6 +76,39 @@
     border-radius: 12px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.07);
     overflow: auto;
+    /* 거래처가 많아지면 페이지 전체를 스크롤하지 않고 표 영역만 스크롤. */
+    max-height: calc(100vh - 260px);
+    min-height: 320px;
+    /* Firefox — 스크롤바 두껍게(auto 보다 큰 thin/auto 둘 중 auto 가 두꺼움). */
+    scrollbar-width: auto;
+    scrollbar-color: #94a3b8 #f1f5f9;
+}
+/* WebKit/Chromium 계열(Chrome/Edge/Safari) — 마우스로 잡고 드래그하기 쉽게
+ * 가로폭 14px 로 넉넉히. 트랙은 옅은 회색, 썸은 진한 회색 + 호버 시 더 진하게. */
+.ca-table-wrap::-webkit-scrollbar {
+    width: 14px;
+    height: 14px;
+}
+.ca-table-wrap::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 8px;
+}
+.ca-table-wrap::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border-radius: 8px;
+    border: 3px solid #f1f5f9; /* 가운데로 모이는 패딩 효과 — 둥글게 떠 보임 */
+    background-clip: padding-box;
+}
+.ca-table-wrap::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+    background-clip: padding-box;
+}
+.ca-table-wrap::-webkit-scrollbar-thumb:active {
+    background: #475569;
+    background-clip: padding-box;
+}
+.ca-table-wrap::-webkit-scrollbar-corner {
+    background: #f1f5f9;
 }
 .ca-table {
     width: 100%;
@@ -92,6 +125,12 @@
     color: #555;
     text-align: left;
     white-space: nowrap;
+    /* 스크롤 시에도 헤더는 상단에 고정 — 열 식별이 끊기지 않게. */
+    position: sticky;
+    top: 0;
+    background: #f8f8f8;
+    z-index: 1;
+    box-shadow: inset 0 -2px 0 #eee;
 }
 .ca-table td {
     padding: 13px 14px;

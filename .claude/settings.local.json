@@ -70,7 +70,19 @@
       "PowerShell(Test-Path *)",
       "Bash(npx --no-install eslint src/pages/gallery src/App.jsx src/components/common/Header.jsx src/pages/admin/GalleryUpload.jsx)",
       "Bash(npx --no-install eslint src/App.jsx src/components/gallery/GalleryPage.jsx)",
-      "Bash(npm.cmd run *)"
+      "Bash(npm.cmd run *)",
+      "Bash(./gradlew.bat compileJava --no-daemon)",
+      "Bash(node --check src/pages/admin/OrderAdmin.jsx)",
+      "Bash(kill %1)",
+      "Bash(grep -iE \"\\\\.\\(px|mb|val|x[0-9]+|y[0-9]+\\)$\")",
+      "Bash(xxd \"C:/EasyformNetC/TempEstimate1.DB\")",
+      "Bash(xxd \"C:/EasyformNetC/Doc.DB\")",
+      "PowerShell(python --version; python -c \"import openpyxl; print\\('openpyxl', openpyxl.__version__\\)\"; python -c \"import xlrd; print\\('xlrd', xlrd.__version__\\)\"; python -c \"import pandas; print\\('pandas', pandas.__version__\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python310\\\\python.exe\" --version)",
+      "PowerShell(& \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python39\\\\python.exe\" -c \"import xlrd; print\\('xlrd', xlrd.__version__\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python310\\\\python.exe\" -m pip install xlrd==2.0.1 openpyxl 2>&1 | Select-Object -Last 5)",
+      "PowerShell(& \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python310\\\\python.exe\" \"C:\\\\Users\\\\USER\\\\Desktop\\\\hdsign\\\\tmp_filter_xls.py\")",
+      "PowerShell(chcp 65001 *)"
     ]
   }
 }
