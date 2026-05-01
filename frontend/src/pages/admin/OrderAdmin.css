@@ -4,6 +4,9 @@
   max-width: 1100px;
   margin: 0 auto;
   padding: 32px 24px 80px;
+  /* 표시할 주문이 없을 때도 [기존지시서에 QR코드만 생성] 드롭다운(최대 420px)이 화면에서
+     잘리지 않도록 페이지 자체의 최소 높이 확보. */
+  min-height: 720px;
 }
 
 .order-feedback {
@@ -699,7 +702,9 @@
 
 .order-empty {
   text-align: center;
-  padding: 40px 16px;
+  /* 빈 메시지가 차지하는 영역을 키워 QR 드롭다운이 펼칠 공간을 확보 — 페이지 최소 높이와
+     별개로, 빈 상태에서도 패널 아래로 충분히 여백이 잡히게 한다. */
+  padding: 80px 16px 220px;
   color: #9ca3af;
 }
 
