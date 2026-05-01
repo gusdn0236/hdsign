@@ -284,20 +284,23 @@ def qr_to_clipboard(order_number: str) -> None:
     if n == 0:
         raise RuntimeError("QR 매트릭스 비어 있음")
 
-    # 물리 크기 (HIMETRIC, 1 = 0.01mm). FlexSign 이 EMF rclFrame 을 보고 native 크기로 붙임.
-    # QR 30mm + gap 2mm + 텍스트 6mm = 38mm 높이. 너무 크면 사용자가 매번 줄여야 해서 일부러 작게.
-    qr_phys = 3000
-    gap_phys = 200
-    text_phys = 600
-    total_w = qr_phys
-    total_h = qr_phys + gap_phys + text_phys
+    # 물리 크기 (HIMETRIC, 1 = 0.01mm) — 정사각형. FlexSign 이 EMF 를 자기 기본 박스(1:1)에
+    # non-uniform 으로 늘려 붙이는 경우가 있어 비정사각 캔버스는 QR 셀까지 직사각형이 됨.
+    # 캔버스를 정사각으로 만들고 그 안에 QR + 주문번호 둘 다 배치하면 어떤 스케일링에도
+    # QR 셀은 정사각으로 유지된다.
+    total_w = 3000  # 30mm
+    total_h = 3000  # 30mm
 
-    # 내부 logical 좌표 — 1000 단위 그리드. EMF 는 rclBounds → destRect 로 자동 스케일하므로
-    # 절대 단위 의미 없음. 종횡비만 맞으면 됨.
+    # 내부 logical 좌표 — 1000 × 1000 정사각 그리드.
     grid_w = 1000
-    grid_h = round(grid_w * total_h / total_w)
-    text_band_h = round(grid_h * text_phys / total_h)
-    text_top = grid_h - text_band_h
+    grid_h = 1000
+    # QR 영역: 위쪽 800 px(80%) 정사각형. 좌우 가운데 정렬.
+    qr_box_size = 800
+    qr_box_left = (grid_w - qr_box_size) // 2  # 100
+    qr_box_top = 30                              # 위 약간 여백
+    # 주문번호 텍스트 영역: QR 아래.
+    text_band_h = 130
+    text_top = qr_box_top + qr_box_size + 20  # 850
 
     gdi32 = ctypes.windll.gdi32
     user32 = ctypes.windll.user32
@@ -374,22 +377,29 @@ def qr_to_clipboard(order_number: str) -> None:
         raise RuntimeError("CreateEnhMetaFile 실패")
 
     BLACK_BRUSH = 4
+    NULL_BRUSH = 5
     NULL_PEN = 8
     black_brush = gdi32.GetStockObject(BLACK_BRUSH)
+    null_brush = gdi32.GetStockObject(NULL_BRUSH)
     null_pen = gdi32.GetStockObject(NULL_PEN)
-    gdi32.SelectObject(emf_dc, black_brush)
-    gdi32.SelectObject(emf_dc, null_pen)
 
-    # QR 셀 — 위쪽 정사각형. 인접 셀 사이 미세 흰 줄(EMF 렌더링 오차) 방지를 위해
-    # 한 셀당 +1 logical 오버드로우. FlexSign 픽셀 정렬 시 QR 스캐너 인식률 보정.
-    cell = grid_w / n
+    # 보이지 않는 정사각 바운딩 — rclBounds 가 캔버스 전체(0,0)-(1000,1000) 가 되도록 강제.
+    # 이게 없으면 GDI 가 실제 그려진 도형(QR+텍스트)만 둘러싸는 직사각형으로 bounds 를 잡고,
+    # FlexSign 이 그 직사각 bounds 를 자기 박스에 fit 하면서 QR 셀이 늘어남.
+    gdi32.SelectObject(emf_dc, null_brush)
+    gdi32.SelectObject(emf_dc, null_pen)
+    gdi32.Rectangle(emf_dc, 0, 0, grid_w, grid_h)
+
+    # QR 셀 — 정사각 영역 800×800 안에 그린다. 셀 크기 = 800/N (정사각).
+    gdi32.SelectObject(emf_dc, black_brush)
+    cell = qr_box_size / n
     for y in range(n):
         for x in range(n):
             if matrix[y][x]:
-                x1 = int(x * cell)
-                y1 = int(y * cell)
-                x2 = int((x + 1) * cell) + 1
-                y2 = int((y + 1) * cell) + 1
+                x1 = qr_box_left + int(x * cell)
+                y1 = qr_box_top + int(y * cell)
+                x2 = qr_box_left + int((x + 1) * cell) + 1
+                y2 = qr_box_top + int((y + 1) * cell) + 1
                 gdi32.Rectangle(emf_dc, x1, y1, x2, y2)
 
     # 주문번호 텍스트 — QR 아래 가운데. BeginPath/ExtTextOut/EndPath/FillPath 로 글리프를

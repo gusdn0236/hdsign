@@ -965,9 +965,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               type="button"
               className="filter-tab qr-trigger"
               onClick={() => (qrPanelOpen ? closeQrPanel() : openQrPanel())}
-              title="수동 작성 지시서용 — 거래처 고르면 주문번호 발번 + QR 을 클립보드에 벡터로 복사"
+              title="이미 그려놓은 지시서에 덧붙일 QR + 주문번호만 클립보드에 벡터로 복사"
             >
-              QR 생성
+              기존지시서에 QR코드만 생성
             </button>
             {qrPanelOpen && (
               <div className="qr-panel" onClick={(e) => e.stopPropagation()}>
@@ -1314,7 +1314,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </td>
                   {isOrderPage && (
                     <td>
-                      {!isTrash && nextStatus && order.status === "RECEIVED" ? (
+                      {/* 파일이 0 개이면 [기존지시서에 QR코드만 생성] 으로 만든 빈 주문 — 자동지시서작성 대상 아님. */}
+                      {!isTrash && nextStatus && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 ? (
                         <button
                           type="button"
                           className="next-status-btn action-worksheet"
@@ -1469,7 +1470,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                               </>
                             ) : (
                               <>
-                                {isOrderType && order.status === "RECEIVED" && (
+                                {/* 파일 없는 주문(QR-only) 은 자동지시서작성 대상 아님 — 버튼 숨김. */}
+                                {isOrderType && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 && (
                                   <button
                                     type="button"
                                     className="next-status-btn action-worksheet"
@@ -1722,7 +1724,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     </>
                   ) : (
                     <>
-                      {selectedOrder.status === "RECEIVED" && selectedOrder.requestType === "ORDER" && (
+                      {/* 파일 없는 주문(QR-only) 은 자동지시서작성 대상 아님. */}
+                      {selectedOrder.status === "RECEIVED" && selectedOrder.requestType === "ORDER" && (selectedOrder.files?.length ?? 0) > 0 && (
                         <button
                           type="button"
                           className="next-status-btn action-worksheet"
