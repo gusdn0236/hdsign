@@ -118,6 +118,31 @@ public class ClientService {
                 dueDate, dueTime, deliveryMethod, deliveryAddress, files);
     }
 
+    /** 수동 작성 지시서용 빈 주문 생성 — FlexSign 에서 이미 그려놓은 지시서에 QR + 주문번호만
+     *  덧붙여 PDF24 로 등록할 때 쓴다. 거래처만 받고 제목/납기/배송 등은 인쇄 매칭 다이얼로그에서
+     *  채운다. mail/저장은 생략 — 일반 발주가 아니라 QR 부여 전용. */
+    @Transactional
+    public OrderDto.Response createQrOnlyOrder(Long clientId) {
+        ClientUser client = clientUserRepository.findById(clientId)
+                .orElseThrow(() -> new RuntimeException("거래처를 찾을 수 없습니다."));
+        String orderNumber = generateOrderNumber(RequestType.ORDER);
+        Order order = Order.builder()
+                .orderNumber(orderNumber)
+                .requestType(RequestType.ORDER)
+                .client(client)
+                .title(null)
+                .hasSMPS(false)
+                .additionalItems(null)
+                .note(null)
+                .dueDate(null)
+                .dueTime(null)
+                .deliveryMethod(null)
+                .deliveryAddress(null)
+                .status(OrderStatus.RECEIVED)
+                .build();
+        return OrderDto.toResponse(orderRepository.save(order));
+    }
+
     private OrderDto.Response submitOrderForClient(
             ClientUser client,
             String title,

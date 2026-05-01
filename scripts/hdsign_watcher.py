@@ -259,6 +259,203 @@ def qr_matrix_js(url: str) -> str:
     return "[" + ",".join(rows) + "]"
 
 
+def qr_to_clipboard(order_number: str) -> None:
+    """수동 작성 지시서용 — QR(주문 추적 URL) + 주문번호 텍스트를 EMF 로 빌드해
+    Windows 클립보드에 CF_ENHMETAFILE 로 올린다. 사용자가 FlexSign 에서 Ctrl+V 하면
+    Illustrator → FlexSign 클립보드 경로와 동일하게 벡터로 들어옴.
+
+    자동지시서작성/QR재생성 과 달리 .ai 파일도 만들지 않고 FlexSign 도 띄우지 않는다 —
+    "이미 거래처 .fs 를 손으로 그려놓은 상태에서 QR 만 한 덩어리 붙이고 싶다" 가 유스케이스.
+    """
+    if not order_number:
+        raise ValueError("order_number 비어 있음")
+
+    # 자동지시서/헤더-only 와 동일한 추적 URL — QR 코드 한 개로 흐름이 어느 경로로 들어와도 같은
+    # /p/{orderNumber} 모바일 카메라 페이지로 이어진다.
+    url = EVIDENCE_URL_BASE + quote(order_number, safe="")
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=1, border=2,
+    )
+    qr.add_data(url)
+    qr.make()
+    matrix = qr.get_matrix()
+    n = len(matrix)
+    if n == 0:
+        raise RuntimeError("QR 매트릭스 비어 있음")
+
+    # 물리 크기 (HIMETRIC, 1 = 0.01mm). FlexSign 이 EMF rclFrame 을 보고 native 크기로 붙임.
+    # QR 30mm + gap 2mm + 텍스트 6mm = 38mm 높이. 너무 크면 사용자가 매번 줄여야 해서 일부러 작게.
+    qr_phys = 3000
+    gap_phys = 200
+    text_phys = 600
+    total_w = qr_phys
+    total_h = qr_phys + gap_phys + text_phys
+
+    # 내부 logical 좌표 — 1000 단위 그리드. EMF 는 rclBounds → destRect 로 자동 스케일하므로
+    # 절대 단위 의미 없음. 종횡비만 맞으면 됨.
+    grid_w = 1000
+    grid_h = round(grid_w * total_h / total_w)
+    text_band_h = round(grid_h * text_phys / total_h)
+    text_top = grid_h - text_band_h
+
+    gdi32 = ctypes.windll.gdi32
+    user32 = ctypes.windll.user32
+
+    # 64-bit Windows 에서 HDC/HGDIOBJ/HENHMETAFILE 은 모두 8바이트 포인터.
+    # ctypes 기본 c_int (4바이트) 로 처리되면 핸들이 잘려 SelectObject/CloseEMF 가 실패함.
+    # 사용하는 함수 전부에 argtypes/restype 명시.
+    HDC = ctypes.c_void_p
+    HGDIOBJ = ctypes.c_void_p
+    HENHMETAFILE = ctypes.c_void_p
+    HFONT = ctypes.c_void_p
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    user32.GetDC.argtypes = [ctypes.c_void_p]
+    user32.GetDC.restype = HDC
+    user32.ReleaseDC.argtypes = [ctypes.c_void_p, HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+
+    gdi32.CreateEnhMetaFileW.argtypes = [HDC, ctypes.c_wchar_p, ctypes.POINTER(RECT), ctypes.c_wchar_p]
+    gdi32.CreateEnhMetaFileW.restype = HDC
+    gdi32.CloseEnhMetaFile.argtypes = [HDC]
+    gdi32.CloseEnhMetaFile.restype = HENHMETAFILE
+    gdi32.DeleteEnhMetaFile.argtypes = [HENHMETAFILE]
+    gdi32.DeleteEnhMetaFile.restype = ctypes.c_int
+
+    gdi32.GetStockObject.argtypes = [ctypes.c_int]
+    gdi32.GetStockObject.restype = HGDIOBJ
+    gdi32.SelectObject.argtypes = [HDC, HGDIOBJ]
+    gdi32.SelectObject.restype = HGDIOBJ
+    gdi32.DeleteObject.argtypes = [HGDIOBJ]
+    gdi32.DeleteObject.restype = ctypes.c_int
+
+    gdi32.Rectangle.argtypes = [HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+    gdi32.Rectangle.restype = ctypes.c_int
+
+    gdi32.CreateFontW.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint,
+        ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.c_wchar_p,
+    ]
+    gdi32.CreateFontW.restype = HFONT
+
+    gdi32.SetTextAlign.argtypes = [HDC, ctypes.c_uint]
+    gdi32.SetTextAlign.restype = ctypes.c_uint
+    gdi32.SetTextColor.argtypes = [HDC, ctypes.c_uint]
+    gdi32.SetTextColor.restype = ctypes.c_uint
+    gdi32.SetBkMode.argtypes = [HDC, ctypes.c_int]
+    gdi32.SetBkMode.restype = ctypes.c_int
+    gdi32.BeginPath.argtypes = [HDC]
+    gdi32.BeginPath.restype = ctypes.c_int
+    gdi32.EndPath.argtypes = [HDC]
+    gdi32.EndPath.restype = ctypes.c_int
+    gdi32.FillPath.argtypes = [HDC]
+    gdi32.FillPath.restype = ctypes.c_int
+    gdi32.ExtTextOutW.argtypes = [
+        HDC, ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_void_p,
+        ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_void_p,
+    ]
+    gdi32.ExtTextOutW.restype = ctypes.c_int
+
+    bounds = RECT(0, 0, total_w, total_h)
+
+    ref_dc = user32.GetDC(None)
+    if not ref_dc:
+        raise RuntimeError("GetDC(NULL) 실패")
+    try:
+        emf_dc = gdi32.CreateEnhMetaFileW(ref_dc, None, ctypes.byref(bounds), "HD Sign\0QR Stamp\0\0")
+    finally:
+        user32.ReleaseDC(None, ref_dc)
+    if not emf_dc:
+        raise RuntimeError("CreateEnhMetaFile 실패")
+
+    BLACK_BRUSH = 4
+    NULL_PEN = 8
+    black_brush = gdi32.GetStockObject(BLACK_BRUSH)
+    null_pen = gdi32.GetStockObject(NULL_PEN)
+    gdi32.SelectObject(emf_dc, black_brush)
+    gdi32.SelectObject(emf_dc, null_pen)
+
+    # QR 셀 — 위쪽 정사각형. 인접 셀 사이 미세 흰 줄(EMF 렌더링 오차) 방지를 위해
+    # 한 셀당 +1 logical 오버드로우. FlexSign 픽셀 정렬 시 QR 스캐너 인식률 보정.
+    cell = grid_w / n
+    for y in range(n):
+        for x in range(n):
+            if matrix[y][x]:
+                x1 = int(x * cell)
+                y1 = int(y * cell)
+                x2 = int((x + 1) * cell) + 1
+                y2 = int((y + 1) * cell) + 1
+                gdi32.Rectangle(emf_dc, x1, y1, x2, y2)
+
+    # 주문번호 텍스트 — QR 아래 가운데. BeginPath/ExtTextOut/EndPath/FillPath 로 글리프를
+    # vector outline 으로 EMF 에 기록 → 폰트 없는 환경/FlexSign 의 텍스트 객체 변환 이슈를
+    # 우회. 결과는 검은 도형 덩어리.
+    FW_BOLD = 700
+    DEFAULT_CHARSET = 1
+    font_height = -text_band_h  # 음수: character height
+    hfont = gdi32.CreateFontW(
+        font_height, 0, 0, 0, FW_BOLD, 0, 0, 0,
+        DEFAULT_CHARSET, 0, 0, 0, 0, "맑은 고딕",
+    )
+    old_font = None
+    try:
+        if hfont:
+            old_font = gdi32.SelectObject(emf_dc, hfont)
+            TA_CENTER = 6  # TA_TOP = 0
+            gdi32.SetTextAlign(emf_dc, TA_CENTER)
+            gdi32.SetTextColor(emf_dc, 0)
+            gdi32.SetBkMode(emf_dc, 1)  # TRANSPARENT
+            gdi32.BeginPath(emf_dc)
+            gdi32.ExtTextOutW(
+                emf_dc, grid_w // 2, text_top,
+                0, None, order_number, len(order_number), None,
+            )
+            gdi32.EndPath(emf_dc)
+            gdi32.FillPath(emf_dc)
+    finally:
+        if old_font is not None:
+            gdi32.SelectObject(emf_dc, old_font)
+        if hfont:
+            gdi32.DeleteObject(hfont)
+
+    hemf = gdi32.CloseEnhMetaFile(emf_dc)
+    if not hemf:
+        raise RuntimeError("CloseEnhMetaFile 실패")
+
+    # 클립보드 — 다른 프로세스가 점유 중이면 OpenClipboard 가 실패하므로 짧은 재시도.
+    import win32clipboard
+    CF_ENHMETAFILE = 14
+
+    opened = False
+    try:
+        last_err: Exception | None = None
+        for _ in range(20):
+            try:
+                win32clipboard.OpenClipboard()
+                opened = True
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(0.05)
+        if not opened:
+            gdi32.DeleteEnhMetaFile(hemf)
+            raise RuntimeError(f"클립보드 열기 실패: {last_err}")
+        win32clipboard.EmptyClipboard()
+        # SetClipboardData 호출 후 hemf 소유권은 OS 로 이전 — 이쪽에서 DeleteEnhMetaFile 호출 X.
+        win32clipboard.SetClipboardData(CF_ENHMETAFILE, hemf)
+    finally:
+        if opened:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+
+
 DELIVERY_SHORT = {
     "화물 발송": "화물",
     "퀵 발송": "퀵발송",
@@ -316,11 +513,12 @@ def format_left_text(meta: dict) -> str:
 
 
 class _PingHandler(BaseHTTPRequestHandler):
-    """관리자 페이지가 fetch 한 번 보내서 워처 실행 여부를 확인하기 위한 핸들러."""
+    """관리자 페이지가 fetch 한 번 보내서 워처 실행 여부를 확인하기 위한 핸들러.
+    POST /clip-qr?order=... 도 받음 — 수동 지시서용 QR 클립보드 복사."""
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Cache-Control", "no-store")
 
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler 규약)
@@ -330,6 +528,45 @@ class _PingHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"ok":true,"app":"hdsign_worksheet"}')
+        else:
+            self.send_response(404)
+            self._cors()
+            self.end_headers()
+
+    def do_POST(self):  # noqa: N802
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        if parsed.path == "/clip-qr":
+            qs = parse_qs(parsed.query)
+            order = (qs.get("order") or [""])[0].strip()
+            company = (qs.get("company") or [""])[0].strip()
+            if not order:
+                self.send_response(400)
+                self._cors()
+                self.end_headers()
+                return
+            try:
+                qr_to_clipboard(order)
+                # company 가 같이 오면 인쇄 매칭 큐에 등록 — PDF24 로 인쇄가 떨어지면
+                # [신규 작성] 탭이 이 주문을 자동 매칭한다. 납기/배송은 매칭 다이얼로그에서 입력.
+                if company:
+                    remember_order_for_print(order, company, "", "", "")
+                ui_log(f"{order} QR 클립보드 복사 완료 — FlexSign 에서 Ctrl+V")
+                self.send_response(200)
+                self._cors()
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+            except Exception as e:
+                ui_log(f"QR 클립보드 복사 실패 ({order}): {e}")
+                self.send_response(500)
+                self._cors()
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                try:
+                    self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+                except Exception:
+                    pass
         else:
             self.send_response(404)
             self._cors()
