@@ -159,6 +159,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [qrPanelClients, setQrPanelClients] = useState([]);
   const [qrPanelQuery, setQrPanelQuery] = useState("");
   const [qrPanelSubmitting, setQrPanelSubmitting] = useState(false);
+  const [qrPanelHighlight, setQrPanelHighlight] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [sortMode, setSortMode] = useState("DEFAULT");
@@ -835,6 +836,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const openQrPanel = async () => {
     setQrPanelOpen(true);
     setQrPanelQuery("");
+    setQrPanelHighlight(0);
     if (qrPanelClients.length > 0) return;
     try {
       const res = await fetch(`${BASE_URL}/api/admin/clients`, {
@@ -986,7 +988,25 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   className="qr-panel-input"
                   placeholder="거래처명/별칭/담당자 검색"
                   value={qrPanelQuery}
-                  onChange={(e) => setQrPanelQuery(e.target.value)}
+                  onChange={(e) => {
+                    setQrPanelQuery(e.target.value);
+                    setQrPanelHighlight(0);
+                  }}
+                  onKeyDown={(e) => {
+                    if (qrPanelSubmitting) return;
+                    const max = qrPanelSuggestions.length - 1;
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setQrPanelHighlight((i) => Math.min(i + 1, max));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setQrPanelHighlight((i) => Math.max(i - 1, 0));
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      const c = qrPanelSuggestions[qrPanelHighlight];
+                      if (c) handleQrPanelPick(c);
+                    }
+                  }}
                   disabled={qrPanelSubmitting}
                   autoFocus
                 />
@@ -996,13 +1016,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                       {qrPanelClients.length === 0 ? "거래처를 불러오는 중..." : "검색 결과 없음"}
                     </div>
                   ) : (
-                    qrPanelSuggestions.map((c) => (
+                    qrPanelSuggestions.map((c, idx) => (
                       <button
                         key={c.id}
                         type="button"
-                        className="qr-panel-row"
+                        className={`qr-panel-row ${idx === qrPanelHighlight ? "highlight" : ""}`}
                         onClick={() => handleQrPanelPick(c)}
+                        onMouseEnter={() => setQrPanelHighlight(idx)}
                         disabled={qrPanelSubmitting}
+                        ref={(el) => {
+                          if (el && idx === qrPanelHighlight) {
+                            el.scrollIntoView({ block: "nearest" });
+                          }
+                        }}
                       >
                         <span className="qr-panel-row-name">{c.companyName}</span>
                         {c.contactName && (

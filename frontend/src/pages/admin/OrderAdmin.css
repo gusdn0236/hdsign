@@ -622,7 +622,8 @@
   font-size: 13px;
 }
 
-.qr-panel-row:hover:not(:disabled) {
+.qr-panel-row:hover:not(:disabled),
+.qr-panel-row.highlight:not(:disabled) {
   background: #fef3c7;
 }
 
