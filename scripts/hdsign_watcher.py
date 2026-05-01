@@ -1266,6 +1266,38 @@ def start_order_alert_loop():
     threading.Thread(target=_run, daemon=True).start()
 
 
+def resolve_new_due_date_md(current_iso: str, month_input: int, day_input: int) -> date:
+    """월+일을 명시적으로 입력받는 새 폼용 — 년은 기준일(current_iso 또는 오늘)에서 가져오되,
+    입력 날짜가 기준일보다 과거면 다음 해로 롤오버. 잘못된 조합(2/30 등)은 그 달 말일로 클램프."""
+    base = date.today()
+    if current_iso:
+        try:
+            base = date.fromisoformat(current_iso)
+        except ValueError:
+            pass
+    year = base.year
+    try:
+        candidate = date(year, month_input, day_input)
+    except ValueError:
+        # 잘못된 월/일 조합 — 해당 월 말일로 클램프
+        if month_input == 12:
+            next_first = date(year + 1, 1, 1)
+        else:
+            next_first = date(year, month_input + 1, 1)
+        candidate = next_first - timedelta(days=1)
+    if candidate < base:
+        # 과거 → 다음 해 같은 월/일.
+        try:
+            candidate = date(year + 1, month_input, day_input)
+        except ValueError:
+            if month_input == 12:
+                next_first = date(year + 2, 1, 1)
+            else:
+                next_first = date(year + 1, month_input + 1, 1)
+            candidate = next_first - timedelta(days=1)
+    return candidate
+
+
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
     """입력 일자를 기준 납기로부터 가장 자연스러운 날짜로 해석.
     같은 달 day_input 이 기준일보다 앞이면(=과거) 다음 달로 넘긴다.
@@ -1807,6 +1839,32 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         except ValueError:
             return ""
 
+    def _month_from_iso(iso: str) -> str:
+        if not iso:
+            return ""
+        try:
+            return str(date.fromisoformat(iso).month)
+        except ValueError:
+            return ""
+
+    _WD_KO = ["월", "화", "수", "목", "금", "토", "일"]
+
+    def _format_md_preview(month_str: str, day_str: str, base_iso: str) -> str:
+        """월+일 입력으로부터 최종 납기 미리보기 — '→ 12월 15일 (화)'.
+        년은 base_iso 기준이고, 입력 날짜가 base 보다 과거면 다음 해로 롤오버."""
+        ms = (month_str or "").strip()
+        ds = (day_str or "").strip()
+        if not (ms.isdigit() and ds.isdigit()):
+            return ""
+        m, d = int(ms), int(ds)
+        if not (1 <= m <= 12 and 1 <= d <= 31):
+            return ""
+        try:
+            resolved = resolve_new_due_date_md(base_iso, m, d)
+        except Exception:
+            return ""
+        return f"→ {resolved.month}월 {resolved.day}일 ({_WD_KO[resolved.weekday()]})"
+
     # ── 탭 컨테이너 ─────────────────────────────────────────
     style = ttk.Style()
     try:
@@ -1854,6 +1912,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
 
     # ── [신규 작성] 탭 ─────────────────────────────────────
     new_day_var = tk.StringVar()
+    new_month_var = tk.StringVar()
     new_delivery_var = tk.StringVar()
     new_day_entry: tk.Entry | None = None
 
@@ -1993,27 +2052,86 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
 
         tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
                  font=("맑은 고딕", 10, "bold")).pack(side="left")
-        new_day_var.set(_day_from_iso(most_recent.get("dueDate") or ""))
-        new_day_entry = tk.Entry(
-            fields, textvariable=new_day_var, width=4, justify="center",
+        _new_base_iso = most_recent.get("dueDate") or ""
+        new_month_var.set(_month_from_iso(_new_base_iso))
+        new_day_var.set(_day_from_iso(_new_base_iso))
+
+        new_month_entry = tk.Entry(
+            fields, textvariable=new_month_var, width=3, justify="center",
             font=("맑은 고딕", 16, "bold"),
             relief="solid", bd=1, bg="white", highlightthickness=0,
         )
-        new_day_entry.pack(side="left", padx=(8, 3))
+        new_month_entry.pack(side="left", padx=(8, 3))
+        tk.Label(fields, text="월", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 6))
+        new_day_entry = tk.Entry(
+            fields, textvariable=new_day_var, width=3, justify="center",
+            font=("맑은 고딕", 16, "bold"),
+            relief="solid", bd=1, bg="white", highlightthickness=0,
+        )
+        new_day_entry.pack(side="left", padx=(0, 3))
         tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 22))
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 8))
+        new_due_preview = tk.Label(
+            fields, text="", bg=BG_SOFT, fg="#0f766e",
+            font=("맑은 고딕", 10, "bold"),
+        )
+        new_due_preview.pack(side="left", padx=(0, 22))
+
+        # 월 입력이 1~12 의 유효한 값이 되면 자동으로 일 입력으로 포커스 이동.
+        # 한 자리(1~9)는 "잠시 후" 두 자리 입력 가능성을 위해 약간 지연하지 않고 바로 넘긴다 —
+        # 한 자리 월(1~9월)이 더 흔하니 빠른 입력이 우선.
+        def _maybe_advance_month_to_day(*_):
+            s = (new_month_var.get() or "").strip()
+            if s.isdigit():
+                v = int(s)
+                if 1 <= v <= 12 and (len(s) == 2 or v >= 2):
+                    # 두 자리거나 1 보다 큰 한 자리 — 더 입력할 자릿수 없음 → 일 칸으로 이동.
+                    new_day_entry.focus_set()
+                    new_day_entry.select_range(0, "end")
+            _refresh_new_due_preview()
+
+        def _refresh_new_due_preview(*_):
+            new_due_preview.config(
+                text=_format_md_preview(new_month_var.get(), new_day_var.get(), _new_base_iso)
+            )
+
+        new_month_var.trace_add("write", _maybe_advance_month_to_day)
+        new_day_var.trace_add("write", _refresh_new_due_preview)
+        _refresh_new_due_preview()
 
         tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
                  font=("맑은 고딕", 10, "bold")).pack(side="left")
-        delivery_labels_in_order = list(DELIVERY_ENUM_TO_KO.values())
         new_delivery_var.set(
             DELIVERY_ENUM_TO_KO.get(most_recent.get("deliveryMethod") or "", "")
         )
-        ttk.Combobox(
-            fields, textvariable=new_delivery_var, state="readonly",
-            values=delivery_labels_in_order, width=14,
-            font=("맑은 고딕", 10),
-        ).pack(side="left", padx=(8, 0))
+        new_delivery_btns: dict[str, tk.Button] = {}
+
+        def _set_new_delivery(label: str):
+            new_delivery_var.set(label)
+            for k, btn in new_delivery_btns.items():
+                if k == label:
+                    btn.config(bg="#0f766e", fg="white", relief="solid")
+                else:
+                    btn.config(bg="white", fg=LABEL_FG, relief="solid")
+
+        delivery_btn_row = tk.Frame(fields, bg=BG_SOFT)
+        delivery_btn_row.pack(side="left", padx=(8, 0))
+        for label in DELIVERY_ENUM_TO_KO.values():
+            b = tk.Button(
+                delivery_btn_row, text=label,
+                font=("맑은 고딕", 9, "bold"),
+                bg="white", fg=LABEL_FG,
+                relief="solid", bd=1,
+                padx=8, pady=2,
+                command=lambda lbl=label: _set_new_delivery(lbl),
+                cursor="hand2",
+            )
+            b.pack(side="left", padx=(0, 4))
+            new_delivery_btns[label] = b
+        # 초기 상태 반영
+        if new_delivery_var.get():
+            _set_new_delivery(new_delivery_var.get())
     else:
         tk.Label(new_tab,
                  text="최근 처리한 주문이 없어 신규 작성 모드를 사용할 수 없습니다.\n"
@@ -2210,29 +2328,88 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         fields.pack(fill="x", anchor="w")
         tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
                  font=("맑은 고딕", 10, "bold")).pack(side="left")
-        day_var_local = tk.StringVar(
-            value=_day_from_iso(ws.get("dueDate") or ""))
-        day_e = tk.Entry(
-            fields, textvariable=day_var_local, width=4, justify="center",
+        _mod_base_iso = ws.get("dueDate") or ""
+        month_var_local = tk.StringVar(value=_month_from_iso(_mod_base_iso))
+        day_var_local = tk.StringVar(value=_day_from_iso(_mod_base_iso))
+
+        month_e = tk.Entry(
+            fields, textvariable=month_var_local, width=3, justify="center",
             font=("맑은 고딕", 14, "bold"),
             relief="solid", bd=1, bg="white", highlightthickness=0,
         )
-        day_e.pack(side="left", padx=(10, 3))
+        month_e.pack(side="left", padx=(10, 3))
+        tk.Label(fields, text="월", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 6))
+        day_e = tk.Entry(
+            fields, textvariable=day_var_local, width=3, justify="center",
+            font=("맑은 고딕", 14, "bold"),
+            relief="solid", bd=1, bg="white", highlightthickness=0,
+        )
+        day_e.pack(side="left", padx=(0, 3))
         tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 24))
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 8))
+        mod_due_preview = tk.Label(
+            fields, text="", bg=BG_SOFT, fg="#0f766e",
+            font=("맑은 고딕", 10, "bold"),
+        )
+        mod_due_preview.pack(side="left", padx=(0, 24))
+
+        def _refresh_mod_due_preview(*_):
+            mod_due_preview.config(
+                text=_format_md_preview(month_var_local.get(), day_var_local.get(), _mod_base_iso)
+            )
+
+        def _maybe_advance_month_to_day_mod(*_):
+            s = (month_var_local.get() or "").strip()
+            if s.isdigit():
+                v = int(s)
+                if 1 <= v <= 12 and (len(s) == 2 or v >= 2):
+                    day_e.focus_set()
+                    day_e.select_range(0, "end")
+            _refresh_mod_due_preview()
+
+        month_var_local.trace_add("write", _maybe_advance_month_to_day_mod)
+        day_var_local.trace_add("write", _refresh_mod_due_preview)
+        _refresh_mod_due_preview()
+
         tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
                  font=("맑은 고딕", 10, "bold")).pack(side="left")
         delivery_var_local = tk.StringVar(
             value=DELIVERY_ENUM_TO_KO.get(ws.get("deliveryMethod") or "", "")
         )
-        ttk.Combobox(
-            fields, textvariable=delivery_var_local, state="readonly",
-            values=list(DELIVERY_ENUM_TO_KO.values()), width=14,
-            font=("맑은 고딕", 10),
-        ).pack(side="left", padx=(10, 0))
+        mod_delivery_btns: dict[str, tk.Button] = {}
+
+        def _set_mod_delivery(label: str):
+            delivery_var_local.set(label)
+            for k, btn in mod_delivery_btns.items():
+                if k == label:
+                    btn.config(bg="#0f766e", fg="white", relief="solid")
+                else:
+                    btn.config(bg="white", fg=LABEL_FG, relief="solid")
+
+        delivery_btn_row = tk.Frame(fields, bg=BG_SOFT)
+        delivery_btn_row.pack(side="left", padx=(10, 0))
+        for label in DELIVERY_ENUM_TO_KO.values():
+            b = tk.Button(
+                delivery_btn_row, text=label,
+                font=("맑은 고딕", 9, "bold"),
+                bg="white", fg=LABEL_FG,
+                relief="solid", bd=1,
+                padx=8, pady=2,
+                command=lambda lbl=label: _set_mod_delivery(lbl),
+                cursor="hand2",
+            )
+            b.pack(side="left", padx=(0, 4))
+            mod_delivery_btns[label] = b
+        if delivery_var_local.get():
+            _set_mod_delivery(delivery_var_local.get())
+
+        chosen_widgets["mod_month_var"] = month_var_local
         chosen_widgets["mod_day_var"] = day_var_local
         chosen_widgets["mod_delivery_var"] = delivery_var_local
         chosen_widgets["mod_day_entry"] = day_e
+        chosen_widgets["mod_month_entry"] = month_e
+        month_e.bind("<Return>", confirm)
         day_e.bind("<Return>", confirm)
 
         # 2행: 변경된 내용 메모 — 비워두면 contentChanged 안 보냄.
@@ -2254,10 +2431,15 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         if saved_note:
             note_text.insert("1.0", saved_note)
 
-        # 진입 시 포커스는 납기 입력 — 가장 자주 만지는 필드.
-        day_e.focus_set()
-        day_e.select_range(0, "end")
-        day_e.icursor("end")
+        # 진입 시 포커스 — 월이 비어 있으면 월부터, 아니면 일에 포커스(가장 자주 바뀌는 값).
+        if not (month_var_local.get() or "").strip():
+            month_e.focus_set()
+            month_e.select_range(0, "end")
+            month_e.icursor("end")
+        else:
+            day_e.focus_set()
+            day_e.select_range(0, "end")
+            day_e.icursor("end")
 
         # ── 매칭된 지시서 PDF 미리보기 (가운데 정렬, 폼 아래) ────
         # 폭 240 — 다이얼로그 880px 안에 헤더/통합폼/하단 버튼이 모두 잘림 없이 들어가는 한계 폭.
@@ -2631,11 +2813,12 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             # [신규 작성] 탭
             if most_recent is None:
                 return
-            s = (new_day_var.get() or "").strip()
-            if not s.isdigit():
+            ms = (new_month_var.get() or "").strip()
+            ds = (new_day_var.get() or "").strip()
+            if not (ms.isdigit() and ds.isdigit()):
                 return
-            d = int(s)
-            if d < 1 or d > 31:
+            m, d = int(ms), int(ds)
+            if not (1 <= m <= 12 and 1 <= d <= 31):
                 return
             delivery_ko = (new_delivery_var.get() or "").strip()
             delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
@@ -2643,6 +2826,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 "mode": "new",
                 "change_type": "delivery",  # 신규는 사실상 납기/배송 흐름과 동일
                 "order_number": most_recent["orderNumber"],
+                "month": m,
                 "day": d,
                 "current_due_iso": most_recent.get("dueDate") or "",
                 "delivery_method": delivery_enum,
@@ -2663,15 +2847,17 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         ws = modify_state["selected_ws"]
         if ws is None:
             return
+        month_var_local = chosen_widgets.get("mod_month_var")
         day_var_local = chosen_widgets.get("mod_day_var")
         delivery_var_local = chosen_widgets.get("mod_delivery_var")
-        if day_var_local is None or delivery_var_local is None:
+        if month_var_local is None or day_var_local is None or delivery_var_local is None:
             return
-        s = (day_var_local.get() or "").strip()
-        if not s.isdigit():
+        ms = (month_var_local.get() or "").strip()
+        ds = (day_var_local.get() or "").strip()
+        if not (ms.isdigit() and ds.isdigit()):
             return
-        d = int(s)
-        if d < 1 or d > 31:
+        m, d = int(ms), int(ds)
+        if not (1 <= m <= 12 and 1 <= d <= 31):
             return
         delivery_ko = (delivery_var_local.get() or "").strip()
         delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
@@ -2693,6 +2879,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             "mode": "modify",
             "change_type": "combined",
             "order_number": ws["orderNumber"],
+            "month": m,
             "day": d,
             "current_due_iso": ws.get("dueDate") or "",
             "delivery_method": delivery_enum,
@@ -3037,7 +3224,14 @@ def _process_printed_pdf(pdf_path: Path):
         print_pdf_to_paper(pdf_path)
         return
 
-    new_due = resolve_new_due_date(sel.get("current_due_iso", ""), sel["day"])
+    # 새 폼은 month + day 를 같이 받음 — 명시적 월 입력으로 자동 추론 의존을 없앤다.
+    if "month" in sel:
+        new_due = resolve_new_due_date_md(
+            sel.get("current_due_iso", ""), sel["month"], sel["day"]
+        )
+    else:
+        # 구버전 호환 — 혹시 month 없는 흐름이 남아 있으면 day 만으로 폴백.
+        new_due = resolve_new_due_date(sel.get("current_due_iso", ""), sel["day"])
     # 배송방법은 다이얼로그에서 변경된 경우에만 함께 보낸다(원래 값과 같으면 생략).
     new_delivery = sel.get("delivery_method") or ""
     orig_delivery = sel.get("original_delivery_method") or ""
