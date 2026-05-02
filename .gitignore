@@ -6,3 +6,16 @@ tmp_mail_test/
 # 빌드는 scripts/build_exe.bat 로 로컬에서 재생성, 배포는 별도 경로(공유폴더 등) 사용.
 scripts/dist/hdsign_worksheet.exe
 scripts/build/hdsign_worksheet/hdsign_worksheet.pkg
+
+# 사무실 PC 배포용 패키지 — 빌드 산출물의 사본이라 git 에 둘 필요 없음.
+HD사인_프로그램_배포/
+HD사인_프로그램_배포.zip
+
+# SumatraPDF 포터블 — 공식 사이트에서 재다운로드 가능, 20MB 이진 파일이라 제외.
+scripts/sumatra/
+scripts/dist/sumatra/
+
+# 빌드 로그 / 파이썬 캐시 / 임시 파일.
+scripts/build_log.txt
+scripts/__pycache__/
+__pycache__/

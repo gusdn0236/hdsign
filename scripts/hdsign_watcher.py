@@ -67,13 +67,77 @@ try:
 except Exception:
     pyzbar_decode = None  # type: ignore
 
-WATCH_DIR = Path(r"C:\Users\USER\Desktop\hdsign_orders")
+# 사무실 PC 마다 Windows 계정명이 다르므로 Path.home() 으로 동적으로 결정.
+# 어떤 계정에서 실행해도 그 사람 바탕화면 아래 hdsign_orders 폴더가 만들어진다.
+WATCH_DIR = Path.home() / "Desktop" / "hdsign_orders"
 DOWNLOADS_DIR = Path.home() / "Downloads"
 DONE_DIR = WATCH_DIR / "done"
 # PDF24(또는 다른 무인 PDF 프린터) 가 인쇄 PDF 를 떨어뜨리는 폴더.
 # PDF24 자동 저장 프로파일에서 저장 폴더를 이 경로로, "저장 시 대화상자" 끄기.
 PRINTED_PDF_DIR = WATCH_DIR / "printed"
-FLEXSIGN_EXE = r"C:\Users\USER\Desktop\FlexiSIGN 6.6\Program\App.exe"
+
+# FlexSign 실행파일 위치는 PC 마다 다르므로 자동 탐색 + config.json 우선 정책.
+# 1순위: config.json 의 flexsign_exe (사용자가 GUI [FlexSign 위치 지정] 으로 직접 지정)
+# 2순위: 아래 후보 경로에서 첫 발견 — 보통의 FlexSign 설치 위치들.
+# 못 찾으면 launch_flexsign() 이 안내 메시지 + GUI 버튼으로 위치 지정을 유도.
+FLEXSIGN_PATH_CANDIDATES = [
+    Path.home() / "Desktop" / "FlexiSIGN 6.6" / "Program" / "App.exe",
+    Path("C:/Program Files/SAi/FlexiSIGN 6.6/Program/App.exe"),
+    Path("C:/Program Files (x86)/SAi/FlexiSIGN 6.6/Program/App.exe"),
+    Path("C:/FlexiSIGN 6.6/Program/App.exe"),
+]
+
+
+def find_flexsign_exe() -> str | None:
+    """FlexSign 실행파일 경로 탐색. config.json 우선, 없으면 기본 후보 스캔.
+    찾으면 절대경로 문자열 반환, 못 찾으면 None."""
+    cfg = _load_config()
+    cfg_path = (cfg.get("flexsign_exe") or "").strip()
+    if cfg_path and Path(cfg_path).exists():
+        return cfg_path
+    for candidate in FLEXSIGN_PATH_CANDIDATES:
+        try:
+            if candidate.exists():
+                return str(candidate)
+        except Exception:
+            continue
+    return None
+
+
+def _runtime_dir() -> Path:
+    """워처 본체가 위치한 폴더. PyInstaller 빌드면 sys.executable 옆, .py 직접 실행이면 스크립트 폴더.
+    SumatraPDF 처럼 워처와 같이 배포되는 포터블 도구를 찾을 때 기준점."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def find_sumatra_exe() -> str | None:
+    """SumatraPDF 실행파일 경로 탐색.
+    1순위: config.json 의 sumatra_exe (사용자 직접 지정)
+    2순위: 워처 exe 옆에 같이 배포된 포터블 (SumatraPDF.exe / sumatra/SumatraPDF.exe)
+    3순위: 일반 설치 위치 (Program Files)
+    못 찾으면 None — 호출자가 ShellExecute 폴백.
+    """
+    cfg = _load_config()
+    cfg_path = (cfg.get("sumatra_exe") or "").strip()
+    if cfg_path and Path(cfg_path).exists():
+        return cfg_path
+    rt = _runtime_dir()
+    candidates = [
+        rt / "SumatraPDF.exe",
+        rt / "sumatra" / "SumatraPDF.exe",
+        rt / "sumatra" / "SumatraPDF-64.exe",
+        Path("C:/Program Files/SumatraPDF/SumatraPDF.exe"),
+        Path("C:/Program Files (x86)/SumatraPDF/SumatraPDF.exe"),
+    ]
+    for c in candidates:
+        try:
+            if c.exists():
+                return str(c)
+        except Exception:
+            continue
+    return None
 EVIDENCE_URL_BASE = "https://hdsigncraft.com/p/"
 API_BASE = "https://hdsign-production.up.railway.app"
 
@@ -1073,6 +1137,42 @@ def get_current_tracked_base() -> str:
     return (_load_config().get("network_customer_base") or "").strip()
 
 
+def change_flexsign_path_async():
+    """GUI [FlexSign 위치 지정] 버튼에서 호출.
+    파일 선택 다이얼로그로 App.exe 를 직접 골라 config.json 에 저장.
+    빌드된 워처가 새 PC 에서 처음 실행될 때 한 번만 누르면 됨."""
+    def _ask():
+        # 보통 FlexSign 폴더는 Desktop 또는 Program Files 에 있음.
+        existing = _load_config().get("flexsign_exe", "")
+        initial = str(Path(existing).parent) if existing and Path(existing).exists() \
+            else str(Path.home() / "Desktop")
+        chosen = filedialog.askopenfilename(
+            title="FlexSign App.exe 선택",
+            initialdir=initial,
+            filetypes=[("FlexSign 실행파일", "App.exe"), ("실행파일", "*.exe"), ("모든 파일", "*.*")],
+        )
+        if not chosen:
+            return
+        chosen_path = Path(chosen)
+        if not chosen_path.exists():
+            messagebox.showerror("FlexSign 위치 지정 실패", f"선택한 파일이 없습니다:\n{chosen}")
+            return
+        if chosen_path.name.lower() != "app.exe":
+            if not messagebox.askyesno(
+                "확인",
+                f"선택한 파일이 App.exe 가 아닙니다.\n\n{chosen_path.name}\n\n그래도 사용할까요?"):
+                return
+        config = _load_config()
+        config["flexsign_exe"] = str(chosen_path)
+        if not _save_config(config):
+            messagebox.showerror("저장 실패", "config.json 저장에 실패했습니다. 워처 로그를 확인해주세요.")
+            return
+        ui_log(f"FlexSign 위치 지정: {chosen_path}")
+        messagebox.showinfo("FlexSign 위치 지정 완료", f"FlexSign 위치가 저장되었습니다.\n\n{chosen_path}")
+
+    _ui_queue.put(("run", _ask))
+
+
 def change_tracked_folder_async(initial_dir: str | None = None):
     """GUI [추적 폴더 변경] 버튼에서 호출.
     1) 폴더 선택 다이얼로그 → 새 base 결정
@@ -1414,27 +1514,64 @@ def resolve_paper_printer() -> str | None:
     return None
 
 
-def print_pdf_to_paper(pdf_path: Path) -> bool:
+def print_pdf_to_paper(pdf_path: Path, copies: int = 1) -> bool:
     """현재 PC 에 설치된 삼성 프린터로 직접 PDF 인쇄. 시스템 기본 프린터를 건드리지 않으므로
     노트북처럼 기본이 PDF24 로 잡혀 있어도 종이는 항상 삼성으로 간다.
-    1차: ShellExecute "printto" — 프린터를 명시 지정해 PDF 핸들러에 전달.
-    2차(폴백): 기본 프린터를 잠깐 그 프린터로 바꾼 뒤 "print" 동사 호출,
-              스풀러가 작업을 큐에 넣을 시간을 두고 원래 프린터로 복구."""
+    0차(권장): SumatraPDF — 무음 + 인쇄 후 자동종료. 한PDF/Acrobat 같은 무거운 핸들러를 우회.
+    1차: ShellExecute "printto" — OS 기본 PDF 핸들러에 위임. SumatraPDF 미설치 시 폴백.
+    2차: 기본 프린터를 잠깐 그 프린터로 바꾼 뒤 "print" 동사 호출.
+
+    copies: 인쇄 매수. SumatraPDF 는 -print-settings "<N>x" 로 한 번에 처리.
+            ShellExecute 폴백은 N 회 반복 호출."""
     target = resolve_paper_printer()
     if not target:
         ui_log("종이 프린터를 찾지 못함 — PAPER_PRINTER_CANDIDATES 또는 PAPER_PRINTER_PATTERN 확인 필요")
         return False
 
-    # 1차: printto 동사
+    if copies < 1:
+        copies = 1
+
+    # 0차: SumatraPDF — 핸들러 매개 없이 직접 프린터로 보냄. 기존 한PDF/Adobe 가 매번 로드되며
+    # 발생하던 1~5초 지연이 사라지고, -exit-on-print 로 파일 핸들도 즉시 해제됨.
+    # 매수는 -print-settings "<N>x" 가 일부 프린터 드라이버에서 무시되는 사례가 있어
+    # 호출 자체를 N 회 반복하는 방식으로 통일 — 한 호출당 ~0.3초라 3~5장도 1~2초 수준.
+    sumatra = find_sumatra_exe()
+    if sumatra:
+        try:
+            ok_count = 0
+            for i in range(copies):
+                rc = subprocess.run(
+                    [sumatra, "-print-to", target, "-silent", "-exit-on-print", str(pdf_path)],
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                    timeout=60,
+                ).returncode
+                if rc == 0:
+                    ok_count += 1
+                else:
+                    ui_log(f"SumatraPDF 종료코드 {rc} ({i+1}/{copies})")
+            if ok_count == copies:
+                ui_log(f"종이 인쇄({target}) 전달[Sumatra×{copies}]: {pdf_path.name}")
+                return True
+            if ok_count > 0:
+                ui_log(f"SumatraPDF 부분 성공 {ok_count}/{copies} — printto 폴백")
+        except Exception as e:
+            ui_log(f"SumatraPDF 호출 실패: {e} — printto 폴백")
+
+    # 1차: printto 동사 — 핸들러 자체에는 매수 옵션이 없으므로 N 회 호출.
     try:
         import win32api
-        rc = win32api.ShellExecute(
-            0, "printto", str(pdf_path), f'"{target}"', None, 0
-        )
-        if rc > 32:
-            ui_log(f"종이 인쇄({target}) 전달: {pdf_path.name}")
+        ok_any = False
+        for i in range(copies):
+            rc = win32api.ShellExecute(
+                0, "printto", str(pdf_path), f'"{target}"', None, 0
+            )
+            if rc > 32:
+                ok_any = True
+            else:
+                ui_log(f"printto 거부(rc={rc}, {i+1}/{copies}) — 폴백 검토")
+        if ok_any:
+            ui_log(f"종이 인쇄({target}) 전달[{copies}회]: {pdf_path.name}")
             return True
-        ui_log(f"printto 거부(rc={rc}) — 기본 프린터 임시 전환 방식으로 폴백")
     except Exception as e:
         ui_log(f"printto 예외: {e} — 기본 프린터 임시 전환 방식으로 폴백")
 
@@ -1445,10 +1582,11 @@ def print_pdf_to_paper(pdf_path: Path) -> bool:
             ui_log(f"종이 프린터({target}) 기본 설정 실패 — 인쇄 보류")
             return False
         try:
-            ctypes.windll.shell32.ShellExecuteW(0, "print", str(pdf_path), None, None, 0)
-            ui_log(f"종이 인쇄({target}) 전달(폴백): {pdf_path.name}")
-            # ShellExecute 는 비동기 — 스풀러가 PDF 를 가져갈 시간을 둔다.
-            time.sleep(2.0)
+            for _ in range(copies):
+                ctypes.windll.shell32.ShellExecuteW(0, "print", str(pdf_path), None, None, 0)
+                # ShellExecute 는 비동기 — 스풀러가 PDF 를 가져갈 시간을 둔다.
+                time.sleep(2.0)
+            ui_log(f"종이 인쇄({target}) 전달(폴백×{copies}): {pdf_path.name}")
             return True
         finally:
             if prev and prev != target:
@@ -2047,8 +2185,9 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         fields_card = tk.Frame(sec2, bg=BG_SOFT,
                                highlightbackground=BORDER, highlightthickness=1)
         fields_card.pack(fill="x", pady=(8, 0))
+        # 납기 행과 배송 행을 따로 둔다 — 한 줄에 다 넣으면 우측 분배함 영역까지 밀어내므로.
         fields = tk.Frame(fields_card, bg=BG_SOFT)
-        fields.pack(padx=14, pady=12, anchor="w")
+        fields.pack(padx=14, pady=(12, 4), anchor="w", fill="x")
 
         tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
                  font=("맑은 고딕", 10, "bold")).pack(side="left")
@@ -2100,7 +2239,10 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         new_day_var.trace_add("write", _refresh_new_due_preview)
         _refresh_new_due_preview()
 
-        tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
+        # 배송 행 — 납기 행 아래로 빼서 가로 폭을 줄임. (이전에는 같은 줄이라 분배함이 잘림)
+        new_delivery_row = tk.Frame(fields_card, bg=BG_SOFT)
+        new_delivery_row.pack(padx=14, pady=(0, 12), anchor="w", fill="x")
+        tk.Label(new_delivery_row, text="배송", bg=BG_SOFT, fg=LABEL_FG,
                  font=("맑은 고딕", 10, "bold")).pack(side="left")
         new_delivery_var.set(
             DELIVERY_ENUM_TO_KO.get(most_recent.get("deliveryMethod") or "", "")
@@ -2115,7 +2257,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 else:
                     btn.config(bg="white", fg=LABEL_FG, relief="solid")
 
-        delivery_btn_row = tk.Frame(fields, bg=BG_SOFT)
+        delivery_btn_row = tk.Frame(new_delivery_row, bg=BG_SOFT)
         delivery_btn_row.pack(side="left", padx=(8, 0))
         for label in DELIVERY_ENUM_TO_KO.values():
             b = tk.Button(
@@ -2372,7 +2514,10 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         day_var_local.trace_add("write", _refresh_mod_due_preview)
         _refresh_mod_due_preview()
 
-        tk.Label(fields, text="배송", bg=BG_SOFT, fg=LABEL_FG,
+        # 배송 행 — 납기 아래로 분리 (이전: 같은 줄에 있어 우측 분배함 영역을 가림)
+        delivery_row_inner = tk.Frame(inner, bg=BG_SOFT)
+        delivery_row_inner.pack(fill="x", anchor="w", pady=(8, 0))
+        tk.Label(delivery_row_inner, text="배송", bg=BG_SOFT, fg=LABEL_FG,
                  font=("맑은 고딕", 10, "bold")).pack(side="left")
         delivery_var_local = tk.StringVar(
             value=DELIVERY_ENUM_TO_KO.get(ws.get("deliveryMethod") or "", "")
@@ -2387,7 +2532,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 else:
                     btn.config(bg="white", fg=LABEL_FG, relief="solid")
 
-        delivery_btn_row = tk.Frame(fields, bg=BG_SOFT)
+        delivery_btn_row = tk.Frame(delivery_row_inner, bg=BG_SOFT)
         delivery_btn_row.pack(side="left", padx=(10, 0))
         for label in DELIVERY_ENUM_TO_KO.values():
             b = tk.Button(
@@ -2753,12 +2898,88 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         font=("맑은 고딕", 9), anchor="w", justify="left", wraplength=350,
     ).pack(fill="x", pady=(8, 0))
 
+    # ── 인쇄 매수 결정 ───────────────────────────────────────
+    # 분배함 클릭 칸 수 + 추가 매수 = 총 인쇄 매수. 클릭/입력 시 즉시 총합 갱신.
+    # 둘 다 0 이어도 최소 1장은 보장(직원 보관용) — 기존 동작과의 호환.
+    tk.Frame(photo_panel, bg=BORDER, height=1).pack(fill="x", pady=(10, 8))
+
+    tk.Label(
+        photo_panel, text="④ 인쇄 매수",
+        bg=BG_SOFT, fg=TITLE_FG,
+        font=("맑은 고딕", 10, "bold"), anchor="w",
+    ).pack(fill="x")
+
+    copies_extra_var = tk.StringVar(value="0")
+
+    counts_row = tk.Frame(photo_panel, bg=BG_SOFT)
+    counts_row.pack(fill="x", pady=(4, 0))
+
+    tk.Label(counts_row, text="분배함",
+             bg=BG_SOFT, fg=LABEL_FG,
+             font=("맑은 고딕", 9)).pack(side="left")
+    slot_count_lbl = tk.Label(
+        counts_row, text="0칸",
+        bg=BG_SOFT, fg=TITLE_FG,
+        font=("맑은 고딕", 11, "bold"),
+    )
+    slot_count_lbl.pack(side="left", padx=(4, 14))
+
+    tk.Label(counts_row, text="+ 더뽑기",
+             bg=BG_SOFT, fg=LABEL_FG,
+             font=("맑은 고딕", 9)).pack(side="left")
+    extra_entry = tk.Entry(
+        counts_row, textvariable=copies_extra_var, width=4, justify="center",
+        font=("맑은 고딕", 11, "bold"),
+        relief="solid", bd=1, bg="white", highlightthickness=0,
+    )
+    extra_entry.pack(side="left", padx=(4, 4))
+    tk.Label(counts_row, text="장",
+             bg=BG_SOFT, fg=LABEL_FG,
+             font=("맑은 고딕", 9)).pack(side="left", padx=(0, 14))
+
+    tk.Label(counts_row, text="=",
+             bg=BG_SOFT, fg=LABEL_FG,
+             font=("맑은 고딕", 11, "bold")).pack(side="left", padx=(0, 4))
+    total_count_lbl = tk.Label(
+        counts_row, text="총 1장",
+        bg=BG_SOFT, fg=ACCENT,
+        font=("맑은 고딕", 12, "bold"),
+    )
+    total_count_lbl.pack(side="left")
+
+    def _calc_copies() -> tuple[int, int, int]:
+        """(slot_n, extra_n, total) — 슬롯 칸 수, 추가 매수, 총합. 총합은 최소 1."""
+        slot_n = sum(
+            1 for label, mapped, _ in SLOT_BOXES
+            if mapped and slot_active.get(label)
+        )
+        try:
+            extra_n = int((copies_extra_var.get() or "0").strip() or "0")
+        except ValueError:
+            extra_n = 0
+        if extra_n < 0:
+            extra_n = 0
+        total = max(1, slot_n + extra_n)
+        return slot_n, extra_n, total
+
+    def _refresh_copies(*_):
+        slot_n, _extra_n, total = _calc_copies()
+        try:
+            slot_count_lbl.config(text=f"{slot_n}칸")
+            total_count_lbl.config(text=f"총 {total}장")
+        except Exception:
+            pass
+
+    copies_extra_var.trace_add("write", _refresh_copies)
+
     def _refresh_summary():
         tags = collect_dept_tags()
         if not tags:
             summary_var.set("선택된 부서 없음 — 모바일 뷰어에서는 \"전체보기\"에서만 노출됩니다.")
         else:
             summary_var.set("배부 부서: " + " · ".join(tags))
+        # 분배함 클릭 시 매수 카운트도 같이 갱신.
+        _refresh_copies()
 
     def _restore_dept_tags(ws):
         """선택된 작업지시서의 저장된 분배 선택을 분배함 그림에 ✓ 로 복원.
@@ -2822,6 +3043,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 return
             delivery_ko = (new_delivery_var.get() or "").strip()
             delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
+            _slot_n, _extra_n, total_copies = _calc_copies()
             result["value"] = {
                 "mode": "new",
                 "change_type": "delivery",  # 신규는 사실상 납기/배송 흐름과 동일
@@ -2836,6 +3058,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 "department_tags": collect_dept_tags(),
                 "department_slots": collect_dept_slots(),
                 "skip_print": bool(skip_print),
+                "copies": total_copies,
             }
             dlg.destroy()
             return
@@ -2875,6 +3098,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         # 메모를 수정/추가했거나 비웠으면 의미 있는 변경으로 처리(기존 로직).
         note_unchanged = bool(note) and note == original_note
         content_changed = bool(note) and not note_unchanged
+        _slot_n_m, _extra_n_m, total_copies_m = _calc_copies()
         result["value"] = {
             "mode": "modify",
             "change_type": "combined",
@@ -2890,6 +3114,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             "department_tags": collect_dept_tags(),
             "department_slots": collect_dept_slots(),
             "skip_print": bool(skip_print),
+            "copies": total_copies_m,
         }
         dlg.destroy()
         return
@@ -2902,8 +3127,10 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         dlg.destroy()
 
     def skip_upload(_event=None):
-        # 종이 인쇄만 진행 — 웹에 안 올림.
-        result["value"] = {"order_number": None}
+        # 종이 인쇄만 진행 — 웹에 안 올림. 분배함 클릭 + 더뽑기 매수도 함께 전달해야
+        # 1장만 나오는 회귀를 막을 수 있다.
+        _slot_n_s, _extra_n_s, total_copies_s = _calc_copies()
+        result["value"] = {"order_number": None, "copies": total_copies_s}
         dlg.destroy()
 
     # ── 버튼 ──────────────────────────────────────────────
@@ -3035,8 +3262,9 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     return result["value"]
 
 
-def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 30):
-    """종이 인쇄(ShellExecute)가 PDF 핸들을 닫을 시간을 벌고 백그라운드에서 unlink.
+def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 10):
+    """종이 인쇄가 PDF 핸들을 닫을 시간을 벌고 백그라운드에서 unlink.
+    SumatraPDF -exit-on-print 흐름에선 거의 즉시 핸들이 풀리므로 10초면 충분.
     실패 시 조용히 로그만 — 다음 인쇄 때까지 남아있어도 동작에는 영향 없음."""
     def _run():
         time.sleep(delay_sec)
@@ -3184,6 +3412,8 @@ def _process_printed_pdf(pdf_path: Path):
         # 매칭할 주문이 큐에 없으면 일단 종이만 인쇄. 직원이 따로 처리할 수 있도록 로그만 남김.
         ui_log(f"인쇄 PDF 감지 — 큐에 주문 없음, 종이 인쇄만 진행: {pdf_path.name}")
         print_pdf_to_paper(pdf_path)
+        # 큐 빈 상태에서의 인쇄는 더 이상 쓸 데 없는 PDF — 누적 방지로 정리.
+        _schedule_printed_pdf_cleanup(pdf_path)
         return
 
     # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
@@ -3219,9 +3449,13 @@ def _process_printed_pdf(pdf_path: Path):
         return
 
     order_number = sel.get("order_number")
+    # 다이얼로그가 정한 매수. 큐에 주문 없을 때 흐름은 위에서 1장 기본으로 처리.
+    copies = int(sel.get("copies") or 1)
     if order_number is None:
-        ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name})")
-        print_pdf_to_paper(pdf_path)
+        ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name}, {copies}장)")
+        print_pdf_to_paper(pdf_path, copies=copies)
+        # 직원이 명시적으로 "웹에 안 올림" 선택 — PDF 가 더 갈 데 없으므로 정리.
+        _schedule_printed_pdf_cleanup(pdf_path)
         return
 
     # 새 폼은 month + day 를 같이 받음 — 명시적 월 입력으로 자동 추론 의존을 없앤다.
@@ -3252,7 +3486,7 @@ def _process_printed_pdf(pdf_path: Path):
     if sel.get("skip_print"):
         ui_log(f"인쇄 — '인쇄 안 함' 선택, 종이 인쇄 생략 ({pdf_path.name})")
     else:
-        print_pdf_to_paper(pdf_path)
+        print_pdf_to_paper(pdf_path, copies=copies)
     # 업로드 성공 시 로컬 PDF 자동 삭제 — 웹(R2)에 보관됐으니 printed/ 누적 방지.
     # 종이 프린터(외부 리더)가 파일 핸들을 닫기 전에 지우면 인쇄 실패하므로 30초 지연.
     # 업로드 실패 시엔 보존 — 사용자가 수동 재업로드/검증할 수 있게.
@@ -4347,7 +4581,10 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     untitled .fs 도큐먼트로 임포트시킨다. 드래그앤드롭 방식은 .ai 도큐먼트로
     잡혀 [Save] 시 .ai 로 저장되지만, [Open] 메뉴로 열면 새 .fs 로 잡혀
     [Save] 한 번이면 .fs 로 저장된다.
-    동작 순서: 창 활성화 → Ctrl+O → (다이얼로그) 클립보드에 경로 복사 → Ctrl+V → Enter.
+    동작 순서:
+      1순위) WM_COMMAND 로 메뉴 직접 호출 → 다이얼로그 → 클립보드+Ctrl+V → Enter
+            (포커스/IME/보안SW 키후킹 모두 우회)
+      2순위) Ctrl+O 키 시뮬레이션 (1순위 실패 시 폴백, 스캔코드 강화)
     """
     try:
         import win32api
@@ -4361,15 +4598,85 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     VK_RETURN = 0x0D
     VK_MENU = 0x12  # Alt
     KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_SCANCODE = 0x0008
+    WM_COMMAND = 0x0111
+    MF_BYPOSITION = 0x0400
+
+    def _vk_scancode(vk: int) -> int:
+        try:
+            return user32.MapVirtualKeyW(vk, 0)  # MAPVK_VK_TO_VSC
+        except Exception:
+            return 0
 
     def _press(vk: int) -> None:
-        win32api.keybd_event(vk, 0, 0, 0)
-        win32api.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+        # 스캔코드 0 으로 보내면 일부 보안 SW / 키보드 후킹이 가짜로 판정해 차단함.
+        # MapVirtualKey 로 실제 스캔코드 부여 — 노트북에선 둘 다 통하지만 사무실 PC 에선 차이 남.
+        sc = _vk_scancode(vk)
+        win32api.keybd_event(vk, sc, 0, 0)
+        win32api.keybd_event(vk, sc, KEYEVENTF_KEYUP, 0)
 
     def _chord(modifier: int, key: int) -> None:
-        win32api.keybd_event(modifier, 0, 0, 0)
-        _press(key)
-        win32api.keybd_event(modifier, 0, KEYEVENTF_KEYUP, 0)
+        sc_mod = _vk_scancode(modifier)
+        sc_key = _vk_scancode(key)
+        win32api.keybd_event(modifier, sc_mod, 0, 0)
+        time.sleep(0.05)
+        win32api.keybd_event(key, sc_key, 0, 0)
+        time.sleep(0.05)
+        win32api.keybd_event(key, sc_key, KEYEVENTF_KEYUP, 0)
+        time.sleep(0.05)
+        win32api.keybd_event(modifier, sc_mod, KEYEVENTF_KEYUP, 0)
+
+    def _find_open_menu_id() -> int:
+        """FlexSign 의 메뉴 트리를 순회해 'Open' / '열기' 항목의 menu ID 를 찾는다.
+        실패 시 0 반환. 영문/한글 라벨 모두 대응.
+
+        Windows 메뉴 텍스트는 보통 '&Open...\tCtrl+O' 형태 — 액셀러레이터 prefix '&' 와
+        탭 이후 단축키 표기를 모두 제거한 뒤 매칭. 노트북에선 탭 없이 '&Open' 만이라
+        startswith('open') 으로 통과했지만 사무실 PC 에선 다른 빌드일 수 있으니 둘 다 처리.
+        """
+        try:
+            menu = user32.GetMenu(hwnd)
+            if not menu:
+                ui_log("FlexSign 창에 표준 Windows 메뉴 없음 (커스텀 UI)")
+                return 0
+            top_count = user32.GetMenuItemCount(menu)
+            collected: list[str] = []
+            for top_idx in range(top_count):
+                sub = user32.GetSubMenu(menu, top_idx)
+                if not sub:
+                    continue
+                cnt = user32.GetMenuItemCount(sub)
+                for i in range(cnt):
+                    buf = ctypes.create_unicode_buffer(256)
+                    n = user32.GetMenuStringW(sub, i, buf, 256, MF_BYPOSITION)
+                    if n <= 0:
+                        continue
+                    raw = buf.value
+                    # 탭 이후는 단축키 표기 ("Open...\tCtrl+O") — 본 라벨만 남김.
+                    label = raw.split("\t", 1)[0]
+                    # & 는 액셀러레이터 prefix — 매칭에서 제외.
+                    label = label.replace("&", "")
+                    text = label.lower().strip()
+                    if not text:
+                        continue
+                    collected.append(text)
+                    # "Recent Files" / "Open Recent" / "Open Again" 류는 제외 (서브픽커).
+                    if "recent" in text or "최근" in text or "again" in text:
+                        continue
+                    # "Open...", "Open File", "열기...", "파일 열기" 등.
+                    if (text.startswith("open") or text.startswith("열기")
+                            or "파일 열기" in text or "open file" in text):
+                        mid = user32.GetMenuItemID(sub, i)
+                        if mid and mid != 0xFFFFFFFF:
+                            return mid & 0xFFFF
+            # 매칭 실패 시 발견된 아이템들을 로그로 덤프 — 다음 라운드 디버깅 자료.
+            if collected:
+                preview = ", ".join(collected[:20])
+                ui_log(f"메뉴 아이템 발견({len(collected)}개): {preview}")
+            return 0
+        except Exception as e:
+            ui_log(f"메뉴 검색 예외: {e}")
+            return 0
 
     def _force_foreground() -> bool:
         """Windows foreground stealing 보호 우회 + 검증.
@@ -4435,25 +4742,43 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
                 time.sleep(0.4)
 
         # 1) 창 활성화 보장 — 검증까지 통과해야 키 입력을 시작한다.
+        # WM_COMMAND 우선 경로에선 포커스가 굳이 필요 없지만, Ctrl+O 폴백 경로엔 필수라
+        # 양쪽 경로 모두 같은 진입을 거치도록 둔다.
         if not _force_foreground():
             ui_log("FlexSign 창을 foreground 로 가져오지 못함 — 메뉴 자동화 중단")
             return False
         time.sleep(0.4)
 
-        # 2) Ctrl+O — 파일 열기 다이얼로그. 다이얼로그가 실제로 떴는지 폴링해서
-        # 확인한다. 캔버스/도구에 포커스가 있어 단축키가 흡수된 케이스를 방지.
-        # 한 번 실패하면 캔버스 클릭 같은 다른 이벤트 없이 한 번 더 재시도.
+        # 2) 파일 열기 다이얼로그 띄우기 — 두 가지 경로를 순서대로 시도.
+        #
+        # 2a) WM_COMMAND 로 메뉴 직접 호출 (1순위)
+        #     포커스/IME/키보드 후킹과 무관하게 FlexSign 의 메뉴 핸들러를 직접 깨운다.
+        #     사무실 PC 처럼 키 시뮬레이션이 막히는 환경에서도 통한다.
         dlg_hwnd = 0
-        for attempt in range(2):
-            _chord(VK_CONTROL, ord('O'))
-            dlg_hwnd = _wait_for_open_dialog(timeout=3.0)
-            if dlg_hwnd:
-                break
-            ui_log(f"Ctrl+O 후 다이얼로그 미감지 — 재시도 {attempt + 1}/2")
-            # 재시도 전에 메인 창에 다시 foreground 보장
-            if not _force_foreground():
-                break
-            time.sleep(0.4)
+        open_id = _find_open_menu_id()
+        if open_id:
+            try:
+                user32.PostMessageW(hwnd, WM_COMMAND, open_id, 0)
+                ui_log(f"메뉴 ID {open_id} 로 [Open] 직접 호출")
+                dlg_hwnd = _wait_for_open_dialog(timeout=3.0)
+            except Exception as e:
+                ui_log(f"WM_COMMAND 호출 실패: {e}")
+        else:
+            ui_log("FlexSign 메뉴에서 [Open] 항목을 찾지 못함 — Ctrl+O 키 시뮬레이션으로 폴백")
+
+        # 2b) Ctrl+O 키 시뮬레이션 (2순위, WM_COMMAND 가 안 통할 때 폴백)
+        #     스캔코드 부여로 키 후킹 SW 도 가능한 한 통과시킨다.
+        if not dlg_hwnd:
+            for attempt in range(2):
+                _chord(VK_CONTROL, ord('O'))
+                dlg_hwnd = _wait_for_open_dialog(timeout=3.0)
+                if dlg_hwnd:
+                    break
+                ui_log(f"Ctrl+O 후 다이얼로그 미감지 — 재시도 {attempt + 1}/2")
+                if not _force_foreground():
+                    break
+                time.sleep(0.4)
+
         if not dlg_hwnd:
             ui_log("파일 열기 다이얼로그가 끝내 나타나지 않음 — 캔버스 오입력 방지를 위해 중단")
             return False
@@ -4515,11 +4840,13 @@ def launch_flexsign(file_path: Path):
     # 넘기면 .ai 도큐먼트로 잡혀 .fs 저장이 안 되므로, 빈 인스턴스로만 띄우고
     # 창이 뜨면 그 위에 [파일 → 열기] 시뮬레이션을 적용한다.
     if not hwnd:
-        if not Path(FLEXSIGN_EXE).exists():
-            ui_log(f"FlexSign 실행파일을 찾을 수 없습니다: {FLEXSIGN_EXE}")
+        flexsign_exe = find_flexsign_exe()
+        if not flexsign_exe:
+            ui_log("FlexSign 실행파일을 찾을 수 없습니다. [FlexSign 위치 지정] 버튼으로 직접 지정해주세요.")
+            _ui_queue.put(("flexsign_missing",))
             return
         try:
-            subprocess.Popen([FLEXSIGN_EXE])
+            subprocess.Popen([flexsign_exe])
             ui_log("FlexSign 자동 실행 — 창 뜰 때까지 대기")
         except Exception as e:
             ui_log(f"FlexSign 실행 실패: {e}")
@@ -4845,6 +5172,16 @@ class App(tk.Tk):
             command=change_tracked_folder_async,
         )
         change_btn.pack(side="left", padx=(8, 0))
+        flex_btn = tk.Button(
+            act, text="FlexSign 위치 지정",
+            bg="#f4f4f5", fg="#3f3f46",
+            activebackground="#e4e4e7",
+            font=("맑은 고딕", 9),
+            relief="flat", bd=0, highlightthickness=0,
+            cursor="hand2", padx=12, pady=6,
+            command=change_flexsign_path_async,
+        )
+        flex_btn.pack(side="left", padx=(8, 0))
 
         # 현재 추적 경로를 작게 표시 — 매년 1월 폴더 옮긴 후 사장님이 확인 용도.
         self._tracked_lbl = tk.Label(
@@ -5183,6 +5520,15 @@ class App(tk.Tk):
                     self.after(0, fn)
                 elif item[0] == "refresh_tracked":
                     self.after(0, self._refresh_tracked_label)
+                elif item[0] == "flexsign_missing":
+                    # FlexSign 실행파일을 찾지 못한 경우 — 즉시 위치지정 다이얼로그 유도.
+                    def _prompt():
+                        if messagebox.askyesno(
+                            "FlexSign 위치 확인 필요",
+                            "FlexSign 실행파일(App.exe)을 찾지 못했습니다.\n\n"
+                            "지금 [FlexSign 위치 지정] 다이얼로그를 열까요?"):
+                            change_flexsign_path_async()
+                    self.after(0, _prompt)
                 elif item[0] == "notify_order":
                     self._handle_order_alert(item[1], item[2])
         except Exception:
