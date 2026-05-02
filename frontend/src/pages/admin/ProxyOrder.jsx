@@ -18,6 +18,12 @@ const DUE_TIMES = [
     { value: '오후 중', desc: '12시 이후' },
     { value: '당일 내', desc: '시간 무관' },
 ];
+const DUE_TIME_PRESETS = DUE_TIMES.map((t) => t.value);
+
+function composeCustomTime(ampm, hour, minute) {
+    if (!hour || minute === '' || minute == null) return '';
+    return `${ampm} ${hour}시 ${minute}분`;
+}
 
 const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -55,6 +61,11 @@ export default function ProxyOrder() {
     const [note, setNote] = useState('');
     const [dueDate, setDueDate] = useState(todayISO());
     const [dueTime, setDueTime] = useState('당일 내');
+    const [customTimeMode, setCustomTimeMode] = useState(false);
+    const [customAmpm, setCustomAmpm] = useState('오전');
+    const [customHour, setCustomHour] = useState('');
+    const [customMinute, setCustomMinute] = useState('');
+    const minuteInputRef = useRef(null);
     const [delivery, setDelivery] = useState('CARGO');
     const [deliveryAddress, setDeliveryAddress] = useState('');
 
@@ -71,8 +82,8 @@ export default function ProxyOrder() {
                 if (!res.ok) throw new Error('거래처 목록을 불러오지 못했습니다.');
                 const data = await res.json();
                 if (!alive) return;
-                const active = (Array.isArray(data) ? data : []).filter((c) => c.status === 'ACTIVE');
-                setClients(active);
+                const selectable = (Array.isArray(data) ? data : []).filter((c) => c.status === 'ACTIVE' || c.status === 'PENDING_SIGNUP');
+                setClients(selectable);
             } catch (err) {
                 if (alive) setFeedback({ type: 'error', msg: err.message });
             } finally {
@@ -84,13 +95,14 @@ export default function ProxyOrder() {
 
     const clientSuggestions = useMemo(() => {
         const q = clientQuery.trim().toLowerCase();
-        if (!q) return clients.slice(0, 8);
-        return clients
-            .filter((c) => {
-                const haystack = `${c.companyName || ''} ${c.networkFolderName || ''} ${c.aliases || ''} ${c.contactName || ''}`.toLowerCase();
-                return haystack.includes(q);
-            })
-            .slice(0, 8);
+        const sorted = [...clients].sort((a, b) =>
+            (a.companyName || '').localeCompare(b.companyName || '', 'ko')
+        );
+        if (!q) return sorted;
+        return sorted.filter((c) => {
+            const haystack = `${c.companyName || ''} ${c.networkFolderName || ''} ${c.aliases || ''} ${c.contactName || ''}`.toLowerCase();
+            return haystack.includes(q);
+        });
     }, [clientQuery, clients]);
 
     const pickClient = (c) => {
@@ -278,7 +290,12 @@ export default function ProxyOrder() {
                     {selectedClient ? (
                         <div className="proxy-client-pick">
                             <div className="proxy-client-info">
-                                <span className="proxy-client-name">{selectedClient.companyName}</span>
+                                <span className="proxy-client-name">
+                                    {selectedClient.companyName}
+                                    {selectedClient.status === 'PENDING_SIGNUP' && (
+                                        <span className="proxy-pending-badge">가입대기</span>
+                                    )}
+                                </span>
                                 <span className="proxy-client-meta">
                                     {selectedClient.contactName ? `${selectedClient.contactName} · ` : ''}
                                     {selectedClient.phone || '-'}
@@ -304,7 +321,12 @@ export default function ProxyOrder() {
                                     {clientSuggestions.map((c) => (
                                         <li key={c.id}>
                                             <button type="button" className="proxy-suggest-item" onMouseDown={(e) => e.preventDefault()} onClick={() => pickClient(c)}>
-                                                <span className="proxy-suggest-name">{c.companyName}</span>
+                                                <span className="proxy-suggest-name">
+                                                    {c.companyName}
+                                                    {c.status === 'PENDING_SIGNUP' && (
+                                                        <span className="proxy-pending-badge">가입대기</span>
+                                                    )}
+                                                </span>
                                                 <span className="proxy-suggest-meta">
                                                     {c.contactName ? `${c.contactName} · ` : ''}
                                                     {c.phone || ''}
@@ -414,14 +436,83 @@ export default function ProxyOrder() {
                             <button
                                 key={t.value}
                                 type="button"
-                                className={`proxy-time-btn ${dueTime === t.value ? 'on' : ''}`}
-                                onClick={() => setDueTime(t.value)}
+                                className={`proxy-time-btn ${!customTimeMode && dueTime === t.value ? 'on' : ''}`}
+                                onClick={() => { setCustomTimeMode(false); setDueTime(t.value); }}
                             >
                                 <span>{t.value}</span>
                                 <span className="proxy-time-desc">{t.desc}</span>
                             </button>
                         ))}
+                        <button
+                            type="button"
+                            className={`proxy-time-btn ${customTimeMode ? 'on' : ''}`}
+                            onClick={() => {
+                                setCustomTimeMode(true);
+                                if (DUE_TIME_PRESETS.includes(dueTime)) setDueTime('');
+                            }}
+                        >
+                            <span>시간 지정</span>
+                            <span className="proxy-time-desc">직접 입력</span>
+                        </button>
                     </div>
+                    {customTimeMode && (
+                        <div className="proxy-time-custom">
+                            <div className="proxy-ampm-toggle">
+                                {['오전', '오후'].map((ap) => (
+                                    <button
+                                        key={ap}
+                                        type="button"
+                                        className={`proxy-ampm-btn ${customAmpm === ap ? 'on' : ''}`}
+                                        onClick={() => {
+                                            setCustomAmpm(ap);
+                                            setDueTime(composeCustomTime(ap, customHour, customMinute));
+                                        }}
+                                    >
+                                        {ap}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="proxy-hm-row">
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    className="proxy-hm-input"
+                                    placeholder="00"
+                                    maxLength={2}
+                                    value={customHour}
+                                    onChange={(e) => {
+                                        const v = e.target.value.replace(/\D/g, '').slice(0, 2);
+                                        const n = v === '' ? '' : Math.min(12, parseInt(v, 10) || 0);
+                                        const next = n === '' ? '' : String(n);
+                                        setCustomHour(next);
+                                        setDueTime(composeCustomTime(customAmpm, next, customMinute));
+                                        if (next.length === 2 || (next.length === 1 && parseInt(next, 10) > 1)) {
+                                            minuteInputRef.current?.focus();
+                                            minuteInputRef.current?.select();
+                                        }
+                                    }}
+                                />
+                                <span className="proxy-hm-unit">시</span>
+                                <input
+                                    ref={minuteInputRef}
+                                    type="text"
+                                    inputMode="numeric"
+                                    className="proxy-hm-input"
+                                    placeholder="00"
+                                    maxLength={2}
+                                    value={customMinute}
+                                    onChange={(e) => {
+                                        const v = e.target.value.replace(/\D/g, '').slice(0, 2);
+                                        const n = v === '' ? '' : Math.min(59, parseInt(v, 10) || 0);
+                                        const next = n === '' ? '' : String(n);
+                                        setCustomMinute(next);
+                                        setDueTime(composeCustomTime(customAmpm, customHour, next));
+                                    }}
+                                />
+                                <span className="proxy-hm-unit">분</span>
+                            </div>
+                        </div>
+                    )}
 
                     <label className="proxy-label" style={{ marginTop: 16 }}>납품 방법</label>
                     <div className="proxy-delivery-row">

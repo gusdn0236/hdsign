@@ -26,6 +26,12 @@ const DUE_TIMES = [
     { value: '오후 중', desc: '12시 이후' },
     { value: '당일 내', desc: '시간 무관' },
 ];
+const DUE_TIME_PRESETS = DUE_TIMES.map((t) => t.value);
+
+function composeCustomTime(ampm, hour, minute) {
+    if (!hour || minute === '' || minute == null) return '';
+    return `${ampm} ${hour}시 ${minute}분`;
+}
 
 const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 // 60MB 초과 시 Railway 메모리/타임아웃 부담 + 일러스트 COM RPC 실패 위험이 커서, 한도를 명시하고
@@ -461,6 +467,11 @@ export default function ClientRequest() {
     const [noteTemplates, setNoteTemplates] = useState([]);
     const [dueDate, setDueDate] = useState('');
     const [dueTime, setDueTime] = useState('');
+    const [customTimeMode, setCustomTimeMode] = useState(false);
+    const [customAmpm, setCustomAmpm] = useState('오전');
+    const [customHour, setCustomHour] = useState('');
+    const [customMinute, setCustomMinute] = useState('');
+    const minuteInputRef = useRef(null);
     const [delivery, setDelivery] = useState('CARGO');
     const [cargoPoint, setCargoPoint] = useState('');
     const [address, setAddress] = useState('');
@@ -848,22 +859,94 @@ export default function ClientRequest() {
                                 onChange={(date) => {
                                     setDueDate(date);
                                     setDueTime('');
+                                    setCustomTimeMode(false);
                                 }}
                             />
                             {dueDate && (
-                                <div className="due-time-wrap">
-                                    {DUE_TIMES.map((time) => (
+                                <>
+                                    <div className="due-time-wrap">
+                                        {DUE_TIMES.map((time) => (
+                                            <button
+                                                key={time.value}
+                                                type="button"
+                                                className={`due-time-btn ${!customTimeMode && dueTime === time.value ? 'active' : ''}`}
+                                                onClick={() => { setCustomTimeMode(false); setDueTime(time.value); }}
+                                            >
+                                                <span className="time-label">{time.value}</span>
+                                                <span className="time-desc">{time.desc}</span>
+                                            </button>
+                                        ))}
                                         <button
-                                            key={time.value}
                                             type="button"
-                                            className={`due-time-btn ${dueTime === time.value ? 'active' : ''}`}
-                                            onClick={() => setDueTime(time.value)}
+                                            className={`due-time-btn ${customTimeMode ? 'active' : ''}`}
+                                            onClick={() => {
+                                                setCustomTimeMode(true);
+                                                if (DUE_TIME_PRESETS.includes(dueTime)) setDueTime('');
+                                            }}
                                         >
-                                            <span className="time-label">{time.value}</span>
-                                            <span className="time-desc">{time.desc}</span>
+                                            <span className="time-label">시간 지정</span>
+                                            <span className="time-desc">직접 입력</span>
                                         </button>
-                                    ))}
-                                </div>
+                                    </div>
+                                    {customTimeMode && (
+                                        <div className="due-time-custom">
+                                            <div className="due-ampm-toggle">
+                                                {['오전', '오후'].map((ap) => (
+                                                    <button
+                                                        key={ap}
+                                                        type="button"
+                                                        className={`due-ampm-btn ${customAmpm === ap ? 'on' : ''}`}
+                                                        onClick={() => {
+                                                            setCustomAmpm(ap);
+                                                            setDueTime(composeCustomTime(ap, customHour, customMinute));
+                                                        }}
+                                                    >
+                                                        {ap}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div className="due-hm-row">
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    className="due-hm-input"
+                                                    placeholder="00"
+                                                    maxLength={2}
+                                                    value={customHour}
+                                                    onChange={(e) => {
+                                                        const v = e.target.value.replace(/\D/g, '').slice(0, 2);
+                                                        const n = v === '' ? '' : Math.min(12, parseInt(v, 10) || 0);
+                                                        const next = n === '' ? '' : String(n);
+                                                        setCustomHour(next);
+                                                        setDueTime(composeCustomTime(customAmpm, next, customMinute));
+                                                        if (next.length === 2 || (next.length === 1 && parseInt(next, 10) > 1)) {
+                                                            minuteInputRef.current?.focus();
+                                                            minuteInputRef.current?.select();
+                                                        }
+                                                    }}
+                                                />
+                                                <span className="due-hm-unit">시</span>
+                                                <input
+                                                    ref={minuteInputRef}
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    className="due-hm-input"
+                                                    placeholder="00"
+                                                    maxLength={2}
+                                                    value={customMinute}
+                                                    onChange={(e) => {
+                                                        const v = e.target.value.replace(/\D/g, '').slice(0, 2);
+                                                        const n = v === '' ? '' : Math.min(59, parseInt(v, 10) || 0);
+                                                        const next = n === '' ? '' : String(n);
+                                                        setCustomMinute(next);
+                                                        setDueTime(composeCustomTime(customAmpm, customHour, next));
+                                                    }}
+                                                />
+                                                <span className="due-hm-unit">분</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
                             )}
                             <label className="req-label" style={{ marginTop: '20px' }}>납품 방법</label>
                             <div className="delivery-options">

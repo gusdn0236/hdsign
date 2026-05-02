@@ -550,6 +550,55 @@
 .due-time-btn.active .time-label { color: #fff; }
 .due-time-btn.active .time-desc  { color: rgba(255,255,255,0.7); }
 
+.due-time-custom {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+    padding: 12px 14px;
+    background: #f7fafb;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    flex-wrap: wrap;
+}
+.due-ampm-toggle {
+    display: inline-flex;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+}
+.due-ampm-btn {
+    padding: 8px 18px;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+.due-ampm-btn.on { background: #005f73; color: #fff; }
+.due-ampm-btn:not(.on):hover { background: #f0f9fa; color: #005f73; }
+
+.due-hm-row { display: inline-flex; align-items: center; gap: 6px; }
+.due-hm-input {
+    width: 64px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    padding: 8px 4px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    color: #111;
+    letter-spacing: 1px;
+}
+.due-hm-input:focus { outline: none; border-color: #005f73; box-shadow: 0 0 0 3px rgba(0,95,115,0.15); }
+.due-hm-unit { font-size: 15px; color: #4b5563; font-weight: 600; margin-right: 4px; }
+
 /* ── Delivery ── */
 .request-page .delivery-options {
     display: grid;

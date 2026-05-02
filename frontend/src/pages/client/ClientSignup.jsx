@@ -137,9 +137,13 @@ export default function ClientSignup() {
                 {/* Step 2 — 본인 확인 + 신청 폼 */}
                 {step === 2 && selected && (
                     <form className="client-login-form" onSubmit={handleSubmit}>
-                        <div className="signup-confirm">
-                            <span>본인 거래처가 맞으신가요?</span>
+                        <div className="signup-confirm signup-confirm-pending">
+                            <span className="signup-pending-tag">가입대기중으로 등록된 거래처</span>
                             <strong>{selected.companyName}</strong>
+                            <p className="signup-pending-desc">
+                                관리자가 미리 등록해둔 거래처입니다.<br />
+                                아래 <b>아이디 · 전화번호 · 이메일</b>만 채워서 가입신청을 완료해 주세요.
+                            </p>
                         </div>
 
                         <div className="form-group">
