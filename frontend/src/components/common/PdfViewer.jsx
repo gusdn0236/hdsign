@@ -280,8 +280,9 @@ export default function PdfViewer({ url }) {
                                     renderTextLayer={false}
                                     renderAnnotationLayer={false}
                                     onLoadSuccess={(page) => {
-                                        const w = page.originalWidth;
-                                        const h = page.originalHeight;
+                                        const viewport = page.getViewport({ scale: 1 });
+                                        const w = viewport?.width || page.originalWidth;
+                                        const h = viewport?.height || page.originalHeight;
                                         if (w && h) setPageAspect(h / w);
                                     }}
                                     onRenderStart={() => setPageRendering(true)}

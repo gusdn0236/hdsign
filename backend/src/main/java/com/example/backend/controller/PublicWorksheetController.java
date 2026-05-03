@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -95,12 +96,17 @@ public class PublicWorksheetController {
      * 인증 없음 — 어차피 R2 public URL 도 무인증이라 보안 수준은 동일.
      */
     @GetMapping("/{orderNumber}/pdf")
-    public ResponseEntity<?> proxyPdf(@PathVariable String orderNumber) {
+    public ResponseEntity<?> proxyPdf(
+            @PathVariable String orderNumber,
+            @RequestHeader(value = "User-Agent", required = false) String userAgent
+    ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null || order.getDeletedAt() != null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
-        String pdfUrl = order.getWorksheetPdfUrl();
+        String pdfUrl = shouldServeOriginalPdf(userAgent)
+                ? firstNonBlank(order.getWorksheetOriginalPdfUrl(), order.getWorksheetPdfUrl())
+                : firstNonBlank(order.getWorksheetPdfUrl(), order.getWorksheetOriginalPdfUrl());
         if (pdfUrl == null || pdfUrl.isBlank()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
@@ -167,6 +173,21 @@ public class PublicWorksheetController {
         // 모바일 뷰어는 detail 엔드포인트에서 별도로 받아 PDF 탭 시 노출 — list 와 detail 양쪽에 노출.
         item.put("worksheetChangeNote", o.getWorksheetChangeNote());
         return item;
+    }
+
+    private static boolean shouldServeOriginalPdf(String userAgent) {
+        if (userAgent == null || userAgent.isBlank()) return false;
+        String ua = userAgent.toLowerCase();
+        return ua.contains("iphone")
+                || ua.contains("ipad")
+                || ua.contains("ipod")
+                || (ua.contains("macintosh") && ua.contains("mobile") && ua.contains("safari"));
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        if (primary != null && !primary.isBlank()) return primary;
+        if (fallback != null && !fallback.isBlank()) return fallback;
+        return null;
     }
 
     private static List<String> splitTags(String csv) {

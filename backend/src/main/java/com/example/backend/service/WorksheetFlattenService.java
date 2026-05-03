@@ -37,8 +37,8 @@ import java.io.ByteArrayOutputStream;
 @Service
 public class WorksheetFlattenService {
 
-    private static final float FLATTEN_DPI = 300f;
-    private static final float FLATTEN_JPEG_QUALITY = 0.88f;
+    private static final float FLATTEN_DPI = 400f;
+    private static final float FLATTEN_JPEG_QUALITY = 0.95f;
 
     /**
      * 입력 PDF 바이트를 평탄화한 새 PDF 바이트로 반환. 실패 시 null —

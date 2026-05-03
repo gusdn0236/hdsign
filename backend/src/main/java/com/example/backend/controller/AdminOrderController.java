@@ -295,7 +295,9 @@ public class AdminOrderController {
             }
 
             // 새 키로 업로드 → DB url 교체 → 옛 키 best-effort 삭제. worksheetUpdatedAt 은 손대지 않음.
-            String newKey = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
+            boolean preserveOldAsOriginal = order.getWorksheetOriginalPdfUrl() == null
+                    || order.getWorksheetOriginalPdfUrl().isBlank();
+            String newKey = "orders/" + order.getOrderNumber() + "/worksheet/flattened-" + UUID.randomUUID() + ".pdf";
             try {
                 s3Client.putObject(
                         PutObjectRequest.builder()
@@ -310,14 +312,19 @@ public class AdminOrderController {
                 failed += 1;
                 continue;
             }
+            if (preserveOldAsOriginal) {
+                order.setWorksheetOriginalPdfUrl(oldUrl);
+            }
             order.setWorksheetPdfUrl(normalizedPublicUrl + newKey);
             orderRepository.save(order);
+            if (!preserveOldAsOriginal) {
             try {
                 s3Client.deleteObject(DeleteObjectRequest.builder()
                         .bucket(bucket).key(oldKey).build());
             } catch (Exception e) {
                 log.warn("이전 지시서 PDF 삭제 실패 [{}/{}]: {}",
                         order.getOrderNumber(), oldKey, e.getMessage());
+            }
             }
             log.info("지시서 PDF 평탄화 [{}]: {} → {} bytes",
                     order.getOrderNumber(), pdfBytes.length, flattened.length);
@@ -352,6 +359,10 @@ public class AdminOrderController {
         String worksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
         if (worksheetKey != null) {
             keysToDelete.add(worksheetKey);
+        }
+        String worksheetOriginalKey = extractKeyFromPublicUrl(order.getWorksheetOriginalPdfUrl());
+        if (worksheetOriginalKey != null && !worksheetOriginalKey.equals(worksheetKey)) {
+            keysToDelete.add(worksheetOriginalKey);
         }
         String worksheetThumbKey = extractKeyFromPublicUrl(order.getWorksheetThumbnailUrl());
         if (worksheetThumbKey != null) {

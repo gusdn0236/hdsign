@@ -65,6 +65,10 @@ public class OrderTrashPurgeScheduler {
         // 지시서 PDF 도 함께 정리 — Order 컬럼이라 위 file 루프에 안 들어와 누수되던 지점.
         String worksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
         if (worksheetKey != null) keys.add(worksheetKey);
+        String worksheetOriginalKey = extractKeyFromPublicUrl(order.getWorksheetOriginalPdfUrl());
+        if (worksheetOriginalKey != null && !worksheetOriginalKey.equals(worksheetKey)) {
+            keys.add(worksheetOriginalKey);
+        }
 
         for (String key : keys) {
             try {

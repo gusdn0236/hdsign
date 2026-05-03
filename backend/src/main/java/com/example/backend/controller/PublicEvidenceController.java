@@ -309,13 +309,14 @@ public class PublicEvidenceController {
         // 실패해도 서비스 흐름엔 영향 없고 다음 영구삭제 시 정리되도록 keysToDelete 가 누적되지 않게
         // 매번 즉시 시도. 새 업로드가 실패하면 옛 PDF 가 그대로 남아 fallback 으로 사용 가능.
         String oldWorksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
+        String oldOriginalWorksheetKey = extractKeyFromPublicUrl(order.getWorksheetOriginalPdfUrl());
         String oldThumbnailKey = extractKeyFromPublicUrl(order.getWorksheetThumbnailUrl());
 
         // PDF 바이트를 한 번 메모리에 읽어 R2 업로드 + PDFBox 썸네일 렌더 양쪽에 재사용.
         // 지시서 PDF 는 보통 수백 KB ~ 수 MB 라 메모리 보관 비용 미미.
-        byte[] pdfBytes;
+        byte[] originalPdfBytes;
         try {
-            pdfBytes = file.getBytes();
+            originalPdfBytes = file.getBytes();
         } catch (Exception e) {
             log.warn("지시서 PDF 읽기 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
@@ -325,37 +326,51 @@ public class PublicEvidenceController {
         // 평탄화 — 일러스트 출력본의 다중 비트맵 타일 구조가 안드로이드 Chrome(갤럭시) 에서
         // pdf.js 를 멈추는 문제 우회. 페이지당 단일 JPEG 으로 재렌더된 PDF 로 대체한다.
         // 실패 시 원본 바이트로 폴백 — 업로드 자체는 절대 막지 않음.
-        byte[] flattened = flattenService.flatten(pdfBytes);
+        byte[] flattened = flattenService.flatten(originalPdfBytes);
+        byte[] androidPdfBytes = flattened != null ? flattened : originalPdfBytes;
         if (flattened != null) {
             log.info("지시서 PDF 평탄화 [{}]: {} → {} bytes",
-                    order.getOrderNumber(), pdfBytes.length, flattened.length);
-            pdfBytes = flattened;
+                    order.getOrderNumber(), originalPdfBytes.length, flattened.length);
         }
 
-        String key = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
+        String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
+                ? ""
+                : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
+        String originalKey = "orders/" + order.getOrderNumber() + "/worksheet/original-" + UUID.randomUUID() + ".pdf";
+        String androidKey = flattened != null
+                ? "orders/" + order.getOrderNumber() + "/worksheet/flattened-" + UUID.randomUUID() + ".pdf"
+                : originalKey;
         try {
             s3Client.putObject(
                     PutObjectRequest.builder()
                             .bucket(bucket)
-                            .key(key)
+                            .key(originalKey)
                             .contentType("application/pdf")
                             .build(),
-                    RequestBody.fromBytes(pdfBytes)
+                    RequestBody.fromBytes(originalPdfBytes)
             );
+            if (flattened != null) {
+                s3Client.putObject(
+                        PutObjectRequest.builder()
+                                .bucket(bucket)
+                                .key(androidKey)
+                                .contentType("application/pdf")
+                                .build(),
+                        RequestBody.fromBytes(androidPdfBytes)
+                );
+            }
         } catch (Exception e) {
             log.warn("지시서 PDF 업로드 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                     .body(Map.of("message", "PDF 업로드에 실패했습니다."));
         }
 
-        String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
-                ? ""
-                : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
-        String url = normalizedPublicUrl + key;
+        String originalUrl = normalizedPublicUrl + originalKey;
+        String androidUrl = normalizedPublicUrl + androidKey;
 
         // 썸네일은 best-effort — 실패해도 PDF 업로드는 이미 성공했으므로 흐름 진행.
         // 프론트는 thumbnailUrl 없으면 PDF 직접 렌더로 폴백.
-        String thumbnailUrl = thumbnailService.renderAndUpload(order.getOrderNumber(), pdfBytes);
+        String thumbnailUrl = thumbnailService.renderAndUpload(order.getOrderNumber(), androidPdfBytes);
 
         // 첫 부착(이전 URL 이 없었음) 또는 사용자가 새 메모를 입력했을 때만 "변경" 배지 트리거.
         // 단순 재인쇄(동일 내용)와 메모 보존(preserveChangeNote) 은 배지 안 띄움.
@@ -363,7 +378,8 @@ public class PublicEvidenceController {
         boolean firstAttachment = order.getWorksheetPdfUrl() == null || order.getWorksheetPdfUrl().isBlank();
         boolean userMarkedChanged = Boolean.TRUE.equals(contentChanged);
         boolean preserveNote = Boolean.TRUE.equals(preserveChangeNote);
-        order.setWorksheetPdfUrl(url);
+        order.setWorksheetPdfUrl(androidUrl);
+        order.setWorksheetOriginalPdfUrl(originalUrl);
         // 썸네일 렌더 실패 시(thumbnailUrl == null) 기존 값을 덮어써 stale 썸네일이 남지 않도록 함.
         // 다음 업로드 때 다시 시도되며, 그 사이엔 프론트가 PDF 폴백으로 그린다.
         order.setWorksheetThumbnailUrl(thumbnailUrl);
@@ -384,7 +400,7 @@ public class PublicEvidenceController {
         orderRepository.save(order);
 
         // DB 가 새 URL 로 바뀐 직후 옛 R2 객체 삭제(best-effort). 실패해도 다음 영구삭제 시 청소됨.
-        if (oldWorksheetKey != null && !oldWorksheetKey.equals(key)) {
+        if (oldWorksheetKey != null && !oldWorksheetKey.equals(originalKey) && !oldWorksheetKey.equals(androidKey)) {
             try {
                 s3Client.deleteObject(DeleteObjectRequest.builder()
                         .bucket(bucket).key(oldWorksheetKey).build());
@@ -392,6 +408,12 @@ public class PublicEvidenceController {
                 log.warn("이전 지시서 PDF 삭제 실패 [{}/{}]: {}",
                         order.getOrderNumber(), oldWorksheetKey, e.getMessage());
             }
+        }
+        if (oldOriginalWorksheetKey != null
+                && !oldOriginalWorksheetKey.equals(originalKey)
+                && !oldOriginalWorksheetKey.equals(androidKey)
+                && !oldOriginalWorksheetKey.equals(oldWorksheetKey)) {
+            deleteR2BestEffort(oldOriginalWorksheetKey);
         }
         if (oldThumbnailKey != null) {
             String newThumbKey = extractKeyFromPublicUrl(thumbnailUrl);
@@ -408,9 +430,20 @@ public class PublicEvidenceController {
 
         Map<String, Object> body = new HashMap<>();
         body.put("orderNumber", order.getOrderNumber());
-        body.put("worksheetPdfUrl", url);
+        body.put("worksheetPdfUrl", androidUrl);
+        body.put("worksheetOriginalPdfUrl", originalUrl);
         body.put("worksheetThumbnailUrl", thumbnailUrl);
         return ResponseEntity.ok(body);
+    }
+
+    private void deleteR2BestEffort(String key) {
+        if (key == null || key.isBlank()) return;
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(bucket).key(key).build());
+        } catch (Exception ignored) {
+            // best-effort cleanup after a failed upload
+        }
     }
 
     private String extractKeyFromPublicUrl(String url) {
