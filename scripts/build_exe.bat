@@ -85,6 +85,9 @@ REM even though "import fitz" succeeds.
 REM --collect-all pyzbar : pyzbar ships libzbar-64.dll as a native binary; without
 REM this the import succeeds but decode silently returns nothing, and the watcher
 REM treats every print as "QR match failed".
+REM No --uac-admin: keep the exe at asInvoker (default) so it can run at either
+REM standard or admin level. Elevation is controlled per-shortcut by the deploy
+REM script, which creates one standard shortcut and one admin-flagged shortcut.
 "%PYTHON%" -m PyInstaller --clean -y --onefile --windowed --name hdsign_worksheet --collect-all pymupdf --collect-all pyzbar --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" "%SCRIPT_DIR%hdsign_watcher.py"
 if errorlevel 1 (
     echo.
