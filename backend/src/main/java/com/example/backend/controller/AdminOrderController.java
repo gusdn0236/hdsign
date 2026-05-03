@@ -1,8 +1,10 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.OrderDto;
+import com.example.backend.entity.ClientUser;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
+import com.example.backend.repository.ClientUserRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,6 +37,7 @@ import java.util.zip.ZipOutputStream;
 public class AdminOrderController {
 
     private final OrderRepository orderRepository;
+    private final ClientUserRepository clientUserRepository;
     private final ClientService clientService;
     private final S3Client s3Client;
 
@@ -285,11 +288,12 @@ public class AdminOrderController {
     private Map<String, Object> buildWorksheetInfo(Order order) {
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("orderNumber", order.getOrderNumber());
-        info.put("companyName", order.getClient().getCompanyName());
+        ClientUser client = order.getClient();
+        info.put("companyName", client.getCompanyName());
         // 워처가 거래처 폴더 매칭에 우선 사용. 빈 값이면 워처가 companyName 으로 폴백.
-        info.put("networkFolderName", order.getClient().getNetworkFolderName());
-        info.put("contactName", order.getClient().getContactName());
-        info.put("phone", order.getClient().getPhone());
+        info.put("networkFolderName", buildEffectiveNetworkFolderName(client));
+        info.put("contactName", client.getContactName());
+        info.put("phone", client.getPhone());
         info.put("title", order.getTitle());
         info.put("requestType", order.getRequestType().name());
         info.put("dueDate", order.getDueDate() != null ? order.getDueDate().toString() : null);
@@ -300,6 +304,51 @@ public class AdminOrderController {
         info.put("note", order.getNote());
         info.put("createdAt", order.getCreatedAt().toString());
         return info;
+    }
+
+    private String buildEffectiveNetworkFolderName(ClientUser client) {
+        String company = trim(client.getCompanyName());
+        String folder = trim(client.getNetworkFolderName());
+        String contact = trim(client.getContactName());
+        String baseFolder = !folder.isBlank() ? folder : company;
+        if (contact.isBlank() || baseFolder.isBlank()) {
+            return folder;
+        }
+        if (!hasMultipleContactsForBaseFolder(baseFolder)) {
+            return folder;
+        }
+
+        String baseKey = normalizeFolderKey(baseFolder);
+        String contactKey = normalizeFolderKey(contact);
+        if (baseKey.contains(contactKey)) {
+            return folder;
+        }
+        return baseFolder + " " + contact;
+    }
+
+    private boolean hasMultipleContactsForBaseFolder(String baseFolder) {
+        String targetKey = normalizeFolderKey(baseFolder);
+        if (targetKey.isBlank()) {
+            return false;
+        }
+        long matches = clientUserRepository.findAll().stream()
+                .map(c -> {
+                    String folder = trim(c.getNetworkFolderName());
+                    return !folder.isBlank() ? folder : trim(c.getCompanyName());
+                })
+                .map(AdminOrderController::normalizeFolderKey)
+                .filter(targetKey::equals)
+                .limit(2)
+                .count();
+        return matches > 1;
+    }
+
+    private static String trim(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private static String normalizeFolderKey(String value) {
+        return trim(value).replaceAll("\\s+", "").toLowerCase();
     }
 
     private String deliveryLabel(Order.DeliveryMethod method) {

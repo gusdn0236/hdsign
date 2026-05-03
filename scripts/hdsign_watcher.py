@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import collections
 import ctypes
+import encodings.idna  # PyInstaller onefile: keep HTTPS host-name codec available.
 import json
 import queue
 import re
@@ -4389,6 +4390,14 @@ def _find_ghostscript() -> str | None:
 def compress_pdf_for_upload(src: Path) -> Path:
     """업로드 직전 PDF 다운샘플링. 벡터 텍스트는 유지한 채 이미지/스트림 압축.
     Ghostscript 가 없거나 압축 실패 시 원본 경로를 그대로 반환 (폴백)."""
+    enable_upload_pdf_compression = False
+    if not enable_upload_pdf_compression:
+        # 작업지시서는 현장 모바일에서 작은 글씨를 읽는 용도가 더 중요하다.
+        # FlexSign/PDF24 출력물이 이미지화된 PDF일 때는 업로드 압축만으로도 글씨가
+        # 뭉개질 수 있으므로 원본 PDF를 그대로 올린다.
+        ui_log("PDF 압축 건너뜀 — 원본 화질로 업로드")
+        return src
+
     gs_exe = _find_ghostscript()
     if not gs_exe:
         ui_log("Ghostscript 미설치 — 원본 PDF 그대로 업로드 (압축 건너뜀)")
@@ -4401,7 +4410,13 @@ def compress_pdf_for_upload(src: Path) -> Path:
         gs_exe,
         "-sDEVICE=pdfwrite",
         "-dCompatibilityLevel=1.5",
-        "-dPDFSETTINGS=/ebook",      # 150dpi 다운샘플링, JPEG 품질 적당, 벡터 보존
+        # Keep worksheet text readable on phones. /ebook downsamples rasterized
+        # PDF24/FlexSign output to about 150dpi, which makes small labels blur.
+        "-dPDFSETTINGS=/printer",
+        "-dColorImageResolution=300",
+        "-dGrayImageResolution=300",
+        "-dMonoImageResolution=300",
+        "-dJPEGQ=92",
         "-dDetectDuplicateImages=true",
         "-dCompressFonts=true",
         "-dSubsetFonts=true",

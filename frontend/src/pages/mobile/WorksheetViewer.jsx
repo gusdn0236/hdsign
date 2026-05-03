@@ -16,9 +16,12 @@ const MAX_DEPT_LEN = 100;
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
-const FAST_PDF_DPR = 1.5;
-const SHARP_PDF_BASE_DPR = 2.5;
-const SHARP_PDF_MAX_DPR = 6;
+// PDF 렌더 DPR — 처음 한 번에 핀치 최대줌까지 견디는 고해상도로 그린다.
+// 옛날엔 빠른 저화질 → idle 후 고화질 재렌더 였는데, 화면이 하얗게 깜빡이는 게
+// 오히려 거슬려서 단계 향상 제거. 캡(10)은 캔버스 픽셀 한계 안전선.
+const PDF_BASE_DPR = 2.5;
+const PDF_MAX_DPR = 10;
+const PINCH_MAX_SCALE = 5;
 
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
@@ -83,7 +86,6 @@ export default function WorksheetViewer() {
     const [pageRatio, setPageRatio] = useState(DEFAULT_PAGE_RATIO);
     const [pdfReady, setPdfReady] = useState(false);
     const [pdfError, setPdfError] = useState('');
-    const [sharpPdfRender, setSharpPdfRender] = useState(false);
 
     // 시트 (탭하면 열림)
     const [sheetOpen, setSheetOpen] = useState(false);
@@ -99,69 +101,21 @@ export default function WorksheetViewer() {
     const [uploadResult, setUploadResult] = useState(null);
     const [uploadError, setUploadError] = useState('');
     const [pdfViewKey, setPdfViewKey] = useState(0);
-    // 화질 점진 향상 — TransformWrapper.onTransformed 로 현재 핀치 줌 스케일 추적,
-    // 디바운스 후 renderScale 갱신 → Page 재렌더(devicePixelRatio 가 scale 배수로).
-    // 줌 안 했을 땐 base DPR 로 빠르게, 줌하면 글씨 또렷해지게.
-    const [renderScale, setRenderScale] = useState(1);
     const transformRef = useRef(null);
-    const renderScaleTimerRef = useRef(null);
-    const sharpRenderTimerRef = useRef(null);
-
-    const clearSharpRenderTimer = useCallback(() => {
-        const timer = sharpRenderTimerRef.current;
-        if (!timer) return;
-        if (timer.kind === 'idle' && typeof window !== 'undefined' && window.cancelIdleCallback) {
-            window.cancelIdleCallback(timer.id);
-        } else {
-            clearTimeout(timer.id);
-        }
-        sharpRenderTimerRef.current = null;
-    }, []);
-
-    const scheduleSharpRender = useCallback(() => {
-        if (sharpPdfRender || sharpRenderTimerRef.current) return;
-        const run = () => {
-            sharpRenderTimerRef.current = null;
-            setSharpPdfRender(true);
-        };
-        if (typeof window !== 'undefined' && window.requestIdleCallback) {
-            sharpRenderTimerRef.current = {
-                kind: 'idle',
-                id: window.requestIdleCallback(run, { timeout: 900 }),
-            };
-        } else {
-            sharpRenderTimerRef.current = { kind: 'timeout', id: setTimeout(run, 450) };
-        }
-    }, [sharpPdfRender]);
 
     const resetPdfView = useCallback((e) => {
         e?.stopPropagation?.();
         if (transformRef.current?.resetTransform) {
             transformRef.current.resetTransform(0);
-            setRenderScale(1);
-            setSharpPdfRender(false);
             return;
         }
         setPdfReady(false);
-        setSharpPdfRender(false);
         setPdfViewKey((key) => key + 1);
     }, []);
 
-    const handleTransformed = useCallback((_ref, state) => {
-        if (renderScaleTimerRef.current) clearTimeout(renderScaleTimerRef.current);
-        renderScaleTimerRef.current = setTimeout(() => {
-            setRenderScale((prev) => {
-                const next = Math.max(1, Math.min(5, state.scale || 1));
-                return Math.abs(next - prev) > 0.05 ? next : prev;
-            });
-        }, 280);
-    }, []);
-
     useEffect(() => () => {
-        if (renderScaleTimerRef.current) clearTimeout(renderScaleTimerRef.current);
         if (stageTapTimerRef.current) clearTimeout(stageTapTimerRef.current);
-        clearSharpRenderTimer();
-    }, [clearSharpRenderTimer]);
+    }, []);
 
     // PDF 영역 한 번 탭 → 변경사항/추가요청사항 오버레이 토글.
     // react-zoom-pan-pinch 가 패닝/핀치 중에는 click 합성을 막아주므로 여기엔 단순 탭만 들어온다.
@@ -278,21 +232,22 @@ export default function WorksheetViewer() {
         queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
     }, [queued]);
 
-    const pdfFile = useMemo(
-        () => (detail?.worksheetPdfUrl ? { url: detail.worksheetPdfUrl } : null),
-        [detail],
-    );
+    const pdfFile = useMemo(() => {
+        if (!detail?.worksheetPdfUrl || !orderNumber) return null;
+        const version = detail.worksheetUpdatedAt || detail.worksheetPdfUrl;
+        return {
+            url: `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/pdf?v=${encodeURIComponent(version)}`,
+        };
+    }, [detail?.worksheetPdfUrl, detail?.worksheetUpdatedAt, orderNumber]);
 
     useEffect(() => {
         setNumPages(0);
         setCurrentPage(1);
         setPageRatio(DEFAULT_PAGE_RATIO);
         setPdfReady(false);
-        setSharpPdfRender(false);
         setPdfError('');
-        clearSharpRenderTimer();
         setPdfViewKey((key) => key + 1);
-    }, [clearSharpRenderTimer, detail?.worksheetPdfUrl]);
+    }, [detail?.worksheetPdfUrl]);
 
     const pageWidth = useMemo(() => {
         if (!stageSize.width || !stageSize.height) return 0;
@@ -320,18 +275,11 @@ export default function WorksheetViewer() {
         return () => clearTimeout(t);
     }, [pdfReady, pageWidth, stageSize.width, stageSize.height]);
 
-    useEffect(() => {
-        setSharpPdfRender(false);
-        clearSharpRenderTimer();
-    }, [clearSharpRenderTimer, currentPage, pageWidth]);
-
     const pdfDevicePixelRatio = useMemo(() => {
-        if (!sharpPdfRender) {
-            const deviceDpr = typeof window !== 'undefined' ? window.devicePixelRatio || FAST_PDF_DPR : FAST_PDF_DPR;
-            return Math.min(FAST_PDF_DPR, Math.max(1, deviceDpr));
-        }
-        return Math.min(SHARP_PDF_MAX_DPR, Math.max(SHARP_PDF_BASE_DPR, Math.ceil(SHARP_PDF_BASE_DPR * renderScale)));
-    }, [renderScale, sharpPdfRender]);
+        const deviceDpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+        // 핀치 최대줌(PINCH_MAX_SCALE) 까지 device pixel 1:1 이상이 되도록 한 번에 고해상도 렌더.
+        return Math.min(PDF_MAX_DPR, Math.max(PDF_BASE_DPR, deviceDpr * PINCH_MAX_SCALE));
+    }, []);
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
@@ -515,7 +463,6 @@ export default function WorksheetViewer() {
                                        'wsv-action-camera-icon', 'wsv-action-camera-text',
                                        'wsv-pager-btn'],
                         }}
-                        onTransformed={handleTransformed}
                     >
                         <TransformComponent
                             wrapperClass="wsv-pdf-wrapper"
@@ -533,14 +480,13 @@ export default function WorksheetViewer() {
                                     <Page
                                         pageNumber={currentPage}
                                         width={pageWidth}
-                                        // 첫 표시는 낮은 DPR 로 빠르게, idle 이후와 핀치줌 정지 후에는 선명하게 재렌더.
+                                        // 핀치 최대줌까지 견디는 고해상도로 한 번만 렌더 — 단계 향상으로 인한 깜빡임 없음.
                                         devicePixelRatio={pdfDevicePixelRatio}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
                                         onLoadSuccess={onPageLoad}
                                         onRenderSuccess={() => {
                                             setPdfReady(true);
-                                            scheduleSharpRender();
                                             // Page 가 실제로 그려진 직후 가운데 정렬 — centerOnInit 이 빈 콘텐츠
                                             // 기준으로 계산돼 어긋나는 케이스 방지. RAF 두 번(레이아웃 사이클 한 바퀴
                                             // 보장) 후 호출 — 첫 RAF 시점엔 onPageLoad 의 pageRatio 변경이 아직

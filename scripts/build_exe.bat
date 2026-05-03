@@ -88,7 +88,7 @@ REM treats every print as "QR match failed".
 REM No --uac-admin: keep the exe at asInvoker (default) so it can run at either
 REM standard or admin level. Elevation is controlled per-shortcut by the deploy
 REM script, which creates one standard shortcut and one admin-flagged shortcut.
-"%PYTHON%" -m PyInstaller --clean -y --onefile --windowed --name hdsign_worksheet --collect-all pymupdf --collect-all pyzbar --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" "%SCRIPT_DIR%hdsign_watcher.py"
+"%PYTHON%" -m PyInstaller --clean -y --onefile --windowed --name hdsign_worksheet --collect-all pymupdf --collect-all pyzbar --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import encodings.idna --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" "%SCRIPT_DIR%hdsign_watcher.py"
 if errorlevel 1 (
     echo.
     echo [ERROR] PyInstaller build failed. See output above.

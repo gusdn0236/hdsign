@@ -116,13 +116,13 @@ export default function PdfViewer({ url }) {
         }
     }, []);
 
-    // Ctrl+휠 줌 — 마우스 포인터 위치를 앵커로. native 리스너 + passive:false 로
+    // 휠 = 줌 — 마우스 포인터 위치를 앵커로. native 리스너 + passive:false 로
     // preventDefault 가능하게(React onWheel 은 일부 환경에서 passive 라 무시됨).
+    // PDF 가 stage 보다 클 때의 스크롤은 드래그(onPanStart) 로 대체.
     useEffect(() => {
         const stage = stageRef.current;
         if (!stage) return;
         const onWheel = (e) => {
-            if (!(e.ctrlKey || e.metaKey)) return;
             e.preventDefault();
             const rect = stage.getBoundingClientRect();
             const ax = e.clientX - rect.left;
@@ -197,7 +197,7 @@ export default function PdfViewer({ url }) {
                     className="pv-btn pv-btn-ghost"
                 >원래대로</button>
 
-                <span className="pv-hint">Ctrl+휠 확대 · 드래그 이동</span>
+                <span className="pv-hint">휠 확대/축소 · 드래그 이동</span>
 
                 {numPages > 1 && (
                     <div className="pv-pager">
