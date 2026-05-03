@@ -90,14 +90,19 @@
 }
 
 .pv-canvas-wrap {
-    /* block 레이아웃 — width: max-content 로 콘텐츠에 맞춰 늘어나고,
-       min-width: 100% 로 작을 땐 stage 전체를 채움. 안쪽 .pv-page 의
-       margin: 0 auto 가 작은 페이지만 가운데 정렬. */
+    /* width: max-content 로 콘텐츠에 맞춰 늘어나고, min-width/height: 100% 로 작을 땐
+       stage 전체를 채움. flex + `safe center` 로 양축 가운데 정렬:
+         - content < stage : 페이지가 가로/세로 모두 가운데
+         - content > stage : `safe` 키워드가 flex-start 로 폴백해 좌상단이 음수
+                             스크롤 영역으로 밀려 닿을 수 없는 문제 방지. */
     box-sizing: border-box;
     padding: 16px;
     width: max-content;
     min-width: 100%;
     min-height: 100%;
+    display: flex;
+    align-items: safe center;
+    justify-content: safe center;
 }
 
 .pv-page {
@@ -105,8 +110,7 @@
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
     border-radius: 4px;
     overflow: hidden;
-    /* canvas-wrap 이 자기보다 클 때만 가운데 정렬 — 페이지가 더 크면 0 으로 무력화 */
-    margin: 0 auto;
+    /* margin 불필요 — flex align/justify 가 직접 정렬, 오버플로 시 safe 키워드가 좌상단으로 폴백. */
 }
 .pv-page canvas {
     display: block;

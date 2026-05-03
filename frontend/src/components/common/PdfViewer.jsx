@@ -52,14 +52,20 @@ export default function PdfViewer({ url }) {
     }, [url]);
 
     // scale=1 일 때 페이지 전체가 stage 안에 들어가도록 — 폭·높이 중 작은 쪽에 맞춤.
+    // canvas-wrap 의 padding 합계만큼 빼서 페이지+패딩이 stage 안에 정확히 들어가게 한다.
+    // 이 보정이 없으면 한 쪽 dim 이 stage 와 정확히 일치해 패딩이 overflow 를 만들고
+    // 의도치 않은 스크롤이 생겨 가운데 정렬도 어긋난다.
     // pageAspect 가 아직 없으면 (첫 렌더 직전) stageWidth 폴백 — 캔버스 그리기 전에
     // onLoadSuccess 가 먼저 와 곧바로 정확한 값으로 갱신됨.
     const baseWidth = useMemo(() => {
         if (!stageWidth) return 0;
+        const PAD = 32; // .pv-canvas-wrap padding 16px × 2.
+        const availW = Math.max(0, stageWidth - PAD);
         if (pageAspect && stageHeight) {
-            return Math.min(stageWidth, stageHeight / pageAspect);
+            const availH = Math.max(0, stageHeight - PAD);
+            return Math.min(availW, availH / pageAspect);
         }
-        return stageWidth;
+        return availW;
     }, [stageWidth, stageHeight, pageAspect]);
 
     const renderDpr = useMemo(() => {
@@ -68,34 +74,56 @@ export default function PdfViewer({ url }) {
     }, [scale]);
 
     /**
-     * 줌 + scroll 보정. anchorX/Y 는 stage 좌표계(0..clientWidth/Height) 위 한 점으로,
-     * 줌 전후로 그 점이 화면상 같은 위치에 머물도록 새 scrollLeft/Top 을 계산.
-     * 안 주면 stage 가운데를 기준으로 확대.
+     * 줌 + scroll 보정. anchorClientX/Y 는 viewport(client) 좌표계의 점.
+     * 줌 전후로 그 점이 페이지의 같은 분수(fractional) 위치를 가리키도록 스크롤을 맞춘다.
+     * 안 주면 stage 가운데가 앵커.
      *
-     * 수식 — 줌 전 stage 좌표계의 점 (ax, ay) 가 콘텐츠상 위치는 (scrollL+ax, scrollT+ay).
-     * 새 scale 에서 그 콘텐츠 위치는 ratio 배 — (scrollL+ax)·r, (scrollT+ay)·r.
-     * 그 점을 다시 (ax, ay) 에 두려면 newScroll = oldPos·r - anchor.
+     * 옛 수식 (scrollLeft+anchor)*ratio-anchor 는 canvas-wrap 이 페이지 크기와 같다고 가정하지만,
+     * 실제로는 작은 페이지일 때 min-width/height:100% + flex center 때문에 canvas-wrap 이
+     * 늘어나 페이지가 wrap 안에서 가운데에 떠 있다. scale 변경 시 그 "떠 있는 오프셋" 이 달라지는
+     * 데(작을 땐 크고, 커지면 0 에 가까워짐) 옛 수식이 이 변화를 반영 못해 scrollLeft 가 0 으로
+     * 클램프돼 좌상단으로 점프하는 증상이 있었다.
+     *
+     * 새 방식 — 앵커 클라이언트 좌표가 페이지의 어느 분수 위치(fracX, fracY ∈ [0,1])에 있는지
+     * 측정 → setScale 후 다음 프레임에 새 페이지 rect 기준으로 같은 분수 위치가 같은 클라이언트
+     * 픽셀에 오도록 스크롤 보정. 페이지의 실제 DOM rect 를 쓰니까 flex 정렬/패딩과 무관하게 정확.
      */
-    const zoomTo = useCallback((target, anchorX, anchorY) => {
+    const zoomTo = useCallback((target, anchorClientX, anchorClientY) => {
         const stage = stageRef.current;
         if (!stage) return;
         const oldScale = scaleRef.current;
         const clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, +target.toFixed(2)));
         if (clamped === oldScale) return;
 
-        const ax = anchorX != null ? anchorX : stage.clientWidth / 2;
-        const ay = anchorY != null ? anchorY : stage.clientHeight / 2;
-        const ratio = clamped / oldScale;
-        const targetX = (stage.scrollLeft + ax) * ratio - ax;
-        const targetY = (stage.scrollTop + ay) * ratio - ay;
+        const stageRect = stage.getBoundingClientRect();
+        const cx = anchorClientX != null ? anchorClientX : stageRect.left + stageRect.width / 2;
+        const cy = anchorClientY != null ? anchorClientY : stageRect.top + stageRect.height / 2;
+
+        // 앵커 클라이언트 좌표가 현재 페이지의 어느 분수 위치인지. 페이지 밖이면 [0,1] 로 클램프해
+        // 가까운 모서리에 앵커한다 — 빈 패딩 영역에서 휠 굴려도 자연스럽게 동작.
+        const pageEl = stage.querySelector('.pv-page');
+        let fracX = 0.5, fracY = 0.5;
+        if (pageEl) {
+            const r = pageEl.getBoundingClientRect();
+            if (r.width > 0) fracX = Math.max(0, Math.min(1, (cx - r.left) / r.width));
+            if (r.height > 0) fracY = Math.max(0, Math.min(1, (cy - r.top) / r.height));
+        }
 
         setScale(clamped);
         // Page 의 width prop 변경 → 래퍼 div 스타일은 React 커밋 직후 즉시 반영.
-        // 다음 프레임에 새 scrollWidth/Height 기준으로 scroll 보정.
+        // 다음 프레임에 새 페이지 rect 으로 같은 분수 위치를 같은 클라이언트 픽셀에 맞춘다.
         requestAnimationFrame(() => {
-            if (!stageRef.current) return;
-            stageRef.current.scrollLeft = Math.max(0, targetX);
-            stageRef.current.scrollTop = Math.max(0, targetY);
+            const ns = stageRef.current;
+            const np = ns?.querySelector('.pv-page');
+            if (!ns || !np) return;
+            const nr = np.getBoundingClientRect();
+            const have = {
+                x: nr.left + fracX * nr.width,
+                y: nr.top + fracY * nr.height,
+            };
+            // (have - want) 만큼 스크롤을 더하면 페이지가 그만큼 왼/위로 밀려 want 에 정렬됨.
+            ns.scrollLeft = Math.max(0, ns.scrollLeft + (have.x - cx));
+            ns.scrollTop = Math.max(0, ns.scrollTop + (have.y - cy));
         });
     }, []);
 
@@ -124,11 +152,9 @@ export default function PdfViewer({ url }) {
         if (!stage) return;
         const onWheel = (e) => {
             e.preventDefault();
-            const rect = stage.getBoundingClientRect();
-            const ax = e.clientX - rect.left;
-            const ay = e.clientY - rect.top;
             const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
-            zoomTo(scaleRef.current + delta, ax, ay);
+            // zoomTo 가 클라이언트 좌표를 받아 페이지 DOM rect 로 분수 좌표 계산 — 정렬/패딩 무관 정확.
+            zoomTo(scaleRef.current + delta, e.clientX, e.clientY);
         };
         stage.addEventListener('wheel', onWheel, { passive: false });
         return () => stage.removeEventListener('wheel', onWheel);
