@@ -187,6 +187,11 @@ _seen_printed_lock = threading.Lock()
 _saved_default_printer: str | None = None
 _printer_lock = threading.Lock()
 
+# FlexSign 6.x 계열은 표준 메뉴 텍스트가 안 잡히는 PC가 있지만, MFC 기본
+# 파일 열기 명령(ID_FILE_OPEN=0xE101)은 그대로 받는 경우가 많다.
+FLEXSIGN_OPEN_COMMAND_IDS = (0xE101,)
+_flexsign_open_menu_id_cache: int = 0
+
 # 사무실 네트워크 거래처 폴더 베이스 경로 등 외부 설정. 빌드 없이 사무실에서 한 줄
 # 추가만으로 동작하도록 JSON 파일로 분리. 키 예시:
 #   { "network_customer_base": "\\\\hd-server\\공용\\거래처" }
@@ -4719,6 +4724,7 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             (포커스/IME/보안SW 키후킹 모두 우회)
       2순위) Ctrl+O 키 시뮬레이션 (1순위 실패 시 폴백, 스캔코드 강화)
     """
+    global _flexsign_open_menu_id_cache
     try:
         import win32api
         import win32clipboard
@@ -4734,6 +4740,23 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     KEYEVENTF_SCANCODE = 0x0008
     WM_COMMAND = 0x0111
     MF_BYPOSITION = 0x0400
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
+    user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.IsWindowVisible.restype = ctypes.c_bool
+    user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+
+    target_pid_buf = ctypes.c_uint32(0)
+    try:
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(target_pid_buf))
+    except Exception:
+        target_pid_buf.value = 0
+    target_pid = target_pid_buf.value
 
     def _vk_scancode(vk: int) -> int:
         try:
@@ -4768,6 +4791,8 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         startswith('open') 으로 통과했지만 사무실 PC 에선 다른 빌드일 수 있으니 둘 다 처리.
         """
         try:
+            if _flexsign_open_menu_id_cache:
+                return _flexsign_open_menu_id_cache
             menu = user32.GetMenu(hwnd)
             if not menu:
                 ui_log("FlexSign 창에 표준 Windows 메뉴 없음 (커스텀 UI)")
@@ -4801,7 +4826,8 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
                             or "파일 열기" in text or "open file" in text):
                         mid = user32.GetMenuItemID(sub, i)
                         if mid and mid != 0xFFFFFFFF:
-                            return mid & 0xFFFF
+                            _flexsign_open_menu_id_cache = mid & 0xFFFF
+                            return _flexsign_open_menu_id_cache
             # 매칭 실패 시 발견된 아이템들을 로그로 덤프 — 다음 라운드 디버깅 자료.
             if collected:
                 preview = ", ".join(collected[:20])
@@ -4810,6 +4836,34 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         except Exception as e:
             ui_log(f"메뉴 검색 예외: {e}")
             return 0
+
+    def _is_open_dialog(candidate_hwnd: int) -> bool:
+        if not candidate_hwnd or candidate_hwnd == hwnd:
+            return False
+        try:
+            if not user32.IsWindowVisible(candidate_hwnd):
+                return False
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(candidate_hwnd, cls, 64)
+            if cls.value != "#32770":
+                return False
+            if target_pid:
+                pid = ctypes.c_uint32(0)
+                user32.GetWindowThreadProcessId(candidate_hwnd, ctypes.byref(pid))
+                if pid.value != target_pid:
+                    return False
+            title_len = user32.GetWindowTextLengthW(candidate_hwnd)
+            title = ""
+            if title_len:
+                title_buf = ctypes.create_unicode_buffer(title_len + 1)
+                user32.GetWindowTextW(candidate_hwnd, title_buf, title_len + 1)
+                title = title_buf.value.lower()
+            # FlexSign 시작 경고창 같은 오류 모달은 파일 선택창으로 오인하지 않는다.
+            if "file not found" in title or "(null)" in title:
+                return False
+            return True
+        except Exception:
+            return False
 
     def _force_foreground() -> bool:
         """Windows foreground stealing 보호 우회 + 검증.
@@ -4833,20 +4887,32 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             time.sleep(0.25)
         return False
 
-    def _wait_for_open_dialog(timeout: float = 3.0) -> int:
+    def _wait_for_open_dialog(timeout: float = 1.2) -> int:
         """Ctrl+O 가 메뉴 단축키로 인식되면 표준 파일 열기 다이얼로그(class "#32770")가
         떠서 foreground 를 가져간다. 이 검증 없이 그냥 sleep 후 Ctrl+V 를 보내면
         Ctrl+O 가 캔버스에 흡수된 경우 경로 텍스트가 캔버스에 그대로 붙는 사고가 난다.
         다이얼로그 hwnd 를 반환하거나, 시간 안에 안 나타나면 0 을 반환해 호출자가 중단."""
         end = time.time() + timeout
-        buf = ctypes.create_unicode_buffer(64)
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         while time.time() < end:
             fg = user32.GetForegroundWindow()
-            if fg and fg != hwnd:
-                user32.GetClassNameW(fg, buf, 64)
-                if buf.value == "#32770":
-                    return fg
-            time.sleep(0.12)
+            if _is_open_dialog(fg):
+                return fg
+            found = [0]
+
+            def _scan(candidate, _lparam):
+                if _is_open_dialog(candidate):
+                    found[0] = candidate
+                    return False
+                return True
+
+            try:
+                user32.EnumWindows(WNDENUMPROC(_scan), 0)
+            except Exception:
+                pass
+            if found[0]:
+                return found[0]
+            time.sleep(0.08)
         return 0
 
     # 클립보드 백업 (사용자가 다른 데서 쓰던 내용 복원하기 위함)
@@ -4874,43 +4940,49 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
                 ui_log(f"FlexSign 시작 경고창 {extra}개 추가 닫음")
                 time.sleep(0.4)
 
-        # 1) 창 활성화 보장 — 검증까지 통과해야 키 입력을 시작한다.
-        # WM_COMMAND 우선 경로에선 포커스가 굳이 필요 없지만, Ctrl+O 폴백 경로엔 필수라
-        # 양쪽 경로 모두 같은 진입을 거치도록 둔다.
-        if not _force_foreground():
-            ui_log("FlexSign 창을 foreground 로 가져오지 못함 — 메뉴 자동화 중단")
-            return False
-        time.sleep(0.4)
-
-        # 2) 파일 열기 다이얼로그 띄우기 — 두 가지 경로를 순서대로 시도.
+        # 1) 파일 열기 다이얼로그 띄우기 — 빠른 직접 명령부터 시도.
         #
-        # 2a) WM_COMMAND 로 메뉴 직접 호출 (1순위)
-        #     포커스/IME/키보드 후킹과 무관하게 FlexSign 의 메뉴 핸들러를 직접 깨운다.
-        #     사무실 PC 처럼 키 시뮬레이션이 막히는 환경에서도 통한다.
         dlg_hwnd = 0
-        open_id = _find_open_menu_id()
-        if open_id:
+        for command_id in FLEXSIGN_OPEN_COMMAND_IDS:
+            try:
+                user32.PostMessageW(hwnd, WM_COMMAND, command_id, 0)
+                dlg_hwnd = _wait_for_open_dialog(timeout=0.9)
+                if dlg_hwnd:
+                    ui_log(f"FlexSign [Open] 빠른 호출 성공(ID {command_id})")
+                    break
+            except Exception:
+                pass
+
+        # 1b) WM_COMMAND 로 메뉴 직접 호출.
+        #     포커스/IME/키보드 후킹과 무관하게 FlexSign 의 메뉴 핸들러를 직접 깨운다.
+        #     한 번 찾은 메뉴 ID 는 캐시해서 다음 지시서부터 메뉴 트리 검색을 생략한다.
+        open_id = 0 if dlg_hwnd else _find_open_menu_id()
+        if not dlg_hwnd and open_id:
             try:
                 user32.PostMessageW(hwnd, WM_COMMAND, open_id, 0)
                 ui_log(f"메뉴 ID {open_id} 로 [Open] 직접 호출")
-                dlg_hwnd = _wait_for_open_dialog(timeout=3.0)
+                dlg_hwnd = _wait_for_open_dialog(timeout=1.2)
             except Exception as e:
                 ui_log(f"WM_COMMAND 호출 실패: {e}")
-        else:
+        elif not dlg_hwnd:
             ui_log("FlexSign 메뉴에서 [Open] 항목을 찾지 못함 — Ctrl+O 키 시뮬레이션으로 폴백")
 
-        # 2b) Ctrl+O 키 시뮬레이션 (2순위, WM_COMMAND 가 안 통할 때 폴백)
+        # 1c) Ctrl+O 키 시뮬레이션 (마지막 폴백)
         #     스캔코드 부여로 키 후킹 SW 도 가능한 한 통과시킨다.
         if not dlg_hwnd:
+            if not _force_foreground():
+                ui_log("FlexSign 창을 foreground 로 가져오지 못함 — 메뉴 자동화 중단")
+                return False
+            time.sleep(0.15)
             for attempt in range(2):
                 _chord(VK_CONTROL, ord('O'))
-                dlg_hwnd = _wait_for_open_dialog(timeout=3.0)
+                dlg_hwnd = _wait_for_open_dialog(timeout=1.5)
                 if dlg_hwnd:
                     break
                 ui_log(f"Ctrl+O 후 다이얼로그 미감지 — 재시도 {attempt + 1}/2")
                 if not _force_foreground():
                     break
-                time.sleep(0.4)
+                time.sleep(0.2)
 
         if not dlg_hwnd:
             ui_log("파일 열기 다이얼로그가 끝내 나타나지 않음 — 캔버스 오입력 방지를 위해 중단")
@@ -4922,7 +4994,7 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             user32.SetForegroundWindow(dlg_hwnd)
         except Exception:
             pass
-        time.sleep(0.25)
+        time.sleep(0.12)
 
         # 3) 파일 경로를 클립보드에 복사 후 Ctrl+V
         # 절대경로는 따옴표로 감싸야 다이얼로그 시작 폴더와 무관하게 그 파일로 직행한다.
@@ -4935,14 +5007,14 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             win32clipboard.SetClipboardText(clip_path, 13)  # CF_UNICODETEXT
         finally:
             win32clipboard.CloseClipboard()
-        time.sleep(0.3)
+        time.sleep(0.12)
         _chord(VK_CONTROL, ord('V'))
         # 긴 한글 경로를 다이얼로그가 해석하는 데 시간 필요.
-        time.sleep(0.5)
+        time.sleep(0.25)
 
         # 4) Enter — 열기 확정
         _press(VK_RETURN)
-        time.sleep(0.7)
+        time.sleep(0.35)
         return True
     except Exception as e:
         ui_log(f"FlexSign 메뉴 열기 실패: {e}")
