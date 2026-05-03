@@ -18,9 +18,12 @@ const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
 // PDF 렌더 DPR — 처음 한 번에 핀치 최대줌까지 견디는 고해상도로 그린다.
 // 옛날엔 빠른 저화질 → idle 후 고화질 재렌더 였는데, 화면이 하얗게 깜빡이는 게
-// 오히려 거슬려서 단계 향상 제거. 캡(10)은 캔버스 픽셀 한계 안전선.
-const PDF_BASE_DPR = 2.5;
-const PDF_MAX_DPR = 10;
+// 오히려 거슬려서 단계 향상 제거. 면적 캡은 모바일 캔버스 한계 안전선.
+const PDF_BASE_DPR = 3;
+const PDF_MAX_DPR = 14;
+const PDF_OVERSAMPLE = 1.15;
+const PDF_MAX_CANVAS_PIXELS = 32_000_000;
+const PDF_JS_MAX_IMAGE_BYTES = 256 * 1024 * 1024;
 const PINCH_MAX_SCALE = 5;
 
 async function compressImage(file) {
@@ -240,6 +243,13 @@ export default function WorksheetViewer() {
         };
     }, [detail?.worksheetPdfUrl, detail?.worksheetUpdatedAt, orderNumber]);
 
+    const pdfOptions = useMemo(() => ({
+        canvasMaxAreaInBytes: PDF_JS_MAX_IMAGE_BYTES,
+        disableFontFace: false,
+        isOffscreenCanvasSupported: true,
+        useSystemFonts: true,
+    }), []);
+
     useEffect(() => {
         setNumPages(0);
         setCurrentPage(1);
@@ -277,9 +287,16 @@ export default function WorksheetViewer() {
 
     const pdfDevicePixelRatio = useMemo(() => {
         const deviceDpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-        // 핀치 최대줌(PINCH_MAX_SCALE) 까지 device pixel 1:1 이상이 되도록 한 번에 고해상도 렌더.
-        return Math.min(PDF_MAX_DPR, Math.max(PDF_BASE_DPR, deviceDpr * PINCH_MAX_SCALE));
-    }, []);
+        const pageHeight = pageRatio > 0 ? pageWidth / pageRatio : 0;
+        const cssPixels = pageWidth > 0 && pageHeight > 0 ? pageWidth * pageHeight : 0;
+        const areaLimitedDpr = cssPixels > 0
+            ? Math.sqrt(PDF_MAX_CANVAS_PIXELS / cssPixels)
+            : PDF_MAX_DPR;
+        const cap = Math.max(PDF_BASE_DPR, Math.min(PDF_MAX_DPR, areaLimitedDpr));
+
+        // 핀치 최대줌(PINCH_MAX_SCALE) 에서도 글자 획이 뭉개지지 않도록 약간 과샘플링한다.
+        return Math.min(cap, Math.max(PDF_BASE_DPR, deviceDpr * PINCH_MAX_SCALE * PDF_OVERSAMPLE));
+    }, [pageRatio, pageWidth]);
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
@@ -470,6 +487,7 @@ export default function WorksheetViewer() {
                         >
                             <Document
                                 file={pdfFile}
+                                options={pdfOptions}
                                 onLoadSuccess={onDocLoad}
                                 onLoadError={onDocError}
                                 loading={null}
