@@ -38,11 +38,15 @@
     height: auto !important;
     flex-shrink: 0;
 }
-/* 백엔드 prerendered JPEG 썸네일 — A4 세로 프레임 안에 가로 폭 맞춤, 세로는 잘림(canvas 동작과 동일). */
+/* 백엔드 prerendered JPEG 썸네일 — 종횡비가 프레임과 달라도 잘리지 않도록 contain 으로
+   전체를 보여주고 가운데 정렬. 프레임이 A4 비율이고 JPEG 도 A4 라 보통 빈 여백 없이 꽉
+   차며, 가로형 PDF 같은 변칙도 안전하게 축소되어 들어온다. */
 .ws-thumb-frame > .ws-thumb-img {
     display: block;
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: contain;
+    object-position: center;
 }
 .ws-thumb-err {
     position: absolute;

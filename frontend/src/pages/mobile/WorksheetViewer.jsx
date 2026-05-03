@@ -18,13 +18,20 @@ const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
 // PDF 렌더 DPR — 처음 한 번에 핀치 최대줌까지 견디는 고해상도로 그린다.
 // 옛날엔 빠른 저화질 → idle 후 고화질 재렌더 였는데, 화면이 하얗게 깜빡이는 게
-// 오히려 거슬려서 단계 향상 제거. 면적 캡은 모바일 캔버스 한계 안전선.
-const PDF_BASE_DPR = 3;
-const PDF_MAX_DPR = 14;
-const PDF_OVERSAMPLE = 1.15;
-const PDF_MAX_CANVAS_PIXELS = 32_000_000;
+// 오히려 거슬려서 단계 향상 제거. 사용 기기는 거의 최신 아이폰(17 등) 이라
+// 면적 캡을 64MP 까지 풀어 작은 글씨도 7배 핀치까지 또렷하게 본다.
+// 구형 iPhone(8 이하) 에선 메모리 한계로 검은 화면 위험 있음 — 그때만 다시 낮출 것.
+const PDF_BASE_DPR = 4;
+const PDF_MAX_DPR = 20;
+const PDF_OVERSAMPLE = 1.3;
+const PDF_MAX_CANVAS_PIXELS = 64_000_000;
 const PDF_JS_MAX_IMAGE_BYTES = 256 * 1024 * 1024;
-const PINCH_MAX_SCALE = 5;
+const PINCH_MAX_SCALE = 7;
+// 최고 DPR 에서 캔버스 할당 실패/pdf.js 내부 에러가 나면 DPR 을 단계적으로 낮추며
+// 재시도. 빈 화면으로 멈추는 대신 약간 낮은 화질로라도 보이게 하는 안전망.
+// 35% 까지 내려가도 deviceDpr 3 환경에선 여전히 6 DPR 안팎이라 옛 설정(MAX=14)과
+// 비슷한 화질이 유지된다. 마지막 단계까지 가도 안 되면 거기서 멈춤(무한루프 방지).
+const PDF_RENDER_FALLBACK_FACTORS = [1, 0.7, 0.5, 0.35];
 
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
@@ -89,6 +96,11 @@ export default function WorksheetViewer() {
     const [pageRatio, setPageRatio] = useState(DEFAULT_PAGE_RATIO);
     const [pdfReady, setPdfReady] = useState(false);
     const [pdfError, setPdfError] = useState('');
+    const [renderAttempt, setRenderAttempt] = useState(0);
+    // 가로형 PDF(/Rotate=90/270 또는 MediaBox 자체가 가로) 는 90° 추가 회전해
+    // 화면을 portrait 으로 채워 글자를 크게 보여준다. 사용자는 폰을 좌측으로
+    // 돌려서 읽으면 자연스럽게 landscape 로 보임. 0 = 회전 없음(=PDF 자체 /Rotate 사용).
+    const [pageRotation, setPageRotation] = useState(0);
 
     // 시트 (탭하면 열림)
     const [sheetOpen, setSheetOpen] = useState(false);
@@ -257,6 +269,8 @@ export default function WorksheetViewer() {
         setPdfReady(false);
         setPdfError('');
         setPdfViewKey((key) => key + 1);
+        setRenderAttempt(0);
+        setPageRotation(0);
     }, [detail?.worksheetPdfUrl]);
 
     const pageWidth = useMemo(() => {
@@ -295,8 +309,15 @@ export default function WorksheetViewer() {
         const cap = Math.max(PDF_BASE_DPR, Math.min(PDF_MAX_DPR, areaLimitedDpr));
 
         // 핀치 최대줌(PINCH_MAX_SCALE) 에서도 글자 획이 뭉개지지 않도록 약간 과샘플링한다.
-        return Math.min(cap, Math.max(PDF_BASE_DPR, deviceDpr * PINCH_MAX_SCALE * PDF_OVERSAMPLE));
-    }, [pageRatio, pageWidth]);
+        const ideal = Math.min(cap, Math.max(PDF_BASE_DPR, deviceDpr * PINCH_MAX_SCALE * PDF_OVERSAMPLE));
+
+        // 렌더 실패 회차마다 fallback factor 를 곱해 단계적으로 낮춘다.
+        const factor = PDF_RENDER_FALLBACK_FACTORS[
+            Math.min(renderAttempt, PDF_RENDER_FALLBACK_FACTORS.length - 1)
+        ];
+        // 최소 PDF_BASE_DPR 은 보장 — 이 아래로는 핀치 시 뭉개짐이 너무 커져 의미 없음.
+        return Math.max(PDF_BASE_DPR, ideal * factor);
+    }, [pageRatio, pageWidth, renderAttempt]);
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
@@ -309,13 +330,40 @@ export default function WorksheetViewer() {
     }, []);
 
     const onPageLoad = useCallback((page) => {
-        const viewport = page.getViewport({ scale: 1 });
-        if (viewport?.width && viewport?.height) {
-            const nextRatio = viewport.width / viewport.height;
-            setPageRatio((currentRatio) => (
-                Math.abs(currentRatio - nextRatio) > 0.001 ? nextRatio : currentRatio
-            ));
+        // page.rotate = PDF 자체 /Rotate 값. getViewport({scale:1}) 인자 생략 시
+        // 이 값을 적용한 dim 을 돌려준다 (즉 사용자가 보는 자연 방향 기준).
+        const naturalRotation = (page?.rotate ?? 0) % 360;
+        const naturalVp = page.getViewport({ scale: 1 });
+        if (!naturalVp?.width || !naturalVp?.height) return;
+        const isLandscape = naturalVp.width > naturalVp.height;
+
+        // 가로면 +90° 추가 — 스크린엔 portrait 으로 채워지고 사용자가 폰을
+        // 좌측으로 90° 기울이면 콘텐츠가 정방향으로 읽힌다.
+        const finalRotation = isLandscape
+            ? (naturalRotation + 90) % 360
+            : naturalRotation;
+
+        setPageRotation((prev) => (prev === finalRotation ? prev : finalRotation));
+
+        // 비율은 우리가 실제 그릴 회전 기준으로 — landscape 를 추가 회전해
+        // portrait 가 됐으면 그 portrait 의 width/height 로 계산해야 stage fit 이 맞다.
+        const finalVp = page.getViewport({ scale: 1, rotation: finalRotation });
+        const nextRatio = finalVp.width / finalVp.height;
+        setPageRatio((currentRatio) => (
+            Math.abs(currentRatio - nextRatio) > 0.001 ? nextRatio : currentRatio
+        ));
+    }, []);
+
+    // 캔버스 할당 실패/메모리 부족 등 렌더 단계 실패 — 다음 회차에 더 낮은 DPR 로
+    // 자동 재시도. 마지막 폴백 단계까지 가도 안 되면 거기서 멈추고 그대로 둔다(무한루프 차단).
+    const onPageRenderError = useCallback((err) => {
+        if (typeof console !== 'undefined') {
+            // eslint-disable-next-line no-console
+            console.warn('[worksheet pdf render]', err?.message || err);
         }
+        setRenderAttempt((a) => (
+            a < PDF_RENDER_FALLBACK_FACTORS.length - 1 ? a + 1 : a
+        ));
     }, []);
 
     const handlePickFiles = async (e) => {
@@ -461,7 +509,7 @@ export default function WorksheetViewer() {
                         ref={transformRef}
                         initialScale={1}
                         minScale={1}
-                        maxScale={5}
+                        maxScale={PINCH_MAX_SCALE}
                         centerOnInit
                         centerZoomedOut
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
@@ -500,9 +548,12 @@ export default function WorksheetViewer() {
                                         width={pageWidth}
                                         // 핀치 최대줌까지 견디는 고해상도로 한 번만 렌더 — 단계 향상으로 인한 깜빡임 없음.
                                         devicePixelRatio={pdfDevicePixelRatio}
+                                        // 가로형 PDF 는 onPageLoad 에서 +90° 추가 회전 적용 → portrait 로 화면 채움.
+                                        rotate={pageRotation}
                                         renderAnnotationLayer={false}
                                         renderTextLayer={false}
                                         onLoadSuccess={onPageLoad}
+                                        onRenderError={onPageRenderError}
                                         onRenderSuccess={() => {
                                             setPdfReady(true);
                                             // Page 가 실제로 그려진 직후 가운데 정렬 — centerOnInit 이 빈 콘텐츠
