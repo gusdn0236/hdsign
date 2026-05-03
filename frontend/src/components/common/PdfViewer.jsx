@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -27,6 +27,12 @@ export default function PdfViewer({ url }) {
     const [docLoading, setDocLoading] = useState(true);
     const [pageRendering, setPageRendering] = useState(false);
     const [error, setError] = useState('');
+
+    // 다음 렌더가 끝나면 적용할 줌 앵커. zoomTo 가 시각 좌표(cx,cy)와 페이지 분수(fracX/Y) 를
+    // 채워두면, useLayoutEffect 가 setScale 후 새 DOM 으로 같은 분수 위치가 같은 시각 좌표에
+    // 오도록 스크롤을 정확히 보정. 옛날엔 setScale + rAF 방식이었는데 react-pdf 의 wrapper
+    // 가 즉시 새 크기로 안 잡혀 측정값이 빗나가 매 휠마다 상단으로 점프하는 버그가 있었다.
+    const pendingZoomRef = useRef(null);
 
     useEffect(() => { scaleRef.current = scale; }, [scale]);
 
@@ -78,15 +84,10 @@ export default function PdfViewer({ url }) {
      * 줌 전후로 그 점이 페이지의 같은 분수(fractional) 위치를 가리키도록 스크롤을 맞춘다.
      * 안 주면 stage 가운데가 앵커.
      *
-     * 옛 수식 (scrollLeft+anchor)*ratio-anchor 는 canvas-wrap 이 페이지 크기와 같다고 가정하지만,
-     * 실제로는 작은 페이지일 때 min-width/height:100% + flex center 때문에 canvas-wrap 이
-     * 늘어나 페이지가 wrap 안에서 가운데에 떠 있다. scale 변경 시 그 "떠 있는 오프셋" 이 달라지는
-     * 데(작을 땐 크고, 커지면 0 에 가까워짐) 옛 수식이 이 변화를 반영 못해 scrollLeft 가 0 으로
-     * 클램프돼 좌상단으로 점프하는 증상이 있었다.
-     *
-     * 새 방식 — 앵커 클라이언트 좌표가 페이지의 어느 분수 위치(fracX, fracY ∈ [0,1])에 있는지
-     * 측정 → setScale 후 다음 프레임에 새 페이지 rect 기준으로 같은 분수 위치가 같은 클라이언트
-     * 픽셀에 오도록 스크롤 보정. 페이지의 실제 DOM rect 를 쓰니까 flex 정렬/패딩과 무관하게 정확.
+     * 동작 — 앵커 클라이언트 좌표가 현재 페이지의 어느 분수 위치(fracX/Y ∈ [0,1])에 있는지
+     * 측정해 pendingZoomRef 에 저장 → setScale → useLayoutEffect 가 React 커밋 직후 새
+     * 페이지 DOM rect 기준으로 같은 분수 위치가 같은 클라이언트 픽셀에 오도록 스크롤 보정.
+     * (rAF 방식은 react-pdf 의 wrapper 가 그 시점에 새 크기로 못 잡혀 자주 빗나갔다.)
      */
     const zoomTo = useCallback((target, anchorClientX, anchorClientY) => {
         const stage = stageRef.current;
@@ -109,23 +110,28 @@ export default function PdfViewer({ url }) {
             if (r.height > 0) fracY = Math.max(0, Math.min(1, (cy - r.top) / r.height));
         }
 
+        // 다음 커밋 후 useLayoutEffect 에서 적용. 클라이언트 좌표 cx/cy 와 분수 위치 fracX/Y
+        // 만으로 충분 — 새 DOM 에서 페이지 rect 다시 읽어 같은 픽셀에 오도록 스크롤 보정.
+        pendingZoomRef.current = { fracX, fracY, cx, cy };
         setScale(clamped);
-        // Page 의 width prop 변경 → 래퍼 div 스타일은 React 커밋 직후 즉시 반영.
-        // 다음 프레임에 새 페이지 rect 으로 같은 분수 위치를 같은 클라이언트 픽셀에 맞춘다.
-        requestAnimationFrame(() => {
-            const ns = stageRef.current;
-            const np = ns?.querySelector('.pv-page');
-            if (!ns || !np) return;
-            const nr = np.getBoundingClientRect();
-            const have = {
-                x: nr.left + fracX * nr.width,
-                y: nr.top + fracY * nr.height,
-            };
-            // (have - want) 만큼 스크롤을 더하면 페이지가 그만큼 왼/위로 밀려 want 에 정렬됨.
-            ns.scrollLeft = Math.max(0, ns.scrollLeft + (have.x - cx));
-            ns.scrollTop = Math.max(0, ns.scrollTop + (have.y - cy));
-        });
     }, []);
+
+    // setScale 후 React 커밋 직후 동기 실행 — 이 시점엔 page wrapper 의 width/height 가
+    // 새 prop 으로 반영돼 있어 getBoundingClientRect 가 새 크기를 돌려준다 (rAF 방식보다 안정).
+    useLayoutEffect(() => {
+        const pending = pendingZoomRef.current;
+        if (!pending) return;
+        pendingZoomRef.current = null;
+        const ns = stageRef.current;
+        const np = ns?.querySelector('.pv-page');
+        if (!ns || !np) return;
+        const nr = np.getBoundingClientRect();
+        const haveX = nr.left + pending.fracX * nr.width;
+        const haveY = nr.top + pending.fracY * nr.height;
+        // (have - want) 만큼 스크롤을 더하면 페이지가 그만큼 왼/위로 밀려 want 에 정렬됨.
+        ns.scrollLeft = Math.max(0, ns.scrollLeft + (haveX - pending.cx));
+        ns.scrollTop = Math.max(0, ns.scrollTop + (haveY - pending.cy));
+    }, [scale]);
 
     const zoomIn = useCallback(() => {
         zoomTo(scaleRef.current + ZOOM_STEP);

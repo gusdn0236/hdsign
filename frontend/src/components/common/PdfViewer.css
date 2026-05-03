@@ -81,6 +81,10 @@
     position: relative;
     /* 스크롤 체이닝 차단 — 스테이지가 끝까지 스크롤되어도 body 로 전파 X */
     overscroll-behavior: contain;
+    /* Chrome 의 자동 scroll anchoring 비활성화 — 줌 시 페이지 크기가 변하면 브라우저가
+       시각적으로 stable 하게 유지하려 scrollTop 을 자동 보정하는데, zoomTo 의 명시적
+       보정과 이중으로 적용돼 결과가 빗나갈 수 있다. */
+    overflow-anchor: none;
     cursor: grab;
     user-select: none;
 }
