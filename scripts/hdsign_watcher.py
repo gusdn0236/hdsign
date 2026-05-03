@@ -895,18 +895,29 @@ def _normalize_company_key(name: str) -> str:
     return n.lower()
 
 
+_CONTACT_TITLE_SUFFIX_RE = re.compile(
+    r"(대표님?|사장님?|부사장님?|전무님?|상무님?|이사님?|부장님?|차장님?|과장님?|대리님?|주임님?|실장님?|팀장님?|매니저님?|님)$"
+)
+
+
+def _contact_folder_part(name: str) -> str:
+    """주문 폴더명에 붙일 담당자명. '정미나차장님' -> '정미나'."""
+    compact = "".join((name or "").strip().split())
+    if not compact:
+        return ""
+    stripped = _CONTACT_TITLE_SUFFIX_RE.sub("", compact)
+    return stripped or compact
+
+
 def resolve_customer_folder(network_base: Path, network_folder_name: str,
                             company_name: str) -> Path:
     """네트워크 베이스 안에서 거래처 폴더 결정.
     1순위: networkFolderName (관리자가 거래처관리에서 명시 지정한 폴더명) 정확 일치
     2순위: companyName 정확 일치 (공백/대소문자/NFC 무시)
-    단, networkFolderName 이 companyName 과 다른 담당자별 폴더명일 때는 companyName 으로
-    후퇴하지 않고 담당자별 '<networkFolderName> (자동생성)' 신규 경로를 만든다.
     매칭 실패 시 '<networkFolderName 또는 companyName> (자동생성)' 신규 경로 반환.
     스캔 실패(권한/네트워크 끊김) 시에도 자동생성 경로로 폴백."""
     primary_key = _normalize_company_key(network_folder_name)
     fallback_key = _normalize_company_key(company_name)
-    primary_is_specific = bool(primary_key and fallback_key and primary_key != fallback_key)
     label = (network_folder_name or "").strip() or (company_name or "").strip()
     safe_label = _sanitize_folder_name(label) or "(미지정)"
     fallback_new = network_base / f"{safe_label} (자동생성)"
@@ -926,7 +937,7 @@ def resolve_customer_folder(network_base: Path, network_folder_name: str,
                 fallback_hit = child
         if primary_hit is not None:
             return primary_hit
-        if fallback_hit is not None and not primary_is_specific:
+        if fallback_hit is not None:
             return fallback_hit
     except Exception as e:
         ui_log(f"거래처 폴더 스캔 실패({e}) — 자동생성 경로로 진행")
@@ -954,6 +965,7 @@ def resolve_network_order_folder(meta: dict, primary_ai_name: str | None) -> Pat
 
     company = (meta.get("companyName") or "").strip()
     network_folder = (meta.get("networkFolderName") or "").strip()
+    contact_part = _contact_folder_part(meta.get("contactName") or "")
     title = (meta.get("title") or "").strip()
     md = _format_md(meta.get("createdAt"))
     if not md:
@@ -967,6 +979,8 @@ def resolve_network_order_folder(meta: dict, primary_ai_name: str | None) -> Pat
         name_part = Path(primary_ai_name).stem or "제목없음"
     else:
         name_part = "제목없음"
+    if contact_part:
+        name_part = f"{name_part}({contact_part})"
     order_folder_raw = f"{md}{name_part}"
     order_folder_name = _sanitize_folder_name(order_folder_raw) or f"{md}제목없음"
 

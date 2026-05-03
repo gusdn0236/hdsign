@@ -4,7 +4,6 @@ import com.example.backend.dto.OrderDto;
 import com.example.backend.entity.ClientUser;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
-import com.example.backend.repository.ClientUserRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,7 +36,6 @@ import java.util.zip.ZipOutputStream;
 public class AdminOrderController {
 
     private final OrderRepository orderRepository;
-    private final ClientUserRepository clientUserRepository;
     private final ClientService clientService;
     private final S3Client s3Client;
 
@@ -291,7 +289,9 @@ public class AdminOrderController {
         ClientUser client = order.getClient();
         info.put("companyName", client.getCompanyName());
         // 워처가 거래처 폴더 매칭에 우선 사용. 빈 값이면 워처가 companyName 으로 폴백.
-        info.put("networkFolderName", buildEffectiveNetworkFolderName(client));
+        // 담당자가 여러 명이어도 거래처 폴더는 회사 폴더 하나를 사용하고,
+        // 워처가 주문 폴더명 끝에 담당자명을 붙여 구분한다.
+        info.put("networkFolderName", client.getNetworkFolderName());
         info.put("contactName", client.getContactName());
         info.put("phone", client.getPhone());
         info.put("title", order.getTitle());
@@ -304,76 +304,6 @@ public class AdminOrderController {
         info.put("note", order.getNote());
         info.put("createdAt", order.getCreatedAt().toString());
         return info;
-    }
-
-    private String buildEffectiveNetworkFolderName(ClientUser client) {
-        String company = trim(client.getCompanyName());
-        String folder = trim(client.getNetworkFolderName());
-        String contact = trim(client.getContactName());
-        String contactFolderPart = contactFolderPart(contact);
-        String baseFolder = !folder.isBlank() ? folder : company;
-        if (contactFolderPart.isBlank() || baseFolder.isBlank()) {
-            return folder;
-        }
-
-        String baseKey = normalizeFolderKey(baseFolder);
-        String contactKey = normalizeFolderKey(contactFolderPart);
-        if (baseKey.contains(contactKey)) {
-            return folder;
-        }
-        if (!hasMultipleContactsForCompany(company) && !hasMultipleContactsForBaseFolder(baseFolder)) {
-            return folder;
-        }
-        return baseFolder + " " + contactFolderPart;
-    }
-
-    private boolean hasMultipleContactsForCompany(String company) {
-        String targetKey = normalizeFolderKey(company);
-        if (targetKey.isBlank()) {
-            return false;
-        }
-        long matches = clientUserRepository.findAll().stream()
-                .filter(c -> normalizeFolderKey(c.getCompanyName()).equals(targetKey))
-                .map(c -> normalizeFolderKey(contactFolderPart(c.getContactName())))
-                .filter(s -> !s.isBlank())
-                .distinct()
-                .limit(2)
-                .count();
-        return matches > 1;
-    }
-
-    private boolean hasMultipleContactsForBaseFolder(String baseFolder) {
-        String targetKey = normalizeFolderKey(baseFolder);
-        if (targetKey.isBlank()) {
-            return false;
-        }
-        long matches = clientUserRepository.findAll().stream()
-                .map(c -> {
-                    String folder = trim(c.getNetworkFolderName());
-                    return !folder.isBlank() ? folder : trim(c.getCompanyName());
-                })
-                .map(AdminOrderController::normalizeFolderKey)
-                .filter(targetKey::equals)
-                .limit(2)
-                .count();
-        return matches > 1;
-    }
-
-    private static String trim(String value) {
-        return value == null ? "" : value.trim();
-    }
-
-    private static String normalizeFolderKey(String value) {
-        return trim(value).replaceAll("\\s+", "").toLowerCase();
-    }
-
-    private static String contactFolderPart(String value) {
-        String compact = trim(value).replaceAll("\\s+", "");
-        if (compact.isBlank()) {
-            return "";
-        }
-        String stripped = compact.replaceAll("(대표님?|사장님?|부사장님?|전무님?|상무님?|이사님?|부장님?|차장님?|과장님?|대리님?|주임님?|실장님?|팀장님?|매니저님?|님)$", "");
-        return stripped.isBlank() ? compact : stripped;
     }
 
     private String deliveryLabel(Order.DeliveryMethod method) {
