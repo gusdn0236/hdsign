@@ -49,6 +49,8 @@ export default function ProxyOrder() {
     const [clientQuery, setClientQuery] = useState('');
     const [selectedClient, setSelectedClient] = useState(null);
     const [showSuggest, setShowSuggest] = useState(false);
+    const [activeSuggestIndex, setActiveSuggestIndex] = useState(0);
+    const suggestListRef = useRef(null);
 
     const [files, setFiles] = useState([]);
     const [dragging, setDragging] = useState(false);
@@ -71,6 +73,8 @@ export default function ProxyOrder() {
 
     const [submitting, setSubmitting] = useState(false);
     const [feedback, setFeedback] = useState(null);
+    const [submitted, setSubmitted] = useState(false);
+    const [submittedOrder, setSubmittedOrder] = useState(null);
 
     useEffect(() => {
         let alive = true;
@@ -105,15 +109,75 @@ export default function ProxyOrder() {
         });
     }, [clientQuery, clients]);
 
+    useEffect(() => {
+        setActiveSuggestIndex(0);
+    }, [clientQuery]);
+
+    useEffect(() => {
+        if (activeSuggestIndex >= clientSuggestions.length) {
+            setActiveSuggestIndex(Math.max(0, clientSuggestions.length - 1));
+        }
+    }, [activeSuggestIndex, clientSuggestions.length]);
+
+    useEffect(() => {
+        if (!showSuggest || !suggestListRef.current) return;
+        const active = suggestListRef.current.querySelector('[data-active="true"]');
+        active?.scrollIntoView({ block: 'nearest' });
+    }, [activeSuggestIndex, showSuggest]);
+
     const pickClient = (c) => {
         setSelectedClient(c);
         setClientQuery(c.companyName);
         setShowSuggest(false);
+        setActiveSuggestIndex(0);
     };
 
     const clearClient = () => {
         setSelectedClient(null);
         setClientQuery('');
+        setShowSuggest(false);
+        setActiveSuggestIndex(0);
+    };
+
+    const handleClientSearchKeyDown = (e) => {
+        if (clientsLoading) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!showSuggest) {
+                setShowSuggest(true);
+                setActiveSuggestIndex(0);
+                return;
+            }
+            setShowSuggest(true);
+            setActiveSuggestIndex((idx) => (
+                clientSuggestions.length ? Math.min(idx + 1, clientSuggestions.length - 1) : 0
+            ));
+            return;
+        }
+
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!showSuggest) {
+                setShowSuggest(true);
+                setActiveSuggestIndex(Math.max(0, clientSuggestions.length - 1));
+                return;
+            }
+            setShowSuggest(true);
+            setActiveSuggestIndex((idx) => Math.max(idx - 1, 0));
+            return;
+        }
+
+        if (e.key === 'Enter' && showSuggest && clientSuggestions.length > 0) {
+            e.preventDefault();
+            pickClient(clientSuggestions[activeSuggestIndex] || clientSuggestions[0]);
+            return;
+        }
+
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            setShowSuggest(false);
+        }
     };
 
     const acceptFiles = (incoming) => {
@@ -189,6 +253,8 @@ export default function ProxyOrder() {
     const reset = () => {
         setSelectedClient(null);
         setClientQuery('');
+        setShowSuggest(false);
+        setActiveSuggestIndex(0);
         setFiles([]);
         setTitle('');
         setTitleAutoFilled(false);
@@ -198,6 +264,13 @@ export default function ProxyOrder() {
         setDueTime('당일 내');
         setDelivery('CARGO');
         setDeliveryAddress('');
+        setFeedback(null);
+    };
+
+    const startNewProxyOrder = () => {
+        reset();
+        setSubmitted(false);
+        setSubmittedOrder(null);
     };
 
     const handleSubmit = async (e) => {
@@ -236,8 +309,12 @@ export default function ProxyOrder() {
                 throw new Error(err.message || '등록에 실패했습니다.');
             }
             const data = await res.json().catch(() => ({}));
-            setFeedback({ type: 'success', msg: `${data.orderNumber || ''} 등록 완료 — 거래처 ${selectedClient.companyName}` });
+            setSubmittedOrder({
+                orderNumber: data.orderNumber || '',
+                companyName: selectedClient.companyName,
+            });
             reset();
+            setSubmitted(true);
         } catch (err) {
             setFeedback({ type: 'error', msg: err.message });
         } finally {
@@ -255,6 +332,35 @@ export default function ProxyOrder() {
             return { iso, m: d.getMonth() + 1, d: d.getDate(), dow: d.getDay(), isToday: i === 0 };
         });
     }, []);
+
+    if (submitted) {
+        return (
+            <div className="proxy-page">
+                <header className="proxy-header">
+                    <div>
+                        <h1 className="proxy-title">대리 발주 등록</h1>
+                        <p className="proxy-sub">
+                            {submittedOrder?.companyName ? `${submittedOrder.companyName} 발주가 등록되었습니다.` : '발주가 등록되었습니다.'}
+                        </p>
+                    </div>
+                    <button type="button" className="proxy-back-btn" onClick={() => navigate('/admin/orders')}>발주 관리로</button>
+                </header>
+                <div className="proxy-submitted-wrap">
+                    <span className="proxy-submitted-icon">✅</span>
+                    <h2 className="proxy-submitted-title">발주에 성공했습니다.</h2>
+                    <p className="proxy-submitted-desc">
+                        {submittedOrder?.orderNumber
+                            ? `${submittedOrder.orderNumber} 주문이 생성되었습니다.`
+                            : '새 주문이 생성되었습니다.'}
+                    </p>
+                    <div className="proxy-submitted-actions">
+                        <button type="button" className="proxy-primary-btn" onClick={startNewProxyOrder}>새 대리발주 작성하기</button>
+                        <button type="button" className="proxy-secondary-btn" onClick={() => navigate('/admin/orders')}>발주 관리 보기</button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="proxy-page">
@@ -312,15 +418,39 @@ export default function ProxyOrder() {
                                 value={clientQuery}
                                 onChange={(e) => { setClientQuery(e.target.value); setShowSuggest(true); }}
                                 onFocus={() => setShowSuggest(true)}
+                                onKeyDown={handleClientSearchKeyDown}
                                 onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
                                 disabled={clientsLoading}
                                 autoComplete="off"
+                                role="combobox"
+                                aria-expanded={showSuggest}
+                                aria-controls="proxy-client-suggestions"
+                                aria-activedescendant={
+                                    showSuggest && clientSuggestions[activeSuggestIndex]
+                                        ? `proxy-client-suggestion-${clientSuggestions[activeSuggestIndex].id}`
+                                        : undefined
+                                }
                             />
                             {showSuggest && clientSuggestions.length > 0 && (
-                                <ul className="proxy-suggest-list">
-                                    {clientSuggestions.map((c) => (
-                                        <li key={c.id}>
-                                            <button type="button" className="proxy-suggest-item" onMouseDown={(e) => e.preventDefault()} onClick={() => pickClient(c)}>
+                                <ul
+                                    id="proxy-client-suggestions"
+                                    className="proxy-suggest-list"
+                                    role="listbox"
+                                    ref={suggestListRef}
+                                >
+                                    {clientSuggestions.map((c, idx) => {
+                                        const active = idx === activeSuggestIndex;
+                                        return (
+                                        <li key={c.id} role="option" aria-selected={active}>
+                                            <button
+                                                id={`proxy-client-suggestion-${c.id}`}
+                                                type="button"
+                                                className={`proxy-suggest-item ${active ? 'active' : ''}`}
+                                                data-active={active}
+                                                onMouseEnter={() => setActiveSuggestIndex(idx)}
+                                                onMouseDown={(e) => e.preventDefault()}
+                                                onClick={() => pickClient(c)}
+                                            >
                                                 <span className="proxy-suggest-name">
                                                     {c.companyName}
                                                     {c.status === 'PENDING_SIGNUP' && (
@@ -333,7 +463,7 @@ export default function ProxyOrder() {
                                                 </span>
                                             </button>
                                         </li>
-                                    ))}
+                                    );})}
                                 </ul>
                             )}
                         </div>

@@ -173,6 +173,12 @@
 }
 .proxy-suggest-list li:last-child .proxy-suggest-item { border-bottom: 0; }
 .proxy-suggest-item:hover { background: #f9fafb; }
+.proxy-suggest-item.active {
+    background: #eef2ff;
+    color: #312e81;
+}
+.proxy-suggest-item.active .proxy-suggest-name { color: #312e81; }
+.proxy-suggest-item.active .proxy-suggest-meta { color: #4338ca; }
 .proxy-suggest-name { font-size: 14px; font-weight: 600; color: #111827; display: inline-flex; align-items: center; gap: 6px; }
 .proxy-suggest-meta { font-size: 12px; color: #6b7280; }
 .proxy-pending-badge {
@@ -472,6 +478,44 @@
     border-color: #c7d2fe;
     cursor: not-allowed;
     box-shadow: none;
+}
+
+.proxy-submitted-wrap {
+    text-align: center;
+    padding: 80px 20px;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+.proxy-submitted-icon {
+    font-size: 56px;
+    display: block;
+    margin-bottom: 20px;
+}
+.proxy-submitted-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #111;
+    margin: 0 0 10px;
+}
+.proxy-submitted-desc {
+    font-size: 15px;
+    color: #666;
+    margin: 0 0 32px;
+}
+.proxy-submitted-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    max-width: 480px;
+    margin: 0 auto;
+}
+.proxy-submitted-actions .proxy-primary-btn,
+.proxy-submitted-actions .proxy-secondary-btn {
+    flex: 1;
+    min-width: 180px;
 }
 
 /* 페이지 전체 드래그 오버레이 */
