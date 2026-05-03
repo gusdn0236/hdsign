@@ -895,6 +895,35 @@ def _normalize_company_key(name: str) -> str:
     return n.lower()
 
 
+_COMPANY_CONTACT_SUFFIX_RE = re.compile(r"^(?P<company>.+?)\((?P<contact>[^()]{1,50})\)\s*$")
+
+
+def _split_company_contact_label(name: str) -> tuple[str, str]:
+    raw = (name or "").strip()
+    if not raw:
+        return "", ""
+    match = _COMPANY_CONTACT_SUFFIX_RE.match(raw)
+    if not match:
+        return raw, ""
+    company = match.group("company").strip()
+    contact = match.group("contact").strip()
+    return company or raw, contact
+
+
+def _customer_folder_name_candidates(network_folder_name: str, company_name: str) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for raw in (network_folder_name, company_name):
+        raw = (raw or "").strip()
+        root, _contact = _split_company_contact_label(raw)
+        for name in (root, raw):
+            key = _normalize_company_key(name)
+            if key and key not in seen:
+                candidates.append(name.strip())
+                seen.add(key)
+    return candidates
+
+
 _CONTACT_TITLE_SUFFIX_RE = re.compile(
     r"(대표님?|사장님?|부사장님?|전무님?|상무님?|이사님?|부장님?|차장님?|과장님?|대리님?|주임님?|실장님?|팀장님?|매니저님?|님)$"
 )
@@ -919,9 +948,13 @@ def resolve_customer_folder(network_base: Path, network_folder_name: str,
     primary_key = _normalize_company_key(network_folder_name)
     fallback_key = _normalize_company_key(company_name)
     label = (network_folder_name or "").strip() or (company_name or "").strip()
+    candidates = _customer_folder_name_candidates(network_folder_name, company_name)
+    if candidates:
+        label = candidates[0]
+    candidate_keys = [_normalize_company_key(name) for name in candidates]
     safe_label = _sanitize_folder_name(label) or "(미지정)"
     fallback_new = network_base / f"{safe_label} (자동생성)"
-    if not primary_key and not fallback_key:
+    if not candidate_keys:
         return fallback_new
     try:
         primary_hit = None
@@ -930,6 +963,8 @@ def resolve_customer_folder(network_base: Path, network_folder_name: str,
             if not child.is_dir():
                 continue
             child_key = _normalize_company_key(child.name)
+            if child_key in candidate_keys:
+                return child
             if primary_key and child_key == primary_key:
                 primary_hit = child
                 break
@@ -965,7 +1000,12 @@ def resolve_network_order_folder(meta: dict, primary_ai_name: str | None) -> Pat
 
     company = (meta.get("companyName") or "").strip()
     network_folder = (meta.get("networkFolderName") or "").strip()
-    contact_part = _contact_folder_part(meta.get("contactName") or "")
+    contact_raw = (meta.get("contactName") or "").strip()
+    if not contact_raw:
+        _company_root, contact_raw = _split_company_contact_label(company)
+    if not contact_raw:
+        _network_root, contact_raw = _split_company_contact_label(network_folder)
+    contact_part = _contact_folder_part(contact_raw)
     title = (meta.get("title") or "").strip()
     md = _format_md(meta.get("createdAt"))
     if not md:

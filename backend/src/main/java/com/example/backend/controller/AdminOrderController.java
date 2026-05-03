@@ -287,12 +287,22 @@ public class AdminOrderController {
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("orderNumber", order.getOrderNumber());
         ClientUser client = order.getClient();
-        info.put("companyName", client.getCompanyName());
+        String companyName = client.getCompanyName();
+        String networkFolderName = client.getNetworkFolderName();
+        String contactName = client.getContactName();
+        String effectiveNetworkFolderName = stripContactSuffix(
+                isBlank(networkFolderName) ? companyName : networkFolderName
+        );
+        String effectiveContactName = isBlank(contactName)
+                ? firstNonBlank(extractContactSuffix(companyName), extractContactSuffix(networkFolderName))
+                : contactName.trim();
+
+        info.put("companyName", companyName);
         // 워처가 거래처 폴더 매칭에 우선 사용. 빈 값이면 워처가 companyName 으로 폴백.
         // 담당자가 여러 명이어도 거래처 폴더는 회사 폴더 하나를 사용하고,
         // 워처가 주문 폴더명 끝에 담당자명을 붙여 구분한다.
-        info.put("networkFolderName", client.getNetworkFolderName());
-        info.put("contactName", client.getContactName());
+        info.put("networkFolderName", effectiveNetworkFolderName);
+        info.put("contactName", effectiveContactName);
         info.put("phone", client.getPhone());
         info.put("title", order.getTitle());
         info.put("requestType", order.getRequestType().name());
@@ -304,6 +314,38 @@ public class AdminOrderController {
         info.put("note", order.getNote());
         info.put("createdAt", order.getCreatedAt().toString());
         return info;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (!isBlank(first)) return first.trim();
+        if (!isBlank(second)) return second.trim();
+        return "";
+    }
+
+    private String stripContactSuffix(String value) {
+        String raw = value == null ? "" : value.trim();
+        int open = raw.lastIndexOf('(');
+        if (open <= 0 || !raw.endsWith(")")) {
+            return raw;
+        }
+        String root = raw.substring(0, open).trim();
+        String contact = raw.substring(open + 1, raw.length() - 1).trim();
+        return root.isEmpty() || contact.isEmpty() ? raw : root;
+    }
+
+    private String extractContactSuffix(String value) {
+        String raw = value == null ? "" : value.trim();
+        int open = raw.lastIndexOf('(');
+        if (open <= 0 || !raw.endsWith(")")) {
+            return "";
+        }
+        String root = raw.substring(0, open).trim();
+        String contact = raw.substring(open + 1, raw.length() - 1).trim();
+        return root.isEmpty() ? "" : contact;
     }
 
     private String deliveryLabel(Order.DeliveryMethod method) {
