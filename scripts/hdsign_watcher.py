@@ -4734,7 +4734,8 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     동작 순서:
       1순위) WM_COMMAND 로 메뉴 직접 호출 → 다이얼로그 → 클립보드+Ctrl+V → Enter
             (포커스/IME/보안SW 키후킹 모두 우회)
-      2순위) Ctrl+O 키 시뮬레이션 (1순위 실패 시 폴백, 스캔코드 강화)
+      2순위) Alt+F → O 로 File > Open 메뉴 키보드 호출
+      3순위) Ctrl+O 키 시뮬레이션 (앞 경로 실패 시 폴백, 스캔코드 강화)
     """
     try:
         import win32api
@@ -4914,9 +4915,21 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             except Exception as e:
                 ui_log(f"WM_COMMAND 호출 실패: {e}")
         else:
-            ui_log("FlexSign 메뉴에서 [Open] 항목을 찾지 못함 — Ctrl+O 키 시뮬레이션으로 폴백")
+            ui_log("FlexSign 메뉴에서 [Open] 항목을 찾지 못함 — Alt+F,O 키 경로로 폴백")
 
-        # 2b) Ctrl+O 키 시뮬레이션 (2순위, WM_COMMAND 가 안 통할 때 폴백)
+        # 2b) Alt+F → O 키보드 메뉴 경로. 드롭이 아니라 FlexSign [열기] 메뉴를 누르는 방식이라
+        #     열리면 .ai 를 .fs 문서로 전환하는 기존 저장 흐름을 유지한다.
+        if not dlg_hwnd:
+            _chord(VK_MENU, ord('F'))
+            time.sleep(0.25)
+            _press(ord('O'))
+            dlg_hwnd = _wait_for_open_dialog(timeout=3.0)
+            if dlg_hwnd:
+                ui_log("Alt+F,O 로 FlexSign [Open] 호출")
+            else:
+                ui_log("Alt+F,O 후 다이얼로그 미감지 — Ctrl+O 키 시뮬레이션으로 폴백")
+
+        # 2c) Ctrl+O 키 시뮬레이션 (마지막 폴백)
         #     스캔코드 부여로 키 후킹 SW 도 가능한 한 통과시킨다.
         if not dlg_hwnd:
             for attempt in range(2):
@@ -5020,29 +5033,14 @@ def launch_flexsign(file_path: Path):
     # 바꿨을 수 있으므로 매번 다시 한 번 보장. 이미 PDF24 면 무동작.
     switch_default_to_pdf24()
 
+    # 드롭 방식은 화면에는 뜨지만 FlexSign 내부에서 .ai 문서로 잡혀 저장 오류가 난다.
+    # 반드시 FlexSign 의 [열기] 흐름으로 v8 AI 를 열어 .fs 도큐먼트로 전환해야 한다.
     ui_log(f"FlexSign 창(HWND={hwnd}) — [파일 → 열기] 시뮬레이션")
     ok = _open_file_via_menu(hwnd, file_path)
     if ok:
         ui_log(f"FlexSign에 전달 완료: {file_path.name}")
-        return
-
-    # 메뉴 자동화 실패 시 fallback — .ai 도큐먼트로 잡히지만 화면 표시는 됨.
-    ui_log("메뉴 열기 실패 — 드롭 방식으로 폴백")
-    try:
-        ok2 = _post_drop_files(hwnd, str(file_path))
-    except Exception as e:
-        ui_log(f"드롭 메시지 실패: {e}")
-        ok2 = False
-    if ok2:
-        try:
-            if ctypes.windll.user32.IsIconic(hwnd):
-                ctypes.windll.user32.ShowWindow(hwnd, 9)
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
-        ui_log(f"FlexSign에 드롭 전달: {file_path.name}")
     else:
-        ui_log(f"드롭 실패 — 수동으로 파일을 열어주세요: {file_path}")
+        ui_log(f"FlexSign 열기 실패 — 드롭은 저장 오류가 나므로 사용하지 않습니다. 수동으로 [열기]에서 파일을 열어주세요: {file_path}")
 
 
 # ── ZIP processing ────────────────────────────────────────────────────────────
