@@ -6,9 +6,12 @@ import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
+import com.example.backend.service.WorksheetThumbnailService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -30,6 +33,7 @@ import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/admin/orders")
 @RequiredArgsConstructor
@@ -38,6 +42,7 @@ public class AdminOrderController {
     private final OrderRepository orderRepository;
     private final ClientService clientService;
     private final S3Client s3Client;
+    private final WorksheetThumbnailService thumbnailService;
 
     @Value("${r2.bucket}")
     private String bucket;
@@ -168,6 +173,67 @@ public class AdminOrderController {
         purgeR2Files(order);
         orderRepository.delete(order);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 일회성 백필 — worksheetPdfUrl 은 있는데 worksheetThumbnailUrl 이 비어있는 옛 주문들에 대해
+     * R2 의 PDF 를 받아 썸네일을 생성/업로드/저장. 신규 PDF 업로드 흐름과 동일한 결과를 만든다.
+     *
+     * 한 번에 너무 많이 처리하면 HTTP 타임아웃 / R2 throttling 우려가 있어 limit (기본 50) 으로
+     * 페이지 단위 처리. 호출 결과의 remaining 이 0 이 될 때까지 반복 호출하면 끝.
+     * 각 주문은 best-effort — 실패하면 worksheetThumbnailUrl 을 NULL 로 두고 다음 호출에서 재시도.
+     */
+    @PostMapping("/backfill-worksheet-thumbnails")
+    public ResponseEntity<?> backfillWorksheetThumbnails(
+            @RequestParam(defaultValue = "50") int limit
+    ) {
+        if (limit < 1) limit = 1;
+        if (limit > 200) limit = 200;
+
+        long totalRemainingBefore = orderRepository
+                .countByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNull();
+        List<Order> batch = orderRepository
+                .findByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNullOrderByCreatedAtDesc(
+                        PageRequest.of(0, limit));
+
+        int processed = 0;
+        int succeeded = 0;
+        int failed = 0;
+        for (Order order : batch) {
+            processed += 1;
+            String pdfUrl = order.getWorksheetPdfUrl();
+            String pdfKey = thumbnailService.extractKey(pdfUrl);
+            if (pdfKey == null) {
+                log.warn("백필 — R2 key 추출 실패 [{}], url={}", order.getOrderNumber(), pdfUrl);
+                failed += 1;
+                continue;
+            }
+            byte[] pdfBytes = thumbnailService.downloadObject(pdfKey);
+            if (pdfBytes == null) {
+                failed += 1;
+                continue;
+            }
+            String thumbUrl = thumbnailService.renderAndUpload(order.getOrderNumber(), pdfBytes);
+            if (thumbUrl == null) {
+                failed += 1;
+                continue;
+            }
+            order.setWorksheetThumbnailUrl(thumbUrl);
+            orderRepository.save(order);
+            succeeded += 1;
+        }
+
+        long remainingAfter = Math.max(0L, totalRemainingBefore - succeeded);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("totalRemainingBefore", totalRemainingBefore);
+        body.put("processed", processed);
+        body.put("succeeded", succeeded);
+        body.put("failed", failed);
+        body.put("remaining", remainingAfter);
+        body.put("limit", limit);
+        log.info("지시서 썸네일 백필 — 처리 {}, 성공 {}, 실패 {}, 남은 {}",
+                processed, succeeded, failed, remainingAfter);
+        return ResponseEntity.ok(body);
     }
 
     private void purgeR2Files(Order order) {

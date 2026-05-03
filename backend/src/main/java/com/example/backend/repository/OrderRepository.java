@@ -25,4 +25,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     List<Order> findByDeletedAtBefore(LocalDateTime cutoff);
     long countByOrderNumberStartingWith(String prefix);
+
+    // 백필 — worksheetPdfUrl 은 있는데 worksheetThumbnailUrl 이 비어있는 주문.
+    // admin POST /backfill-worksheet-thumbnails 에서 페이지 단위로 처리.
+    List<Order> findByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNullOrderByCreatedAtDesc(
+            org.springframework.data.domain.Pageable pageable);
+
+    long countByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNull();
 }
