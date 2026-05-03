@@ -4740,6 +4740,7 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     user32 = ctypes.windll.user32
     VK_CONTROL = 0x11
     VK_RETURN = 0x0D
+    VK_ESCAPE = 0x1B
     VK_MENU = 0x12  # Alt
     KEYEVENTF_KEYUP = 0x0002
     KEYEVENTF_SCANCODE = 0x0008
@@ -4979,16 +4980,31 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             return 0
         return edits[-1] if edits else 0
 
-    def _set_dialog_file_path(dialog_hwnd: int, text: str) -> bool:
-        edit_hwnd = _find_file_name_edit(dialog_hwnd)
-        if not edit_hwnd:
-            return False
+    def _set_clipboard_text(text: str) -> None:
+        win32clipboard.OpenClipboard()
         try:
-            user32.SendMessageW(edit_hwnd, WM_SETTEXT, None, text)
-            time.sleep(0.12)
-            return True
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardText(text, 13)  # CF_UNICODETEXT
+        finally:
+            win32clipboard.CloseClipboard()
+
+    def _paste_dialog_file_path(dialog_hwnd: int, text: str) -> None:
+        """파일명 입력칸에 절대경로를 붙여넣는다.
+        직접 WM_SETTEXT 경로가 일부 FlexSign PC에서 다른 Edit 칸을 잡아 빈 파일명으로
+        Enter 만 재시도하는 문제가 있어, 실제 키 입력 경로를 기본으로 둔다."""
+        try:
+            user32.SetForegroundWindow(dialog_hwnd)
         except Exception:
-            return False
+            pass
+        time.sleep(0.15)
+        # 영문/한글 Windows 공용 파일열기에서 파일명 칸으로 이동하는 단축키.
+        _chord(VK_MENU, ord('N'))
+        time.sleep(0.12)
+        _chord(VK_CONTROL, ord('A'))
+        time.sleep(0.08)
+        _set_clipboard_text(text)
+        time.sleep(0.10)
+        _chord(VK_CONTROL, ord('V'))
 
     # 클립보드 백업 (사용자가 다른 데서 쓰던 내용 복원하기 위함)
     prev_clip = ""
@@ -5084,17 +5100,7 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         # 미감싼 경로는 공백/한글이 섞이면 옛날 #32770 다이얼로그(FlexSign 6.6 등)가
         # 토큰을 분리해 검색하려다 "파일 없음" 으로 실패하는 케이스가 있다.
         clip_path = f'"{file_path}"'
-        if _set_dialog_file_path(dlg_hwnd, clip_path):
-            ui_log("파일 경로를 열기 다이얼로그에 직접 입력")
-        else:
-            win32clipboard.OpenClipboard()
-            try:
-                win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardText(clip_path, 13)  # CF_UNICODETEXT
-            finally:
-                win32clipboard.CloseClipboard()
-            time.sleep(0.12)
-            _chord(VK_CONTROL, ord('V'))
+        _paste_dialog_file_path(dlg_hwnd, clip_path)
         # 긴 한글 경로를 다이얼로그가 해석하는 데 시간 필요.
         time.sleep(0.35)
 
@@ -5102,13 +5108,24 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         _press(VK_RETURN)
         _wait_until_dialog_closes(dlg_hwnd, timeout=4.0)
         if user32.IsWindow(dlg_hwnd) and user32.IsWindowVisible(dlg_hwnd):
-            ui_log("파일 열기 확인 지연 — Enter 재시도")
+            ui_log("파일 열기 확인 지연 — 파일명 재입력 후 Enter 재시도")
             try:
                 user32.SetForegroundWindow(dlg_hwnd)
             except Exception:
                 pass
+            _paste_dialog_file_path(dlg_hwnd, clip_path)
+            time.sleep(0.25)
             _press(VK_RETURN)
             _wait_until_dialog_closes(dlg_hwnd, timeout=3.0)
+        if user32.IsWindow(dlg_hwnd) and user32.IsWindowVisible(dlg_hwnd):
+            ui_log("파일 열기 다이얼로그가 닫히지 않음 — 드롭 방식 폴백으로 전환")
+            try:
+                user32.SetForegroundWindow(dlg_hwnd)
+            except Exception:
+                pass
+            _press(VK_ESCAPE)
+            time.sleep(0.25)
+            return False
         _show_flexsign_window(verify=False)
         time.sleep(0.25)
         return True
