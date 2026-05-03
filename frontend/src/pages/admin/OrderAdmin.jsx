@@ -1425,6 +1425,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                         <div className="order-card-thumb-wrap">
                           <WorksheetThumbnail
                             pdfUrl={order.worksheetPdfUrl || null}
+                            thumbnailUrl={order.worksheetThumbnailUrl || null}
                             fallback={
                               <div className="order-card-thumb-empty">
                                 <span className="order-card-thumb-empty-title">

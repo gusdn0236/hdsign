@@ -187,6 +187,10 @@ public class AdminOrderController {
         if (worksheetKey != null) {
             keysToDelete.add(worksheetKey);
         }
+        String worksheetThumbKey = extractKeyFromPublicUrl(order.getWorksheetThumbnailUrl());
+        if (worksheetThumbKey != null) {
+            keysToDelete.add(worksheetThumbKey);
+        }
 
         for (String key : keysToDelete) {
             try {

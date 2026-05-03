@@ -32,6 +32,7 @@ public class OrderDto {
         private String status;
         private List<FileInfo> files;
         private String worksheetPdfUrl;
+        private String worksheetThumbnailUrl;
         private LocalDateTime evidenceLastUploadedAt;
         private LocalDateTime worksheetUpdatedAt;
         private String worksheetChangeNote;
@@ -95,6 +96,7 @@ public class OrderDto {
                 .status(order.getStatus().name())
                 .files(files)
                 .worksheetPdfUrl(order.getWorksheetPdfUrl())
+                .worksheetThumbnailUrl(order.getWorksheetThumbnailUrl())
                 .evidenceLastUploadedAt(order.getEvidenceLastUploadedAt())
                 .worksheetUpdatedAt(order.getWorksheetUpdatedAt())
                 .worksheetChangeNote(order.getWorksheetChangeNote())

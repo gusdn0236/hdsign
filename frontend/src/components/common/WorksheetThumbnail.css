@@ -38,6 +38,12 @@
     height: auto !important;
     flex-shrink: 0;
 }
+/* 백엔드 prerendered JPEG 썸네일 — A4 세로 프레임 안에 가로 폭 맞춤, 세로는 잘림(canvas 동작과 동일). */
+.ws-thumb-frame > .ws-thumb-img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
 .ws-thumb-err {
     position: absolute;
     inset: 0;

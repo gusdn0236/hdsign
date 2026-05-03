@@ -7,6 +7,10 @@ import com.example.backend.repository.OrderFileRepository;
 import com.example.backend.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.ImageType;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +26,15 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.MemoryCacheImageOutputStream;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
@@ -301,20 +314,32 @@ public class PublicEvidenceController {
             return ResponseEntity.badRequest().body(Map.of("message", "PDF 파일이 비어 있습니다."));
         }
 
-        // 새 PDF 업로드 전에 이전 PDF 키를 미리 잡아둔다 — 업로드/저장 성공 후 best-effort 로 삭제.
+        // 새 PDF 업로드 전에 이전 PDF/썸네일 키를 미리 잡아둔다 — 업로드/저장 성공 후 best-effort 로 삭제.
         // 실패해도 서비스 흐름엔 영향 없고 다음 영구삭제 시 정리되도록 keysToDelete 가 누적되지 않게
         // 매번 즉시 시도. 새 업로드가 실패하면 옛 PDF 가 그대로 남아 fallback 으로 사용 가능.
         String oldWorksheetKey = extractKeyFromPublicUrl(order.getWorksheetPdfUrl());
+        String oldThumbnailKey = extractKeyFromPublicUrl(order.getWorksheetThumbnailUrl());
+
+        // PDF 바이트를 한 번 메모리에 읽어 R2 업로드 + PDFBox 썸네일 렌더 양쪽에 재사용.
+        // 지시서 PDF 는 보통 수백 KB ~ 수 MB 라 메모리 보관 비용 미미.
+        byte[] pdfBytes;
+        try {
+            pdfBytes = file.getBytes();
+        } catch (Exception e) {
+            log.warn("지시서 PDF 읽기 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("message", "PDF 읽기에 실패했습니다."));
+        }
 
         String key = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
-        try (java.io.InputStream in = file.getInputStream()) {
+        try {
             s3Client.putObject(
                     PutObjectRequest.builder()
                             .bucket(bucket)
                             .key(key)
                             .contentType("application/pdf")
                             .build(),
-                    RequestBody.fromInputStream(in, file.getSize())
+                    RequestBody.fromBytes(pdfBytes)
             );
         } catch (Exception e) {
             log.warn("지시서 PDF 업로드 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
@@ -327,6 +352,10 @@ public class PublicEvidenceController {
                 : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
         String url = normalizedPublicUrl + key;
 
+        // 썸네일은 best-effort — 실패해도 PDF 업로드는 이미 성공했으므로 흐름 진행.
+        // 프론트는 thumbnailUrl 없으면 PDF 직접 렌더로 폴백.
+        String thumbnailUrl = renderAndUploadThumbnail(order.getOrderNumber(), pdfBytes);
+
         // 첫 부착(이전 URL 이 없었음) 또는 사용자가 새 메모를 입력했을 때만 "변경" 배지 트리거.
         // 단순 재인쇄(동일 내용)와 메모 보존(preserveChangeNote) 은 배지 안 띄움.
         // 납기/배송 실제 변경은 /due-date 에서 별도로 잡는다.
@@ -334,6 +363,9 @@ public class PublicEvidenceController {
         boolean userMarkedChanged = Boolean.TRUE.equals(contentChanged);
         boolean preserveNote = Boolean.TRUE.equals(preserveChangeNote);
         order.setWorksheetPdfUrl(url);
+        // 썸네일 렌더 실패 시(thumbnailUrl == null) 기존 값을 덮어써 stale 썸네일이 남지 않도록 함.
+        // 다음 업로드 때 다시 시도되며, 그 사이엔 프론트가 PDF 폴백으로 그린다.
+        order.setWorksheetThumbnailUrl(thumbnailUrl);
         if (firstAttachment || userMarkedChanged) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
         }
@@ -360,11 +392,104 @@ public class PublicEvidenceController {
                         order.getOrderNumber(), oldWorksheetKey, e.getMessage());
             }
         }
+        if (oldThumbnailKey != null) {
+            String newThumbKey = extractKeyFromPublicUrl(thumbnailUrl);
+            if (!oldThumbnailKey.equals(newThumbKey)) {
+                try {
+                    s3Client.deleteObject(DeleteObjectRequest.builder()
+                            .bucket(bucket).key(oldThumbnailKey).build());
+                } catch (Exception e) {
+                    log.warn("이전 지시서 썸네일 삭제 실패 [{}/{}]: {}",
+                            order.getOrderNumber(), oldThumbnailKey, e.getMessage());
+                }
+            }
+        }
 
-        return ResponseEntity.ok(Map.of(
-                "orderNumber", order.getOrderNumber(),
-                "worksheetPdfUrl", url
-        ));
+        Map<String, Object> body = new HashMap<>();
+        body.put("orderNumber", order.getOrderNumber());
+        body.put("worksheetPdfUrl", url);
+        body.put("worksheetThumbnailUrl", thumbnailUrl);
+        return ResponseEntity.ok(body);
+    }
+
+    // PDF 1페이지를 카드용 JPEG 으로 렌더해 R2 에 업로드하고 public URL 을 반환.
+    // 실패 시 null — 호출부는 폴백 처리. PDFBox 는 메모리 모드(Loader.loadPDF(byte[])) 사용.
+    // 카드 표시 폭(보통 240–320px) 의 약 2배 해상도로 720px wide 고정,
+    // JPEG 품질 0.7 이면 일반 지시서 1페이지가 50–120KB 수준.
+    private static final int THUMBNAIL_WIDTH_PX = 720;
+    private static final float THUMBNAIL_JPEG_QUALITY = 0.7f;
+
+    private String renderAndUploadThumbnail(String orderNumber, byte[] pdfBytes) {
+        BufferedImage rendered;
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            if (doc.getNumberOfPages() < 1) return null;
+            PDFRenderer renderer = new PDFRenderer(doc);
+            // 페이지 가로 픽셀 폭이 THUMBNAIL_WIDTH_PX 가 되도록 DPI 산정 (PDF 1pt = 1/72 inch).
+            float pageWidthPt = doc.getPage(0).getMediaBox().getWidth();
+            if (pageWidthPt <= 0) return null;
+            float dpi = (THUMBNAIL_WIDTH_PX / pageWidthPt) * 72f;
+            // 너무 작은 페이지에도 과도한 DPI 가 잡히지 않도록 상한.
+            if (dpi > 200f) dpi = 200f;
+            rendered = renderer.renderImageWithDPI(0, dpi, ImageType.RGB);
+        } catch (Exception e) {
+            log.warn("지시서 썸네일 렌더 실패 [{}]: {}", orderNumber, e.getMessage());
+            return null;
+        }
+
+        // 렌더 결과가 목표 폭을 넘으면 한 번 더 리샘플 (품질 보존하며 파일 크기 절감).
+        BufferedImage finalImage = rendered;
+        if (rendered.getWidth() > THUMBNAIL_WIDTH_PX) {
+            int targetW = THUMBNAIL_WIDTH_PX;
+            int targetH = Math.round(rendered.getHeight() * (targetW / (float) rendered.getWidth()));
+            BufferedImage resized = new BufferedImage(targetW, targetH, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = resized.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.drawImage(rendered, 0, 0, targetW, targetH, null);
+            g.dispose();
+            finalImage = resized;
+        }
+
+        byte[] jpegBytes;
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
+            ImageWriteParam param = writer.getDefaultWriteParam();
+            param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionQuality(THUMBNAIL_JPEG_QUALITY);
+            try (MemoryCacheImageOutputStream ios = new MemoryCacheImageOutputStream(baos)) {
+                writer.setOutput(ios);
+                writer.write(null, new IIOImage(finalImage, null, null), param);
+            } finally {
+                writer.dispose();
+            }
+            jpegBytes = baos.toByteArray();
+        } catch (Exception e) {
+            log.warn("지시서 썸네일 인코딩 실패 [{}]: {}", orderNumber, e.getMessage());
+            return null;
+        }
+
+        String thumbKey = "orders/" + orderNumber + "/worksheet/" + UUID.randomUUID() + ".jpg";
+        try {
+            s3Client.putObject(
+                    PutObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(thumbKey)
+                            .contentType("image/jpeg")
+                            // 거래처/관리자 모두 같은 객체를 반복 노출하므로 CDN/브라우저 캐시 1년 허용.
+                            // PDF 가 바뀌면 썸네일 키 자체가 새 UUID 라 캐시 무효화 자동.
+                            .cacheControl("public, max-age=31536000, immutable")
+                            .build(),
+                    RequestBody.fromBytes(jpegBytes)
+            );
+        } catch (Exception e) {
+            log.warn("지시서 썸네일 업로드 실패 [{}]: {}", orderNumber, e.getMessage());
+            return null;
+        }
+
+        String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
+                ? ""
+                : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
+        return normalizedPublicUrl + thumbKey;
     }
 
     private String extractKeyFromPublicUrl(String url) {

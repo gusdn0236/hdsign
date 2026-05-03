@@ -89,6 +89,10 @@ public class Order {
     @Column(length = 500)
     private String worksheetPdfUrl;
 
+    // PDF 1페이지를 작은 JPEG 으로 변환한 R2 URL — admin/모바일 목록 카드용. 풀 PDF 는 카드 클릭 후만 다운로드.
+    @Column(length = 500)
+    private String worksheetThumbnailUrl;
+
     // 워처 인쇄 다이얼로그 "지시서 내용 변경" 선택 시 작업자가 입력한 변경 메모.
     // 모바일 뷰어에서 PDF 한 번 터치하면 노출되어 작업자가 무엇이 바뀌었는지 즉시 본다.
     // 신규작성/단순 납기변경 업로드가 들어오면 다시 비워서 "최신 변경분만" 떠 있게 한다.

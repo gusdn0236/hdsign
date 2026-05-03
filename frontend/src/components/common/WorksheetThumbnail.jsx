@@ -16,8 +16,13 @@ const THUMB_MAX_DPR = 2.5;
 // 보이기 시작할 때만 PDF 1페이지를 카드 폭에 맞춰 렌더. 텍스트/주석 레이어 끔 → 가벼운 미리보기.
 // memo + 안정 prop(pdfUrl 문자열) 로 부모 폴링/필터 토글 시 불필요 재렌더 차단.
 // /m/worksheets, /admin/orders 양쪽에서 공유.
+//
+// thumbnailUrl: 백엔드가 PDF 업로드 시 PDFBox 로 미리 생성한 JPEG (admin/모바일 카드 빠른 로딩용).
+// 있으면 <img> 한 장으로 끝내고 react-pdf 는 아예 호출 안 함 → 다운로드/CPU 모두 대폭 절감.
+// 없으면(과거 업로드 등) 기존 PDF 렌더 폴백.
 const WorksheetThumbnail = memo(function WorksheetThumbnail({
   pdfUrl,
+  thumbnailUrl,
   rootMargin = DEFAULT_ROOT_MARGIN,
   fallback = null,
 }) {
@@ -26,6 +31,7 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
   const [visible, setVisible] = useState(false);
   const [canRender, setCanRender] = useState(false);
   const [errored, setErrored] = useState(false);
+  const [imgErrored, setImgErrored] = useState(false);
   const renderTimerRef = useRef(null);
 
   useEffect(() => {
@@ -64,7 +70,14 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
   }, [pdfUrl]);
 
   useEffect(() => {
-    if (!visible || canRender) return undefined;
+    setImgErrored(false);
+  }, [thumbnailUrl]);
+
+  // 썸네일 JPEG 가 있으면 PDF 렌더 자체를 건너뛴다 — img 가 onError 면 PDF 폴백.
+  const useImageThumb = Boolean(thumbnailUrl) && !imgErrored;
+
+  useEffect(() => {
+    if (!visible || canRender || useImageThumb) return undefined;
     const run = () => {
       renderTimerRef.current = null;
       setCanRender(true);
@@ -87,7 +100,7 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
       }
       renderTimerRef.current = null;
     };
-  }, [canRender, visible]);
+  }, [canRender, visible, useImageThumb]);
 
   const file = useMemo(() => (pdfUrl ? { url: pdfUrl } : null), [pdfUrl]);
 
@@ -98,8 +111,19 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
 
   return (
     <div className="ws-thumb-frame" ref={ref}>
-      {!pdfUrl && fallback}
-      {pdfUrl && visible && canRender && file && width > 0 && !errored && (
+      {!pdfUrl && !thumbnailUrl && fallback}
+      {useImageThumb && (
+        <img
+          className="ws-thumb-img"
+          src={thumbnailUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          onError={() => setImgErrored(true)}
+        />
+      )}
+      {!useImageThumb && pdfUrl && visible && canRender && file && width > 0 && !errored && (
         <Document
           file={file}
           loading={null}
@@ -117,7 +141,7 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
           />
         </Document>
       )}
-      {pdfUrl && errored && <div className="ws-thumb-err">미리보기 실패</div>}
+      {!useImageThumb && pdfUrl && errored && <div className="ws-thumb-err">미리보기 실패</div>}
     </div>
   );
 });

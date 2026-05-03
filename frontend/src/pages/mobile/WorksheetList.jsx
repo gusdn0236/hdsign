@@ -339,7 +339,10 @@ export default function WorksheetList() {
                                     to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
                                     className="ws-grid-card"
                                 >
-                                    <WorksheetThumbnail pdfUrl={it.worksheetPdfUrl} />
+                                    <WorksheetThumbnail
+                                        pdfUrl={it.worksheetPdfUrl}
+                                        thumbnailUrl={it.worksheetThumbnailUrl}
+                                    />
                                     <div className="ws-thumb-company">
                                         {it.companyName || '거래처 미상'}
                                     </div>
