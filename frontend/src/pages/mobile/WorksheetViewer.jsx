@@ -18,15 +18,16 @@ const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
 // PDF 렌더 DPR — 처음 한 번에 핀치 최대줌까지 견디는 고해상도로 그린다.
 // 옛날엔 빠른 저화질 → idle 후 고화질 재렌더 였는데, 화면이 하얗게 깜빡이는 게
-// 오히려 거슬려서 단계 향상 제거. 사용 기기는 거의 최신 아이폰(17 등) 이라
-// 면적 캡을 64MP 까지 풀어 작은 글씨도 7배 핀치까지 또렷하게 본다.
+// 오히려 거슬려서 단계 향상 제거. 핀치 한도를 5배로 잡아 ideal DPR(deviceDpr×PINCH×OVERSAMPLE)
+// 이 ~30% 줄어든다 — 갤럭시 등 안드로이드에서 캔버스 ~5760×8100 → ~4100×5800 으로 떨어져
+// 첫 렌더 대기시간이 크게 짧아짐. 1~3배 줌에선 화질 차이 사실상 안 보임.
 // 구형 iPhone(8 이하) 에선 메모리 한계로 검은 화면 위험 있음 — 그때만 다시 낮출 것.
 const PDF_BASE_DPR = 4;
 const PDF_MAX_DPR = 20;
 const PDF_OVERSAMPLE = 1.3;
 const PDF_MAX_CANVAS_PIXELS = 64_000_000;
 const PDF_JS_MAX_IMAGE_BYTES = 256 * 1024 * 1024;
-const PINCH_MAX_SCALE = 7;
+const PINCH_MAX_SCALE = 5;
 // 최고 DPR 에서 캔버스 할당 실패/pdf.js 내부 에러가 나면 DPR 을 단계적으로 낮추며
 // 재시도. 빈 화면으로 멈추는 대신 약간 낮은 화질로라도 보이게 하는 안전망.
 // 35% 까지 내려가도 deviceDpr 3 환경에선 여전히 6 DPR 안팎이라 옛 설정(MAX=14)과

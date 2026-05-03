@@ -6,6 +6,7 @@ import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
+import com.example.backend.service.WorksheetFlattenService;
 import com.example.backend.service.WorksheetThumbnailService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,10 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+// software.amazon.awssdk.core.sync.RequestBody 는 명시 임포트하지 않음 — Spring 의
+// @RequestBody (org.springframework.web.bind.annotation.*) 와 클래스명 충돌해서
+// 같은 파일 내 다른 핸들러의 @RequestBody 가 깨진다. 본문에서 FQN 으로 사용.
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +35,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -43,6 +49,7 @@ public class AdminOrderController {
     private final ClientService clientService;
     private final S3Client s3Client;
     private final WorksheetThumbnailService thumbnailService;
+    private final WorksheetFlattenService flattenService;
 
     @Value("${r2.bucket}")
     private String bucket;
@@ -233,6 +240,99 @@ public class AdminOrderController {
         body.put("limit", limit);
         log.info("지시서 썸네일 백필 — 처리 {}, 성공 {}, 실패 {}, 남은 {}",
                 processed, succeeded, failed, remainingAfter);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 기존 R2 의 작업지시서 PDF 를 평탄화(페이지당 단일 JPEG)된 PDF 로 재저장.
+     * 갤럭시 등 안드로이드 Chrome 의 pdf.js 가 다중 비트맵 타일 PDF 에서 멈추는 문제를
+     * 기존 데이터에도 적용하기 위함. 신규 업로드는 PublicEvidenceController 가 자동 처리하므로
+     * 이 엔드포인트는 한 번만 돌려 백로그를 정리하는 용도.
+     *
+     * <p>"이미 평탄화됨" 마커 컬럼은 두지 않음 — 재처리해도 결과는 시각적으로 동일하고
+     * 비용도 페이지당 1~2초로 미미. 페이지 파라미터(page=0,1,...) 로 walk 하거나 limit 만
+     * 키워 한 번에 끝내면 됨. worksheetUpdatedAt 는 손대지 않아 모바일/관리자에 "변경" 배지가
+     * 잘못 트리거되지 않는다(동일 내용 재포맷이라 사용자 입장에선 변경 아님).
+     */
+    @PostMapping("/backfill-worksheet-flatten")
+    public ResponseEntity<?> backfillWorksheetFlatten(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int limit
+    ) {
+        if (limit < 1) limit = 1;
+        // 평탄화는 썸네일보다 무거움(페이지당 PDFBox 렌더 + JPEG 인코딩 + 새 PDF 직렬화).
+        // Railway 60s HTTP 타임아웃 안에 들어오도록 한도 조심스럽게 잡음.
+        if (limit > 50) limit = 50;
+        if (page < 0) page = 0;
+
+        long total = orderRepository.countByWorksheetPdfUrlIsNotNullAndDeletedAtIsNull();
+        List<Order> batch = orderRepository
+                .findByWorksheetPdfUrlIsNotNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+                        PageRequest.of(page, limit));
+
+        String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
+                ? "" : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
+
+        int processed = 0, succeeded = 0, failed = 0;
+        for (Order order : batch) {
+            processed += 1;
+            String oldUrl = order.getWorksheetPdfUrl();
+            String oldKey = thumbnailService.extractKey(oldUrl);
+            if (oldKey == null) {
+                log.warn("평탄화 백필 — R2 key 추출 실패 [{}], url={}", order.getOrderNumber(), oldUrl);
+                failed += 1;
+                continue;
+            }
+            byte[] pdfBytes = thumbnailService.downloadObject(oldKey);
+            if (pdfBytes == null) {
+                failed += 1;
+                continue;
+            }
+            byte[] flattened = flattenService.flatten(pdfBytes);
+            if (flattened == null) {
+                failed += 1;
+                continue;
+            }
+
+            // 새 키로 업로드 → DB url 교체 → 옛 키 best-effort 삭제. worksheetUpdatedAt 은 손대지 않음.
+            String newKey = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
+            try {
+                s3Client.putObject(
+                        PutObjectRequest.builder()
+                                .bucket(bucket)
+                                .key(newKey)
+                                .contentType("application/pdf")
+                                .build(),
+                        software.amazon.awssdk.core.sync.RequestBody.fromBytes(flattened)
+                );
+            } catch (Exception e) {
+                log.warn("평탄화 PDF 업로드 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
+                failed += 1;
+                continue;
+            }
+            order.setWorksheetPdfUrl(normalizedPublicUrl + newKey);
+            orderRepository.save(order);
+            try {
+                s3Client.deleteObject(DeleteObjectRequest.builder()
+                        .bucket(bucket).key(oldKey).build());
+            } catch (Exception e) {
+                log.warn("이전 지시서 PDF 삭제 실패 [{}/{}]: {}",
+                        order.getOrderNumber(), oldKey, e.getMessage());
+            }
+            log.info("지시서 PDF 평탄화 [{}]: {} → {} bytes",
+                    order.getOrderNumber(), pdfBytes.length, flattened.length);
+            succeeded += 1;
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("total", total);
+        body.put("page", page);
+        body.put("processed", processed);
+        body.put("succeeded", succeeded);
+        body.put("failed", failed);
+        body.put("limit", limit);
+        log.info("지시서 PDF 평탄화 백필 — page={} 처리 {}, 성공 {}, 실패 {}",
+                page, processed, succeeded, failed);
         return ResponseEntity.ok(body);
     }
 

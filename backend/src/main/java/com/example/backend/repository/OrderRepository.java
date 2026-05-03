@@ -32,4 +32,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             org.springframework.data.domain.Pageable pageable);
 
     long countByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNull();
+
+    // 백필 — worksheetPdfUrl 이 있는 활성 주문 전체. admin POST /backfill-worksheet-flatten
+    // 에서 페이지 단위로 처리해 기존 PDF 를 단일 이미지/페이지 구조로 재저장한다.
+    // "이미 평탄화됨" 마커 컬럼은 두지 않음 — 재처리해도 시각적 결과 동일하고 비용 미미.
+    List<Order> findByWorksheetPdfUrlIsNotNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+            org.springframework.data.domain.Pageable pageable);
+
+    long countByWorksheetPdfUrlIsNotNullAndDeletedAtIsNull();
 }

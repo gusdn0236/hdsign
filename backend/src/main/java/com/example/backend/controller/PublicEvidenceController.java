@@ -5,6 +5,7 @@ import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderFileRepository;
 import com.example.backend.repository.OrderRepository;
+import com.example.backend.service.WorksheetFlattenService;
 import com.example.backend.service.WorksheetThumbnailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +47,7 @@ public class PublicEvidenceController {
     private final OrderFileRepository orderFileRepository;
     private final S3Client s3Client;
     private final WorksheetThumbnailService thumbnailService;
+    private final WorksheetFlattenService flattenService;
 
     @Value("${r2.bucket}")
     private String bucket;
@@ -318,6 +320,16 @@ public class PublicEvidenceController {
             log.warn("지시서 PDF 읽기 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                     .body(Map.of("message", "PDF 읽기에 실패했습니다."));
+        }
+
+        // 평탄화 — 일러스트 출력본의 다중 비트맵 타일 구조가 안드로이드 Chrome(갤럭시) 에서
+        // pdf.js 를 멈추는 문제 우회. 페이지당 단일 JPEG 으로 재렌더된 PDF 로 대체한다.
+        // 실패 시 원본 바이트로 폴백 — 업로드 자체는 절대 막지 않음.
+        byte[] flattened = flattenService.flatten(pdfBytes);
+        if (flattened != null) {
+            log.info("지시서 PDF 평탄화 [{}]: {} → {} bytes",
+                    order.getOrderNumber(), pdfBytes.length, flattened.length);
+            pdfBytes = flattened;
         }
 
         String key = "orders/" + order.getOrderNumber() + "/worksheet/" + UUID.randomUUID() + ".pdf";
