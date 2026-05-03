@@ -299,6 +299,15 @@ def check_prerequisites() -> bool:
             0x30,  # MB_ICONWARNING
         )
         return False
+    ok, message = check_illustrator_com_ready()
+    if not ok:
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            message,
+            "HD사인 지시서 프로그램 - Illustrator 연결 실패",
+            0x30,  # MB_ICONWARNING
+        )
+        return False
     return True
 
 
@@ -1449,9 +1458,11 @@ def _set_default_printer(name: str) -> bool:
 
 
 def switch_default_to_pdf24() -> None:
-    """FlexSign 인쇄 다이얼로그가 PDF24 를 자동 선택하도록 임시 전환.
-    이전 기본 프린터를 _saved_default_printer 에 보관하고, 인쇄 PDF 감지 시 복구한다.
-    이미 PDF24 로 되어 있거나 PDF24 가 시스템에 없으면 아무 동작 안 함."""
+    """시스템 기본 프린터를 PDF24 로 전환 — 워처 실행 동안 계속 유지.
+    이전 기본 프린터를 _saved_default_printer 에 보관해 워처 종료 시 on_close 에서 복구.
+    이미 PDF24 로 되어 있으면 무동작. PDF24 가 시스템에 없으면 명확한 경고 로그.
+    종이 인쇄(print_pdf_to_paper)는 시스템 기본과 무관하게 삼성으로 직접 가므로
+    PDF24 가 상시 기본이어도 종이 출력에 영향 없음."""
     global _saved_default_printer
     with _printer_lock:
         current = _get_default_printer()
@@ -1459,18 +1470,27 @@ def switch_default_to_pdf24() -> None:
             return
         if current == PDF24_PRINTER_NAME:
             return
+        # PDF24 미설치를 직접 확인해 사용자에게 또렷한 안내 — SetDefaultPrinter 가 실패해도
+        # 메시지가 모호해서 'PDF24 설치/이름 확인' 단계로 유도하기 어려움.
+        installed = _list_installed_printers()
+        if installed and PDF24_PRINTER_NAME not in installed:
+            ui_log(
+                f"⚠ PDF24 프린터를 못 찾음 — FlexSign 인쇄가 PDF24 로 가지 않습니다. "
+                f"제어판 → 장치 및 프린터에서 'PDF24' 이름 확인 (현재 설치 목록: {', '.join(installed)})"
+            )
+            return
         # 이미 한 번 전환해 두고 아직 복구되지 않았다면, 원래 값을 덮어쓰지 않는다.
         if _saved_default_printer is None:
             _saved_default_printer = current
         if _set_default_printer(PDF24_PRINTER_NAME):
-            ui_log(f"기본 프린터: {current} → {PDF24_PRINTER_NAME} (인쇄 후 자동 복구)")
+            ui_log(f"기본 프린터: {current} → {PDF24_PRINTER_NAME} (워처 종료 시 자동 복구)")
         else:
             # 전환 실패 시 저장된 값도 의미 없으므로 비운다.
             _saved_default_printer = None
 
 
 def restore_default_printer() -> None:
-    """_process_printed_pdf 시작 시 호출 — 종이 인쇄 단계에서 원래 프린터로 가도록."""
+    """워처 종료(on_close) 시 호출 — 시작할 때 보관해둔 원래 기본 프린터로 복구."""
     global _saved_default_printer
     with _printer_lock:
         if _saved_default_printer is None:
@@ -1541,7 +1561,14 @@ def print_pdf_to_paper(pdf_path: Path, copies: int = 1) -> bool:
             ok_count = 0
             for i in range(copies):
                 rc = subprocess.run(
-                    [sumatra, "-print-to", target, "-silent", "-exit-on-print", str(pdf_path)],
+                    [
+                        sumatra,
+                        "-print-to", target,
+                        "-print-settings", "color",
+                        "-silent",
+                        "-exit-on-print",
+                        str(pdf_path),
+                    ],
                     creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
                     timeout=60,
                 ).returncode
@@ -1550,7 +1577,7 @@ def print_pdf_to_paper(pdf_path: Path, copies: int = 1) -> bool:
                 else:
                     ui_log(f"SumatraPDF 종료코드 {rc} ({i+1}/{copies})")
             if ok_count == copies:
-                ui_log(f"종이 인쇄({target}) 전달[Sumatra×{copies}]: {pdf_path.name}")
+                ui_log(f"종이 인쇄({target}) 전달[Sumatra/color×{copies}]: {pdf_path.name}")
                 return True
             if ok_count > 0:
                 ui_log(f"SumatraPDF 부분 성공 {ok_count}/{copies} — printto 폴백")
@@ -3403,9 +3430,9 @@ def _process_printed_pdf(pdf_path: Path):
     # 파일이 완전히 쓰여질 때까지 잠깐 대기 (PDF24 가 청크 단위로 쓸 수 있음)
     time.sleep(0.8)
 
-    # PDF24 가 출력을 끝낸 시점이므로, 이후 종이 인쇄가 원래 프린터(삼성)로 가도록
-    # 워처가 launch_flexsign 직전에 임시 전환했던 기본 프린터를 즉시 복구한다.
-    restore_default_printer()
+    # 시스템 기본 프린터는 워처 실행 동안 PDF24 로 유지 — 종이 인쇄는
+    # print_pdf_to_paper 가 시스템 기본과 무관하게 삼성으로 직접 보낸다.
+    # 워처 종료 시 on_close 에서 원래 프린터로 일괄 복구.
 
     orders = list_recent_orders()
     if not orders:
@@ -4151,15 +4178,107 @@ def process_header_only_to_v8(ai_app, dst_path: Path,
         return False
 
 
+def _enumerate_illustrator_progids() -> list[str]:
+    """HKEY_CLASSES_ROOT 에서 'Illustrator.Application' 또는 버전 접미사가 붙은
+    ProgID 를 모두 찾아 반환. CC 2024+ 일부 설치본은 bare ProgID 를 등록하지 않고
+    'Illustrator.Application.28' 같은 형태만 등록하는 경우가 있어 fallback 필요."""
+    try:
+        import winreg
+    except Exception:
+        return []
+    found: list[str] = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "") as root:
+            i = 0
+            while True:
+                try:
+                    name = winreg.EnumKey(root, i)
+                except OSError:
+                    break
+                if name.startswith("Illustrator.Application"):
+                    found.append(name)
+                i += 1
+    except Exception:
+        return found
+    # bare 를 최우선, 그 다음 버전 큰 순서로 정렬 (최신 버전 우선 시도).
+    def _sort_key(n: str):
+        if n == "Illustrator.Application":
+            return (0, 0)
+        suffix = n.rsplit(".", 1)[-1]
+        try:
+            return (1, -int(suffix))
+        except ValueError:
+            return (2, 0)
+    found.sort(key=_sort_key)
+    return found
+
+
+def _get_active_illustrator():
+    """실행 중인 Illustrator 의 COM Application 객체 반환.
+    'Illustrator.Application' 이 등록 안 돼 있을 수 있어 버전 접미사도 같이 시도.
+    모든 시도 실패 시 RuntimeError — 시도한 ProgID 들과 마지막 에러 포함."""
+    import win32com.client as win32
+
+    progids = _enumerate_illustrator_progids() or ["Illustrator.Application"]
+    attempts: list[str] = []
+    last_error: Exception | None = None
+    for progid in progids:
+        try:
+            app = win32.GetActiveObject(progid)
+            ui_log(f"Illustrator COM 연결: {progid}")
+            return app
+        except Exception as e:
+            attempts.append(f"{progid}={e}")
+            last_error = e
+    raise RuntimeError(
+        f"Illustrator COM 연결 실패. Illustrator 가 실행 중인지, 워처와 Illustrator 를 "
+        f"같은 권한으로 실행했는지, Illustrator COM/스크립팅 구성요소가 등록되어 있는지 "
+        f"확인하세요. 시도: {attempts or [str(last_error)]}"
+    )
+
+
+def check_illustrator_com_ready() -> tuple[bool, str]:
+    """Illustrator 프로세스 실행만으로는 부족해서 COM 연결 가능 여부까지 확인."""
+    try:
+        import pythoncom
+
+        pythoncom.CoInitialize()
+        progids = _enumerate_illustrator_progids()
+        if not progids:
+            return (
+                False,
+                "Illustrator 는 실행 중이지만 Windows COM 등록을 찾지 못했습니다.\n\n"
+                "이 PC에서 아래 순서로 조치해 주세요.\n"
+                "1. Illustrator 를 완전히 종료한 뒤 다시 실행\n"
+                "2. 워처와 Illustrator 를 같은 권한으로 실행(둘 다 일반 실행 또는 둘 다 관리자 실행)\n"
+                "3. 그래도 같으면 Adobe Creative Cloud 에서 Illustrator 복구/재설치\n\n"
+                "원인: Illustrator.Application ProgID 가 이 PC의 레지스트리에 등록되어 있지 않습니다.",
+            )
+        try:
+            _get_active_illustrator()
+            return True, ""
+        except Exception as e:
+            return (
+                False,
+                "Illustrator 는 실행 중이지만 워처가 자동 저장용 COM 연결을 만들지 못했습니다.\n\n"
+                "이 PC에서 아래 순서로 확인해 주세요.\n"
+                "1. 워처와 Illustrator 를 같은 권한으로 실행(둘 다 일반 실행 또는 둘 다 관리자 실행)\n"
+                "2. Illustrator 를 한 번 직접 열고 빈 문서를 만든 뒤 다시 시도\n"
+                "3. 계속 실패하면 Adobe Creative Cloud 에서 Illustrator 복구/재설치\n\n"
+                f"상세 오류: {e}",
+            )
+    except Exception as e:
+        return False, f"Illustrator COM 확인 중 오류가 발생했습니다.\n\n상세 오류: {e}"
+
+
 def convert_header_only(order_number: str, qr_js_matrix: str,
                         header_text: str, left_text: str, note_text: str) -> Path | None:
     """주문 정보로부터 헤더만 그린 AI v8 를 생성. 성공 시 경로, 실패 시 None."""
     try:
         import pythoncom
-        import win32com.client as win32
 
         pythoncom.CoInitialize()
-        ai_app = win32.GetActiveObject("Illustrator.Application")
+        ai_app = _get_active_illustrator()
         ai_app.UserInteractionLevel = -1
 
         out_dir = WATCH_DIR / "converted"
@@ -4184,10 +4303,9 @@ def convert_ai_file(ai_path: Path, qr_js_matrix: str,
     Illustrator/FlexSign 실행 여부는 process_zip 진입 시점에 일괄 검사한다."""
     try:
         import pythoncom
-        import win32com.client as win32
 
         pythoncom.CoInitialize()
-        ai_app = win32.GetActiveObject("Illustrator.Application")
+        ai_app = _get_active_illustrator()
         ai_app.UserInteractionLevel = -1
 
         out_dir = WATCH_DIR / "converted"
@@ -4866,9 +4984,8 @@ def launch_flexsign(file_path: Path):
         # 창이 막 떠서 메뉴/단축키가 안정화될 때까지 잠시 더 기다림
         time.sleep(1.5)
 
-    # FlexSign 인쇄 다이얼로그가 PDF24 를 자동 선택하도록 기본 프린터를 임시 전환.
-    # 인쇄 PDF 가 PRINTED_PDF_DIR 에 떨어지면 _process_printed_pdf 시작부에서
-    # restore_default_printer() 가 원래(삼성) 프린터로 즉시 복구한다.
+    # 안전망 — 워처 시작 시 이미 PDF24 로 전환했지만, 사용자가 도중에 기본 프린터를
+    # 바꿨을 수 있으므로 매번 다시 한 번 보장. 이미 PDF24 면 무동작.
     switch_default_to_pdf24()
 
     ui_log(f"FlexSign 창(HWND={hwnd}) — [파일 → 열기] 시뮬레이션")
@@ -4919,6 +5036,12 @@ def process_zip(zip_path: Path):
             f"아래 프로그램이 실행 중이 아닙니다:\n\n  • " + "\n  • ".join(missing)
             + "\n\n먼저 실행한 뒤 어드민에서 [지시서 작성하기] 를 다시 눌러주세요.",
         )
+        _seen_zips.discard(key)
+        return
+    ok, message = check_illustrator_com_ready()
+    if not ok:
+        ui_log(f"{zip_path.name} 처리 보류 — Illustrator COM 연결 실패")
+        ui_alert("Illustrator 연결 확인 필요", message)
         _seen_zips.discard(key)
         return
 
@@ -5573,9 +5696,20 @@ class App(tk.Tk):
 
             ui_status("watching", "지시서가 도착하면 자동으로 열어드립니다")
 
+            # 시스템 기본 프린터를 PDF24 로 전환 — 워처 실행 동안 유지.
+            # FlexSign 에서 기존 지시서 열어 인쇄해도 자동으로 PDF24 로 가서
+            # 매칭 다이얼로그가 뜨도록 보장. on_close 에서 원래 프린터로 복구.
+            switch_default_to_pdf24()
+
         threading.Thread(target=_run, daemon=True).start()
 
     def on_close(self):
+        # 워처 시작 시 PDF24 로 전환했던 기본 프린터를 원래대로 복구.
+        # 사용자가 워처 없이 다른 프로그램에서 인쇄할 때 PDF24 로 가지 않게.
+        try:
+            restore_default_printer()
+        except Exception:
+            pass
         if self._observer:
             self._observer.stop()
             self._observer.join()
