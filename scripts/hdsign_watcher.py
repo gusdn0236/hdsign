@@ -4568,6 +4568,8 @@ def _dismiss_flexsign_alerts(main_hwnd: int) -> int:
     user32.GetWindowTextLengthW.restype = ctypes.c_int
     user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
     user32.GetWindowTextW.restype = ctypes.c_int
+    user32.IsWindow.argtypes = [ctypes.c_void_p]
+    user32.IsWindow.restype = ctypes.c_bool
 
     pid_buf = ctypes.c_uint32(0)
     user32.GetWindowThreadProcessId(main_hwnd, ctypes.byref(pid_buf))
@@ -4750,6 +4752,8 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     user32.GetWindowTextLengthW.restype = ctypes.c_int
     user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
     user32.GetWindowTextW.restype = ctypes.c_int
+    user32.IsWindow.argtypes = [ctypes.c_void_p]
+    user32.IsWindow.restype = ctypes.c_bool
 
     target_pid_buf = ctypes.c_uint32(0)
     try:
@@ -4887,6 +4891,23 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             time.sleep(0.25)
         return False
 
+    def _show_flexsign_window(verify: bool = False) -> bool:
+        """빠른 WM_COMMAND 경로에서도 사용자가 FlexSign 화면을 먼저 보도록 전면 표시."""
+        try:
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            else:
+                user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+        if not verify:
+            time.sleep(0.12)
+            return True
+        time.sleep(0.15)
+        return user32.GetForegroundWindow() == hwnd or _force_foreground()
+
     def _wait_for_open_dialog(timeout: float = 1.2) -> int:
         """Ctrl+O 가 메뉴 단축키로 인식되면 표준 파일 열기 다이얼로그(class "#32770")가
         떠서 foreground 를 가져간다. 이 검증 없이 그냥 sleep 후 Ctrl+V 를 보내면
@@ -4915,6 +4936,16 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             time.sleep(0.08)
         return 0
 
+    def _wait_until_dialog_closes(dialog_hwnd: int, timeout: float = 2.0) -> None:
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                if not user32.IsWindow(dialog_hwnd) or not user32.IsWindowVisible(dialog_hwnd):
+                    return
+            except Exception:
+                return
+            time.sleep(0.08)
+
     # 클립보드 백업 (사용자가 다른 데서 쓰던 내용 복원하기 위함)
     prev_clip = ""
     try:
@@ -4940,8 +4971,11 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
                 ui_log(f"FlexSign 시작 경고창 {extra}개 추가 닫음")
                 time.sleep(0.4)
 
-        # 1) 파일 열기 다이얼로그 띄우기 — 빠른 직접 명령부터 시도.
+        # 1) FlexSign 화면을 먼저 보여준 뒤 파일 열기 다이얼로그를 띄운다.
+        # 빠른 WM_COMMAND 경로는 포커스가 없어도 동작하지만, 사용자가 "지시서가 작성됐다"는
+        # 걸 바로 알아야 하므로 창 복원/전면 표시를 먼저 한다.
         #
+        _show_flexsign_window(verify=False)
         dlg_hwnd = 0
         for command_id in FLEXSIGN_OPEN_COMMAND_IDS:
             try:
@@ -5014,7 +5048,9 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
 
         # 4) Enter — 열기 확정
         _press(VK_RETURN)
-        time.sleep(0.35)
+        _wait_until_dialog_closes(dlg_hwnd, timeout=2.0)
+        _show_flexsign_window(verify=False)
+        time.sleep(0.25)
         return True
     except Exception as e:
         ui_log(f"FlexSign 메뉴 열기 실패: {e}")
