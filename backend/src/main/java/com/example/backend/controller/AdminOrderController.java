@@ -310,20 +310,36 @@ public class AdminOrderController {
         String company = trim(client.getCompanyName());
         String folder = trim(client.getNetworkFolderName());
         String contact = trim(client.getContactName());
+        String contactFolderPart = contactFolderPart(contact);
         String baseFolder = !folder.isBlank() ? folder : company;
-        if (contact.isBlank() || baseFolder.isBlank()) {
-            return folder;
-        }
-        if (!hasMultipleContactsForBaseFolder(baseFolder)) {
+        if (contactFolderPart.isBlank() || baseFolder.isBlank()) {
             return folder;
         }
 
         String baseKey = normalizeFolderKey(baseFolder);
-        String contactKey = normalizeFolderKey(contact);
+        String contactKey = normalizeFolderKey(contactFolderPart);
         if (baseKey.contains(contactKey)) {
             return folder;
         }
-        return baseFolder + " " + contact;
+        if (!hasMultipleContactsForCompany(company) && !hasMultipleContactsForBaseFolder(baseFolder)) {
+            return folder;
+        }
+        return baseFolder + " " + contactFolderPart;
+    }
+
+    private boolean hasMultipleContactsForCompany(String company) {
+        String targetKey = normalizeFolderKey(company);
+        if (targetKey.isBlank()) {
+            return false;
+        }
+        long matches = clientUserRepository.findAll().stream()
+                .filter(c -> normalizeFolderKey(c.getCompanyName()).equals(targetKey))
+                .map(c -> normalizeFolderKey(contactFolderPart(c.getContactName())))
+                .filter(s -> !s.isBlank())
+                .distinct()
+                .limit(2)
+                .count();
+        return matches > 1;
     }
 
     private boolean hasMultipleContactsForBaseFolder(String baseFolder) {
@@ -349,6 +365,15 @@ public class AdminOrderController {
 
     private static String normalizeFolderKey(String value) {
         return trim(value).replaceAll("\\s+", "").toLowerCase();
+    }
+
+    private static String contactFolderPart(String value) {
+        String compact = trim(value).replaceAll("\\s+", "");
+        if (compact.isBlank()) {
+            return "";
+        }
+        String stripped = compact.replaceAll("(대표님?|사장님?|부사장님?|전무님?|상무님?|이사님?|부장님?|차장님?|과장님?|대리님?|주임님?|실장님?|팀장님?|매니저님?|님)$", "");
+        return stripped.isBlank() ? compact : stripped;
     }
 
     private String deliveryLabel(Order.DeliveryMethod method) {

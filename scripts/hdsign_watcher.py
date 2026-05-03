@@ -905,10 +905,13 @@ def resolve_customer_folder(network_base: Path, network_folder_name: str,
     """네트워크 베이스 안에서 거래처 폴더 결정.
     1순위: networkFolderName (관리자가 거래처관리에서 명시 지정한 폴더명) 정확 일치
     2순위: companyName 정확 일치 (공백/대소문자/NFC 무시)
+    단, networkFolderName 이 companyName 과 다른 담당자별 폴더명일 때는 companyName 으로
+    후퇴하지 않고 담당자별 '<networkFolderName> (자동생성)' 신규 경로를 만든다.
     매칭 실패 시 '<networkFolderName 또는 companyName> (자동생성)' 신규 경로 반환.
     스캔 실패(권한/네트워크 끊김) 시에도 자동생성 경로로 폴백."""
     primary_key = _normalize_company_key(network_folder_name)
     fallback_key = _normalize_company_key(company_name)
+    primary_is_specific = bool(primary_key and fallback_key and primary_key != fallback_key)
     label = (network_folder_name or "").strip() or (company_name or "").strip()
     safe_label = _sanitize_folder_name(label) or "(미지정)"
     fallback_new = network_base / f"{safe_label} (자동생성)"
@@ -928,7 +931,7 @@ def resolve_customer_folder(network_base: Path, network_folder_name: str,
                 fallback_hit = child
         if primary_hit is not None:
             return primary_hit
-        if fallback_hit is not None:
+        if fallback_hit is not None and not primary_is_specific:
             return fallback_hit
     except Exception as e:
         ui_log(f"거래처 폴더 스캔 실패({e}) — 자동생성 경로로 진행")
@@ -4741,6 +4744,7 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     KEYEVENTF_KEYUP = 0x0002
     KEYEVENTF_SCANCODE = 0x0008
     WM_COMMAND = 0x0111
+    WM_SETTEXT = 0x000C
     MF_BYPOSITION = 0x0400
     user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
     user32.GetWindowThreadProcessId.restype = ctypes.c_uint32
@@ -4754,6 +4758,10 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
     user32.GetWindowTextW.restype = ctypes.c_int
     user32.IsWindow.argtypes = [ctypes.c_void_p]
     user32.IsWindow.restype = ctypes.c_bool
+    user32.EnumChildWindows.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    user32.EnumChildWindows.restype = ctypes.c_bool
+    user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_wchar_p]
+    user32.SendMessageW.restype = ctypes.c_void_p
 
     target_pid_buf = ctypes.c_uint32(0)
     try:
@@ -4946,6 +4954,42 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
                 return
             time.sleep(0.08)
 
+    def _find_file_name_edit(dialog_hwnd: int) -> int:
+        """표준 파일 열기 다이얼로그의 파일명 입력칸(Edit)을 찾는다.
+        느린 PC에서 Ctrl+V 가 키 입력으로 씹히는 경우가 있어, 가능하면 WM_SETTEXT 로
+        입력칸에 경로를 직접 넣는다."""
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        edits: list[int] = []
+
+        def _scan(child, _lparam):
+            try:
+                if not user32.IsWindowVisible(child):
+                    return True
+                cls = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(child, cls, 64)
+                if cls.value.lower() == "edit":
+                    edits.append(int(child))
+            except Exception:
+                pass
+            return True
+
+        try:
+            user32.EnumChildWindows(dialog_hwnd, WNDENUMPROC(_scan), 0)
+        except Exception:
+            return 0
+        return edits[-1] if edits else 0
+
+    def _set_dialog_file_path(dialog_hwnd: int, text: str) -> bool:
+        edit_hwnd = _find_file_name_edit(dialog_hwnd)
+        if not edit_hwnd:
+            return False
+        try:
+            user32.SendMessageW(edit_hwnd, WM_SETTEXT, None, text)
+            time.sleep(0.12)
+            return True
+        except Exception:
+            return False
+
     # 클립보드 백업 (사용자가 다른 데서 쓰던 내용 복원하기 위함)
     prev_clip = ""
     try:
@@ -4978,14 +5022,19 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         _show_flexsign_window(verify=False)
         dlg_hwnd = 0
         for command_id in FLEXSIGN_OPEN_COMMAND_IDS:
-            try:
-                user32.PostMessageW(hwnd, WM_COMMAND, command_id, 0)
-                dlg_hwnd = _wait_for_open_dialog(timeout=0.9)
-                if dlg_hwnd:
-                    ui_log(f"FlexSign [Open] 빠른 호출 성공(ID {command_id})")
-                    break
-            except Exception:
-                pass
+            for attempt in range(2):
+                try:
+                    user32.PostMessageW(hwnd, WM_COMMAND, command_id, 0)
+                    dlg_hwnd = _wait_for_open_dialog(timeout=2.2)
+                    if dlg_hwnd:
+                        ui_log(f"FlexSign [Open] 빠른 호출 성공(ID {command_id})")
+                        break
+                    ui_log(f"FlexSign 빠른 Open 응답 지연 — 재시도 {attempt + 1}/2")
+                    _show_flexsign_window(verify=False)
+                except Exception:
+                    pass
+            if dlg_hwnd:
+                break
 
         # 1b) WM_COMMAND 로 메뉴 직접 호출.
         #     포커스/IME/키보드 후킹과 무관하게 FlexSign 의 메뉴 핸들러를 직접 깨운다.
@@ -4995,7 +5044,7 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
             try:
                 user32.PostMessageW(hwnd, WM_COMMAND, open_id, 0)
                 ui_log(f"메뉴 ID {open_id} 로 [Open] 직접 호출")
-                dlg_hwnd = _wait_for_open_dialog(timeout=1.2)
+                dlg_hwnd = _wait_for_open_dialog(timeout=2.2)
             except Exception as e:
                 ui_log(f"WM_COMMAND 호출 실패: {e}")
         elif not dlg_hwnd:
@@ -5035,20 +5084,31 @@ def _open_file_via_menu(hwnd: int, file_path: Path) -> bool:
         # 미감싼 경로는 공백/한글이 섞이면 옛날 #32770 다이얼로그(FlexSign 6.6 등)가
         # 토큰을 분리해 검색하려다 "파일 없음" 으로 실패하는 케이스가 있다.
         clip_path = f'"{file_path}"'
-        win32clipboard.OpenClipboard()
-        try:
-            win32clipboard.EmptyClipboard()
-            win32clipboard.SetClipboardText(clip_path, 13)  # CF_UNICODETEXT
-        finally:
-            win32clipboard.CloseClipboard()
-        time.sleep(0.12)
-        _chord(VK_CONTROL, ord('V'))
+        if _set_dialog_file_path(dlg_hwnd, clip_path):
+            ui_log("파일 경로를 열기 다이얼로그에 직접 입력")
+        else:
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(clip_path, 13)  # CF_UNICODETEXT
+            finally:
+                win32clipboard.CloseClipboard()
+            time.sleep(0.12)
+            _chord(VK_CONTROL, ord('V'))
         # 긴 한글 경로를 다이얼로그가 해석하는 데 시간 필요.
-        time.sleep(0.25)
+        time.sleep(0.35)
 
         # 4) Enter — 열기 확정
         _press(VK_RETURN)
-        _wait_until_dialog_closes(dlg_hwnd, timeout=2.0)
+        _wait_until_dialog_closes(dlg_hwnd, timeout=4.0)
+        if user32.IsWindow(dlg_hwnd) and user32.IsWindowVisible(dlg_hwnd):
+            ui_log("파일 열기 확인 지연 — Enter 재시도")
+            try:
+                user32.SetForegroundWindow(dlg_hwnd)
+            except Exception:
+                pass
+            _press(VK_RETURN)
+            _wait_until_dialog_closes(dlg_hwnd, timeout=3.0)
         _show_flexsign_window(verify=False)
         time.sleep(0.25)
         return True
