@@ -199,7 +199,7 @@ _CONFIG_FILE = WATCH_DIR / "state" / "config.json"
 # "이 지시서는 어느 칸에 꽂힌다"고 지정하면 → 해당 칸에 매핑된 부서 태그가 붙는다.
 # 같은 지시서가 여러 칸에 꽂히는 경우(여러 부서를 거치는 간판) 다중 태그 허용.
 #
-# 분배함 사진은 scripts/assets/distribution.jpg (실제 사진 3510x5613).
+# 분배함 사진은 hdsign-watcher/assets/distribution.jpg (실제 사진 3510x5613).
 # 좌표는 (left, top, right, bottom) — 사진 원본 픽셀 좌표 기준. 다이얼로그에서 표시할 때
 # 비율 유지로 축소하면서 클릭 좌표를 원본 픽셀 좌표로 역변환해 어떤 칸인지 판정한다.
 #
@@ -362,8 +362,10 @@ def qr_to_clipboard(order_number: str) -> None:
     # non-uniform 으로 늘려 붙이는 경우가 있어 비정사각 캔버스는 QR 셀까지 직사각형이 됨.
     # 캔버스를 정사각으로 만들고 그 안에 QR + 주문번호 둘 다 배치하면 어떤 스케일링에도
     # QR 셀은 정사각으로 유지된다.
-    total_w = 3000  # 30mm
-    total_h = 3000  # 30mm
+    # 60mm — 30mm 가 너무 작아 보인다는 피드백을 받아 2배로 확대. 작업자가 FlexSign 에서
+    # 더 크게/작게 줄여 쓸 수 있지만, 첫 붙여넣기 사이즈가 가시성 좋도록.
+    total_w = 6000  # 60mm
+    total_h = 6000  # 60mm
 
     # 내부 logical 좌표 — 1000 × 1000 정사각 그리드.
     grid_w = 1000
@@ -2837,8 +2839,9 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
           (이전엔 매칭된 PDF 를 자동으로 큰 창으로 띄웠으나, 작업자가 [변경된 내용] 메모를
            작성하려고 다이얼로그를 클릭하는 시점에 비동기로 줌 창이 떠올라 입력을 가리는
            문제가 있어 자동 줌은 제거 — [🔍 크게 보기] 버튼으로만 연다.)
-        - QR 디코드는 됐지만 진행중 작업에서 매칭 실패: 신규 탭 + 실패 배너.
-        - QR 디코드 자체가 실패(잘림/누락): 신규 탭 + 실패 배너."""
+        - 인쇄 매칭 큐 매칭(=접수단계 첫 지시서): 신규 탭 + 성공 배너.
+          most_recent 가 이미 그 주문으로 교체되어 있으니 그대로 [확인] 만 누르면 된다.
+        - QR 디코드 자체 실패 또는 진행중/큐 어디에도 없음: 신규 탭 + 실패 배너."""
         if qr_matched_ws is not None:
             try:
                 _show_qr_banner(
@@ -2863,8 +2866,20 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                         pass
             except Exception as e:
                 ui_log(f"QR 자동 라우팅(변경) 실패: {e}")
+        elif qr_matched_recent is not None:
+            # 접수단계 주문 — 아직 worksheet PDF 가 없으니 existing_worksheets 에는 없지만
+            # 큐(=clip-qr 호출 시 등록)에는 있다. 신규 탭으로 보내되 배너는 success 톤으로.
+            try:
+                _show_qr_banner(
+                    "QR코드 매칭에 성공했습니다. 첫 지시서를 등록합니다.",
+                    kind="success",
+                )
+                notebook.select(new_tab)
+                _schedule_dialog_redraw()
+            except Exception as e:
+                ui_log(f"QR 자동 라우팅(신규) 실패: {e}")
         else:
-            # QR 디코드 실패(잘림/누락) 또는 디코드는 됐지만 진행중 작업에 없음 → 신규 작성 흐름.
+            # QR 디코드 실패(잘림/누락) 또는 디코드는 됐지만 진행중/큐 어디에도 없음 → 신규 작성 흐름.
             try:
                 _show_qr_banner(
                     "QR코드 매칭에 실패했습니다. 새로운 지시서를 작성합니다.",
@@ -2925,7 +2940,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     else:
         canvas.create_text(
             PHOTO_DISPLAY_WIDTH // 2, display_h // 2,
-            text="분배함 사진 없음\n(scripts/assets/distribution.jpg)",
+            text="분배함 사진 없음\n(hdsign-watcher/assets/distribution.jpg)",
             fill=SUB_FG, font=("맑은 고딕", 10), justify="center",
         )
 

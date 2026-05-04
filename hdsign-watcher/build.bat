@@ -60,7 +60,9 @@ del /F /Q "%SCRIPT_DIR%dist\hdsign_worksheet.old_*.exe" >nul 2>nul
 if exist "%SCRIPT_DIR%hdsign_worksheet.spec" del "%SCRIPT_DIR%hdsign_worksheet.spec"
 if exist "%SCRIPT_DIR%hdsign_watcher.spec" del "%SCRIPT_DIR%hdsign_watcher.spec"
 if exist "%SCRIPT_DIR%build" rmdir /s /q "%SCRIPT_DIR%build"
-if exist "%SCRIPT_DIR%dist" rmdir /s /q "%SCRIPT_DIR%dist"
+REM Keep the dist folder itself - we already taskkill + del + rename-fallback
+REM the .exe above, and PyInstaller overwrites the new .exe into the same dist
+REM folder. Preserves any companion files the user may have placed in dist.
 
 echo.
 echo === Ensuring dependencies are installed ===
