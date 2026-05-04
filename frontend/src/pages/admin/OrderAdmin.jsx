@@ -164,6 +164,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [sortMode, setSortMode] = useState("DEFAULT");
   const [clientFilter, setClientFilter] = useState("");
+  const [clientSearch, setClientSearch] = useState("");
   const [dueDateRange, setDueDateRange] = useState("ALL");
   const [viewMode, setViewMode] = useState(() => getStoredViewMode());
 
@@ -355,6 +356,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
     let result = [...statusFilteredOrders];
 
+    const searchTerm = clientSearch.trim().toLowerCase();
+    if (searchTerm) {
+      result = result.filter((o) =>
+        (o.clientCompanyName || "").toLowerCase().includes(searchTerm)
+      );
+    }
+
     if (sortMode === "BY_CLIENT") {
       if (clientFilter) {
         result = result.filter((o) => (o.clientCompanyName || "") === clientFilter);
@@ -405,7 +413,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
 
     return result;
-  }, [statusFilteredOrders, sortMode, clientFilter, dueDateRange, activeFilter]);
+  }, [statusFilteredOrders, sortMode, clientFilter, clientSearch, dueDateRange, activeFilter]);
 
   // 카드 보기 — 납기별 정렬일 때만 dueDate 로 그룹핑(모바일 /m/worksheets 와 동일).
   // 그 외 모드(기본/거래처별/휴지통)에선 단일 그룹 한 덩어리로 보여 시각적 산만함을 줄인다.
@@ -1057,6 +1065,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 onClick={() => {
                   setSortMode("DEFAULT");
                   setClientFilter("");
+                  setClientSearch("");
                   setDueDateRange("ALL");
                 }}
               >
@@ -1076,6 +1085,26 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               >
                 납기별
               </button>
+            </div>
+            <div className="client-search-box">
+              <input
+                type="search"
+                className="client-search-input"
+                placeholder="거래처 검색"
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+              />
+              {clientSearch && (
+                <button
+                  type="button"
+                  className="client-search-clear"
+                  onClick={() => setClientSearch("")}
+                  aria-label="검색어 지우기"
+                  title="지우기"
+                >
+                  ×
+                </button>
+              )}
             </div>
             {sortMode === "BY_CLIENT" && (
               <select
@@ -1101,7 +1130,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 <option value="OVERDUE">지연 (완료 제외)</option>
               </select>
             )}
-            {(sortMode !== "DEFAULT") && (
+            {(sortMode !== "DEFAULT" || clientSearch.trim()) && (
               <span className="sort-result-count">{filteredOrders.length}건</span>
             )}
           </>

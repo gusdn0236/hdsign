@@ -58,6 +58,7 @@ export default function WorksheetList() {
     const [error, setError] = useState('');
     const [dateFilter, setDateFilter] = useState('all'); // 'today' | '3days' | 'all'
     const [companyFilter, setCompanyFilter] = useState('ALL');
+    const [companySearch, setCompanySearch] = useState('');
     // 체크 시 내 부서 태그가 붙은 지시서만 노출. 태그가 비어있는(워처 도입 이전) 지시서는
     // 자연스럽게 빠지므로 누락 방지 차원에서 기본은 off.
     const [mineOnly, setMineOnly] = useState(false);
@@ -166,19 +167,28 @@ export default function WorksheetList() {
         });
     }, [items, dateFilter]);
 
-    // 거래처 옵션 — 날짜 필터에 걸린 항목만 모아서 카운트. 날짜 필터를 좁히면
+    // 검색어로 한 번 더 좁힌 결과 — 거래처 드롭다운/카운트도 이걸 기준으로 한다.
+    const searchFilteredItems = useMemo(() => {
+        const term = companySearch.trim().toLowerCase();
+        if (!term) return dateFilteredItems;
+        return dateFilteredItems.filter((it) =>
+            (it.companyName || '').toLowerCase().includes(term)
+        );
+    }, [dateFilteredItems, companySearch]);
+
+    // 거래처 옵션 — 날짜+검색에 걸린 항목만 모아서 카운트. 필터를 좁히면
     // 해당 거래처 건수도 자연스럽게 줄거나(0건이면 옵션이 사라짐) 그대로 유지.
     const companyOptions = useMemo(() => {
         const counts = new Map();
-        dateFilteredItems.forEach((it) => {
+        searchFilteredItems.forEach((it) => {
             if (it.companyName) counts.set(it.companyName, (counts.get(it.companyName) || 0) + 1);
         });
         return Array.from(counts.entries())
             .map(([name, count]) => ({ name, count }))
             .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-    }, [dateFilteredItems]);
+    }, [searchFilteredItems]);
 
-    // 선택해둔 거래처가 날짜 필터 변경으로 옵션에서 사라지면 자동으로 '전체' 로 리셋.
+    // 선택해둔 거래처가 날짜/검색 필터 변경으로 옵션에서 사라지면 자동으로 '전체' 로 리셋.
     useEffect(() => {
         if (companyFilter === 'ALL') return;
         if (!companyOptions.some((c) => c.name === companyFilter)) {
@@ -187,9 +197,9 @@ export default function WorksheetList() {
     }, [companyFilter, companyOptions]);
 
     const companyFilteredItems = useMemo(() => {
-        if (companyFilter === 'ALL') return dateFilteredItems;
-        return dateFilteredItems.filter((it) => it.companyName === companyFilter);
-    }, [dateFilteredItems, companyFilter]);
+        if (companyFilter === 'ALL') return searchFilteredItems;
+        return searchFilteredItems.filter((it) => it.companyName === companyFilter);
+    }, [searchFilteredItems, companyFilter]);
 
     // mineOnly 가 true + 부서 설정됨일 때만 태그 매칭으로 좁힌다. 그 외엔 전체 통과.
     // 태그가 비어있는(워처 도입 이전) 지시서는 mineOnly 에서 빠지고 off 에서만 보여 누락 방지.
@@ -290,13 +300,37 @@ export default function WorksheetList() {
                             value={companyFilter}
                             onChange={(e) => setCompanyFilter(e.target.value)}
                         >
-                            <option value="ALL">전체 ({dateFilteredItems.length})</option>
+                            <option value="ALL">전체 ({searchFilteredItems.length})</option>
                             {companyOptions.map(({ name, count }) => (
                                 <option key={name} value={name}>{name} ({count})</option>
                             ))}
                         </select>
                     </label>
                 </form>
+
+                <div className="ws-search-row">
+                    <span className="ws-search-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="7" cy="7" r="4.5" />
+                            <path d="M10.5 10.5L13.5 13.5" />
+                        </svg>
+                    </span>
+                    <input
+                        type="search"
+                        className="ws-search-input"
+                        placeholder="거래처 검색"
+                        value={companySearch}
+                        onChange={(e) => setCompanySearch(e.target.value)}
+                    />
+                    {companySearch && (
+                        <button
+                            type="button"
+                            className="ws-search-clear"
+                            onClick={() => setCompanySearch('')}
+                            aria-label="검색어 지우기"
+                        >×</button>
+                    )}
+                </div>
 
                 <div className="ws-personal-row">
                     <label className="ws-mine-toggle">
