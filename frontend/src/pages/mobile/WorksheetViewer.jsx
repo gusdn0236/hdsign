@@ -85,7 +85,8 @@ const DELIVERY_LABELS = {
 export default function WorksheetViewer() {
     const { orderNumber } = useParams();
     const navigate = useNavigate();
-    const fileInputRef = useRef(null);
+    const cameraInputRef = useRef(null);
+    const galleryInputRef = useRef(null);
     const stageRef = useRef(null);
 
     const [detail, setDetail] = useState(null);
@@ -382,7 +383,7 @@ export default function WorksheetViewer() {
         setQueued((prev) => [...prev, ...processed]);
         setSheetOpen(true);
         setCompressing(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
+        if (e.target) e.target.value = '';
     };
 
     const removeQueued = (idx) => {
@@ -401,7 +402,17 @@ export default function WorksheetViewer() {
             setShowDeptModal(true);
             return;
         }
-        fileInputRef.current?.click();
+        cameraInputRef.current?.click();
+    };
+
+    const triggerGallery = () => {
+        if (compressing || uploading) return;
+        if (!department) {
+            setDeptDraft('');
+            setShowDeptModal(true);
+            return;
+        }
+        galleryInputRef.current?.click();
     };
 
     const handleUpload = async () => {
@@ -706,10 +717,17 @@ export default function WorksheetViewer() {
                 </button>
             </div>
             <input
-                ref={fileInputRef}
+                ref={cameraInputRef}
                 type="file"
                 accept="image/*"
                 capture="environment"
+                onChange={handlePickFiles}
+                style={{ display: 'none' }}
+            />
+            <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
                 multiple
                 onChange={handlePickFiles}
                 style={{ display: 'none' }}
@@ -745,24 +763,39 @@ export default function WorksheetViewer() {
                             </button>
                         </div>
 
-                        <button
-                            type="button"
-                            className="wsv-camera-btn"
-                            onClick={triggerCamera}
-                            disabled={uploading || compressing}
-                        >
-                            {compressing ? (
+                        {compressing ? (
+                            <button type="button" className="wsv-camera-btn" disabled>
                                 <span>사진 처리 중…</span>
-                            ) : (
-                                <>
+                            </button>
+                        ) : (
+                            <div className="wsv-pick-actions">
+                                <button
+                                    type="button"
+                                    className="wsv-camera-btn"
+                                    onClick={triggerCamera}
+                                    disabled={uploading}
+                                >
                                     <svg viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                         <path d="M4 7.5h2.5l1.5-2h6l1.5 2H18a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 18 18.5H4A1.5 1.5 0 0 1 2.5 17V9A1.5 1.5 0 0 1 4 7.5z" />
                                         <circle cx="11" cy="13" r="3.2" />
                                     </svg>
-                                    <span>사진 찍기 / 선택하기</span>
-                                </>
-                            )}
-                        </button>
+                                    <span>사진 찍기</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className="wsv-gallery-btn"
+                                    onClick={triggerGallery}
+                                    disabled={uploading}
+                                >
+                                    <svg viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <rect x="3" y="4" width="16" height="13" rx="2" />
+                                        <circle cx="8" cy="9" r="1.5" />
+                                        <path d="M3 14l4.5-4 4 4 3-2.5 4.5 4" />
+                                    </svg>
+                                    <span>선택하기</span>
+                                </button>
+                            </div>
+                        )}
 
                         {queued.length > 0 && (
                             <div className="wsv-queue">

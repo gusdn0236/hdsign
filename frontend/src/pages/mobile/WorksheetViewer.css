@@ -383,7 +383,8 @@ body:has(.wsv-page) {
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    z-index: 90;
+    /* topbar/actionbar(z-index:200) 위에 떠야 하단이 가려지지 않는다. */
+    z-index: 300;
     animation: wsv-fade-in 0.18s ease;
 }
 @keyframes wsv-fade-in {
@@ -507,39 +508,63 @@ body:has(.wsv-page) {
     background: #f4f4f5;
 }
 
-/* 카메라 버튼 ----------------------------------------------------- */
-.wsv-camera-btn {
+/* 카메라/갤러리 버튼 --------------------------------------------- */
+.wsv-pick-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+.wsv-camera-btn,
+.wsv-gallery-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
+    gap: 8px;
     width: 100%;
-    background: #2563eb;
-    color: #fff;
-    border: none;
     border-radius: 14px;
     height: 56px;
-    padding: 0 16px;
-    font-size: 16px;
+    padding: 0 14px;
+    font-size: 15px;
     font-weight: 700;
     cursor: pointer;
-    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.3);
     -webkit-tap-highlight-color: transparent;
     line-height: 1;
     letter-spacing: -0.01em;
-    transition: background 0.12s ease;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.wsv-camera-btn {
+    background: #2563eb;
+    color: #fff;
+    border: 1.5px solid #2563eb;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.3);
 }
 .wsv-camera-btn:active {
     background: #1d4ed8;
+    border-color: #1d4ed8;
 }
 .wsv-camera-btn:disabled {
     background: #94a3b8;
+    border-color: #94a3b8;
     box-shadow: none;
     cursor: not-allowed;
 }
-.wsv-camera-btn svg {
-    width: 22px;
-    height: 22px;
+.wsv-gallery-btn {
+    background: #fff;
+    color: #2563eb;
+    border: 1.5px solid #2563eb;
+}
+.wsv-gallery-btn:active {
+    background: #eff6ff;
+}
+.wsv-gallery-btn:disabled {
+    color: #94a3b8;
+    border-color: #cbd5e1;
+    cursor: not-allowed;
+}
+.wsv-camera-btn svg,
+.wsv-gallery-btn svg {
+    width: 20px;
+    height: 20px;
     display: block;
 }
 
@@ -699,7 +724,8 @@ body:has(.wsv-page) {
     align-items: center;
     justify-content: center;
     padding: 16px;
-    z-index: 120;
+    /* sheet-backdrop(300) 위에 — 시트에서 부서 입력 모달이 열릴 수 있으므로. */
+    z-index: 320;
     animation: wsv-fade-in 0.18s ease;
 }
 .wsv-modal {
@@ -823,9 +849,15 @@ body:has(.wsv-page) {
     .wsv-action-camera {
         padding: 0 14px;
     }
-    .wsv-camera-btn {
-        font-size: 15px;
+    .wsv-camera-btn,
+    .wsv-gallery-btn {
+        font-size: 14px;
         height: 52px;
+        gap: 6px;
+        padding: 0 10px;
+    }
+    .wsv-pick-actions {
+        gap: 8px;
     }
     .wsv-topbar-title {
         font-size: 13px;
