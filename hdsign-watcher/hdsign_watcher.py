@@ -1561,6 +1561,92 @@ def restore_default_printer() -> None:
             ui_log(f"기본 프린터 복구: → {prev}")
 
 
+def start_print_dialog_autoconfirm() -> None:
+    """워처 백그라운드에서 표준 윈도우 인쇄 다이얼로그를 감지해 IDOK 자동 송신.
+    FlexSign [인쇄하기] 후 추가 Enter 없이 PDF24 로 직행 — 사무실 직원이 [인쇄하기] →
+    [Enter] 두 단계를 한 단계로 줄여 매칭 다이얼로그가 바로 뜨도록.
+
+    매칭 조건(보수적):
+      - 윈도우 클래스 정확히 '#32770' (표준 다이얼로그)
+      - 제목 정확히 '인쇄' 또는 'Print' ('인쇄 미리보기' / '인쇄 옵션' 등은 회피)
+
+    타이밍 — 사용자 Enter 와 충돌해 취소가 눌리는 회귀를 막기 위해 즉시 발화:
+      - 폴링 30ms (이전 300ms → 사용자 반응 시간 ~150ms 보다 훨씬 빠름)
+      - 감지 즉시 IDOK 송신(이전 0.15s 사전 sleep 제거 — PostMessage 는 비동기로
+        다이얼로그 메시지 큐에 들어가므로 다이얼로그가 완성되기 전에 보내도 안전)
+
+    안전장치:
+      - 같은 hwnd 는 5초 동안 재처리 안 함(다이얼로그 닫히는 데 걸리는 시간 보호).
+      - PDF24 가 시스템 기본 프린터로 전환된 상태가 전제(switch_default_to_pdf24 후 호출).
+    """
+    if sys.platform != "win32":
+        return
+
+    user32 = ctypes.windll.user32
+    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    WM_COMMAND = 0x0111
+    IDOK = 1
+    PRINT_DIALOG_TITLES = {"인쇄", "Print"}
+    HANDLED_TTL = 5.0
+
+    handled: dict[int, float] = {}
+
+    def _scan_and_confirm():
+        targets: list[int] = []
+
+        def _proc(hwnd, _):
+            try:
+                if not hwnd or not user32.IsWindowVisible(hwnd):
+                    return True
+                cls_buf = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(hwnd, cls_buf, 64)
+                if cls_buf.value != "#32770":
+                    return True
+                t_buf = ctypes.create_unicode_buffer(128)
+                user32.GetWindowTextW(hwnd, t_buf, 128)
+                if t_buf.value in PRINT_DIALOG_TITLES:
+                    targets.append(int(hwnd))
+            except Exception:
+                pass
+            return True
+
+        try:
+            user32.EnumWindows(EnumWindowsProc(_proc), 0)
+        except Exception:
+            return
+
+        now = time.time()
+        for h in [h for h, ts in handled.items() if now - ts > HANDLED_TTL]:
+            handled.pop(h, None)
+
+        for hwnd in targets:
+            if hwnd in handled:
+                continue
+            handled[hwnd] = now
+            try:
+                # 즉시 IDOK — 사전 sleep 없음. PostMessage 는 비동기라 다이얼로그가 IDOK
+                # 핸들러를 등록하기 전이라도 메시지 큐에 들어가 처리된다. 사용자의 즉발 Enter
+                # (~150ms) 와 시간 차로 충돌해 '취소' 가 눌려버리던 회귀 방지.
+                user32.PostMessageW(hwnd, WM_COMMAND, IDOK, 0)
+                ui_log(f"인쇄 다이얼로그 자동 확인(hwnd=0x{hwnd:x})")
+            except Exception as e:
+                ui_log(f"인쇄 다이얼로그 자동 확인 실패: {e}")
+
+    def _loop():
+        # 30ms 폴링 — EnumWindows 가 가벼운 호출이라 CPU 영향 작음(<1%). 사람 반응 시간보다
+        # 훨씬 빨라야 사용자 Enter 와 시간 차이 충돌이 없다.
+        while True:
+            try:
+                _scan_and_confirm()
+            except Exception:
+                pass
+            time.sleep(0.03)
+
+    threading.Thread(target=_loop, daemon=True).start()
+    ui_log("인쇄 다이얼로그 자동 확인 활성화")
+
+
 def _list_installed_printers() -> list[str]:
     try:
         import win32print
@@ -1603,13 +1689,15 @@ def print_pdf_to_paper(pdf_path: Path, copies: int = 1) -> bool:
 
     copies: 인쇄 매수. SumatraPDF 는 -print-settings "<N>x" 로 한 번에 처리.
             ShellExecute 폴백은 N 회 반복 호출."""
+    if copies < 1:
+        # 다이얼로그 [✓ 적용하기] 미클릭 = 매수 0 = 의도적 인쇄 생략. 호출자에게는
+        # 실패가 아니라 "정상적으로 아무 일도 안 했다" 고 True 로 알린다.
+        return True
+
     target = resolve_paper_printer()
     if not target:
         ui_log("종이 프린터를 찾지 못함 — PAPER_PRINTER_CANDIDATES 또는 PAPER_PRINTER_PATTERN 확인 필요")
         return False
-
-    if copies < 1:
-        copies = 1
 
     # 0차: SumatraPDF — 핸들러 매개 없이 직접 프린터로 보냄. 기존 한PDF/Adobe 가 매번 로드되며
     # 발생하던 1~5초 지연이 사라지고, -exit-on-print 로 파일 핸들도 즉시 해제됨.
@@ -1829,14 +1917,16 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         "department_slots": list[str],     # 직원이 클릭한 슬롯 라벨(부서가 같아도 슬롯이 다른 경우 구분용)
       }
     """
-    BG = "#ffffff"
-    BG_SOFT = "#fafafa"
-    BORDER = "#e4e4e7"
-    TITLE_FG = "#18181b"
-    LABEL_FG = "#3f3f46"
-    SUB_FG = "#71717a"
-    ACCENT = "#16a34a"
-    ACCENT_HOVER = "#15803d"
+    # Zinc + emerald 베이스 — 모노톤에 메인 액션만 포인트 그린.
+    BG = "#ffffff"          # 다이얼로그·헤더·탭 배경(순백)
+    BG_SOFT = "#fafafa"     # 카드/섹션 배경(살짝 톤다운)
+    BG_CARD = "#ffffff"     # 입력 카드(흰색 — BG_SOFT 위에 띄움)
+    BORDER = "#e4e4e7"      # 보더/구분선
+    TITLE_FG = "#18181b"    # 제목·강조 텍스트
+    LABEL_FG = "#3f3f46"    # 일반 라벨
+    SUB_FG = "#71717a"      # 보조/설명 텍스트
+    ACCENT = "#10b981"      # 메인 액션(에메랄드)
+    ACCENT_HOVER = "#059669"
 
     # QR 매칭 결과 사전 분석. 기존 지시서에 있는 주문 → 변경 모드. 큐의 신규 → 신규 모드 + 우선노출.
     qr_matched_ws: dict | None = None
@@ -1859,6 +1949,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     else:
         most_recent = orders[0] if orders else None
 
+    # 우측 slots_col(폭 ~310)을 통째로 pick_page 가 차지 — 1열 × 큰 썸네일.
     THUMB_W = 220
     THUMB_H = int(THUMB_W * 1.414)  # A4 portrait 비율
 
@@ -1869,173 +1960,62 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     dlg.configure(bg=BG)
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
-    # 좌측: 탭 영역(신규/기존) / 우측: 분배함 사진. 기존 720h → 880h 로 확장하여 그리드가
-    # 한 화면에 6장 정도 들어오도록.
-    # 화면 왼쪽 가장자리에 붙이고 세로는 중앙 정렬 — 우측에 분배함 사진을 띄워두고
-    # 다이얼로그를 왼쪽에서 클릭/입력하기 위함.
-    DLG_W, DLG_H = 1320, 880
+    # 세로형 — 메인은 ③ 분배함 사진. 사용자는 이 다이얼로그를 화면 좌측 끝에 붙이고
+    # 우측 빈 공간에 FlexiSign 지시서를 띄워 확대해 보면서 어느 칸에 꽂을지 결정한다.
+    # 좁은 폭(440)이면 1920px 모니터에서도 FlexiSign 영역 1480px 가 확보됨.
+    # 2단 세로 — 좌측 form_col(폼+버튼) 260, 우측 slots_col(분배함+매수) ~340.
+    # ③ 분배함 사진이 메인 시각 요소라 우측 단 폭과 다이얼로그 세로를 사진에 맞춰 잡음.
+    # 폭 660 으로 1920px 모니터에 FlexiSign 1260px 확보(여전히 충분).
+    DLG_W = 660
     dlg.update_idletasks()
+    sw = dlg.winfo_screenwidth()
     sh = dlg.winfo_screenheight()
-    dlg_y = max(0, (sh - DLG_H) // 2)
-    dlg.geometry(f"{DLG_W}x{DLG_H}+0+{dlg_y}")
+    # photo 320 wide → height 511. 매수 ~170, 헤더/패딩 ~80 → DLG_H ~870 필요.
+    # 사진을 메인으로 키우라는 요청이라 세로 800~920 사이로 클램프.
+    DLG_H = min(920, max(800, sh - 50))
+    # 화면 우측 끝 + 세로 중앙 도킹.
+    dlg_x = max(0, sw - DLG_W)
+    dlg_y = max(20, (sh - DLG_H) // 2)
+    dlg.geometry(f"{DLG_W}x{DLG_H}+{dlg_x}+{dlg_y}")
+    # ③ 분배함 사진 — 우측 컬럼(약 340px) 거의 꽉 채워 320 폭(높이 511). 메인 시각 요소.
+    PHOTO_DISPLAY_WIDTH = 320
 
-    # ── 줌 토플레벨 공통 헬퍼 ───────────────────────────────────────
-    # 인쇄 PDF / 매칭된 기존 지시서 둘 다 같은 패닝·스크롤·z-order 처리를 공유.
-    # 메인 다이얼로그가 -topmost 라 줌이 클릭 한 번에 가려지는 문제 해결: 줌 열려있는 동안
-    # 메인의 -topmost 를 끄고, 줌 닫으면 다시 켠다(분배함 클릭해도 줌 사진이 위에 그대로).
-    def _show_zoom_image(title: str, pil_img):
-        try:
-            zoom_dlg = tk.Toplevel(dlg)
-            zoom_dlg.title(title)
-            zoom_dlg.configure(bg=BG)
-            zoom_dlg.attributes("-topmost", True)
-            try:
-                dlg.attributes("-topmost", False)
-            except Exception:
-                pass
-
-            # 창 크기 = PDF 렌더 이미지 크기 + 스크롤바 한 줄. 메인 다이얼로그가 좌측에 붙어
-            # 있고 우측은 분배함 사진이 떠 있으므로, 줌도 화면 좌측 가장자리에 붙여 띄운다 —
-            # 메인 다이얼로그 위에 살짝 겹치더라도 우측의 분배함 사진을 가리지 않도록.
-            sw = zoom_dlg.winfo_screenwidth()
-            sh = zoom_dlg.winfo_screenheight()
-            # 스크롤바(약 18px) + 윈도우 보더(약 16px). 안 맞아도 스크롤로 보이므로 여유는 작게.
-            CHROME_W = 22
-            CHROME_H = 22
-            ww = min(int(sw * 0.65), pil_img.width + CHROME_W)
-            wh = min(int(sh * 0.92), pil_img.height + CHROME_H)
-            zoom_dlg.geometry(f"{ww}x{wh}+0+{max(0, (sh-wh)//2)}")
-
-            canvas_frame = tk.Frame(zoom_dlg, bg=BG)
-            canvas_frame.pack(fill="both", expand=True)
-            vbar = ttk.Scrollbar(canvas_frame, orient="vertical")
-            hbar = ttk.Scrollbar(canvas_frame, orient="horizontal")
-            cv = tk.Canvas(canvas_frame, bg="#3f3f46", highlightthickness=0,
-                           yscrollcommand=vbar.set, xscrollcommand=hbar.set)
-            vbar.config(command=cv.yview)
-            hbar.config(command=cv.xview)
-            vbar.pack(side="right", fill="y")
-            hbar.pack(side="bottom", fill="x")
-            cv.pack(side="left", fill="both", expand=True)
-
-            photo = ImageTk.PhotoImage(pil_img)
-            cv.create_image(0, 0, image=photo, anchor="nw")
-            cv.configure(scrollregion=(0, 0, pil_img.width, pil_img.height))
-            cv.image = photo  # GC 방지
-
-            def _on_wheel(e):
-                if e.state & 0x0001:
-                    cv.xview_scroll(int(-e.delta / 120), "units")
-                else:
-                    cv.yview_scroll(int(-e.delta / 120), "units")
-            cv.bind_all("<MouseWheel>", _on_wheel)
-
-            def _on_press(e):
-                cv.configure(cursor="fleur")
-                cv.scan_mark(e.x, e.y)
-            def _on_drag(e):
-                cv.scan_dragto(e.x, e.y, gain=1)
-            def _on_release(_e):
-                cv.configure(cursor="")
-            cv.configure(cursor="hand2")
-            cv.bind("<ButtonPress-1>", _on_press)
-            cv.bind("<B1-Motion>", _on_drag)
-            cv.bind("<ButtonRelease-1>", _on_release)
-
-            def _cleanup():
-                try:
-                    cv.unbind_all("<MouseWheel>")
-                except Exception:
-                    pass
-                try:
-                    dlg.attributes("-topmost", True)
-                except Exception:
-                    pass
-                try:
-                    zoom_dlg.destroy()
-                except Exception:
-                    pass
-            zoom_dlg.protocol("WM_DELETE_WINDOW", _cleanup)
-            zoom_dlg.bind("<Escape>", lambda _e: _cleanup())
-            return zoom_dlg
-        except Exception as e:
-            ui_log(f"줌 윈도우 생성 실패: {e}")
-            return None
-
-    def _open_zoom_for_matched_ws(ws):
-        """매칭된 기존 지시서의 PDF 를 별도 토플레벨에서 크게 표시.
-        다운로드 + 렌더는 백그라운드에서 처리하여 다이얼로그 진입이 멈추지 않도록 한다."""
-        if fitz is None or not ws:
-            return
-        order_num = (ws.get("orderNumber") or "").strip()
-        if not order_num:
-            return
-        company = (ws.get("companyName") or "거래처 미상").strip()
-        title = f"매칭된 지시서 — {company} / {order_num}"
-        pdf_url = f"{API_BASE}/api/public/worksheets/{quote(order_num, safe='')}/pdf"
-
-        def _worker():
-            try:
-                with urllib.request.urlopen(_safe_url(pdf_url), timeout=20) as resp:
-                    data = resp.read()
-                doc = fitz.open(stream=data, filetype="pdf")
-                try:
-                    page = doc[0]
-                    page_w = max(1.0, float(page.rect.width))
-                    sw = dlg.winfo_screenwidth()
-                    target_w = max(800, int(sw * 0.55))
-                    zoom = min(3.0, max(1.0, target_w / page_w))
-                    mat = fitz.Matrix(zoom, zoom)
-                    pix = page.get_pixmap(matrix=mat, alpha=False)
-                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                finally:
-                    doc.close()
-            except Exception as e:
-                ui_log(f"매칭 지시서 PDF 다운로드 실패: {e}")
-                return
-            try:
-                dlg.after(0, lambda: _show_zoom_image(title, pil))
-            except Exception:
-                pass
-
-        threading.Thread(target=_worker, daemon=True).start()
+    # PDF 미리보기/줌 헬퍼는 폐기 — 작업자가 FlexiSign 에서 직접 확대해 보면서 분배함을
+    # 결정하는 워크플로로 바뀌었기 때문. 이 다이얼로그는 분배함/매수/폼만 담당.
 
     body = tk.Frame(dlg, bg=BG)
     body.pack(fill="both", expand=True)
+    # 단일 컬럼 — 헤더 → 노트북(폼) → ③ 분배함 사진 → ④ 매수 → 액션 버튼.
+    # 분배함 사진은 화면 가운데 메인 시각 요소. 이전 우측 분리 패널은 폐기.
     left = tk.Frame(body, bg=BG)
     left.pack(side="left", fill="both", expand=True)
-    right = tk.Frame(body, bg=BG_SOFT, highlightbackground=BORDER, highlightthickness=1)
-    right.pack(side="right", fill="y", padx=(0, 12), pady=12)
 
     # ── 헤더 ────────────────────────────────────────────────
-    # 좌측: 타이틀/부제. 우측: QR 결과 배너(빈 공간 활용).
     header = tk.Frame(left, bg=BG)
-    header.pack(fill="x", padx=22, pady=(18, 0))
+    header.pack(fill="x", padx=14, pady=(12, 0))
 
-    title_box = tk.Frame(header, bg=BG)
-    title_box.pack(side="left", fill="x", expand=True)
     tk.Label(
-        title_box, text="웹에 변경사항 적용하기",
+        header, text="웹에 변경사항 적용하기",
         bg=BG, fg=TITLE_FG,
-        font=("맑은 고딕", 15, "bold"), anchor="w",
+        font=("맑은 고딕", 13, "bold"), anchor="w",
     ).pack(fill="x")
     tk.Label(
-        title_box,
-        text="방금 인쇄한 PDF 를 거래처 작업현황 / 어드민 페이지에 반영합니다.",
+        header,
+        text="좌측 폼 작성 → 우측 분배함 클릭 → 매수 적용",
         bg=BG, fg=SUB_FG,
         font=("맑은 고딕", 9), anchor="w",
-    ).pack(fill="x", pady=(3, 0))
+    ).pack(fill="x", pady=(2, 0))
 
-    # ── QR 인식 결과 배너 (헤더 우측) ───────────────────────
-    # _apply_qr_routing 가 텍스트/색상을 채운다.
-    qr_banner_holder = tk.Frame(header, bg=BG)
+    # ── QR 인식 결과 배너 (헤더 아래, 전체 폭) ───────────────
+    # 세로형이라 헤더 우측에 못 들어감 → 별도 줄로 분리. _apply_qr_routing 가 채운다.
+    qr_banner_holder = tk.Frame(left, bg=BG)
     qr_banner_var = tk.StringVar(value="")
     qr_banner_label = tk.Label(
         qr_banner_holder, textvariable=qr_banner_var,
         bg="#ecfdf5", fg="#065f46",
-        font=("맑은 고딕", 11, "bold"),
+        font=("맑은 고딕", 10, "bold"),
         anchor="center", justify="left",
-        padx=18, pady=12,
+        padx=12, pady=8, wraplength=420,
     )
 
     def _show_qr_banner(text: str, kind: str = "success"):
@@ -2051,10 +2031,13 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                                      highlightbackground="#6ee7b7")
         qr_banner_label.configure(highlightthickness=1)
         qr_banner_var.set(text)
-        qr_banner_holder.pack(side="right", padx=(20, 0))
-        qr_banner_label.pack()
+        # 헤더 바로 아래(구분선 위)에 끼워 넣기 — 안 그러면 dynamic pack 이 맨 아래로 감.
+        qr_banner_holder.pack(fill="x", padx=14, pady=(8, 0),
+                              before=header_divider)
+        qr_banner_label.pack(fill="x")
 
-    tk.Frame(left, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(14, 0))
+    header_divider = tk.Frame(left, bg=BORDER, height=1)
+    header_divider.pack(fill="x", padx=14, pady=(10, 0))
 
     def _day_from_iso(iso: str) -> str:
         if not iso:
@@ -2091,21 +2074,35 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         return f"→ {resolved.month}월 {resolved.day}일 ({_WD_KO[resolved.weekday()]})"
 
     # ── 탭 컨테이너 ─────────────────────────────────────────
+    # 세로형 — notebook 은 폼 영역만 담당. 높이를 제한해 그 아래의 ③ 분배함 사진이
+    # 메인 시각 요소가 되도록 유지. pick_page 의 worksheet 그리드는 자체 스크롤로 처리.
     style = ttk.Style()
     try:
         style.configure("HD.TNotebook", background=BG, borderwidth=0)
         style.configure("HD.TNotebook.Tab",
-                        padding=(18, 8), font=("맑은 고딕", 10, "bold"))
+                        padding=(14, 6), font=("맑은 고딕", 10, "bold"))
     except Exception:
         pass
 
-    notebook = ttk.Notebook(left, style="HD.TNotebook")
-    notebook.pack(fill="both", expand=True, padx=22, pady=(14, 0))
+    # ── 본문 2단 분할 ────────────────────────────────────
+    # 좌측(form_col): notebook(신규/기존 폼). 우측(slots_col): ③ 분배함 + ④ 매수.
+    body_split = tk.Frame(left, bg=BG)
+    body_split.pack(fill="both", expand=True, padx=14, pady=(10, 0))
+
+    form_col = tk.Frame(body_split, bg=BG, width=260)
+    form_col.pack_propagate(False)
+    form_col.pack(side="left", fill="y")
+
+    slots_col = tk.Frame(body_split, bg=BG)
+    slots_col.pack(side="left", fill="both", expand=True, padx=(12, 0))
+
+    notebook = ttk.Notebook(form_col, style="HD.TNotebook")
+    notebook.pack(fill="both", expand=True)
 
     new_tab = tk.Frame(notebook, bg=BG)
     modify_tab = tk.Frame(notebook, bg=BG)
-    notebook.add(new_tab, text="신규 지시서 작성")
-    notebook.add(modify_tab, text="기존 지시서 변경")
+    notebook.add(new_tab, text="신규 작성")
+    notebook.add(modify_tab, text="기존 변경")
 
     def _force_dialog_redraw():
         """QR 자동 라우팅 직후 Windows 가 Tk 자식 위젯 paint 를 늦추는 경우가 있어
@@ -2142,19 +2139,11 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     new_day_entry: tk.Entry | None = None
 
     if most_recent is not None:
-        # ── 좌·우 분할: 좌측 = 정보+필드, 우측 = PDF 미리보기 ──
-        # 미리보기를 세로로 쌓으면 ②최종납기일 카드가 880px 다이얼로그 밖으로 밀려 잘림.
-        # 가로 분할로 미리보기를 보면서 납기일/배송을 같은 화면에서 입력 가능.
-        new_split = tk.Frame(new_tab, bg=BG)
-        new_split.pack(fill="both", expand=True, pady=(14, 0))
-        new_left_col = tk.Frame(new_split, bg=BG)
-        new_left_col.pack(side="left", fill="both", expand=True)
-        new_right_col = tk.Frame(new_split, bg=BG)
-        new_right_col.pack(side="right", fill="y", padx=(14, 0))
-
-        info_card = tk.Frame(new_left_col, bg=BG_SOFT,
+        # 세로형 — 단일 컬럼: 정보 카드 → 납기/배송 카드. PDF 미리보기/줌은 폐기
+        # (작업자가 FlexiSign 에서 직접 확대해 보면서 분배함을 결정).
+        info_card = tk.Frame(new_tab, bg=BG_SOFT,
                              highlightbackground=BORDER, highlightthickness=1)
-        info_card.pack(fill="x")
+        info_card.pack(fill="x", pady=(10, 0))
         company = (most_recent.get("companyName") or "거래처 미상").strip()
         # 파일제목: 자동지시서 흐름이라면 ZIP 안의 원본 .ai 파일명을, 헤더-only/매칭 실패 시
         # 폴백으로 인쇄된 PDF 파일명(보통 'print_yyyymmdd_...flexiSign-...') 을 쓴다.
@@ -2167,104 +2156,15 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         info_text = f"{company}  /  {file_title}  /  {most_recent.get('orderNumber') or ''}"
         tk.Label(info_card, text="현재 지시서",
                  bg=BG_SOFT, fg=SUB_FG,
-                 font=("맑은 고딕", 9), anchor="w").pack(fill="x", padx=14, pady=(10, 2))
+                 font=("맑은 고딕", 9), anchor="w").pack(fill="x", padx=12, pady=(8, 1))
         tk.Label(info_card, text=info_text,
                  bg=BG_SOFT, fg=TITLE_FG,
-                 font=("맑은 고딕", 13, "bold"), anchor="w",
-                 wraplength=420, justify="left"
-                 ).pack(fill="x", padx=14, pady=(0, 12))
+                 font=("맑은 고딕", 10, "bold"), anchor="w",
+                 wraplength=250, justify="left"
+                 ).pack(fill="x", padx=12, pady=(0, 8))
 
-        # ── 인쇄된 PDF 미리보기(우측) ──────────────────────────
-        # 클릭하거나 [확대] 누르면 별도 Toplevel 에서 더 크게(스크롤 가능) 본다.
-        # 작게 보고 싶으면 PREVIEW_W 만 조정 — 세로는 A4 비율(1.414) 로 자동.
-        PREVIEW_W = 320
-        PREVIEW_H = int(PREVIEW_W * 1.414)
-        preview_card = tk.Frame(new_right_col, bg=BG_SOFT,
-                                highlightbackground=BORDER, highlightthickness=1)
-        preview_card.pack()
-        preview_inner = tk.Frame(preview_card, width=PREVIEW_W, height=PREVIEW_H,
-                                 bg="#e4e4e7", cursor="hand2")
-        preview_inner.pack_propagate(False)
-        preview_inner.pack(padx=8, pady=(8, 4))
-        preview_label = tk.Label(
-            preview_inner, bg="#e4e4e7", fg=SUB_FG,
-            font=("맑은 고딕", 11), text="미리보기 준비 중…",
-            cursor="hand2",
-        )
-        preview_label.pack(fill="both", expand=True)
-
-        # 우측에 [확대] 버튼 — 별도 창에서 큰 사이즈로 본다.
-        preview_btn_row = tk.Frame(preview_card, bg=BG_SOFT)
-        preview_btn_row.pack(fill="x", padx=8, pady=(0, 8))
-        zoom_btn = tk.Button(
-            preview_btn_row, text="🔍  크게 보기",
-            font=("맑은 고딕", 10, "bold"),
-            bg="#18181b", fg="white",
-            activebackground="#27272a", activeforeground="white",
-            relief="flat", padx=14, pady=6, bd=0, cursor="hand2",
-        )
-        zoom_btn.pack(side="right")
-
-        def _open_zoom_window(_event=None):
-            """인쇄된 PDF 첫 페이지를 별도 토플레벨에서 큰 해상도로 표시.
-            공통 줌 헬퍼(_show_zoom_image)가 패닝/스크롤/z-order 를 모두 처리한다."""
-            if fitz is None or not pdf_path.exists():
-                return
-            try:
-                sw = dlg.winfo_screenwidth()
-                # 우측 분배함 사진을 가리지 않도록 화면 폭의 ~50% 만 사용. 더 크게 보고 싶으면
-                # 줌 창에서 휠/드래그로 패닝/스크롤 가능 — 렌더 자체를 키우진 않는다.
-                target_w = max(600, int(sw * 0.5))
-                doc = fitz.open(str(pdf_path))
-                try:
-                    page = doc[0]
-                    page_w = max(1.0, float(page.rect.width))
-                    zoom = min(3.0, target_w / page_w)
-                    mat = fitz.Matrix(zoom, zoom)
-                    pix = page.get_pixmap(matrix=mat, alpha=False)
-                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                finally:
-                    doc.close()
-                _show_zoom_image(f"미리보기 — {pdf_path.name}", pil)
-            except Exception as e:
-                ui_log(f"미리보기 확대 실패: {e}")
-
-        zoom_btn.configure(command=_open_zoom_window)
-        # 미리보기 영역 직접 클릭으로도 확대.
-        preview_label.bind("<Button-1>", _open_zoom_window)
-        preview_inner.bind("<Button-1>", _open_zoom_window)
-
-        def _render_new_preview():
-            if fitz is None:
-                preview_label.configure(text="미리보기 라이브러리(pymupdf) 없음")
-                zoom_btn.configure(state="disabled")
-                return
-            if not pdf_path.exists():
-                preview_label.configure(text="PDF 파일을 찾을 수 없습니다")
-                zoom_btn.configure(state="disabled")
-                return
-            try:
-                doc = fitz.open(str(pdf_path))
-                try:
-                    page = doc[0]
-                    page_w = max(1.0, float(page.rect.width))
-                    zoom = PREVIEW_W / page_w
-                    mat = fitz.Matrix(zoom, zoom)
-                    pix = page.get_pixmap(matrix=mat, alpha=False)
-                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                finally:
-                    doc.close()
-                photo = ImageTk.PhotoImage(pil)
-                preview_label.configure(image=photo, text="", bg="white")
-                preview_label.image = photo  # GC 방지
-            except Exception as e:
-                preview_label.configure(text=f"미리보기 실패: {e}")
-                zoom_btn.configure(state="disabled")
-        # UI 스레드에서 즉시 시도 — 단일 PDF 라 렌더가 빠르고, 결과를 보면서 입력해야 하므로 동기.
-        dlg.after(50, _render_new_preview)
-
-        sec2 = tk.Frame(new_left_col, bg=BG)
-        sec2.pack(fill="x", pady=(18, 0))
+        sec2 = tk.Frame(new_tab, bg=BG)
+        sec2.pack(fill="x", pady=(10, 0))
         tk.Label(sec2, text="② 최종납기일",
                  bg=BG, fg=TITLE_FG,
                  font=("맑은 고딕", 10, "bold"), anchor="w").pack(fill="x")
@@ -2284,25 +2184,26 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
 
         new_month_entry = tk.Entry(
             fields, textvariable=new_month_var, width=3, justify="center",
-            font=("맑은 고딕", 16, "bold"),
+            font=("맑은 고딕", 13, "bold"),
             relief="solid", bd=1, bg="white", highlightthickness=0,
         )
-        new_month_entry.pack(side="left", padx=(8, 3))
+        new_month_entry.pack(side="left", padx=(6, 2))
         tk.Label(fields, text="월", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 6))
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 4))
         new_day_entry = tk.Entry(
             fields, textvariable=new_day_var, width=3, justify="center",
-            font=("맑은 고딕", 16, "bold"),
+            font=("맑은 고딕", 13, "bold"),
             relief="solid", bd=1, bg="white", highlightthickness=0,
         )
-        new_day_entry.pack(side="left", padx=(0, 3))
+        new_day_entry.pack(side="left", padx=(0, 2))
         tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 8))
+                 font=("맑은 고딕", 10)).pack(side="left")
+        # 납기 미리보기 — 같은 줄에 두면 좁은 form_col(260)에서 짤리니 다음 줄로 분리.
         new_due_preview = tk.Label(
-            fields, text="", bg=BG_SOFT, fg="#0f766e",
-            font=("맑은 고딕", 10, "bold"),
+            fields_card, text="", bg=BG_SOFT, fg="#0f766e",
+            font=("맑은 고딕", 10, "bold"), anchor="w",
         )
-        new_due_preview.pack(side="left", padx=(0, 22))
+        new_due_preview.pack(fill="x", padx=14, pady=(0, 4))
 
         # 월 입력이 1~12 의 유효한 값이 되면 자동으로 일 입력으로 포커스 이동.
         # 한 자리(1~9)는 "잠시 후" 두 자리 입력 가능성을 위해 약간 지연하지 않고 바로 넘긴다 —
@@ -2326,11 +2227,12 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         new_day_var.trace_add("write", _refresh_new_due_preview)
         _refresh_new_due_preview()
 
-        # 배송 행 — 납기 행 아래로 빼서 가로 폭을 줄임. (이전에는 같은 줄이라 분배함이 잘림)
-        new_delivery_row = tk.Frame(fields_card, bg=BG_SOFT)
-        new_delivery_row.pack(padx=14, pady=(0, 12), anchor="w", fill="x")
-        tk.Label(new_delivery_row, text="배송", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10, "bold")).pack(side="left")
+        # 배송 — 좁은 form_col(260)에 맞춰 라벨 위, 버튼 2열 grid 아래.
+        # "지방화물차 배송" 같은 긴 라벨도 잘리지 않게 sticky="ew" 로 균등 분배.
+        new_delivery_section = tk.Frame(fields_card, bg=BG_SOFT)
+        new_delivery_section.pack(fill="x", padx=14, pady=(0, 10))
+        tk.Label(new_delivery_section, text="배송", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10, "bold"), anchor="w").pack(fill="x")
         new_delivery_var.set(
             DELIVERY_ENUM_TO_KO.get(most_recent.get("deliveryMethod") or "", "")
         )
@@ -2344,19 +2246,23 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 else:
                     btn.config(bg="white", fg=LABEL_FG, relief="solid")
 
-        delivery_btn_row = tk.Frame(new_delivery_row, bg=BG_SOFT)
-        delivery_btn_row.pack(side="left", padx=(8, 0))
-        for label in DELIVERY_ENUM_TO_KO.values():
+        new_delivery_grid = tk.Frame(new_delivery_section, bg=BG_SOFT)
+        new_delivery_grid.pack(fill="x", pady=(4, 0))
+        new_delivery_grid.columnconfigure(0, weight=1, uniform="dlv")
+        new_delivery_grid.columnconfigure(1, weight=1, uniform="dlv")
+        for i, label in enumerate(DELIVERY_ENUM_TO_KO.values()):
+            r, c = i // 2, i % 2
             b = tk.Button(
-                delivery_btn_row, text=label,
-                font=("맑은 고딕", 9, "bold"),
+                new_delivery_grid, text=label,
+                font=("맑은 고딕", 9),
                 bg="white", fg=LABEL_FG,
                 relief="solid", bd=1,
-                padx=8, pady=2,
+                padx=4, pady=3,
                 command=lambda lbl=label: _set_new_delivery(lbl),
                 cursor="hand2",
             )
-            b.pack(side="left", padx=(0, 4))
+            b.grid(row=r, column=c, sticky="ew",
+                   padx=(0 if c == 0 else 4), pady=2)
             new_delivery_btns[label] = b
         # 초기 상태 반영
         if new_delivery_var.get():
@@ -2373,16 +2279,40 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     modify_state: dict = {"selected_ws": None, "change_type": None}
     chosen_widgets: dict = {}
 
-    pick_page = tk.Frame(modify_tab, bg=BG)
+    # chosen_page 는 form_col(modify_tab) 안에 항상 존재 — 폼 입력은 좌측에서 받는다.
+    # pick_page 는 slots_col 의 photo_panel 과 sibling — "다른 지시서" 누르면 토글.
+    # 이렇게 하면 썸네일이 우측 슬롯 영역(약 310px)을 꽉 채워 크게 보이고,
+    # 지시서 선택 후엔 다시 photo_panel(분배함 사진) 로 돌아온다.
     chosen_page = tk.Frame(modify_tab, bg=BG)
+    chosen_page.pack(fill="both", expand=True)
+    # ws 미선택 상태의 안내 — _refresh_chosen 이 chosen_page 자식을 다 지우므로 자동 사라짐.
+    tk.Label(chosen_page,
+             text="→ 우측에서 작업할 지시서를 선택하세요",
+             bg=BG, fg=SUB_FG, font=("맑은 고딕", 10),
+             anchor="w", justify="left", wraplength=240,
+             ).pack(fill="x", padx=8, pady=24)
+    # pick_page 는 slots_col 자식 — photo_panel 과 sibling. 토글로 보이거나 숨김.
+    pick_page = tk.Frame(slots_col, bg=BG)
 
-    def show_pick():
-        chosen_page.pack_forget()
-        pick_page.pack(fill="both", expand=True)
+    def show_pick_in_slots():
+        """우측 slots_col 을 사진 → 큰 썸네일 그리드로 전환."""
+        try:
+            photo_panel.pack_forget()
+            pick_page.pack(fill="both", expand=True)
+        except Exception:
+            pass
 
-    def show_chosen():
-        pick_page.pack_forget()
-        chosen_page.pack(fill="both", expand=True)
+    def show_photo_in_slots():
+        """우측 slots_col 을 큰 썸네일 그리드 → 분배함 사진으로 복귀."""
+        try:
+            pick_page.pack_forget()
+            photo_panel.pack(fill="both", expand=True)
+        except Exception:
+            pass
+
+    # 호환 alias — 기존 호출자가 show_pick/show_chosen 으로 부르므로 유지.
+    show_pick = show_pick_in_slots
+    show_chosen = show_photo_in_slots
 
     if not existing_worksheets:
         tk.Label(pick_page,
@@ -2390,19 +2320,24 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                  bg=BG, fg=SUB_FG, font=("맑은 고딕", 10),
                  anchor="w", justify="left").pack(fill="x", padx=2, pady=24)
     else:
-        tk.Label(pick_page, text="어느 지시서를 변경하시나요?",
+        # ── pick_page 헤더 (뒤로가기 + 안내) ─────────────
+        pick_header = tk.Frame(pick_page, bg=BG)
+        pick_header.pack(fill="x", padx=10, pady=(8, 4))
+        tk.Button(pick_header, text="◀ 뒤로",
+                  command=show_photo_in_slots,
+                  font=("맑은 고딕", 9, "bold"),
+                  bg="#f4f4f5", fg=LABEL_FG,
+                  activebackground=BORDER, activeforeground=TITLE_FG,
+                  relief="flat", padx=10, pady=4, cursor="hand2", bd=0,
+                  ).pack(side="left")
+        tk.Label(pick_header, text="어느 지시서를 변경하시나요?",
                  bg=BG, fg=TITLE_FG,
-                 font=("맑은 고딕", 11, "bold"), anchor="w"
-                 ).pack(fill="x", pady=(14, 6))
-        if fitz is None:
-            tk.Label(pick_page,
-                     text="(미리보기 라이브러리(pymupdf) 미설치 — 카드만 표시됩니다)",
-                     bg=BG, fg=SUB_FG, font=("맑은 고딕", 9), anchor="w"
-                     ).pack(fill="x", pady=(0, 4))
+                 font=("맑은 고딕", 10, "bold"), anchor="w"
+                 ).pack(side="left", padx=(10, 0))
 
         # 스크롤 가능한 그리드 — Canvas + 내부 Frame 패턴.
         grid_outer = tk.Frame(pick_page, bg=BG)
-        grid_outer.pack(fill="both", expand=True, pady=(0, 4))
+        grid_outer.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         grid_canvas = tk.Canvas(grid_outer, bg=BG, highlightthickness=0)
         gscroll = ttk.Scrollbar(grid_outer, orient="vertical",
                                 command=grid_canvas.yview)
@@ -2427,9 +2362,8 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         grid_canvas.bind("<Leave>",
                          lambda _e: grid_canvas.unbind_all("<MouseWheel>"))
 
-        cols = 3
-        for col in range(cols):
-            grid_inner.grid_columnconfigure(col, weight=1, uniform="card")
+        cols = 1  # slots_col(310) 가 통째로 pick_page 가 되어 한 카드 풀폭으로 크게.
+        grid_inner.grid_columnconfigure(0, weight=1, uniform="card")
 
         thumbnail_work: list[tuple[dict, "tk.Label"]] = []
 
@@ -2501,27 +2435,26 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         title = (ws.get("title") or "").strip()
         order_num = ws.get("orderNumber") or ""
 
-        # ── 상단 바: [← 다른 지시서] + 선택한 지시서 정보 ─────
-        # 기존: 정보 카드 + 뒤로가기 버튼이 두 줄로 쌓여 세로 공간 낭비.
-        # 변경: 한 줄에 좌측 뒤로가기, 우측 거래처/제목/주문번호 인라인 배치.
+        # ── 상단 바: 좁은 폼 컬럼(290px)이라 세로 배치 — 위 뒤로가기, 아래 정보 카드 ─
         topbar = tk.Frame(chosen_page, bg=BG)
-        topbar.pack(fill="x", pady=(10, 0))
+        topbar.pack(fill="x", pady=(8, 0))
 
-        tk.Button(topbar, text="◀  다른 지시서 선택",
+        tk.Button(topbar, text="◀  다른 지시서",
                   command=lambda: show_pick(),
                   font=("맑은 고딕", 9, "bold"),
                   bg="#f4f4f5", fg=LABEL_FG,
                   activebackground=BORDER, activeforeground=TITLE_FG,
-                  relief="flat", padx=14, pady=8, cursor="hand2", bd=0,
+                  relief="flat", padx=10, pady=5, cursor="hand2", bd=0,
                   ).pack(side="left")
 
-        info_box = tk.Frame(topbar, bg=BG)
-        info_box.pack(side="left", padx=(16, 0), fill="x", expand=True)
+        info_box = tk.Frame(chosen_page, bg=BG_SOFT,
+                            highlightbackground=BORDER, highlightthickness=1)
+        info_box.pack(fill="x", pady=(8, 0))
         tk.Label(info_box, text=company,
-                 bg=BG, fg=TITLE_FG,
-                 font=("맑은 고딕", 13, "bold"),
-                 anchor="w", wraplength=560, justify="left",
-                 ).pack(fill="x")
+                 bg=BG_SOFT, fg=TITLE_FG,
+                 font=("맑은 고딕", 10, "bold"),
+                 anchor="w", wraplength=240, justify="left",
+                 ).pack(fill="x", padx=10, pady=(8, 0))
         sub_parts = []
         if title:
             sub_parts.append(title)
@@ -2529,10 +2462,13 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             sub_parts.append(order_num)
         if sub_parts:
             tk.Label(info_box, text="  ·  ".join(sub_parts),
-                     bg=BG, fg=SUB_FG,
+                     bg=BG_SOFT, fg=SUB_FG,
                      font=("맑은 고딕", 9),
-                     anchor="w", wraplength=560, justify="left",
-                     ).pack(fill="x", pady=(2, 0))
+                     anchor="w", wraplength=240, justify="left",
+                     ).pack(fill="x", padx=10, pady=(0, 8))
+        else:
+            # padding 만 잡아주기 — 회사 라벨 아래 여백.
+            tk.Frame(info_box, bg=BG_SOFT, height=8).pack(fill="x")
 
         # ── 통합 변경 폼 (납기/배송 + 내용 메모) ──────────────
         # 기존: 둘 중 하나만 라디오로 선택 → 둘 다 바뀌면 손볼 수 없음.
@@ -2563,25 +2499,26 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
 
         month_e = tk.Entry(
             fields, textvariable=month_var_local, width=3, justify="center",
-            font=("맑은 고딕", 14, "bold"),
+            font=("맑은 고딕", 13, "bold"),
             relief="solid", bd=1, bg="white", highlightthickness=0,
         )
-        month_e.pack(side="left", padx=(10, 3))
+        month_e.pack(side="left", padx=(6, 2))
         tk.Label(fields, text="월", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 6))
+                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 4))
         day_e = tk.Entry(
             fields, textvariable=day_var_local, width=3, justify="center",
-            font=("맑은 고딕", 14, "bold"),
+            font=("맑은 고딕", 13, "bold"),
             relief="solid", bd=1, bg="white", highlightthickness=0,
         )
-        day_e.pack(side="left", padx=(0, 3))
+        day_e.pack(side="left", padx=(0, 2))
         tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 8))
+                 font=("맑은 고딕", 10)).pack(side="left")
+        # 납기 미리보기 — 별도 줄(좁은 form_col 에서 짤림 방지).
         mod_due_preview = tk.Label(
-            fields, text="", bg=BG_SOFT, fg="#0f766e",
-            font=("맑은 고딕", 10, "bold"),
+            inner, text="", bg=BG_SOFT, fg="#0f766e",
+            font=("맑은 고딕", 10, "bold"), anchor="w",
         )
-        mod_due_preview.pack(side="left", padx=(0, 24))
+        mod_due_preview.pack(fill="x", pady=(2, 0))
 
         def _refresh_mod_due_preview(*_):
             mod_due_preview.config(
@@ -2601,11 +2538,11 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         day_var_local.trace_add("write", _refresh_mod_due_preview)
         _refresh_mod_due_preview()
 
-        # 배송 행 — 납기 아래로 분리 (이전: 같은 줄에 있어 우측 분배함 영역을 가림)
-        delivery_row_inner = tk.Frame(inner, bg=BG_SOFT)
-        delivery_row_inner.pack(fill="x", anchor="w", pady=(8, 0))
-        tk.Label(delivery_row_inner, text="배송", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10, "bold")).pack(side="left")
+        # 배송 — 좁은 form_col(260)에 5개 버튼 모두 보이게 라벨 위, 2열 grid 아래.
+        delivery_section = tk.Frame(inner, bg=BG_SOFT)
+        delivery_section.pack(fill="x", pady=(8, 0))
+        tk.Label(delivery_section, text="배송", bg=BG_SOFT, fg=LABEL_FG,
+                 font=("맑은 고딕", 10, "bold"), anchor="w").pack(fill="x")
         delivery_var_local = tk.StringVar(
             value=DELIVERY_ENUM_TO_KO.get(ws.get("deliveryMethod") or "", "")
         )
@@ -2619,19 +2556,23 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 else:
                     btn.config(bg="white", fg=LABEL_FG, relief="solid")
 
-        delivery_btn_row = tk.Frame(delivery_row_inner, bg=BG_SOFT)
-        delivery_btn_row.pack(side="left", padx=(10, 0))
-        for label in DELIVERY_ENUM_TO_KO.values():
+        delivery_grid = tk.Frame(delivery_section, bg=BG_SOFT)
+        delivery_grid.pack(fill="x", pady=(4, 0))
+        delivery_grid.columnconfigure(0, weight=1, uniform="dlv_m")
+        delivery_grid.columnconfigure(1, weight=1, uniform="dlv_m")
+        for i, label in enumerate(DELIVERY_ENUM_TO_KO.values()):
+            r, c = i // 2, i % 2
             b = tk.Button(
-                delivery_btn_row, text=label,
-                font=("맑은 고딕", 9, "bold"),
+                delivery_grid, text=label,
+                font=("맑은 고딕", 9),
                 bg="white", fg=LABEL_FG,
                 relief="solid", bd=1,
-                padx=8, pady=2,
+                padx=4, pady=3,
                 command=lambda lbl=label: _set_mod_delivery(lbl),
                 cursor="hand2",
             )
-            b.pack(side="left", padx=(0, 4))
+            b.grid(row=r, column=c, sticky="ew",
+                   padx=(0 if c == 0 else 4), pady=2)
             mod_delivery_btns[label] = b
         if delivery_var_local.get():
             _set_mod_delivery(delivery_var_local.get())
@@ -2646,10 +2587,10 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
 
         # 2행: 변경된 내용 메모 — 비워두면 contentChanged 안 보냄.
         tk.Label(inner,
-                 text="변경된 내용  (선택 — 입력 시 모바일 뷰어에서 PDF 탭하면 노출)",
+                 text="변경된 내용 (선택 — 모바일 뷰어 노출)",
                  bg=BG_SOFT, fg=SUB_FG,
                  font=("맑은 고딕", 9),
-                 anchor="w").pack(fill="x", pady=(10, 3))
+                 anchor="w", wraplength=220).pack(fill="x", pady=(10, 3))
         note_text = tk.Text(inner, height=2, wrap="word",
                             relief="solid", bd=1,
                             font=("맑은 고딕", 10), bg="white",
@@ -2673,165 +2614,23 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             day_e.select_range(0, "end")
             day_e.icursor("end")
 
-        # ── 매칭된 지시서 PDF 미리보기 (가운데 정렬, 폼 아래) ────
-        # 폭 240 — 다이얼로그 880px 안에 헤더/통합폼/하단 버튼이 모두 잘림 없이 들어가는 한계 폭.
-        # 더 키우면 하단 [웹에 적용/취소/종이만] 버튼이 밀려 안 보임.
-        preview_pane = tk.Frame(chosen_page, bg=BG)
-        preview_pane.pack(fill="both", expand=True, pady=(8, 0))
+        # 매칭된 지시서 PDF 미리보기는 폐기 — 작업자가 FlexiSign 에서 직접 확대해 보고
+        # 분배함을 결정하므로, 다이얼로그 안에 미리보기를 두면 세로 공간만 잡아먹는다.
 
-        PREVIEW_W_C = 240
-        PREVIEW_H_C = int(PREVIEW_W_C * 1.414)
-        preview_card = tk.Frame(preview_pane, bg=BG_SOFT,
-                                highlightbackground=BORDER, highlightthickness=1)
-        # anchor="n" 으로 위쪽 가운데 정렬 — 빈공간 안 생기게.
-        preview_card.pack(anchor="n")
-        preview_inner_c = tk.Canvas(preview_card,
-                                    width=PREVIEW_W_C, height=PREVIEW_H_C,
-                                    bg="#e4e4e7", highlightthickness=0,
-                                    cursor="hand2")
-        preview_inner_c.pack(padx=8, pady=(8, 4))
-        preview_inner_c.create_text(
-            PREVIEW_W_C // 2, PREVIEW_H_C // 2,
-            text="미리보기 로딩 중…",
-            fill=SUB_FG,
-            font=("맑은 고딕", 11),
-            anchor="center",
-            tags=("preview_content",),
-        )
+    # 초기 상태는 photo_panel(분배함 사진). 기존 변경 탭에서 ws 가 안 골라져 있으면
+    # 탭 전환 핸들러가 자동으로 pick_page 로 토글 (아래 _on_tab_change 참고).
 
-        def _open_chosen_zoom(_e=None):
-            _open_zoom_for_matched_ws(ws)
-        preview_inner_c.bind("<Button-1>", _open_chosen_zoom)
-
-        # 미리보기가 deferred paint 로 인해 첫 표시가 늦는 케이스를 대비해 안내 문구.
-        # 사용자가 회색 화면에서 무한정 기다리지 않게 — "창 한 번 클릭하면 보입니다".
-        tk.Label(
-            preview_card,
-            text="(미리보기가 안 보일 경우, 창을 한 번 클릭하면 보입니다)",
-            bg=BG_SOFT, fg=SUB_FG,
-            font=("맑은 고딕", 8),
-            anchor="center",
-            wraplength=PREVIEW_W_C,
-            justify="center",
-        ).pack(fill="x", padx=8, pady=(0, 4))
-
-        zoom_row_c = tk.Frame(preview_card, bg=BG_SOFT)
-        zoom_row_c.pack(fill="x", padx=8, pady=(0, 8))
-        tk.Button(zoom_row_c, text="🔍  크게 보기",
-                  command=_open_chosen_zoom,
-                  font=("맑은 고딕", 9, "bold"),
-                  bg="#18181b", fg="white",
-                  activebackground="#27272a", activeforeground="white",
-                  relief="flat", padx=12, pady=5, bd=0, cursor="hand2",
-                  ).pack(side="right")
-
-        preview_result_q: queue.Queue = queue.Queue(maxsize=1)
-
-        def _force_chosen_preview_paint():
-            def _tick():
-                try:
-                    if preview_inner_c.winfo_exists():
-                        preview_inner_c.update_idletasks()
-                        preview_inner_c.update()
-                    if dlg.winfo_exists():
-                        dlg.lift()
-                        dlg.update_idletasks()
-                except Exception:
-                    pass
-                _force_dialog_redraw()
-            for delay in (0, 30, 120):
-                try:
-                    dlg.after(delay, _tick)
-                except Exception:
-                    pass
-
-        def _set_chosen_preview_message(msg: str):
-            try:
-                if preview_inner_c.winfo_exists():
-                    preview_inner_c.delete("preview_content")
-                    preview_inner_c.create_text(
-                        PREVIEW_W_C // 2, PREVIEW_H_C // 2,
-                        text=msg,
-                        fill=SUB_FG,
-                        font=("맑은 고딕", 11),
-                        anchor="center",
-                        width=PREVIEW_W_C - 24,
-                        tags=("preview_content",),
-                    )
-                _force_chosen_preview_paint()
-            except Exception:
-                pass
-
-        def _apply_chosen_preview(pil):
-            try:
-                if not preview_inner_c.winfo_exists():
-                    return
-                photo = ImageTk.PhotoImage(pil, master=preview_inner_c)
-                preview_inner_c.configure(bg="white")
-                preview_inner_c.delete("preview_content")
-                preview_inner_c.create_image(
-                    PREVIEW_W_C // 2, 0,
-                    image=photo,
-                    anchor="n",
-                    tags=("preview_content",),
-                )
-                preview_inner_c.image = photo  # GC 방지
-                _force_chosen_preview_paint()
-            except Exception:
-                pass
-
-        def _poll_chosen_preview():
-            try:
-                kind, payload = preview_result_q.get_nowait()
-            except queue.Empty:
-                try:
-                    if preview_inner_c.winfo_exists():
-                        dlg.after(60, _poll_chosen_preview)
-                except Exception:
-                    pass
-                return
-            if kind == "ok":
-                _apply_chosen_preview(payload)
+    def _on_tab_change(_event=None):
+        try:
+            sel = notebook.select()
+            if sel == str(modify_tab) and modify_state.get("selected_ws") is None:
+                show_pick_in_slots()
             else:
-                _set_chosen_preview_message(str(payload))
+                show_photo_in_slots()
+        except Exception:
+            pass
 
-        def _put_chosen_preview_result(kind: str, payload):
-            try:
-                preview_result_q.put_nowait((kind, payload))
-            except queue.Full:
-                pass
-
-        def _load_chosen_preview():
-            if fitz is None:
-                _put_chosen_preview_result("error", "미리보기 라이브러리(pymupdf) 없음")
-                return
-            order_num_local = (ws.get("orderNumber") or "").strip()
-            if not order_num_local:
-                _put_chosen_preview_result("error", "주문번호 없음")
-                return
-            pdf_url = f"{API_BASE}/api/public/worksheets/{quote(order_num_local, safe='')}/pdf"
-            try:
-                with urllib.request.urlopen(_safe_url(pdf_url), timeout=20) as resp:
-                    data = resp.read()
-                doc = fitz.open(stream=data, filetype="pdf")
-                try:
-                    page = doc[0]
-                    page_w = max(1.0, float(page.rect.width))
-                    zoom = PREVIEW_W_C / page_w
-                    mat = fitz.Matrix(zoom, zoom)
-                    pix = page.get_pixmap(matrix=mat, alpha=False)
-                    pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-                finally:
-                    doc.close()
-            except Exception as e:
-                _put_chosen_preview_result("error", f"미리보기 실패: {e}")
-                return
-            _put_chosen_preview_result("ok", pil)
-
-        dlg.after(60, _poll_chosen_preview)
-        threading.Thread(target=_load_chosen_preview, daemon=True).start()
-
-    show_pick()  # 시작은 그리드 페이지
+    notebook.bind("<<NotebookTabChanged>>", _on_tab_change)
 
     def _apply_qr_routing():
         """QR 디코드 결과를 다이얼로그 초기 상태에 반영.
@@ -2895,23 +2694,14 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     # 위젯들이 부모 사이즈 0 으로 잡히는 문제 회피.
     dlg.after(200, _apply_qr_routing)
 
-    # ── 우측 패널: 분배함 사진(클릭으로 칸 토글) ────────────
-    photo_panel = tk.Frame(right, bg=BG_SOFT)
-    photo_panel.pack(fill="both", expand=True, padx=14, pady=14)
+    # ── ③ 분배함 사진 + ④ 인쇄 매수 (우측 컬럼) ─────────────
+    # 분배함 사진이 메인 — 헤더/안내 라벨 없이 사진 자체가 압도적이게.
+    # 작업자는 FlexiSign 을 좌측에 띄워두고 이 사진에서 칸을 클릭한다.
+    photo_panel = tk.Frame(slots_col, bg=BG_SOFT,
+                           highlightbackground=BORDER, highlightthickness=1)
+    photo_panel.pack(fill="both", expand=True)
 
-    tk.Label(
-        photo_panel, text="③ 어느 분배함 칸에 꽂으시나요?",
-        bg=BG_SOFT, fg=TITLE_FG,
-        font=("맑은 고딕", 10, "bold"), anchor="w",
-    ).pack(fill="x")
-    tk.Label(
-        photo_panel,
-        text="사무실 분배함 그림입니다. 해당 칸을 클릭해 표시하세요. 여러 칸 동시 선택 가능.",
-        bg=BG_SOFT, fg=SUB_FG,
-        font=("맑은 고딕", 9), anchor="w", justify="left", wraplength=350,
-    ).pack(fill="x", pady=(2, 8))
-
-    PHOTO_DISPLAY_WIDTH = 360
+    # PHOTO_DISPLAY_WIDTH 는 다이얼로그 진입 시점에 결정됨(위쪽 참조).
     src_w, src_h = SLOT_LAYOUT_PHOTO_SIZE
     photo_scale = PHOTO_DISPLAY_WIDTH / src_w
     display_h = int(src_h * photo_scale)
@@ -2995,60 +2785,33 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     tk.Label(
         photo_panel, textvariable=summary_var,
         bg=BG_SOFT, fg=SUB_FG,
-        font=("맑은 고딕", 9), anchor="w", justify="left", wraplength=350,
-    ).pack(fill="x", pady=(8, 0))
+        font=("맑은 고딕", 9), anchor="w", justify="left", wraplength=320,
+    ).pack(fill="x", padx=10, pady=(6, 2))
 
-    # ── 인쇄 매수 결정 ───────────────────────────────────────
-    # 분배함 클릭 칸 수 + 추가 매수 = 총 인쇄 매수. 클릭/입력 시 즉시 총합 갱신.
-    # 둘 다 0 이어도 최소 1장은 보장(직원 보관용) — 기존 동작과의 호환.
-    tk.Frame(photo_panel, bg=BORDER, height=1).pack(fill="x", pady=(10, 8))
+    # ── ④ 인쇄 매수 ────────────────────────────────────
+    # 두 개의 독립된 [✓ 적용] 버튼 — 분배함과 더뽑기를 따로 적용. 둘 다 적용해야
+    # 합산된 매수가 확정 총합으로 잡힌다(분배만 / 더뽑기만 / 둘 다 자유롭게).
+    # [↺ 초기화] 는 두 확정값을 0 으로 되돌리고 더뽑기 입력도 0 으로 클리어 —
+    # 슬롯 클릭(부서 분배)은 건드리지 않는다.
+    # 전체를 한 Frame 으로 묶어 photo_panel 하단에 pack(side="bottom") — 좌측 form_col
+    # 액션 버튼과 같은 baseline 정렬을 위해.
+    quantity_section = tk.Frame(photo_panel, bg=BG_SOFT)
+    quantity_section.pack(side="bottom", fill="x")
+
+    tk.Frame(quantity_section, bg=BORDER, height=1).pack(fill="x", padx=12, pady=(0, 6))
 
     tk.Label(
-        photo_panel, text="④ 인쇄 매수",
+        quantity_section, text="④ 인쇄 매수",
         bg=BG_SOFT, fg=TITLE_FG,
         font=("맑은 고딕", 10, "bold"), anchor="w",
-    ).pack(fill="x")
+    ).pack(fill="x", padx=12)
 
     copies_extra_var = tk.StringVar(value="0")
+    # 적용된(확정) 매수 — 두 슬롯이 합산되어 총 매수가 됨. 액션 버튼은 이 합만 본다.
+    committed = {"slot": 0, "extra": 0}
 
-    counts_row = tk.Frame(photo_panel, bg=BG_SOFT)
-    counts_row.pack(fill="x", pady=(4, 0))
-
-    tk.Label(counts_row, text="분배함",
-             bg=BG_SOFT, fg=LABEL_FG,
-             font=("맑은 고딕", 9)).pack(side="left")
-    slot_count_lbl = tk.Label(
-        counts_row, text="0칸",
-        bg=BG_SOFT, fg=TITLE_FG,
-        font=("맑은 고딕", 11, "bold"),
-    )
-    slot_count_lbl.pack(side="left", padx=(4, 14))
-
-    tk.Label(counts_row, text="+ 더뽑기",
-             bg=BG_SOFT, fg=LABEL_FG,
-             font=("맑은 고딕", 9)).pack(side="left")
-    extra_entry = tk.Entry(
-        counts_row, textvariable=copies_extra_var, width=4, justify="center",
-        font=("맑은 고딕", 11, "bold"),
-        relief="solid", bd=1, bg="white", highlightthickness=0,
-    )
-    extra_entry.pack(side="left", padx=(4, 4))
-    tk.Label(counts_row, text="장",
-             bg=BG_SOFT, fg=LABEL_FG,
-             font=("맑은 고딕", 9)).pack(side="left", padx=(0, 14))
-
-    tk.Label(counts_row, text="=",
-             bg=BG_SOFT, fg=LABEL_FG,
-             font=("맑은 고딕", 11, "bold")).pack(side="left", padx=(0, 4))
-    total_count_lbl = tk.Label(
-        counts_row, text="총 1장",
-        bg=BG_SOFT, fg=ACCENT,
-        font=("맑은 고딕", 12, "bold"),
-    )
-    total_count_lbl.pack(side="left")
-
-    def _calc_copies() -> tuple[int, int, int]:
-        """(slot_n, extra_n, total) — 슬롯 칸 수, 추가 매수, 총합. 총합은 최소 1."""
+    def _calc_copies() -> tuple[int, int]:
+        """(slot_n, extra_n) — 라이브 슬롯 칸 수와 더뽑기 입력값. 둘 다 0 이상."""
         slot_n = sum(
             1 for label, mapped, _ in SLOT_BOXES
             if mapped and slot_active.get(label)
@@ -3059,18 +2822,153 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             extra_n = 0
         if extra_n < 0:
             extra_n = 0
-        total = max(1, slot_n + extra_n)
-        return slot_n, extra_n, total
+        return slot_n, extra_n
 
-    def _refresh_copies(*_):
-        slot_n, _extra_n, total = _calc_copies()
+    def _committed_total() -> int:
+        return committed["slot"] + committed["extra"]
+
+    # ── 분배함 적용 카드 ─────────────────────────────
+    slot_card = tk.Frame(quantity_section, bg="white",
+                         highlightbackground=BORDER, highlightthickness=1)
+    slot_card.pack(fill="x", padx=12, pady=(6, 4))
+    slot_inner = tk.Frame(slot_card, bg="white")
+    slot_inner.pack(fill="x", padx=10, pady=6)
+
+    tk.Label(slot_inner, text="분배함",
+             bg="white", fg=SUB_FG,
+             font=("맑은 고딕", 9)).pack(side="left")
+    slot_count_lbl = tk.Label(
+        slot_inner, text="0칸",
+        bg="white", fg=TITLE_FG,
+        font=("맑은 고딕", 13, "bold"),
+    )
+    slot_count_lbl.pack(side="left", padx=(6, 0))
+
+    def _apply_slot(_event=None):
+        slot_n, _ = _calc_copies()
+        committed["slot"] = slot_n
+        _refresh_total_lbl()
+        _refresh_slot_apply_btn()
+
+    slot_apply_btn = tk.Button(
+        slot_inner, text="✓ 적용", command=_apply_slot,
+        font=("맑은 고딕", 9, "bold"),
+        bg=ACCENT, fg="white",
+        activebackground=ACCENT_HOVER, activeforeground="white",
+        relief="flat", padx=12, pady=4, cursor="hand2", bd=0,
+    )
+    slot_apply_btn.pack(side="right")
+
+    # ── 더뽑기 적용 카드 ─────────────────────────────
+    extra_card = tk.Frame(quantity_section, bg="white",
+                          highlightbackground=BORDER, highlightthickness=1)
+    extra_card.pack(fill="x", padx=12, pady=(0, 4))
+    extra_inner = tk.Frame(extra_card, bg="white")
+    extra_inner.pack(fill="x", padx=10, pady=6)
+
+    tk.Label(extra_inner, text="더뽑기",
+             bg="white", fg=SUB_FG,
+             font=("맑은 고딕", 9)).pack(side="left")
+    extra_entry = tk.Entry(
+        extra_inner, textvariable=copies_extra_var, width=4, justify="center",
+        font=("맑은 고딕", 12, "bold"),
+        relief="solid", bd=1, bg="#fafafa", highlightthickness=0,
+    )
+    extra_entry.pack(side="left", padx=(6, 3))
+    tk.Label(extra_inner, text="장",
+             bg="white", fg=SUB_FG,
+             font=("맑은 고딕", 9)).pack(side="left")
+
+    def _apply_extra(_event=None):
+        _, extra_n = _calc_copies()
+        committed["extra"] = extra_n
+        _refresh_total_lbl()
+        _refresh_extra_apply_btn()
+
+    extra_apply_btn = tk.Button(
+        extra_inner, text="✓ 적용", command=_apply_extra,
+        font=("맑은 고딕", 9, "bold"),
+        bg=ACCENT, fg="white",
+        activebackground=ACCENT_HOVER, activeforeground="white",
+        relief="flat", padx=12, pady=4, cursor="hand2", bd=0,
+    )
+    extra_apply_btn.pack(side="right")
+
+    # ── 총 매수 + 초기화 ─────────────────────────────
+    total_row = tk.Frame(quantity_section, bg=BG_SOFT)
+    total_row.pack(fill="x", padx=12, pady=(6, 10))
+
+    total_count_lbl = tk.Label(
+        total_row, text="총 0장이 인쇄됩니다",
+        bg=BG_SOFT, fg=ACCENT,
+        font=("맑은 고딕", 12, "bold"), anchor="w",
+    )
+    total_count_lbl.pack(side="left")
+
+    def _reset_copies(_event=None):
+        committed["slot"] = 0
+        committed["extra"] = 0
+        copies_extra_var.set("0")
+        _refresh_total_lbl()
+        _refresh_slot_apply_btn()
+        _refresh_extra_apply_btn()
+
+    reset_btn = tk.Button(
+        total_row, text="↺ 초기화", command=_reset_copies,
+        font=("맑은 고딕", 9),
+        bg=BG_SOFT, fg=SUB_FG,
+        activebackground=BORDER, activeforeground=TITLE_FG,
+        relief="flat", padx=8, pady=2, cursor="hand2", bd=0,
+    )
+    reset_btn.pack(side="right")
+
+    def _refresh_total_lbl():
         try:
-            slot_count_lbl.config(text=f"{slot_n}칸")
-            total_count_lbl.config(text=f"총 {total}장")
+            total_count_lbl.config(text=f"총 {_committed_total()}장이 인쇄됩니다")
         except Exception:
             pass
 
+    def _refresh_slot_apply_btn():
+        slot_n, _ = _calc_copies()
+        try:
+            if slot_n != committed["slot"]:
+                slot_apply_btn.config(text="✓ 적용",
+                                      bg=ACCENT, fg="white",
+                                      activebackground=ACCENT_HOVER)
+            else:
+                slot_apply_btn.config(text="적용됨",
+                                      bg="#f4f4f5", fg=SUB_FG,
+                                      activebackground=BORDER)
+        except Exception:
+            pass
+
+    def _refresh_extra_apply_btn():
+        _, extra_n = _calc_copies()
+        try:
+            if extra_n != committed["extra"]:
+                extra_apply_btn.config(text="✓ 적용",
+                                       bg=ACCENT, fg="white",
+                                       activebackground=ACCENT_HOVER)
+            else:
+                extra_apply_btn.config(text="적용됨",
+                                       bg="#f4f4f5", fg=SUB_FG,
+                                       activebackground=BORDER)
+        except Exception:
+            pass
+
+    def _refresh_copies(*_):
+        """슬롯 클릭/더뽑기 입력 시 호출 — 칸수 라벨과 두 적용 버튼 dirty 갱신."""
+        slot_n, _ = _calc_copies()
+        try:
+            slot_count_lbl.config(text=f"{slot_n}칸")
+        except Exception:
+            pass
+        _refresh_slot_apply_btn()
+        _refresh_extra_apply_btn()
+
     copies_extra_var.trace_add("write", _refresh_copies)
+    _refresh_slot_apply_btn()
+    _refresh_extra_apply_btn()
 
     def _refresh_summary():
         tags = collect_dept_tags()
@@ -3078,7 +2976,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             summary_var.set("선택된 부서 없음 — 모바일 뷰어에서는 \"전체보기\"에서만 노출됩니다.")
         else:
             summary_var.set("배부 부서: " + " · ".join(tags))
-        # 분배함 클릭 시 매수 카운트도 같이 갱신.
+        # 분배함 클릭 시 칸 수 라벨과 적용 대기 표시도 같이 갱신.
         _refresh_copies()
 
     def _restore_dept_tags(ws):
@@ -3143,7 +3041,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 return
             delivery_ko = (new_delivery_var.get() or "").strip()
             delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
-            _slot_n, _extra_n, total_copies = _calc_copies()
+            total_copies = _committed_total()
             result["value"] = {
                 "mode": "new",
                 "change_type": "delivery",  # 신규는 사실상 납기/배송 흐름과 동일
@@ -3198,7 +3096,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         # 메모를 수정/추가했거나 비웠으면 의미 있는 변경으로 처리(기존 로직).
         note_unchanged = bool(note) and note == original_note
         content_changed = bool(note) and not note_unchanged
-        _slot_n_m, _extra_n_m, total_copies_m = _calc_copies()
+        total_copies_m = _committed_total()
         result["value"] = {
             "mode": "modify",
             "change_type": "combined",
@@ -3227,52 +3125,55 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         dlg.destroy()
 
     def skip_upload(_event=None):
-        # 종이 인쇄만 진행 — 웹에 안 올림. 분배함 클릭 + 더뽑기 매수도 함께 전달해야
-        # 1장만 나오는 회귀를 막을 수 있다.
-        _slot_n_s, _extra_n_s, total_copies_s = _calc_copies()
-        result["value"] = {"order_number": None, "copies": total_copies_s}
+        # 종이 인쇄만 — 웹에 안 올림. 확정 매수(committed_copies)만 따라가므로,
+        # 분배함 슬롯이 자동 복원돼도 적용하기를 안 누른 상태면 0장 = 인쇄 생략.
+        result["value"] = {"order_number": None, "copies": _committed_total()}
         dlg.destroy()
 
-    # ── 버튼 ──────────────────────────────────────────────
-    tk.Frame(left, bg=BORDER, height=1).pack(fill="x", padx=22, pady=(20, 0))
+    # ── 액션 버튼 (form_col 하단) ────────────────────────
+    # form_col 폭 260 — 메인 액션을 풀 폭으로, 보조 3개를 한 줄로.
+    # form_col 안에 두면 빈 여백이 줄고 폼-액션 동선이 같은 컬럼에서 이어짐.
+    # pack(side="bottom") 은 먼저 pack 한 게 바닥 — btns_section 먼저, divider 나중에.
+    btns_section = tk.Frame(form_col, bg=BG)
+    btns_section.pack(side="bottom", fill="x", pady=(0, 4))
+    tk.Frame(form_col, bg=BORDER, height=1).pack(side="bottom", fill="x", pady=(8, 6))
 
-    button_row = tk.Frame(left, bg=BG)
-    button_row.pack(fill="x", padx=22, pady=(14, 16))
-
-    # 좌측: 두 가지 보조 액션. (1) 웹 안 올리고 종이만, (2) 웹만 올리고 인쇄 안 함.
+    # 1행: 메인 액션 — 풀 폭, 강조.
     tk.Button(
-        button_row, text="웹에 올리지 않고 종이만 인쇄",
-        command=skip_upload,
-        font=("맑은 고딕", 9),
-        bg="#f4f4f5", fg=SUB_FG,
-        activebackground=BORDER, activeforeground=TITLE_FG,
-        relief="flat", padx=12, pady=6, cursor="hand2", bd=0,
-    ).pack(side="left")
-    tk.Button(
-        button_row, text="웹에만 적용하고 인쇄 안 함",
-        command=confirm_no_print,
-        font=("맑은 고딕", 9),
-        bg="#f4f4f5", fg=SUB_FG,
-        activebackground=BORDER, activeforeground=TITLE_FG,
-        relief="flat", padx=12, pady=6, cursor="hand2", bd=0,
-    ).pack(side="left", padx=(6, 0))
-
-    tk.Button(
-        button_row, text="취소", command=cancel,
-        font=("맑은 고딕", 11),
-        bg="#f4f4f5", fg=LABEL_FG,
-        activebackground=BORDER, activeforeground=TITLE_FG,
-        relief="flat", padx=22, pady=8, cursor="hand2",
-        bd=0,
-    ).pack(side="right", padx=(8, 0))
-    tk.Button(
-        button_row, text="✓  웹에 적용 & 인쇄하기", command=confirm,
+        btns_section, text="✓ 웹에 적용 & 인쇄", command=confirm,
         font=("맑은 고딕", 11, "bold"),
         bg=ACCENT, fg="white",
         activebackground=ACCENT_HOVER, activeforeground="white",
-        relief="flat", padx=24, pady=8, cursor="hand2",
-        bd=0,
-    ).pack(side="right")
+        relief="flat", padx=10, pady=9, cursor="hand2", bd=0,
+    ).pack(fill="x")
+
+    # 2행: 보조 액션 3개 — 균등 분할.
+    sec_row = tk.Frame(btns_section, bg=BG)
+    sec_row.pack(fill="x", pady=(6, 0))
+    sec_row.columnconfigure(0, weight=1, uniform="sec")
+    sec_row.columnconfigure(1, weight=1, uniform="sec")
+    sec_row.columnconfigure(2, weight=1, uniform="sec")
+    tk.Button(
+        sec_row, text="종이만 인쇄", command=skip_upload,
+        font=("맑은 고딕", 9),
+        bg=BG_SOFT, fg=SUB_FG,
+        activebackground=BORDER, activeforeground=TITLE_FG,
+        relief="flat", pady=6, cursor="hand2", bd=0,
+    ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+    tk.Button(
+        sec_row, text="웹만 적용", command=confirm_no_print,
+        font=("맑은 고딕", 9),
+        bg=BG_SOFT, fg=SUB_FG,
+        activebackground=BORDER, activeforeground=TITLE_FG,
+        relief="flat", pady=6, cursor="hand2", bd=0,
+    ).grid(row=0, column=1, sticky="ew", padx=3)
+    tk.Button(
+        sec_row, text="취소", command=cancel,
+        font=("맑은 고딕", 9),
+        bg=BG_SOFT, fg=LABEL_FG,
+        activebackground=BORDER, activeforeground=TITLE_FG,
+        relief="flat", pady=6, cursor="hand2", bd=0,
+    ).grid(row=0, column=2, sticky="ew", padx=(3, 0))
 
     # Enter/Esc 는 다이얼로그 어디에 포커스가 있어도 동작하도록 위젯별로도 바인딩.
     dlg.bind("<Return>", confirm)
@@ -3549,11 +3450,16 @@ def _process_printed_pdf(pdf_path: Path):
         return
 
     order_number = sel.get("order_number")
-    # 다이얼로그가 정한 매수. 큐에 주문 없을 때 흐름은 위에서 1장 기본으로 처리.
-    copies = int(sel.get("copies") or 1)
+    # 다이얼로그 [✓ 적용하기] 로 확정된 매수. 0 이면 종이 인쇄 생략 — 0 or 1 함정 회피를
+    # 위해 None 인 경우만 1 로 폴백하고, 명시적 0 은 그대로 0 으로 전달한다.
+    copies_raw = sel.get("copies")
+    copies = int(copies_raw) if copies_raw is not None else 1
     if order_number is None:
-        ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name}, {copies}장)")
-        print_pdf_to_paper(pdf_path, copies=copies)
+        if copies < 1:
+            ui_log(f"인쇄 — 매칭 안 함 선택 + 매수 0, 종이 인쇄 생략 ({pdf_path.name})")
+        else:
+            ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name}, {copies}장)")
+            print_pdf_to_paper(pdf_path, copies=copies)
         # 직원이 명시적으로 "웹에 안 올림" 선택 — PDF 가 더 갈 데 없으므로 정리.
         _schedule_printed_pdf_cleanup(pdf_path)
         return
@@ -3582,9 +3488,11 @@ def _process_printed_pdf(pdf_path: Path):
                                      content_changed=bool(sel.get("content_changed", False)),
                                      change_note=sel.get("change_note") or "",
                                      preserve_note=bool(sel.get("preserve_note", False)))
-    # "웹에만 적용하고 인쇄 안 함" 선택 시 종이 인쇄 단계를 건너뛴다 — 웹 적용만 끝.
+    # "웹에만 적용하고 인쇄 안 함" 선택 또는 확정 매수 0 인 경우 종이 인쇄 생략.
     if sel.get("skip_print"):
         ui_log(f"인쇄 — '인쇄 안 함' 선택, 종이 인쇄 생략 ({pdf_path.name})")
+    elif copies < 1:
+        ui_log(f"인쇄 — 매수 0(적용 안 함), 종이 인쇄 생략 ({pdf_path.name})")
     else:
         print_pdf_to_paper(pdf_path, copies=copies)
     # 업로드 성공 시 로컬 PDF 자동 삭제 — 웹(R2)에 보관됐으니 printed/ 누적 방지.
@@ -5785,6 +5693,10 @@ class App(tk.Tk):
             # FlexSign 에서 기존 지시서 열어 인쇄해도 자동으로 PDF24 로 가서
             # 매칭 다이얼로그가 뜨도록 보장. on_close 에서 원래 프린터로 복구.
             switch_default_to_pdf24()
+
+            # FlexSign [인쇄하기] → 인쇄 다이얼로그(PDF24 기본 선택) 가 뜨면 추가 Enter 없이
+            # 자동 OK — 사무실 직원이 두 번 누르는 혼란 제거. on_close 시 데몬 쓰레드 자동 종료.
+            start_print_dialog_autoconfirm()
 
         threading.Thread(target=_run, daemon=True).start()
 
