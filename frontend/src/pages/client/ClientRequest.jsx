@@ -34,9 +34,9 @@ function composeCustomTime(ampm, hour, minute) {
 }
 
 const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
-// 60MB 초과 시 Railway 메모리/타임아웃 부담 + 일러스트 COM RPC 실패 위험이 커서, 한도를 명시하고
+// 80MB 초과 시 Railway 메모리/타임아웃 부담 + 일러스트 COM RPC 실패 위험이 커서, 한도를 명시하고
 // 초과 케이스는 분할 발주 또는 이메일로 안내한다.
-const MAX_TOTAL_FILE_SIZE_MB = 60;
+const MAX_TOTAL_FILE_SIZE_MB = 80;
 const MAX_TOTAL_FILE_SIZE_BYTES = MAX_TOTAL_FILE_SIZE_MB * 1024 * 1024;
 const COMPANY_EMAIL = 'hdno88@daum.net';
 

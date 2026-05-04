@@ -5,7 +5,7 @@ import './ProxyOrder.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
-const MAX_TOTAL_FILE_SIZE_MB = 60;
+const MAX_TOTAL_FILE_SIZE_MB = 80;
 const MAX_TOTAL_FILE_SIZE_BYTES = MAX_TOTAL_FILE_SIZE_MB * 1024 * 1024;
 
 function formatSize(bytes) {
