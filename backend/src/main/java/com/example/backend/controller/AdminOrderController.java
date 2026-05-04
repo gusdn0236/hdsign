@@ -59,15 +59,17 @@ public class AdminOrderController {
 
     // 관리자 대리 발주 — 메일/전화로 들어온 거래처 발주를 관리자가 직접 등록.
     // 거래처 로그인을 거치지 않고 clientId 만으로 동일한 발주 흐름을 태운다.
+    // 납기/배송은 이 단계에서 선택 — 일러스트를 열어보지 않고 빠르게 등록한 뒤
+    // 인쇄 매칭 다이얼로그에서 통화 후 확정해 채운다.
     @PostMapping("/proxy")
     public ResponseEntity<OrderDto.Response> proxyOrder(
             @RequestParam Long clientId,
             @RequestParam(required = false) String title,
             @RequestParam(required = false) String additionalItems,
             @RequestParam(required = false) String note,
-            @RequestParam String dueDate,
+            @RequestParam(required = false) String dueDate,
             @RequestParam(required = false) String dueTime,
-            @RequestParam String deliveryMethod,
+            @RequestParam(required = false) String deliveryMethod,
             @RequestParam(required = false) String deliveryAddress,
             @RequestParam(required = false) List<MultipartFile> files
     ) {

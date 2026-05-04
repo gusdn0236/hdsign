@@ -5,39 +5,12 @@ import './ProxyOrder.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
-const DELIVERY_OPTIONS = [
-    { value: 'CARGO', label: '화물 발송' },
-    { value: 'QUICK', label: '퀵 발송' },
-    { value: 'DIRECT', label: '직접 배송' },
-    { value: 'LOCAL_CARGO', label: '지방화물차' },
-    { value: 'PICKUP', label: '직접 수령' },
-];
-
-const DUE_TIMES = [
-    { value: '오전 중', desc: '12시 이전' },
-    { value: '오후 중', desc: '12시 이후' },
-    { value: '당일 내', desc: '시간 무관' },
-];
-const DUE_TIME_PRESETS = DUE_TIMES.map((t) => t.value);
-
-function composeCustomTime(ampm, hour, minute) {
-    if (!hour || minute === '' || minute == null) return '';
-    return `${ampm} ${hour}시 ${minute}분`;
-}
-
-const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
-
 const MAX_TOTAL_FILE_SIZE_MB = 60;
 const MAX_TOTAL_FILE_SIZE_BYTES = MAX_TOTAL_FILE_SIZE_MB * 1024 * 1024;
 
 function formatSize(bytes) {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function todayISO() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export default function ProxyOrder() {
@@ -57,19 +30,10 @@ export default function ProxyOrder() {
     const fileInputRef = useRef(null);
     const dragCounter = useRef(0);
 
+    // title 은 UI 가 없지만 첨부 첫 파일명에서 자동 채워 넣어
+    // 발주관리 목록의 "제목" 컬럼 식별자로 사용한다. 납기/배송 등 나머지는
+    // 빈 값으로 등록되며 발주관리 모달에서 통화 후 채운다.
     const [title, setTitle] = useState('');
-    const [titleAutoFilled, setTitleAutoFilled] = useState(false);
-    const [additionalItems, setAdditionalItems] = useState('');
-    const [note, setNote] = useState('');
-    const [dueDate, setDueDate] = useState(todayISO());
-    const [dueTime, setDueTime] = useState('당일 내');
-    const [customTimeMode, setCustomTimeMode] = useState(false);
-    const [customAmpm, setCustomAmpm] = useState('오전');
-    const [customHour, setCustomHour] = useState('');
-    const [customMinute, setCustomMinute] = useState('');
-    const minuteInputRef = useRef(null);
-    const [delivery, setDelivery] = useState('CARGO');
-    const [deliveryAddress, setDeliveryAddress] = useState('');
 
     const [submitting, setSubmitting] = useState(false);
     const [feedback, setFeedback] = useState(null);
@@ -193,7 +157,6 @@ export default function ProxyOrder() {
         setFiles(merged);
         if (!title.trim() && incoming.length > 0) {
             setTitle(incoming[0].name.replace(/\.[^/.]+$/, ''));
-            setTitleAutoFilled(true);
         }
     };
 
@@ -257,13 +220,6 @@ export default function ProxyOrder() {
         setActiveSuggestIndex(0);
         setFiles([]);
         setTitle('');
-        setTitleAutoFilled(false);
-        setAdditionalItems('');
-        setNote('');
-        setDueDate(todayISO());
-        setDueTime('당일 내');
-        setDelivery('CARGO');
-        setDeliveryAddress('');
         setFeedback(null);
     };
 
@@ -279,24 +235,12 @@ export default function ProxyOrder() {
 
         if (!selectedClient) return setFeedback({ type: 'error', msg: '거래처를 선택해 주세요.' });
         if (!files.length) return setFeedback({ type: 'error', msg: '파일을 1개 이상 첨부해 주세요.' });
-        if (!title.trim()) return setFeedback({ type: 'error', msg: '작업명을 입력해 주세요.' });
-        if (!dueDate) return setFeedback({ type: 'error', msg: '납기일을 선택해 주세요.' });
-        if (!dueTime) return setFeedback({ type: 'error', msg: '납기 시간을 선택해 주세요.' });
-        if ((delivery === 'CARGO' || delivery === 'QUICK' || delivery === 'DIRECT' || delivery === 'LOCAL_CARGO') && !deliveryAddress.trim()) {
-            return setFeedback({ type: 'error', msg: delivery === 'CARGO' ? '화물 지점을 입력해 주세요.' : '주소를 입력해 주세요.' });
-        }
 
         setSubmitting(true);
         try {
             const formData = new FormData();
             formData.append('clientId', selectedClient.id);
             formData.append('title', title.trim());
-            formData.append('additionalItems', additionalItems.trim());
-            formData.append('note', note.trim());
-            formData.append('dueDate', dueDate);
-            formData.append('dueTime', dueTime);
-            formData.append('deliveryMethod', delivery);
-            formData.append('deliveryAddress', deliveryAddress.trim());
             files.forEach((f) => formData.append('files', f));
 
             const res = await fetch(`${BASE_URL}/api/admin/orders/proxy`, {
@@ -322,17 +266,6 @@ export default function ProxyOrder() {
         }
     };
 
-    const dateChips = useMemo(() => {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        return Array.from({ length: 14 }, (_, i) => {
-            const d = new Date(today);
-            d.setDate(today.getDate() + i);
-            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            return { iso, m: d.getMonth() + 1, d: d.getDate(), dow: d.getDay(), isToday: i === 0 };
-        });
-    }, []);
-
     if (submitted) {
         return (
             <div className="proxy-page">
@@ -350,12 +283,33 @@ export default function ProxyOrder() {
                     <h2 className="proxy-submitted-title">발주에 성공했습니다.</h2>
                     <p className="proxy-submitted-desc">
                         {submittedOrder?.orderNumber
-                            ? `${submittedOrder.orderNumber} 주문이 생성되었습니다.`
+                            ? <><strong className="proxy-submitted-order-no">{submittedOrder.orderNumber}</strong> 주문이 생성되었습니다.</>
                             : '새 주문이 생성되었습니다.'}
                     </p>
+
+                    <div className="proxy-next-step">
+                        <div className="proxy-next-step-head">다음 단계</div>
+                        <ol className="proxy-next-step-list">
+                            <li>
+                                <span className="proxy-next-step-num">1</span>
+                                <span><strong>발주관리</strong> 탭에서 방금 등록한 주문을 엽니다.</span>
+                            </li>
+                            <li>
+                                <span className="proxy-next-step-num">2</span>
+                                <span><strong>[지시서 자동작성]</strong> 버튼을 눌러 FlexSign 에 지시서를 띄웁니다.</span>
+                            </li>
+                            <li>
+                                <span className="proxy-next-step-num">3</span>
+                                <span>거래처와 통화하며 납기 · 배송 등을 채워 최종 완성 후 PDF24/워처로 웹에 반영합니다.</span>
+                            </li>
+                        </ol>
+                    </div>
+
                     <div className="proxy-submitted-actions">
-                        <button type="button" className="proxy-primary-btn" onClick={startNewProxyOrder}>새 대리발주 작성하기</button>
-                        <button type="button" className="proxy-secondary-btn" onClick={() => navigate('/admin/orders')}>발주 관리 보기</button>
+                        <button type="button" className="proxy-secondary-btn" onClick={startNewProxyOrder}>새 대리발주 작성</button>
+                        <button type="button" className="proxy-primary-btn" onClick={() => navigate('/admin/orders')}>
+                            발주관리로 이동 →
+                        </button>
                     </div>
                 </div>
             </div>
@@ -376,7 +330,7 @@ export default function ProxyOrder() {
             <header className="proxy-header">
                 <div>
                     <h1 className="proxy-title">대리 발주 등록</h1>
-                    <p className="proxy-sub">메일/전화로 들어온 발주를 한 번에 등록합니다. 거래처 로그인 절차가 필요 없습니다.</p>
+                    <p className="proxy-sub">메일/전화로 들어온 발주를 거래처 + 첨부파일만으로 빠르게 등록합니다. 작업명·납기·배송 등은 발주관리에서 통화하며 채워 넣습니다.</p>
                 </div>
                 <button type="button" className="proxy-back-btn" onClick={() => navigate('/admin/orders')}>← 작업 관리로</button>
             </header>
@@ -496,181 +450,6 @@ export default function ProxyOrder() {
                                 </li>
                             ))}
                         </ul>
-                    )}
-                </section>
-
-                <section className="proxy-section">
-                    <div className="proxy-section-head">
-                        <span className="proxy-section-num">03</span>
-                        <h2>발주 내용</h2>
-                    </div>
-                    <label className="proxy-label">
-                        작업명
-                        {titleAutoFilled && <span className="proxy-hint">파일명에서 자동 입력 — 수정 가능</span>}
-                    </label>
-                    <input
-                        type="text"
-                        className="proxy-input"
-                        value={title}
-                        onChange={(e) => { setTitle(e.target.value); setTitleAutoFilled(false); }}
-                        placeholder="예) 스타벅스 강남점 채널간판"
-                        maxLength={120}
-                    />
-
-                    <label className="proxy-label" style={{ marginTop: 16 }}>추가 물품 (선택)</label>
-                    <input
-                        type="text"
-                        className="proxy-input"
-                        value={additionalItems}
-                        onChange={(e) => setAdditionalItems(e.target.value)}
-                        placeholder="예) 파워기(SMPS) 200W 2개, 볼트&너트"
-                    />
-
-                    <label className="proxy-label" style={{ marginTop: 16 }}>요청사항 (선택)</label>
-                    <textarea
-                        className="proxy-textarea"
-                        value={note}
-                        onChange={(e) => setNote(e.target.value)}
-                        placeholder="거래처 요청사항을 그대로 받아 적어주세요."
-                        rows={4}
-                    />
-                </section>
-
-                <section className="proxy-section">
-                    <div className="proxy-section-head">
-                        <span className="proxy-section-num">04</span>
-                        <h2>납기 및 납품</h2>
-                    </div>
-                    <label className="proxy-label">납기일</label>
-                    <div className="proxy-date-grid">
-                        {dateChips.map((c) => {
-                            const cls = [
-                                'proxy-date-btn',
-                                dueDate === c.iso && 'on',
-                                c.isToday && 'today',
-                                c.dow === 0 && 'sun',
-                                c.dow === 6 && 'sat',
-                            ].filter(Boolean).join(' ');
-                            return (
-                                <button key={c.iso} type="button" className={cls} onClick={() => setDueDate(c.iso)}>
-                                    <span className="proxy-date-md">{c.m}/{c.d}</span>
-                                    <span className="proxy-date-dow">{c.isToday ? '오늘' : DAY_NAMES[c.dow]}</span>
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    <label className="proxy-label" style={{ marginTop: 16 }}>납기 시간</label>
-                    <div className="proxy-time-row">
-                        {DUE_TIMES.map((t) => (
-                            <button
-                                key={t.value}
-                                type="button"
-                                className={`proxy-time-btn ${!customTimeMode && dueTime === t.value ? 'on' : ''}`}
-                                onClick={() => { setCustomTimeMode(false); setDueTime(t.value); }}
-                            >
-                                <span>{t.value}</span>
-                                <span className="proxy-time-desc">{t.desc}</span>
-                            </button>
-                        ))}
-                        <button
-                            type="button"
-                            className={`proxy-time-btn ${customTimeMode ? 'on' : ''}`}
-                            onClick={() => {
-                                setCustomTimeMode(true);
-                                if (DUE_TIME_PRESETS.includes(dueTime)) setDueTime('');
-                            }}
-                        >
-                            <span>시간 지정</span>
-                            <span className="proxy-time-desc">직접 입력</span>
-                        </button>
-                    </div>
-                    {customTimeMode && (
-                        <div className="proxy-time-custom">
-                            <div className="proxy-ampm-toggle">
-                                {['오전', '오후'].map((ap) => (
-                                    <button
-                                        key={ap}
-                                        type="button"
-                                        className={`proxy-ampm-btn ${customAmpm === ap ? 'on' : ''}`}
-                                        onClick={() => {
-                                            setCustomAmpm(ap);
-                                            setDueTime(composeCustomTime(ap, customHour, customMinute));
-                                        }}
-                                    >
-                                        {ap}
-                                    </button>
-                                ))}
-                            </div>
-                            <div className="proxy-hm-row">
-                                <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    className="proxy-hm-input"
-                                    placeholder="00"
-                                    maxLength={2}
-                                    value={customHour}
-                                    onChange={(e) => {
-                                        const v = e.target.value.replace(/\D/g, '').slice(0, 2);
-                                        const n = v === '' ? '' : Math.min(12, parseInt(v, 10) || 0);
-                                        const next = n === '' ? '' : String(n);
-                                        setCustomHour(next);
-                                        setDueTime(composeCustomTime(customAmpm, next, customMinute));
-                                        if (next.length === 2 || (next.length === 1 && parseInt(next, 10) > 1)) {
-                                            minuteInputRef.current?.focus();
-                                            minuteInputRef.current?.select();
-                                        }
-                                    }}
-                                />
-                                <span className="proxy-hm-unit">시</span>
-                                <input
-                                    ref={minuteInputRef}
-                                    type="text"
-                                    inputMode="numeric"
-                                    className="proxy-hm-input"
-                                    placeholder="00"
-                                    maxLength={2}
-                                    value={customMinute}
-                                    onChange={(e) => {
-                                        const v = e.target.value.replace(/\D/g, '').slice(0, 2);
-                                        const n = v === '' ? '' : Math.min(59, parseInt(v, 10) || 0);
-                                        const next = n === '' ? '' : String(n);
-                                        setCustomMinute(next);
-                                        setDueTime(composeCustomTime(customAmpm, customHour, next));
-                                    }}
-                                />
-                                <span className="proxy-hm-unit">분</span>
-                            </div>
-                        </div>
-                    )}
-
-                    <label className="proxy-label" style={{ marginTop: 16 }}>납품 방법</label>
-                    <div className="proxy-delivery-row">
-                        {DELIVERY_OPTIONS.map((opt) => (
-                            <button
-                                key={opt.value}
-                                type="button"
-                                className={`proxy-delivery-btn ${delivery === opt.value ? 'on' : ''}`}
-                                onClick={() => setDelivery(opt.value)}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
-                    </div>
-
-                    {delivery !== 'PICKUP' && (
-                        <>
-                            <label className="proxy-label" style={{ marginTop: 16 }}>
-                                {delivery === 'CARGO' ? '화물 지점' : delivery === 'LOCAL_CARGO' ? '하차 주소' : '배송 주소'}
-                            </label>
-                            <input
-                                type="text"
-                                className="proxy-input"
-                                value={deliveryAddress}
-                                onChange={(e) => setDeliveryAddress(e.target.value)}
-                                placeholder={delivery === 'CARGO' ? '예) 경동택배 군포금정214영업소' : '주소를 입력하세요'}
-                            />
-                        </>
                     )}
                 </section>
 

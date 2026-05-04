@@ -120,7 +120,8 @@ public class ClientService {
 
     /** 수동 작성 지시서용 빈 주문 생성 — FlexSign 에서 이미 그려놓은 지시서에 QR + 주문번호만
      *  덧붙여 PDF24 로 등록할 때 쓴다. 거래처만 받고 제목/납기/배송 등은 인쇄 매칭 다이얼로그에서
-     *  채운다. mail/저장은 생략 — 일반 발주가 아니라 QR 부여 전용. */
+     *  채운다. mail/저장은 생략 — 일반 발주가 아니라 QR 부여 전용.
+     *  관리자가 직접 등록하는 흐름이라 접수 단계를 건너뛰고 바로 IN_PROGRESS 로 진입한다. */
     @Transactional
     public OrderDto.Response createQrOnlyOrder(Long clientId) {
         ClientUser client = clientUserRepository.findById(clientId)
@@ -138,7 +139,7 @@ public class ClientService {
                 .dueTime(null)
                 .deliveryMethod(null)
                 .deliveryAddress(null)
-                .status(OrderStatus.RECEIVED)
+                .status(OrderStatus.IN_PROGRESS)
                 .build();
         return OrderDto.toResponse(orderRepository.save(order));
     }
@@ -156,6 +157,13 @@ public class ClientService {
     ) {
         String orderNumber = generateOrderNumber(RequestType.ORDER);
 
+        // 대리 발주 흐름에서는 납기/배송을 비워둘 수 있음 — 인쇄 매칭 다이얼로그에서 확정.
+        // 빈 문자열/null 둘 다 미입력으로 취급한다.
+        LocalDate parsedDueDate = (dueDate == null || dueDate.isBlank())
+                ? null : LocalDate.parse(dueDate);
+        DeliveryMethod parsedDelivery = (deliveryMethod == null || deliveryMethod.isBlank())
+                ? null : DeliveryMethod.valueOf(deliveryMethod);
+
         Order order = Order.builder()
                 .orderNumber(orderNumber)
                 .requestType(RequestType.ORDER)
@@ -164,9 +172,9 @@ public class ClientService {
                 .hasSMPS(additionalItems != null && additionalItems.contains("SMPS"))
                 .additionalItems(additionalItems)
                 .note(note)
-                .dueDate(LocalDate.parse(dueDate))
+                .dueDate(parsedDueDate)
                 .dueTime(dueTime)
-                .deliveryMethod(DeliveryMethod.valueOf(deliveryMethod))
+                .deliveryMethod(parsedDelivery)
                 .deliveryAddress(deliveryAddress)
                 .status(OrderStatus.RECEIVED)
                 .build();
