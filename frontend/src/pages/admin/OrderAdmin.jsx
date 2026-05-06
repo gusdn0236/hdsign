@@ -1574,7 +1574,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           e.stopPropagation();
                           updateOrderStatus(order.id, nextStatus);
                         }}
-                        disabled={updating}
+                        disabled={updating || selectMode}
+                        title={selectMode ? "선택 모드 종료 후 사용 가능 (선택 모드는 하단 [작업완료] 로 일괄 처리)" : undefined}
                       >
                         {updating
                           ? "변경 중..."
@@ -1586,7 +1587,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </td>
                   {isOrderPage && (
                     <td>
-                      {/* 파일이 0 개이면 [기존지시서에 QR코드만 생성] 으로 만든 빈 주문 — 자동지시서작성 대상 아님. */}
+                      {/* 파일이 0 개이면 [기존지시서에 QR코드만 생성] 으로 만든 빈 주문 — 자동지시서작성 대상 아님.
+                          IN_PROGRESS 단계의 [QR재생성] 은 잘 안 쓰는 폴백이라 행에선 숨기고 모달에서만 노출. */}
                       {!isTrash && nextStatus && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 ? (
                         <button
                           type="button"
@@ -1595,16 +1597,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           disabled={downloadingId === order.id}
                         >
                           {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
-                        </button>
-                      ) : !isTrash && nextStatus && order.status === "IN_PROGRESS" ? (
-                        <button
-                          type="button"
-                          className="next-status-btn action-worksheet"
-                          onClick={(e) => regenerateHeader(e, order)}
-                          disabled={regeneratingHeaderId === order.id}
-                          title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더(QR+주문정보) 만 다시 생성"
-                        >
-                          {regeneratingHeaderId === order.id ? "준비 중..." : "QR재생성"}
                         </button>
                       ) : null}
                     </td>
@@ -1770,23 +1762,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                                     {downloadingId === order.id ? "준비 중..." : "지시서 자동작성"}
                                   </button>
                                 )}
-                                {isOrderType && order.status === "IN_PROGRESS" && (
-                                  <button
-                                    type="button"
-                                    className="next-status-btn action-worksheet"
-                                    onClick={(e) => regenerateHeader(e, order)}
-                                    disabled={regeneratingHeaderId === order.id}
-                                    title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더만 재생성"
-                                  >
-                                    {regeneratingHeaderId === order.id ? "준비 중..." : "QR재생성"}
-                                  </button>
-                                )}
+                                {/* IN_PROGRESS 의 [QR재생성] 은 잘 안 쓰는 폴백 — 카드에선 숨기고 모달에서만 노출. */}
                                 {nextStatus && !(isOrderType && order.status === "RECEIVED") && (
                                   <button
                                     type="button"
                                     className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
                                     onClick={() => updateOrderStatus(order.id, nextStatus)}
-                                    disabled={updating}
+                                    disabled={updating || selectMode}
+                                    title={selectMode ? "선택 모드 종료 후 사용 가능 (하단 [작업완료] 로 일괄 처리)" : undefined}
                                   >
                                     {updating
                                       ? "변경 중..."
