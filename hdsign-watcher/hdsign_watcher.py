@@ -334,66 +334,6 @@ def qr_matrix_js(url: str) -> str:
     return "[" + ",".join(rows) + "]"
 
 
-def inject_qr_into_pdf(pdf_path: Path, order_number: str,
-                       size_ratio: float = 0.13,
-                       margin_ratio: float = 0.04,
-                       min_size_mm: float = 22.0) -> Path:
-    """수기 작성 지시서 PDF 의 첫 페이지 우상단 코너에 QR 한 장 박아 새 PDF 로 저장.
-    크기/여백을 페이지 폭에 비례하게 잡아 A4/A3/대형 출력 어디에든 시각적 비율 유지:
-      QR 변 = max(min_size_mm, 페이지폭 × size_ratio)
-      여백  = 페이지폭 × margin_ratio (우/상)
-    A4 (210mm) → QR ≈ 27mm / 여백 ≈ 8mm. A3 (297mm) → QR ≈ 39mm / 여백 ≈ 12mm.
-    A6 같은 작은 지시서에서 QR 이 너무 작아져 스캔이 어려워지지 않도록 하한선(min_size_mm) 적용.
-
-    ([신규 작성] 흐름 — 직원이 FlexSign 에 직접 그린 손작업 지시서에 자동으로 QR 을 얹어
-    한 번의 [✓ 적용] 으로 R2 업로드 + 종이 인쇄 모두 끝내기 위함. 클립보드/재인쇄 단계 제거.)
-
-    QR 데이터는 자동작성/QR재생성 흐름과 같은 추적 URL — 모바일 작업자 카메라 인식 경로 동일.
-    반환값: 새 PDF 의 경로 (원본 보존). fitz/qrcode 미설치 또는 처리 실패 시 원본 그대로 반환."""
-    if fitz is None:
-        ui_log(f"PDF QR 주입 생략: PyMuPDF(fitz) 사용 불가 ({order_number})")
-        return pdf_path
-    try:
-        url = EVIDENCE_URL_BASE + quote(order_number, safe="")
-        qr = qrcode.QRCode(
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=10, border=2,
-        )
-        qr.add_data(url)
-        qr.make()
-        qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-        buf = io.BytesIO()
-        qr_img.save(buf, format="PNG")
-        png_bytes = buf.getvalue()
-
-        MM_TO_PT = 2.83465
-        min_size_pt = min_size_mm * MM_TO_PT
-
-        out_path = pdf_path.with_name(pdf_path.stem + ".qr.pdf")
-        doc = fitz.open(str(pdf_path))
-        try:
-            page = doc[0]
-            page_w = page.rect.width
-            page_h = page.rect.height
-            # 페이지 폭 기준 비례 — 작은 종이에서 너무 작아지지 않게 min_size_pt 로 클램프.
-            size_pt = max(min_size_pt, page_w * size_ratio)
-            margin_pt = page_w * margin_ratio
-            # 우상단 코너 — 가능하면 기존 도안과 안 겹치도록 안쪽으로 margin 만큼 들임.
-            x0 = max(0.0, page_w - margin_pt - size_pt)
-            y0 = margin_pt
-            rect = fitz.Rect(x0, y0, x0 + size_pt, y0 + size_pt)
-            # 흰색 배경으로 살짝 가린 뒤 QR 을 얹어 어떤 도안 위에서도 인식 잘 되게.
-            page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
-            page.insert_image(rect, stream=png_bytes)
-            doc.save(str(out_path))
-        finally:
-            doc.close()
-        return out_path
-    except Exception as e:
-        ui_log(f"PDF QR 주입 실패 ({order_number}): {e}")
-        return pdf_path
-
-
 def qr_to_clipboard(order_number: str) -> None:
     """수동 작성 지시서용 — QR(주문 추적 URL) + 주문번호 텍스트를 EMF 로 빌드해
     Windows 클립보드에 CF_ENHMETAFILE 로 올린다. 사용자가 FlexSign 에서 Ctrl+V 하면
@@ -2273,8 +2213,6 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     new_month_var = tk.StringVar()
     new_delivery_var = tk.StringVar()
     new_day_entry: tk.Entry | None = None
-    # (B) 흐름의 거래처 카드 클릭 결과 — confirm() 가 꺼내 createQrOnlyOrder 호출.
-    new_form_state: dict = {"client": None}
 
     if qr_order_number is not None and most_recent is not None:
         # ── (A) 자동작성 + 큐 매칭 — 거래처/주문번호는 결정. 납기/배송만 입력. ───
@@ -2407,47 +2345,37 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                  anchor="w", justify="left", wraplength=240,
                  ).pack(fill="x", padx=2, pady=(0, 8))
     else:
-        # ── (B) 신규 작성 — 거래처 검색 + 납기/배송 입력 + 분배함 클릭 → [✓ 적용]. ──
+        # ── (B) QR 없는 첫 인쇄 — 거래처만 골라서 발주번호+QR 생성, 클립보드 복사. ──
+        # 사용자는 클립보드 QR 을 FlexSign 에 붙이고 저장 후 다시 인쇄. 두 번째 인쇄는
+        # QR 매칭으로 [기존 변경] 탭에 자동 라우팅돼 거기서 납기/배송/분배함 입력 후 업로드.
         sorted_clients_new = sorted(
             list(clients_for_new or []),
             key=lambda c: (c.get("companyName") or "").lower(),
         )
 
-        tk.Label(new_tab, text="신규 지시서 등록",
+        tk.Label(new_tab, text="QR 코드 만들기",
                  bg=BG, fg=TITLE_FG,
                  font=("맑은 고딕", 11, "bold"), anchor="w").pack(fill="x", padx=2, pady=(10, 2))
         tk.Label(new_tab,
-                 text="거래처 검색 → 거래처 클릭 → 납기/배송 입력 → 우측 분배함 클릭 → [✓ 적용].\n"
-                      "PDF 우상단에 QR 이 자동으로 박힌 채로 웹에 등록 + 종이 인쇄까지 한 번에 끝납니다.",
+                 text="이 인쇄본에 QR 이 없습니다.\n"
+                      "거래처를 클릭(또는 Enter)하면 새 발주번호의 QR 이 클립보드에 복사됩니다.\n"
+                      "FlexSign 에 붙여넣고 저장 → 다시 인쇄하면 납기/배송 입력 단계로 진행됩니다.",
                  bg=BG, fg=SUB_FG, font=("맑은 고딕", 9),
                  anchor="w", justify="left", wraplength=240
-                 ).pack(fill="x", padx=2, pady=(0, 6))
-
-        # 선택된 거래처 카드 — 클릭 전엔 빈 안내, 클릭 후엔 회사명/담당자.
-        selected_card = tk.Frame(new_tab, bg=BG_SOFT,
-                                 highlightbackground=BORDER, highlightthickness=1)
-        selected_card.pack(fill="x", pady=(0, 6))
-        selected_lbl = tk.Label(selected_card, text="(거래처 미선택 — 아래에서 검색)",
-                                bg=BG_SOFT, fg=SUB_FG,
-                                font=("맑은 고딕", 9), anchor="w",
-                                wraplength=240, justify="left")
-        selected_lbl.pack(fill="x", padx=10, pady=(8, 8))
+                 ).pack(fill="x", padx=2, pady=(0, 8))
 
         client_search_var = tk.StringVar()
         client_search_entry = tk.Entry(new_tab, textvariable=client_search_var,
-                                       font=("맑은 고딕", 10), bg="white",
+                                       font=("맑은 고딕", 11), bg="white",
                                        relief="solid", bd=1, highlightthickness=0)
         client_search_entry.pack(fill="x", padx=2, pady=(0, 2))
         tk.Label(new_tab, text="거래처 / 별칭 / 담당자 검색",
                  bg=BG, fg=SUB_FG, font=("맑은 고딕", 8),
-                 anchor="w").pack(fill="x", padx=4, pady=(0, 2))
+                 anchor="w").pack(fill="x", padx=4, pady=(0, 4))
 
-        # 거래처 목록 — 높이 고정으로 아래의 납기/배송 폼이 항상 보이게.
         client_list_outer = tk.Frame(new_tab, bg=BG,
-                                     highlightbackground=BORDER, highlightthickness=1,
-                                     height=140)
-        client_list_outer.pack_propagate(False)
-        client_list_outer.pack(fill="x", padx=2, pady=(0, 6))
+                                     highlightbackground=BORDER, highlightthickness=1)
+        client_list_outer.pack(fill="both", expand=True, padx=2, pady=(0, 8))
         client_canvas = tk.Canvas(client_list_outer, bg="white", highlightthickness=0)
         client_scroll = ttk.Scrollbar(client_list_outer, orient="vertical",
                                       command=client_canvas.yview)
@@ -2461,117 +2389,34 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         client_canvas.bind("<Configure>",
                            lambda e: client_canvas.itemconfig(client_inner_id, width=e.width))
 
-        # 납기/배송 카드 — 거래처 선택 여부와 상관없이 항상 보임. 둘 다 비어있으면
-        # 발주는 미정 상태로 등록(거래처만 채움).
-        fields_card = tk.Frame(new_tab, bg=BG_SOFT,
-                               highlightbackground=BORDER, highlightthickness=1)
-        fields_card.pack(fill="x", pady=(0, 6))
-        fields = tk.Frame(fields_card, bg=BG_SOFT)
-        fields.pack(padx=14, pady=(12, 4), anchor="w", fill="x")
+        # 클릭/엔터 한 번으로 끝나는 흐름. 더블서밋 가드.
+        new_submitting = {"flag": False}
+        # 검색 결과 캐시 — Enter 시 가장 위 항목으로 즉시 발주.
+        new_filtered_cache: list[dict] = []
 
-        tk.Label(fields, text="납기", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10, "bold")).pack(side="left")
-        new_month_entry = tk.Entry(
-            fields, textvariable=new_month_var, width=3, justify="center",
-            font=("맑은 고딕", 13, "bold"),
-            relief="solid", bd=1, bg="white", highlightthickness=0,
-        )
-        new_month_entry.pack(side="left", padx=(6, 2))
-        tk.Label(fields, text="월", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left", padx=(0, 4))
-        new_day_entry = tk.Entry(
-            fields, textvariable=new_day_var, width=3, justify="center",
-            font=("맑은 고딕", 13, "bold"),
-            relief="solid", bd=1, bg="white", highlightthickness=0,
-        )
-        new_day_entry.pack(side="left", padx=(0, 2))
-        tk.Label(fields, text="일", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10)).pack(side="left")
-
-        new_due_preview = tk.Label(
-            fields_card, text="(미입력 — 미정으로 등록)", bg=BG_SOFT, fg=SUB_FG,
-            font=("맑은 고딕", 9), anchor="w",
-        )
-        new_due_preview.pack(fill="x", padx=14, pady=(0, 4))
-
-        new_delivery_section = tk.Frame(fields_card, bg=BG_SOFT)
-        new_delivery_section.pack(fill="x", padx=14, pady=(0, 10))
-        tk.Label(new_delivery_section, text="배송", bg=BG_SOFT, fg=LABEL_FG,
-                 font=("맑은 고딕", 10, "bold"), anchor="w").pack(fill="x")
-        new_delivery_btns: dict[str, tk.Button] = {}
-
-        def _set_new_delivery(label: str):
-            new_delivery_var.set(label)
-            for k, btn in new_delivery_btns.items():
-                if k == label:
-                    btn.config(bg="#0f766e", fg="white", relief="solid")
-                else:
-                    btn.config(bg="white", fg=LABEL_FG, relief="solid")
-
-        new_delivery_grid = tk.Frame(new_delivery_section, bg=BG_SOFT)
-        new_delivery_grid.pack(fill="x", pady=(4, 0))
-        new_delivery_grid.columnconfigure(0, weight=1, uniform="dlv")
-        new_delivery_grid.columnconfigure(1, weight=1, uniform="dlv")
-        for i, label in enumerate(DELIVERY_ENUM_TO_KO.values()):
-            r, c = i // 2, i % 2
-            b = tk.Button(
-                new_delivery_grid, text=label,
-                font=("맑은 고딕", 9),
-                bg="white", fg=LABEL_FG,
-                relief="solid", bd=1,
-                padx=4, pady=3,
-                command=lambda lbl=label: _set_new_delivery(lbl),
-                cursor="hand2",
-            )
-            b.grid(row=r, column=c, sticky="ew",
-                   padx=(0 if c == 0 else 4), pady=2)
-            new_delivery_btns[label] = b
-
-        # 납기 미리보기 — 오늘 기준으로 가까운 미래 납기 풀이.
-        def _refresh_new_due_preview(*_):
-            ms = (new_month_var.get() or "").strip()
-            ds = (new_day_var.get() or "").strip()
-            if not ms and not ds:
-                new_due_preview.config(text="(미입력 — 미정으로 등록)", fg=SUB_FG)
-                return
-            if not (ms.isdigit() and ds.isdigit()):
-                new_due_preview.config(text="(잘못된 날짜)", fg="#b91c1c")
-                return
-            m, d = int(ms), int(ds)
-            if not (1 <= m <= 12 and 1 <= d <= 31):
-                new_due_preview.config(text="(잘못된 날짜)", fg="#b91c1c")
-                return
-            try:
-                resolved = resolve_new_due_date_md(date.today().isoformat(), m, d)
-            except Exception:
-                new_due_preview.config(text="(잘못된 날짜)", fg="#b91c1c")
-                return
-            new_due_preview.config(
-                text=f"→ {resolved.month}월 {resolved.day}일 ({_WD_KO[resolved.weekday()]})",
-                fg="#0f766e",
-            )
-
-        def _maybe_advance_month_to_day_new(*_):
-            s = (new_month_var.get() or "").strip()
-            if s.isdigit():
-                v = int(s)
-                if 1 <= v <= 12 and (len(s) == 2 or v >= 2):
-                    new_day_entry.focus_set()
-                    new_day_entry.select_range(0, "end")
-            _refresh_new_due_preview()
-
-        new_month_var.trace_add("write", _maybe_advance_month_to_day_new)
-        new_day_var.trace_add("write", _refresh_new_due_preview)
-        _refresh_new_due_preview()
-
-        # 거래처 클릭 → 선택만 보관(이 시점에는 백엔드 호출 X). 발주는 [✓ 적용] 시.
         def _on_pick_client_new(client):
-            new_form_state["client"] = client
-            name = (client.get("companyName") or "-").strip()
-            contact = (client.get("contactName") or "").strip()
-            text = name + (f"  ·  {contact}" if contact else "")
-            selected_lbl.config(text=text, fg=TITLE_FG,
-                                font=("맑은 고딕", 10, "bold"))
+            if new_submitting["flag"]:
+                return
+            client_id = client.get("id")
+            if client_id is None:
+                return
+            new_submitting["flag"] = True
+            try:
+                created = _create_qr_only_order(int(client_id))
+                if not created or not created.get("orderNumber"):
+                    ui_log("빈 주문 생성 실패 — 잠시 후 다시 시도해 주세요.")
+                    new_submitting["flag"] = False
+                    return
+                order_num = (created.get("orderNumber") or "").strip()
+                company = (created.get("clientCompanyName")
+                           or client.get("companyName") or "").strip()
+                ui_log(f"{order_num} ({company}) 빈 주문 발급 — 다음 인쇄 시 자동 매칭")
+                # qr_only_copy 모드 — 호출자(_process_printed_pdf) 가 클립보드 복사 + 안내.
+                result["value"] = {"qr_only_copy": True, "order_number": order_num}
+                dlg.destroy()
+            except Exception as e:
+                ui_log(f"새 주문 발급 중 오류: {e}")
+                new_submitting["flag"] = False
 
         def _filter_clients_new():
             q = (client_search_var.get() or "").strip().lower()
@@ -2591,20 +2436,25 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             for child in client_inner.winfo_children():
                 child.destroy()
             items = _filter_clients_new()
+            new_filtered_cache.clear()
+            new_filtered_cache.extend(items)
             if not items:
                 tk.Label(client_inner,
                          text="검색 결과 없음" if client_search_var.get().strip() else "거래처 없음",
                          bg="white", fg=SUB_FG, font=("맑은 고딕", 10)).pack(pady=12)
                 return
-            for c in items:
-                row = tk.Frame(client_inner, bg="white", cursor="hand2")
+            for idx, c in enumerate(items):
+                # 첫 행은 강조 — Enter 키로 누르면 이게 발주됨을 시각적으로 안내.
+                row_bg = "#f0fdf4" if idx == 0 else "white"
+                row = tk.Frame(client_inner, bg=row_bg, cursor="hand2")
                 row.pack(fill="x", padx=8, pady=2)
                 name = c.get("companyName") or "-"
                 contact = (c.get("contactName") or "").strip()
                 row_text = f"{name}    {contact}".strip()
-                lbl = tk.Label(row, text=row_text, bg="white", fg=TITLE_FG,
-                               font=("맑은 고딕", 10), anchor="w")
-                lbl.pack(side="left", fill="x", expand=True, padx=8, pady=4)
+                lbl = tk.Label(row, text=row_text, bg=row_bg, fg=TITLE_FG,
+                               font=("맑은 고딕", 10, "bold" if idx == 0 else "normal"),
+                               anchor="w")
+                lbl.pack(side="left", fill="x", expand=True, padx=8, pady=6)
 
                 def _make_pick_handler(client_local):
                     return lambda _e=None: _on_pick_client_new(client_local)
@@ -2614,6 +2464,17 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
 
         client_search_var.trace_add("write", lambda *_: _render_client_list_new())
         _render_client_list_new()
+
+        # Enter 키 → 검색 결과 첫 항목으로 즉시 발주(편의 흐름).
+        def _on_search_enter(_e=None):
+            if new_filtered_cache:
+                _on_pick_client_new(new_filtered_cache[0])
+        client_search_entry.bind("<Return>", _on_search_enter)
+        # 다이얼로그 진입 시점에 검색창에 포커스 — 사용자가 바로 거래처 이름 타이핑하도록.
+        try:
+            dlg.after(50, client_search_entry.focus_set)
+        except Exception:
+            pass
 
     # ── [기존 변경] 탭 ─────────────────────────────────────
     # 두 페이지: pick_page(그리드) → chosen_page(라디오+폼). pack/unpack 으로 토글.
@@ -3448,47 +3309,10 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         if idx == 0:
             # ── [신규 작성] 탭 ──────────────────────────────
             if qr_order_number is None:
-                # (B) 손작업 신규 — 거래처 폼 검증 후 new_qr_apply 모드로 호출자에 위임.
-                client = new_form_state.get("client")
-                if not client or client.get("id") is None:
-                    try:
-                        messagebox.showwarning(
-                            "거래처 미선택",
-                            "신규 지시서를 만들려면 먼저 거래처를 선택해 주세요.",
-                            parent=dlg,
-                        )
-                    except Exception:
-                        pass
-                    return
-                ms = (new_month_var.get() or "").strip()
-                ds = (new_day_var.get() or "").strip()
-                due_iso = ""
-                if ms or ds:
-                    if not (ms.isdigit() and ds.isdigit()):
-                        return
-                    m, d = int(ms), int(ds)
-                    if not (1 <= m <= 12 and 1 <= d <= 31):
-                        return
-                    try:
-                        resolved = resolve_new_due_date_md(date.today().isoformat(), m, d)
-                        due_iso = resolved.isoformat()
-                    except Exception:
-                        return
-                delivery_ko = (new_delivery_var.get() or "").strip()
-                delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
-                total_copies = _committed_total()
-                result["value"] = {
-                    "mode": "new_qr_apply",
-                    "client_id": int(client["id"]),
-                    "client_company": (client.get("companyName") or "").strip(),
-                    "due_iso": due_iso,
-                    "delivery_method": delivery_enum,
-                    "department_tags": collect_dept_tags(),
-                    "department_slots": collect_dept_slots(),
-                    "skip_print": bool(skip_print),
-                    "copies": total_copies,
-                }
-                dlg.destroy()
+                # (B) QR 없는 첫 인쇄 — Enter/[✓ 적용] 누르면 검색 결과 첫 거래처에 발주.
+                # 기본은 거래처 행 클릭 또는 검색창 Enter 로 처리되지만, [✓ 적용] 버튼을
+                # 눌렀을 때도 같은 동작이 일어나도록 처리.
+                # (이 분기에서는 new_form_state 사용 안 함 — 클릭=즉시 발주 흐름이라 보관 상태가 없음.)
                 return
 
             # (A) qr_order_number 있음 — 자동작성 + 큐 매칭. 기존 흐름.
@@ -3930,75 +3754,38 @@ def _process_printed_pdf(pdf_path: Path):
         return
 
     # QR 클립보드 복사 모드 — qr_order_number 가 None 이었던 경우(=PDF 에 QR 없음).
-    # 이 PDF 는 R2 에 업로드 안 함 + 종이 인쇄도 생략(곧 사용자가 Ctrl+V 후 다시 인쇄할 거라).
-    # qr_to_clipboard 는 EMF 벡터 QR 을 Windows 클립보드에 올림 — FlexSign 에서 Ctrl+V.
+    # [신규 작성] 탭에서 거래처를 선택해 빈 주문을 발급한 직후, 또는 [기존 변경] 탭에서
+    # 옛 worksheet 에 QR 만 다시 박고 싶을 때 호출. 이 PDF 는 R2 업로드 안 하고 종이 인쇄도
+    # 생략 — 사용자가 FlexSign 에 QR 붙여 저장 후 재인쇄해야 두 번째 인쇄가 R2 업로드된다.
     if sel.get("qr_only_copy"):
         order_num = (sel.get("order_number") or "").strip()
         if order_num:
+            qr_copy_ok = False
             try:
                 qr_to_clipboard(order_num)
-                ui_log(f"{order_num} QR 클립보드 복사 완료 — FlexSign Ctrl+V 후 다시 인쇄")
+                qr_copy_ok = True
             except Exception as e:
                 ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
-        _schedule_printed_pdf_cleanup(pdf_path)
-        return
-
-    # 신규 작성(B) — QR 없는 PDF + 거래처/납기/배송/분배함을 다이얼로그에서 입력.
-    # 한 번의 [✓ 적용] 으로:
-    #   1) 백엔드에 빈 주문(거래처+납기+배송) 생성
-    #   2) 분배함 슬롯/태그 PATCH
-    #   3) PDF 우상단에 QR 자동 주입
-    #   4) QR 박힌 PDF 를 R2 업로드 + 종이 인쇄
-    # 클립보드 복사/재인쇄 단계 폐지 — 직원이 FlexSign 으로 다시 돌아가 붙여넣지 않아도 됨.
-    if sel.get("mode") == "new_qr_apply":
-        client_id = sel.get("client_id")
-        if not client_id:
-            ui_log(f"신규 작성: client_id 누락 — 처리 중단 ({pdf_path.name})")
-            _schedule_printed_pdf_cleanup(pdf_path)
-            return
-        due_iso = (sel.get("due_iso") or "").strip()
-        delivery_enum = (sel.get("delivery_method") or "").strip()
-        created = _create_qr_only_order(
-            int(client_id),
-            due_iso=due_iso or None,
-            delivery_enum=delivery_enum or None,
-        )
-        if not created or not created.get("orderNumber"):
-            ui_log("신규 작성: 빈 주문 생성 실패 — 잠시 후 다시 시도해 주세요.")
-            return
-        order_num = (created.get("orderNumber") or "").strip()
-        company = (created.get("clientCompanyName")
-                   or sel.get("client_company") or "").strip()
-        # 분배함 슬롯/태그는 createQrOnlyOrder 본문에 포함시키지 않으므로 별도 PATCH.
-        # dueDate 는 이미 저장됐으니 None 으로 보내 멱등.
-        dept_tags = list(sel.get("department_tags") or [])
-        dept_slots = list(sel.get("department_slots") or [])
-        if dept_tags or dept_slots:
-            patch_due_date(order_num, None, None, dept_tags, dept_slots)
-
-        # QR 을 PDF 우상단에 자동 주입 → R2 업로드 + 종이 인쇄에 같은 PDF 사용.
-        qr_pdf_path = inject_qr_into_pdf(pdf_path, order_num)
-        upload_ok = upload_worksheet_pdf(order_num, qr_pdf_path)
-        copies_raw = sel.get("copies")
-        copies = int(copies_raw) if copies_raw is not None else 0
-        if sel.get("skip_print"):
-            ui_log(f"신규 작성 — '인쇄 안 함' 선택, 종이 인쇄 생략 ({pdf_path.name})")
-        elif copies < 1:
-            ui_log(f"신규 작성 — 매수 0, 종이 인쇄 생략 ({pdf_path.name})")
-        else:
-            print_pdf_to_paper(qr_pdf_path, copies=copies)
-
-        if upload_ok:
-            ui_log(f"{order_num} ({company}) 신규 발주 등록 + 웹 적용 완료")
-        else:
-            ui_log(f"{order_num} ({company}) 신규 발주 등록됨 — PDF 업로드 실패. 어드민에서 수동 업로드 필요")
-
-        # 임시 QR-주입 PDF + 원본 인쇄 PDF 둘 다 정리.
-        if qr_pdf_path != pdf_path:
-            try:
-                qr_pdf_path.unlink()
-            except Exception:
-                pass
+            if qr_copy_ok:
+                ui_log(f"{order_num} QR 클립보드 복사 완료 — FlexSign 에 붙여넣고 다시 인쇄")
+                info_title = "QR 코드 복사 완료"
+                info_msg = (
+                    f"발주번호 {order_num} 의 QR 이 클립보드에 복사되었습니다.\n\n"
+                    f"1) FlexSign 캔버스로 돌아가 Ctrl+V 로 붙여넣기\n"
+                    f"2) 지시서 저장 후 다시 인쇄\n\n"
+                    f"두 번째 인쇄에서 납기 / 배송 / 분배함 입력 단계로 진행됩니다."
+                )
+                _ui_queue.put((
+                    "run",
+                    lambda t=info_title, m=info_msg: messagebox.showinfo(t, m),
+                ))
+            else:
+                _ui_queue.put((
+                    "alert",
+                    "QR 클립보드 복사 실패",
+                    f"발주번호 {order_num} 는 등록되었지만 QR 클립보드 복사에 실패했습니다.\n"
+                    f"어드민 페이지에서 QR 을 다시 발급해 사용해주세요.",
+                ))
         _schedule_printed_pdf_cleanup(pdf_path)
         return
 
