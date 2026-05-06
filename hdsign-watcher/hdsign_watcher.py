@@ -1357,6 +1357,58 @@ def _fetch_admin_orders() -> list[dict] | None:
         return None
 
 
+def _fetch_admin_clients() -> list[dict] | None:
+    """admin 토큰으로 /api/admin/clients 호출 — QR 클립보드 다이얼로그 [신규 작성] 탭의 거래처 선택용.
+    ACTIVE/PENDING_SIGNUP 만 골라 반환. 네트워크 실패 시 None.
+    어드민 OrderAdmin.openQrPanel 과 동일한 필터(status in ACTIVE,PENDING_SIGNUP)."""
+    token = _get_admin_token()
+    if not token:
+        return None
+    url = f"{API_BASE}/api/admin/clients"
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(data, list):
+            return None
+        return [c for c in data if c.get("status") in ("ACTIVE", "PENDING_SIGNUP")]
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            with _admin_token_lock:
+                _admin_token_cache["token"] = None
+        return None
+    except Exception:
+        return None
+
+
+def _create_qr_only_order(client_id: int) -> dict | None:
+    """admin 토큰으로 POST /api/admin/orders/qr-only — 빈 주문(번호만 부여) 생성.
+    어드민의 [기존지시서에 QR코드만 생성] 패널이 호출하던 엔드포인트와 동일.
+    응답 dict (orderNumber, clientCompanyName 등) 반환. 실패 시 None."""
+    token = _get_admin_token()
+    if not token:
+        ui_log("빈 주문 생성 실패: admin 토큰 없음(config.json 의 admin_username/password 확인).")
+        return None
+    url = f"{API_BASE}/api/admin/orders/qr-only?clientId={int(client_id)}"
+    req = urllib.request.Request(url, method="POST", data=b"")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data if isinstance(data, dict) else None
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            with _admin_token_lock:
+                _admin_token_cache["token"] = None
+        ui_log(f"빈 주문 생성 실패(HTTP {e.code}): {e.reason}")
+        return None
+    except Exception as e:
+        ui_log(f"빈 주문 생성 실패: {e}")
+        return None
+
+
 def play_alert_sound() -> None:
     """시스템 알림음 비동기 재생. winsound 없는 환경(예: 다른 OS)에서는 무시."""
     if winsound is None:
