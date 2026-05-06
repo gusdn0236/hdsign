@@ -161,7 +161,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [restoringOrderId, setRestoringOrderId] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
-  const [regeneratingHeaderId, setRegeneratingHeaderId] = useState(null);
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
   // 다중 선택 모드 — 행을 클릭하면 모달 대신 선택 토글. 선택한 건들은 한 번에 작업완료로.
@@ -176,12 +175,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [reviewStage, setReviewStage] = useState("choose"); // 'choose' | 'pickDate'
   const [reviewDateInput, setReviewDateInput] = useState("");
   const [bulkApplying, setBulkApplying] = useState(false);
-  // QR 생성 패널 — 휴지통 탭 옆에서 펼쳐 거래처 한 번 고르면 빈 주문 + QR 클립보드.
-  const [qrPanelOpen, setQrPanelOpen] = useState(false);
-  const [qrPanelClients, setQrPanelClients] = useState([]);
-  const [qrPanelQuery, setQrPanelQuery] = useState("");
-  const [qrPanelSubmitting, setQrPanelSubmitting] = useState(false);
-  const [qrPanelHighlight, setQrPanelHighlight] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [sortMode, setSortMode] = useState("DEFAULT");
@@ -301,26 +294,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   useEffect(() => {
     setClientFilter("");
   }, [activeFilter]);
-
-  // QR 패널 외부 클릭/ESC 닫기.
-  useEffect(() => {
-    if (!qrPanelOpen) return;
-    const onDocClick = (ev) => {
-      if (qrPanelSubmitting) return;
-      const target = ev.target;
-      if (target && target.closest && target.closest(".qr-panel-wrap")) return;
-      setQrPanelOpen(false);
-    };
-    const onKey = (ev) => {
-      if (ev.key === "Escape" && !qrPanelSubmitting) setQrPanelOpen(false);
-    };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [qrPanelOpen, qrPanelSubmitting]);
 
   const evidencePhotos = useMemo(
     () =>
@@ -1010,144 +983,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  // 자동지시서작성이 RPC 타임아웃 등으로 실패해 거래처 원본만 받아진 경우의 폴백.
-  // 헤더(QR + 박스 + 좌측텍스트 + 노트박스) 만 그린 작은 AI 를 워처가 만들어 FlexSign 에 띄움.
-  // 사용자는 그 헤더를 복사해 거래처 원본 캔버스에 붙여 인쇄 → PDF24 → 매칭 으로 동일 흐름 복귀.
-  // QR 은 같은 /p/{orderNumber} 를 가리키므로 재생성 후에도 작업 추적은 정상.
-  const regenerateHeader = async (e, order) => {
-    e.stopPropagation();
-    setRegeneratingHeaderId(order.id);
-    try {
-      const watcherUp = await isWatcherRunning();
-      if (!watcherUp) {
-        setFeedback({
-          type: "error",
-          msg: "지시서 프로그램이 실행 중이지 않습니다. 프로그램을 켠 뒤 다시 시도해 주세요.",
-        });
-        return;
-      }
-      const res = await fetch(`${BASE_URL}/api/admin/orders/${order.id}/worksheet-header-package`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("헤더 생성 실패");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${order.orderNumber}_지시서_헤더만.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setFeedback({
-        type: "success",
-        msg: "헤더 ZIP을 다운받았습니다. FlexSign에서 헤더를 복사해 거래처 원본에 붙여 인쇄해주세요.",
-      });
-    } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "QR재생성 중 오류가 발생했습니다." });
-    } finally {
-      setRegeneratingHeaderId(null);
-    }
-  };
-
-  // 수동 작성 지시서용 QR 생성 — 거래처 한 번 고르면 빈 주문(번호만 부여)이 DB 에 만들어지고,
-  // 워처가 EMF(벡터) QR + 주문번호를 Windows 클립보드에 올린다. 사용자는 FlexSign .fs 캔버스에
-  // Ctrl+V → 인쇄 → PDF24 → 매칭 다이얼로그가 이 주문에 자동 매칭하면서 납기/배송을 입력받음.
-  const openQrPanel = async () => {
-    setQrPanelOpen(true);
-    setQrPanelQuery("");
-    setQrPanelHighlight(0);
-    if (qrPanelClients.length > 0) return;
-    try {
-      const res = await fetch(`${BASE_URL}/api/admin/clients`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error("거래처 목록을 불러오지 못했습니다.");
-      const data = await res.json();
-      const selectable = (Array.isArray(data) ? data : []).filter(
-        (c) => c.status === "ACTIVE" || c.status === "PENDING_SIGNUP"
-      );
-      setQrPanelClients(selectable);
-    } catch (err) {
-      setFeedback({ type: "error", msg: err.message });
-    }
-  };
-
-  const closeQrPanel = () => {
-    if (qrPanelSubmitting) return;
-    setQrPanelOpen(false);
-    setQrPanelQuery("");
-  };
-
-  const qrPanelSuggestions = useMemo(() => {
-    const q = qrPanelQuery.trim().toLowerCase();
-    const sorted = [...qrPanelClients].sort((a, b) =>
-      (a.companyName || "").localeCompare(b.companyName || "", "ko")
-    );
-    if (!q) return sorted.slice(0, 20);
-    return sorted
-      .filter((c) => {
-        const hay = `${c.companyName || ""} ${c.networkFolderName || ""} ${c.aliases || ""} ${c.contactName || ""}`.toLowerCase();
-        return hay.includes(q);
-      })
-      .slice(0, 20);
-  }, [qrPanelQuery, qrPanelClients]);
-
-  const handleQrPanelPick = async (client) => {
-    if (!client || qrPanelSubmitting) return;
-    setQrPanelSubmitting(true);
-    try {
-      const watcherUp = await isWatcherRunning();
-      if (!watcherUp) {
-        setFeedback({
-          type: "error",
-          msg: "지시서 프로그램이 실행 중이지 않습니다. 프로그램을 켠 뒤 다시 시도해 주세요.",
-        });
-        return;
-      }
-      // 1) 빈 주문 생성 — clientId 만 보내면 백엔드가 주문번호 발번.
-      const fd = new URLSearchParams();
-      fd.append("clientId", String(client.id));
-      const createRes = await fetch(`${BASE_URL}/api/admin/orders/qr-only`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: fd.toString(),
-      });
-      if (!createRes.ok) throw new Error("주문 생성에 실패했습니다.");
-      const created = await createRes.json();
-      const orderNumber = created.orderNumber;
-      const company = created.clientCompanyName || client.companyName || "";
-
-      // 2) 워처에게 QR EMF 클립보드 + 인쇄 매칭 큐 등록 요청.
-      const url = `http://127.0.0.1:5577/clip-qr?order=${encodeURIComponent(orderNumber)}&company=${encodeURIComponent(company)}`;
-      const clipRes = await fetch(url, { method: "POST" });
-      if (!clipRes.ok) {
-        let msg = "QR 클립보드 복사에 실패했습니다.";
-        try {
-          const j = await clipRes.json();
-          if (j && j.error) msg = `QR 클립보드 복사 실패: ${j.error}`;
-        } catch { /* ignore */ }
-        throw new Error(msg);
-      }
-
-      // 3) UI 정리 + 주문 목록 새로고침(새 주문이 카드에 즉시 보이도록).
-      setFeedback({
-        type: "success",
-        msg: `${orderNumber} (${company}) QR 이 클립보드에 복사되었습니다. FlexSign 캔버스에서 Ctrl+V → 인쇄하세요.`,
-      });
-      setQrPanelOpen(false);
-      setQrPanelQuery("");
-      loadOrders();
-    } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "QR 생성 중 오류가 발생했습니다." });
-    } finally {
-      setQrPanelSubmitting(false);
-    }
-  };
-
   const requestLabel = (requestType) => REQUEST_TYPE_LABELS[requestType] || "요청";
 
   return (
@@ -1200,90 +1035,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             <span className="tab-count">{tab.count}</span>
           </button>
         ))}
-        {isOrderPage && (
-          <div className="qr-panel-wrap">
-            <button
-              type="button"
-              className="filter-tab qr-trigger"
-              onClick={() => (qrPanelOpen ? closeQrPanel() : openQrPanel())}
-              title="이미 그려놓은 지시서에 덧붙일 QR + 주문번호만 클립보드에 벡터로 복사"
-            >
-              기존지시서에 QR코드만 생성
-            </button>
-            {qrPanelOpen && (
-              <div className="qr-panel" onClick={(e) => e.stopPropagation()}>
-                <div className="qr-panel-head">
-                  <span className="qr-panel-title">거래처 선택</span>
-                  <button
-                    type="button"
-                    className="qr-panel-close"
-                    onClick={closeQrPanel}
-                    disabled={qrPanelSubmitting}
-                    aria-label="닫기"
-                  >×</button>
-                </div>
-                <input
-                  type="text"
-                  className="qr-panel-input"
-                  placeholder="거래처명/별칭/담당자 검색"
-                  value={qrPanelQuery}
-                  onChange={(e) => {
-                    setQrPanelQuery(e.target.value);
-                    setQrPanelHighlight(0);
-                  }}
-                  onKeyDown={(e) => {
-                    if (qrPanelSubmitting) return;
-                    const max = qrPanelSuggestions.length - 1;
-                    if (e.key === "ArrowDown") {
-                      e.preventDefault();
-                      setQrPanelHighlight((i) => Math.min(i + 1, max));
-                    } else if (e.key === "ArrowUp") {
-                      e.preventDefault();
-                      setQrPanelHighlight((i) => Math.max(i - 1, 0));
-                    } else if (e.key === "Enter") {
-                      e.preventDefault();
-                      const c = qrPanelSuggestions[qrPanelHighlight];
-                      if (c) handleQrPanelPick(c);
-                    }
-                  }}
-                  disabled={qrPanelSubmitting}
-                  autoFocus
-                />
-                <div className="qr-panel-list">
-                  {qrPanelSuggestions.length === 0 ? (
-                    <div className="qr-panel-empty">
-                      {qrPanelClients.length === 0 ? "거래처를 불러오는 중..." : "검색 결과 없음"}
-                    </div>
-                  ) : (
-                    qrPanelSuggestions.map((c, idx) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className={`qr-panel-row ${idx === qrPanelHighlight ? "highlight" : ""}`}
-                        onClick={() => handleQrPanelPick(c)}
-                        onMouseEnter={() => setQrPanelHighlight(idx)}
-                        disabled={qrPanelSubmitting}
-                        ref={(el) => {
-                          if (el && idx === qrPanelHighlight) {
-                            el.scrollIntoView({ block: "nearest" });
-                          }
-                        }}
-                      >
-                        <span className="qr-panel-row-name">{c.companyName}</span>
-                        {c.contactName && (
-                          <span className="qr-panel-row-sub">{c.contactName}</span>
-                        )}
-                      </button>
-                    ))
-                  )}
-                </div>
-                {qrPanelSubmitting && (
-                  <div className="qr-panel-submitting">QR 만드는 중...</div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       <div className="order-sort-row">
@@ -1662,8 +1413,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </td>
                   {isOrderPage && (
                     <td>
-                      {/* 파일이 0 개이면 [기존지시서에 QR코드만 생성] 으로 만든 빈 주문 — 자동지시서작성 대상 아님.
-                          IN_PROGRESS 단계의 [QR재생성] 은 잘 안 쓰는 폴백이라 행에선 숨기고 모달에서만 노출. */}
+                      {/* 파일이 0 개인 빈 주문(워처 [새 주문 만들기] 로 발번된 케이스)은 자동지시서작성 대상 아님 —
+                          이미 일러스트에서 사용자가 직접 그리고 QR 클립보드 붙여 인쇄하는 흐름. */}
                       {!isTrash && nextStatus && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 ? (
                         <button
                           type="button"
@@ -1852,7 +1603,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                                     {downloadingId === order.id ? "준비 중..." : "지시서 자동작성"}
                                   </button>
                                 )}
-                                {/* IN_PROGRESS 의 [QR재생성] 은 잘 안 쓰는 폴백 — 카드에선 숨기고 모달에서만 노출. */}
                                 {nextStatus && !(isOrderType && order.status === "RECEIVED") && (
                                   <button
                                     type="button"
@@ -2137,17 +1887,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           onClick={(e) => downloadWorksheet(e, selectedOrder)}
                         >
                           {downloadingId === selectedOrder.id ? "준비 중..." : "지시서 자동작성하기"}
-                        </button>
-                      )}
-                      {selectedOrder.status === "IN_PROGRESS" && selectedOrder.requestType === "ORDER" && (
-                        <button
-                          type="button"
-                          className="next-status-btn action-worksheet"
-                          disabled={regeneratingHeaderId === selectedOrder.id}
-                          onClick={(e) => regenerateHeader(e, selectedOrder)}
-                          title="자동지시서작성이 실패해 거래처 파일만 받아졌을 때, QR 헤더(QR+주문정보) 만 다시 생성"
-                        >
-                          {regeneratingHeaderId === selectedOrder.id ? "준비 중..." : "QR재생성"}
                         </button>
                       )}
                       <select
