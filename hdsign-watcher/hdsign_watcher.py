@@ -834,9 +834,63 @@ def list_recent_orders() -> list[dict]:
 
 
 def fetch_existing_worksheets() -> list[dict]:
-    """공개 API 에서 IN_PROGRESS + PDF 부착된 작업지시서 목록을 가져온다.
-    인쇄 다이얼로그 [기존 변경] 탭에서 어느 지시서를 갱신할지 그리드로 보여주는 용도.
-    네트워크 실패 시 빈 리스트(다이얼로그는 신규 탭 위주로 표시)."""
+    """진행중/대기중 작업지시서 목록 — 인쇄 다이얼로그 [기존 변경] 탭의 그리드/검색용.
+
+    옛 구현은 /api/public/worksheets (IN_PROGRESS + PDF 있는 것만). 그러면 RECEIVED + 빈 PDF
+    주문(거래처 발주만 들어온 상태에서 사용자가 일러스트로 직접 그린 케이스)은 후보에서
+    빠져 QR 매칭 실패 → 신규 흐름으로 잘못 라우팅됐다. admin /api/admin/orders 로 전환해
+    COMPLETED/휴지통/견적 외 모든 ORDER 주문을 워처가 후보로 가지게 변경.
+
+    응답 필드는 OrderDto.Response — 다이얼로그가 사용하는 키와 차이가 있는 것은
+    public 응답 형식으로 normalize(특히 clientCompanyName → companyName).
+    admin 토큰 없거나 호출 실패 시 옛 public 엔드포인트로 폴백."""
+    token = _get_admin_token()
+    if token:
+        url = f"{API_BASE}/api/admin/orders"
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(data, list):
+                return []
+            result: list[dict] = []
+            for o in data:
+                if (o.get("status") or "") == "COMPLETED":
+                    continue
+                if o.get("deletedAt"):
+                    continue
+                # 견적(QUOTE) 은 종이 인쇄 매칭 대상이 아님 — ORDER 만.
+                if (o.get("requestType") or "") not in ("", "ORDER"):
+                    continue
+                due = o.get("dueDate")
+                result.append({
+                    "orderNumber": o.get("orderNumber"),
+                    "title": o.get("title"),
+                    # admin: clientCompanyName → 다이얼로그 코드는 companyName 키를 본다.
+                    "companyName": o.get("clientCompanyName"),
+                    "dueDate": str(due) if due else None,
+                    "dueTime": o.get("dueTime"),
+                    "deliveryMethod": o.get("deliveryMethod"),
+                    "worksheetPdfUrl": o.get("worksheetPdfUrl"),
+                    "worksheetThumbnailUrl": o.get("worksheetThumbnailUrl"),
+                    "worksheetUpdatedAt": o.get("worksheetUpdatedAt"),
+                    "worksheetChangeNote": o.get("worksheetChangeNote"),
+                    "departmentTags": o.get("departmentTags") or [],
+                    "departmentSlots": o.get("departmentSlots") or [],
+                    "evidenceLastUploadedAt": o.get("evidenceLastUploadedAt"),
+                    "status": o.get("status"),
+                })
+            return result
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                with _admin_token_lock:
+                    _admin_token_cache["token"] = None
+            ui_log(f"admin 지시서 목록 조회 실패(HTTP {e.code}) — public 으로 폴백")
+        except Exception as e:
+            ui_log(f"admin 지시서 목록 조회 실패: {e} — public 으로 폴백")
+
+    # 폴백 — admin 토큰 없거나 admin 호출 실패: 옛 public 엔드포인트(IN_PROGRESS + PDF 있는 것만).
     url = f"{API_BASE}/api/public/worksheets"
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
