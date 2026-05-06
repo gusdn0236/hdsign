@@ -1995,6 +1995,23 @@ def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
             if order_num in _thumbnail_pil_cache:
                 _publish(order_num)
                 continue
+            # 1차: 백엔드가 미리 만들어 R2 에 올린 작은 JPEG 썸네일(worksheetThumbnailUrl) — 가장 빠름.
+            # 모바일 목록 카드와 같은 데이터를 그대로 받기 때문에 PDF 다운로드+렌더 대비 5~10배 빠르게 표시.
+            thumb_url = (ws.get("worksheetThumbnailUrl") or "").strip()
+            if thumb_url:
+                try:
+                    with urllib.request.urlopen(_safe_url(thumb_url), timeout=10) as resp:
+                        data = resp.read()
+                    pil = Image.open(io.BytesIO(data))
+                    # 비율 유지 리사이즈 — target_width 안 넘게.
+                    pil.thumbnail((target_width, target_width * 4), Image.LANCZOS)
+                    _thumbnail_pil_cache[order_num] = pil
+                    _publish(order_num)
+                    continue
+                except Exception as e:
+                    ui_log(f"썸네일 JPEG 다운로드 실패 [{order_num}]: {e} — PDF 폴백")
+
+            # 2차: PDF 받아 PyMuPDF 로 첫 페이지 렌더 — 옛 데이터(thumbnailUrl 미생성) 폴백.
             raw_pdf_url = ws.get("worksheetPdfUrl") or ""
             if fitz is None:
                 _show_err(order_num, "미리보기 라이브러리\n(pymupdf) 없음")
@@ -3488,12 +3505,23 @@ def _ask_qr_paste_blocking(pdf_path: Path,
         tk.Label(existing_tab, text="진행중 작업지시서가 없습니다.",
                  bg=BG_SOFT, fg=SUB_FG, font=("맑은 고딕", 10)).pack(pady=40)
     else:
-        # 스크롤 캔버스에 3열 썸네일 그리드.
-        ex_canvas = tk.Canvas(existing_tab, bg=BG_SOFT, highlightthickness=0)
-        ex_scroll = ttk.Scrollbar(existing_tab, orient="vertical", command=ex_canvas.yview)
+        # 거래처/제목/주문번호 검색. 입력하는 즉시 그리드를 다시 렌더 — 캐시된 썸네일은 즉시 재표시.
+        ex_search_var = tk.StringVar()
+        ex_search_entry = tk.Entry(existing_tab, textvariable=ex_search_var,
+                                   font=("맑은 고딕", 11), bg="#ffffff", relief="solid", bd=1)
+        ex_search_entry.pack(fill="x", padx=8, pady=(8, 4))
+        # placeholder-like 회색 안내 라벨(검색 입력 위 작게).
+        tk.Label(existing_tab, text="거래처/제목/주문번호 검색",
+                 bg=BG_SOFT, fg=SUB_FG, font=("맑은 고딕", 9)).pack(anchor="w", padx=10)
+
+        # 스크롤 캔버스 — 검색 시에도 같은 캔버스 안의 inner 만 다시 채움(캔버스 자체는 1회 생성).
+        ex_canvas_outer = tk.Frame(existing_tab, bg=BG_SOFT)
+        ex_canvas_outer.pack(fill="both", expand=True, padx=(8, 0), pady=8)
+        ex_canvas = tk.Canvas(ex_canvas_outer, bg=BG_SOFT, highlightthickness=0)
+        ex_scroll = ttk.Scrollbar(ex_canvas_outer, orient="vertical", command=ex_canvas.yview)
         ex_canvas.configure(yscrollcommand=ex_scroll.set)
-        ex_canvas.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
-        ex_scroll.pack(side="right", fill="y", pady=8)
+        ex_canvas.pack(side="left", fill="both", expand=True)
+        ex_scroll.pack(side="right", fill="y")
         ex_inner = tk.Frame(ex_canvas, bg=BG_SOFT)
         ex_canvas.create_window((0, 0), window=ex_inner, anchor="nw")
         ex_inner.bind("<Configure>",
@@ -3503,59 +3531,84 @@ def _ask_qr_paste_blocking(pdf_path: Path,
             ex_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
         ex_canvas.bind_all("<MouseWheel>", _on_ex_wheel, add="+")
 
-        cols = 3
-        thumbnail_work: list[tuple[dict, "tk.Label"]] = []
-        for idx, w in enumerate(sorted_ws):
-            row, col = divmod(idx, cols)
-            cell = tk.Frame(ex_inner, bg="#ffffff", bd=1, relief="solid",
-                            highlightbackground=BORDER, highlightthickness=1,
-                            cursor="hand2")
-            cell.grid(row=row, column=col, padx=6, pady=6, sticky="nw")
+        def _filter_ws():
+            q = (ex_search_var.get() or "").strip().lower()
+            if not q:
+                return sorted_ws
+            def _hit(w):
+                hay = " ".join([
+                    str(w.get("companyName") or ""),
+                    str(w.get("title") or ""),
+                    str(w.get("orderNumber") or ""),
+                ]).lower()
+                return q in hay
+            return [w for w in sorted_ws if _hit(w)]
 
-            # 썸네일 — 고정 크기 frame 안의 label. _start_thumbnail_loader 가 백그라운드에서
-            # /api/public/worksheets/{n}/pdf 받아 PyMuPDF 로 1페이지 렌더 → ImageTk 부착.
-            thumb_frame = tk.Frame(cell, width=THUMB_W, height=THUMB_H, bg="#e4e4e7")
-            thumb_frame.pack_propagate(False)
-            thumb_frame.pack(padx=6, pady=(6, 4))
-            thumb_label = tk.Label(thumb_frame, bg="#e4e4e7",
-                                   text="…" if fitz is not None else "(미리보기 없음)",
-                                   fg=SUB_FG, font=("맑은 고딕", 11))
-            thumb_label.pack(fill="both", expand=True)
+        def _render_existing_grid():
+            for child in ex_inner.winfo_children():
+                child.destroy()
+            items = _filter_ws()
+            if not items:
+                tk.Label(ex_inner,
+                         text="검색 결과 없음" if ex_search_var.get().strip() else "표시할 지시서 없음",
+                         bg=BG_SOFT, fg=SUB_FG, font=("맑은 고딕", 10)).grid(
+                    row=0, column=0, padx=12, pady=24)
+                return
+            cols = 3
+            thumbnail_work: list[tuple[dict, "tk.Label"]] = []
+            for idx, w in enumerate(items):
+                row, col = divmod(idx, cols)
+                cell = tk.Frame(ex_inner, bg="#ffffff", bd=1, relief="solid",
+                                highlightbackground=BORDER, highlightthickness=1,
+                                cursor="hand2")
+                cell.grid(row=row, column=col, padx=6, pady=6, sticky="nw")
 
-            company = w.get("companyName") or "-"
-            order_no = w.get("orderNumber") or ""
-            due = w.get("dueDate") or ""
-            company_lbl = tk.Label(cell, text=company, bg="#ffffff", fg=TITLE_FG,
-                                   font=("맑은 고딕", 10, "bold"), wraplength=THUMB_W,
+                # 썸네일 — _start_thumbnail_loader 가 worksheetThumbnailUrl(JPEG) 우선 다운로드.
+                thumb_frame = tk.Frame(cell, width=THUMB_W, height=THUMB_H, bg="#e4e4e7")
+                thumb_frame.pack_propagate(False)
+                thumb_frame.pack(padx=6, pady=(6, 4))
+                thumb_label = tk.Label(thumb_frame, bg="#e4e4e7",
+                                       text="…" if fitz is not None else "(미리보기 없음)",
+                                       fg=SUB_FG, font=("맑은 고딕", 11))
+                thumb_label.pack(fill="both", expand=True)
+
+                company = w.get("companyName") or "-"
+                order_no = w.get("orderNumber") or ""
+                due = w.get("dueDate") or ""
+                company_lbl = tk.Label(cell, text=company, bg="#ffffff", fg=TITLE_FG,
+                                       font=("맑은 고딕", 10, "bold"), wraplength=THUMB_W,
+                                       anchor="w", justify="left")
+                company_lbl.pack(anchor="w", padx=6, fill="x")
+                sub_lbl = tk.Label(cell, text=f"{order_no}  ·  납기 {due or '미정'}",
+                                   bg="#ffffff", fg=SUB_FG, font=("맑은 고딕", 9),
                                    anchor="w", justify="left")
-            company_lbl.pack(anchor="w", padx=6, fill="x")
-            sub_lbl = tk.Label(cell, text=f"{order_no}  ·  납기 {due or '미정'}",
-                               bg="#ffffff", fg=SUB_FG, font=("맑은 고딕", 9),
-                               anchor="w", justify="left")
-            sub_lbl.pack(anchor="w", padx=6, pady=(0, 6), fill="x")
+                sub_lbl.pack(anchor="w", padx=6, pady=(0, 6), fill="x")
 
-            def _on_pick_existing(ev=None, ws=w):
-                order_num = ws.get("orderNumber") or ""
-                if not order_num:
-                    return
-                try:
-                    qr_to_clipboard(order_num)
-                except Exception as e:
-                    ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
-                    return
-                ui_log(f"{order_num} QR 클립보드 복사 완료 — FlexSign 에서 Ctrl+V")
-                result["value"] = {"action": "qr_copied", "order_number": order_num}
-                dlg.destroy()
+                def _on_pick_existing(ev=None, ws=w):
+                    order_num = ws.get("orderNumber") or ""
+                    if not order_num:
+                        return
+                    try:
+                        qr_to_clipboard(order_num)
+                    except Exception as e:
+                        ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
+                        return
+                    ui_log(f"{order_num} QR 클립보드 복사 완료 — FlexSign 에서 Ctrl+V")
+                    result["value"] = {"action": "qr_copied", "order_number": order_num}
+                    dlg.destroy()
 
-            for child in (cell, thumb_frame, thumb_label, company_lbl, sub_lbl):
-                try:
-                    child.bind("<Button-1>", _on_pick_existing)
-                except Exception:
-                    pass
+                for child in (cell, thumb_frame, thumb_label, company_lbl, sub_lbl):
+                    try:
+                        child.bind("<Button-1>", _on_pick_existing)
+                    except Exception:
+                        pass
 
-            thumbnail_work.append((w, thumb_label))
+                thumbnail_work.append((w, thumb_label))
 
-        _start_thumbnail_loader(dlg, thumbnail_work, THUMB_W)
+            _start_thumbnail_loader(dlg, thumbnail_work, THUMB_W)
+
+        ex_search_var.trace_add("write", lambda *_: _render_existing_grid())
+        _render_existing_grid()
 
     # ── 탭 2: 새 주문 만들기 (거래처 선택) ────────────────────────────────────
     new_tab = tk.Frame(notebook, bg=BG_SOFT)
