@@ -11,6 +11,10 @@ const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 // 워처 분배함은 부서 기준 그대로 유지하고, 모바일 필터만 직원 기준으로 매칭한다(workers.js 매핑).
 const WORKER_KEY = 'hdsign_uploader_worker';
 
+// "내 지시서만 보기" 를 사용자가 명시적으로 푼 직원 이름. 담당자가 설정되어 있으면 default 는 ON 이지만,
+// 한 번 풀고 나면 다시 켜기 전까지는 OFF 유지(workerName 저장으로 직원이 바뀌면 다시 default ON).
+const MINE_OFF_KEY = 'hdsign_mine_off_worker';
+
 function getStoredWorker() {
     try {
         const v = localStorage.getItem(WORKER_KEY);
@@ -23,6 +27,20 @@ function setStoredWorker(value) {
     try {
         if (value) localStorage.setItem(WORKER_KEY, value);
         else localStorage.removeItem(WORKER_KEY);
+    } catch { /* ignore */ }
+}
+function getStoredMineOffWorker() {
+    try {
+        const v = localStorage.getItem(MINE_OFF_KEY);
+        return v ? v.trim() : '';
+    } catch {
+        return '';
+    }
+}
+function setStoredMineOffWorker(value) {
+    try {
+        if (value) localStorage.setItem(MINE_OFF_KEY, value);
+        else localStorage.removeItem(MINE_OFF_KEY);
     } catch { /* ignore */ }
 }
 
@@ -87,11 +105,15 @@ export default function WorksheetList() {
     const [companySearch, setCompanySearch] = useState('');
     // 'due' = 납기 임박순(날짜 그룹), 'uploaded' = 최근 업로드순(평탄 리스트, 방금 올린 게 최상단).
     const [sortMode, setSortMode] = useState('due');
-    // 체크 시 내 슬롯에 매핑된 지시서만 노출. 본인 또는 같은 슬롯 다른 직원이 [작업완료] 를 누르면
-    // workerCompletedAt 이 차서 자동으로 본인 리스트에서도 사라진다(claim 모델).
-    // 슬롯 매핑이 없는(워처 도입 이전) 지시서는 mineOnly 에서 빠지고 off 에서만 보여 누락 방지.
-    const [mineOnly, setMineOnly] = useState(false);
+    // 체크 시 본인 슬롯에 매핑된 지시서만 노출 + 본인이 [작업완료] 누른 건 자동 제외(per-worker).
+    // 담당자가 있으면 default = ON. 사용자가 직접 풀면 그 직원 이름이 MINE_OFF_KEY 에 저장되어
+    // 다음 진입에도 OFF 유지. 직원이 바뀌면 자동으로 default ON 복귀(이전 OFF 키와 다른 이름이라).
     const [worker, setWorker] = useState(() => getStoredWorker());
+    const [mineOnly, setMineOnly] = useState(() => {
+        const w = getStoredWorker();
+        if (!w) return false;
+        return getStoredMineOffWorker() !== w;
+    });
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
     const [lastSyncedAt, setLastSyncedAt] = useState(null);
@@ -119,7 +141,22 @@ export default function WorksheetList() {
         if (!v) return;
         setWorker(v);
         setStoredWorker(v);
+        // 직원이 바뀌었거나 새로 설정된 시점 — mineOnly off 마커는 그 직원 한정이라 초기화하고
+        // mineOnly 자동 ON 으로 복귀("담당자가 선택되었다면 항상 체크" 정책).
+        setStoredMineOffWorker('');
+        setMineOnly(true);
         setShowWorkerModal(false);
+    };
+
+    // mineOnly 사용자 토글 — 풀면 MINE_OFF_KEY 에 현재 worker 저장, 켜면 키 제거.
+    // 직원 미설정인데 켜면 모달 띄우는 기존 useEffect 가 그대로 동작.
+    const handleMineToggle = (next) => {
+        setMineOnly(next);
+        if (!next && worker) {
+            setStoredMineOffWorker(worker);
+        } else {
+            setStoredMineOffWorker('');
+        }
     };
 
     const openWorkerModal = () => {
@@ -495,7 +532,7 @@ export default function WorksheetList() {
                             type="checkbox"
                             className="ws-mine-checkbox"
                             checked={mineOnly}
-                            onChange={(e) => setMineOnly(e.target.checked)}
+                            onChange={(e) => handleMineToggle(e.target.checked)}
                         />
                         <span className="ws-mine-text">
                             내 지시서만 보기
