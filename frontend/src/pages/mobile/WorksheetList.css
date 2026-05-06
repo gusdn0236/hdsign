@@ -110,12 +110,43 @@
     to   { transform: rotate(360deg); }
 }
 
+/* 정렬 모드 토글 — 납기 임박순 / 최근 업로드순 ----------------------- */
+/* 상위 모드 스위치: 토글 한 번으로 그룹/평탄 전환. 다크 헤더 위에 segmented pill. */
+.ws-sort-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.32);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 3px;
+    margin-top: 12px;
+}
+.ws-sort-tab {
+    height: 34px;
+    border: none;
+    background: transparent;
+    color: #a1a1aa;
+    font-size: 13px;
+    font-weight: 700;
+    border-radius: 7px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease, color 0.12s ease;
+    letter-spacing: -0.01em;
+}
+.ws-sort-tab.active {
+    background: #fafafa;
+    color: #18181b;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
 /* 필터 폼 — 납기일자 + 거래처 두 셀렉트 ----------------------------- */
 .ws-filter-form {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
-    margin-top: 14px;
+    margin-top: 10px;
 }
 .ws-filter-field {
     display: flex;
@@ -329,22 +360,45 @@
 
 /* 그룹(납기 일자별) ----------------------------------------------- */
 .ws-group {
-    margin-bottom: 22px;
+    margin-bottom: 24px;
 }
 .ws-group-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 8px;
-    font-size: 13px;
-    font-weight: 700;
+    font-size: 17px;
+    font-weight: 800;
     color: #18181b;
-    margin: 0 4px 10px;
-    letter-spacing: -0.01em;
+    margin: 0 4px 12px;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
 }
+.ws-group-date {
+    color: #18181b;
+}
+/* 오늘/내일/지남/업로드 — 한눈에 들어오는 컬러 배지. 헤더 높이는 22px 고정 */
+.ws-group-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    color: #fff;
+    flex-shrink: 0;
+}
+.ws-group-badge.today { background: #16a34a; }
+.ws-group-badge.tomorrow { background: #f59e0b; }
+.ws-group-badge.overdue { background: #dc2626; }
+
 .ws-group-count {
+    margin-left: auto;
     color: #71717a;
-    font-weight: 500;
-    font-size: 12px;
+    font-weight: 600;
+    font-size: 13px;
 }
 
 /* 카드 그리드 ----------------------------------------------------- */
@@ -367,17 +421,61 @@
     transform: scale(0.97);
 }
 
+.ws-thumb-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+}
 .ws-thumb-company {
-    font-size: 12px;
-    font-weight: 600;
-    color: #3f3f46;
+    font-size: 13px;
+    font-weight: 700;
+    color: #18181b;
     text-align: center;
-    line-height: 1.3;
+    line-height: 1.25;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     padding: 0 2px;
     letter-spacing: -0.01em;
+    max-width: 100%;
+}
+/* 최근 업로드순일 때만 노출되는 카드 보조 라인 — 납기 배지/날짜 + 업로드 상대시간 */
+.ws-thumb-sub {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 11px;
+    line-height: 1.2;
+    color: #71717a;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.ws-thumb-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    color: #fff;
+    flex-shrink: 0;
+}
+.ws-thumb-badge.today { background: #16a34a; }
+.ws-thumb-badge.tomorrow { background: #f59e0b; }
+.ws-thumb-badge.overdue { background: #dc2626; }
+.ws-thumb-date {
+    color: #3f3f46;
+    font-weight: 700;
+}
+.ws-thumb-uploaded {
+    color: #71717a;
+    font-weight: 500;
 }
 
 /* 빈 상태 -------------------------------------------------------- */
@@ -527,6 +625,16 @@
         gap: 8px;
     }
     .ws-thumb-company {
-        font-size: 11px;
+        font-size: 12px;
+    }
+    .ws-thumb-sub {
+        font-size: 10px;
+        gap: 4px;
+    }
+    .ws-group-head {
+        font-size: 16px;
+    }
+    .ws-sort-tab {
+        font-size: 12px;
     }
 }

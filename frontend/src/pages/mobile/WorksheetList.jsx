@@ -26,24 +26,50 @@ function setStoredDept(value) {
     } catch { /* ignore */ }
 }
 
-function formatDateLabel(dateStr) {
-    if (!dateStr) return '납기 미정';
+// 그룹 헤더용: '5월 6일 (수)' 만 — 오늘/내일/지남 같은 상태는 배지로 별도 표시.
+function formatDueDateLabel(dateStr) {
+    if (!dateStr) return '';
     const d = new Date(dateStr + 'T00:00:00');
     if (Number.isNaN(d.getTime())) return dateStr;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-
-    const isToday = d.getTime() === today.getTime();
-    const isTomorrow = d.getTime() === tomorrow.getTime();
-
     const md = `${d.getMonth() + 1}월 ${d.getDate()}일`;
     const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
-
-    if (isToday) return `오늘 · ${md} (${dow})`;
-    if (isTomorrow) return `내일 · ${md} (${dow})`;
     return `${md} (${dow})`;
+}
+
+// 카드 보조 라인용 짧은 형식: '5/7'.
+function formatShortDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// 납기 상태 배지 — 오늘/내일/지남 만. 일반 미래 일자는 null 반환(헤더 날짜만 보임).
+function getDueBadge(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((d.getTime() - today.getTime()) / 86400000);
+    if (diffDays < 0) return { kind: 'overdue', text: `${-diffDays}일 지남` };
+    if (diffDays === 0) return { kind: 'today', text: '오늘' };
+    if (diffDays === 1) return { kind: 'tomorrow', text: '내일' };
+    return null;
+}
+
+// '최근 업로드순' 카드 보조 라인용 상대시간. 7일 넘으면 'M/D' 로 폴백.
+function formatRelativeUpload(iso) {
+    if (!iso) return '';
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return '';
+    const diff = Math.max(0, (Date.now() - t) / 1000);
+    if (diff < 60) return '방금';
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+    if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}일 전`;
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 function getGroupKey(dateStr) {
@@ -59,6 +85,8 @@ export default function WorksheetList() {
     const [dateFilter, setDateFilter] = useState('all'); // 'today' | '3days' | 'all'
     const [companyFilter, setCompanyFilter] = useState('ALL');
     const [companySearch, setCompanySearch] = useState('');
+    // 'due' = 납기 임박순(날짜 그룹), 'uploaded' = 최근 업로드순(평탄 리스트, 방금 올린 게 최상단).
+    const [sortMode, setSortMode] = useState('due');
     // 체크 시 내 부서 태그가 붙은 지시서만 노출. 태그가 비어있는(워처 도입 이전) 지시서는
     // 자연스럽게 빠지므로 누락 방지 차원에서 기본은 off.
     const [mineOnly, setMineOnly] = useState(false);
@@ -219,6 +247,16 @@ export default function WorksheetList() {
     }, [companyFilteredItems, myDept]);
 
     const groups = useMemo(() => {
+        // 최근 업로드순 — 그룹 분리 없이 평탄 리스트. 방금 올린 게 최상단.
+        // worksheetUpdatedAt 이 비어있는(아주 옛날) 항목은 0 으로 가라앉힘.
+        if (sortMode === 'uploaded') {
+            const sorted = [...filtered].sort((a, b) => {
+                const ta = a.worksheetUpdatedAt ? new Date(a.worksheetUpdatedAt).getTime() : 0;
+                const tb = b.worksheetUpdatedAt ? new Date(b.worksheetUpdatedAt).getTime() : 0;
+                return tb - ta;
+            });
+            return [['__uploaded__', sorted]];
+        }
         const map = new Map();
         filtered.forEach((it) => {
             const key = getGroupKey(it.dueDate);
@@ -231,7 +269,7 @@ export default function WorksheetList() {
             if (b === 'none') return -1;
             return a.localeCompare(b);
         });
-    }, [filtered]);
+    }, [filtered, sortMode]);
 
     const formatSyncedAt = (d) => {
         if (!d) return '';
@@ -270,8 +308,6 @@ export default function WorksheetList() {
                 </div>
                 <p className="ws-list-meta">
                     <span className="ws-list-meta-count">{filtered.length}건</span>
-                    <span className="ws-list-meta-sep">·</span>
-                    <span>납기 임박 순</span>
                     {lastSyncedAt && (
                         <>
                             <span className="ws-list-meta-sep">·</span>
@@ -279,6 +315,23 @@ export default function WorksheetList() {
                         </>
                     )}
                 </p>
+
+                <div className="ws-sort-toggle" role="tablist" aria-label="정렬 방식">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={sortMode === 'due'}
+                        className={`ws-sort-tab ${sortMode === 'due' ? 'active' : ''}`}
+                        onClick={() => setSortMode('due')}
+                    >납기 임박순</button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={sortMode === 'uploaded'}
+                        className={`ws-sort-tab ${sortMode === 'uploaded' ? 'active' : ''}`}
+                        onClick={() => setSortMode('uploaded')}
+                    >최근 업로드순</button>
+                </div>
 
                 <form className="ws-filter-form" onSubmit={(e) => e.preventDefault()}>
                     <label className="ws-filter-field">
@@ -359,29 +412,59 @@ export default function WorksheetList() {
             )}
 
             {groups.map(([key, list]) => {
-                const headerLabel = key === 'none' ? '납기 미정' : formatDateLabel(key);
+                const isUploaded = key === '__uploaded__';
+                const isNoDate = key === 'none';
+                const groupBadge = !isUploaded && !isNoDate ? getDueBadge(key) : null;
                 return (
                     <section className="ws-group" key={key}>
                         <h2 className="ws-group-head">
-                            <span>{headerLabel}</span>
+                            {isUploaded ? (
+                                <span className="ws-group-date">최근 업로드</span>
+                            ) : isNoDate ? (
+                                <span className="ws-group-date">납기 미정</span>
+                            ) : (
+                                <>
+                                    {groupBadge && (
+                                        <span className={`ws-group-badge ${groupBadge.kind}`}>{groupBadge.text}</span>
+                                    )}
+                                    <span className="ws-group-date">{formatDueDateLabel(key)}</span>
+                                </>
+                            )}
                             <span className="ws-group-count">{list.length}개</span>
                         </h2>
                         <div className="ws-grid">
-                            {list.map((it) => (
-                                <Link
-                                    key={it.orderNumber}
-                                    to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
-                                    className="ws-grid-card"
-                                >
-                                    <WorksheetThumbnail
-                                        pdfUrl={it.worksheetPdfUrl}
-                                        thumbnailUrl={it.worksheetThumbnailUrl}
-                                    />
-                                    <div className="ws-thumb-company">
-                                        {it.companyName || '거래처 미상'}
-                                    </div>
-                                </Link>
-                            ))}
+                            {list.map((it) => {
+                                const cardBadge = isUploaded ? getDueBadge(it.dueDate) : null;
+                                return (
+                                    <Link
+                                        key={it.orderNumber}
+                                        to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
+                                        className="ws-grid-card"
+                                    >
+                                        <WorksheetThumbnail
+                                            pdfUrl={it.worksheetPdfUrl}
+                                            thumbnailUrl={it.worksheetThumbnailUrl}
+                                        />
+                                        <div className="ws-thumb-meta">
+                                            <div className="ws-thumb-company">
+                                                {it.companyName || '거래처 미상'}
+                                            </div>
+                                            {isUploaded && (
+                                                <div className="ws-thumb-sub">
+                                                    {cardBadge ? (
+                                                        <span className={`ws-thumb-badge ${cardBadge.kind}`}>{cardBadge.text}</span>
+                                                    ) : it.dueDate ? (
+                                                        <span className="ws-thumb-date">{formatShortDate(it.dueDate)}</span>
+                                                    ) : null}
+                                                    {it.worksheetUpdatedAt && (
+                                                        <span className="ws-thumb-uploaded">{formatRelativeUpload(it.worksheetUpdatedAt)}</span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </Link>
+                                );
+                            })}
                         </div>
                     </section>
                 );
