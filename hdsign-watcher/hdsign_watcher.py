@@ -1358,6 +1358,57 @@ def _fetch_admin_orders() -> list[dict] | None:
         return None
 
 
+def _fetch_admin_clients() -> list[dict] | None:
+    """admin 토큰으로 /api/admin/clients 호출 — 분배함 사진 다이얼로그 [신규 작성] 탭의
+    "큐가 비어있을 때 거래처 검색 → 새 빈 주문 발급" 흐름에 사용. ACTIVE/PENDING_SIGNUP 만 반환."""
+    token = _get_admin_token()
+    if not token:
+        return None
+    url = f"{API_BASE}/api/admin/clients"
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(data, list):
+            return None
+        return [c for c in data if c.get("status") in ("ACTIVE", "PENDING_SIGNUP")]
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            with _admin_token_lock:
+                _admin_token_cache["token"] = None
+        return None
+    except Exception:
+        return None
+
+
+def _create_qr_only_order(client_id: int) -> dict | None:
+    """admin 토큰으로 POST /api/admin/orders/qr-only — 빈 주문(번호만 부여) 생성.
+    어드민의 옛 [기존지시서에 QR코드만 생성] 패널이 호출하던 엔드포인트와 동일.
+    응답 dict (orderNumber, clientCompanyName 등) 반환. 실패 시 None."""
+    token = _get_admin_token()
+    if not token:
+        ui_log("빈 주문 생성 실패: admin 토큰 없음(config.json 의 admin_username/password 확인).")
+        return None
+    url = f"{API_BASE}/api/admin/orders/qr-only?clientId={int(client_id)}"
+    req = urllib.request.Request(url, method="POST", data=b"")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data if isinstance(data, dict) else None
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            with _admin_token_lock:
+                _admin_token_cache["token"] = None
+        ui_log(f"빈 주문 생성 실패(HTTP {e.code}): {e.reason}")
+        return None
+    except Exception as e:
+        ui_log(f"빈 주문 생성 실패: {e}")
+        return None
+
+
 def play_alert_sound() -> None:
     """시스템 알림음 비동기 재생. winsound 없는 환경(예: 다른 OS)에서는 무시."""
     if winsound is None:
@@ -1902,7 +1953,8 @@ def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
 
 def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                               existing_worksheets: list[dict],
-                              qr_order_number: str | None = None) -> dict | None:
+                              qr_order_number: str | None = None,
+                              clients_for_new: list[dict] | None = None) -> dict | None:
     """모달 다이얼로그: 방금 인쇄한 PDF 를 어느 작업에 어떻게 반영할지 결정한다.
 
     탭 두 개로 분기:
@@ -2324,11 +2376,117 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             if new_delivery_var.get():
                 _set_new_delivery(new_delivery_var.get())
     else:
+        # 큐가 비어있는 케이스 — 사용자가 일러스트에서 직접 그린 신규 지시서 인쇄. 거래처를
+        # 골라 새 빈 주문(QR-only) 발급 → QR 클립보드 복사 → 사용자 Ctrl+V 후 다시 인쇄.
+        sorted_clients_new = sorted(
+            list(clients_for_new or []),
+            key=lambda c: (c.get("companyName") or "").lower(),
+        )
+
+        tk.Label(new_tab, text="신규 지시서",
+                 bg=BG, fg=TITLE_FG,
+                 font=("맑은 고딕", 11, "bold"), anchor="w").pack(fill="x", padx=2, pady=(10, 2))
         tk.Label(new_tab,
-                 text="최근 처리한 주문이 없어 신규 작성 모드를 사용할 수 없습니다.\n"
-                      "[기존 변경] 탭에서 갱신할 지시서를 골라주세요.",
-                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 10),
-                 anchor="w", justify="left").pack(fill="x", padx=2, pady=24)
+                 text="이 지시서의 거래처를 선택하면 새 주문번호가 발급되고,\n"
+                      "그 QR 이 클립보드에 복사됩니다. FlexSign 캔버스에 Ctrl+V 후 다시 인쇄하세요.",
+                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 9),
+                 anchor="w", justify="left", wraplength=260
+                 ).pack(fill="x", padx=2, pady=(0, 8))
+
+        client_search_var = tk.StringVar()
+        client_search_entry = tk.Entry(new_tab, textvariable=client_search_var,
+                                       font=("맑은 고딕", 11), bg="white",
+                                       relief="solid", bd=1, highlightthickness=0)
+        client_search_entry.pack(fill="x", padx=2, pady=(0, 4))
+        tk.Label(new_tab, text="거래처 / 별칭 / 담당자 검색",
+                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 8),
+                 anchor="w").pack(fill="x", padx=4, pady=(0, 4))
+
+        client_list_outer = tk.Frame(new_tab, bg=BG,
+                                     highlightbackground=BORDER, highlightthickness=1)
+        client_list_outer.pack(fill="both", expand=True, padx=2, pady=(0, 8))
+        client_canvas = tk.Canvas(client_list_outer, bg="white", highlightthickness=0)
+        client_scroll = ttk.Scrollbar(client_list_outer, orient="vertical",
+                                      command=client_canvas.yview)
+        client_canvas.configure(yscrollcommand=client_scroll.set)
+        client_canvas.pack(side="left", fill="both", expand=True)
+        client_scroll.pack(side="right", fill="y")
+        client_inner = tk.Frame(client_canvas, bg="white")
+        client_inner_id = client_canvas.create_window((0, 0), window=client_inner, anchor="nw")
+        client_inner.bind("<Configure>",
+                          lambda e: client_canvas.configure(scrollregion=client_canvas.bbox("all")))
+        client_canvas.bind("<Configure>",
+                           lambda e: client_canvas.itemconfig(client_inner_id, width=e.width))
+
+        new_submitting = {"flag": False}
+
+        def _on_pick_client_new(client):
+            if new_submitting["flag"]:
+                return
+            new_submitting["flag"] = True
+            try:
+                client_id = client.get("id")
+                if client_id is None:
+                    return
+                created = _create_qr_only_order(int(client_id))
+                if not created or not created.get("orderNumber"):
+                    ui_log("빈 주문 생성 실패 — 잠시 후 다시 시도해 주세요.")
+                    new_submitting["flag"] = False
+                    return
+                order_num = created.get("orderNumber")
+                company = (created.get("clientCompanyName")
+                           or client.get("companyName") or "")
+                # 두 번째 인쇄 시 [신규 작성] 탭이 이 주문을 자동 매칭하도록 워처 큐에 등록.
+                remember_order_for_print(order_num, company, "", "", "")
+                ui_log(f"{order_num} ({company}) 빈 주문 발급 — 다음 인쇄 시 자동 매칭")
+                # qr_only_copy 모드 — 호출자(_process_printed_pdf)가 qr_to_clipboard 호출.
+                result["value"] = {"qr_only_copy": True, "order_number": order_num}
+                dlg.destroy()
+            except Exception as e:
+                ui_log(f"새 주문 발급 중 오류: {e}")
+                new_submitting["flag"] = False
+
+        def _filter_clients_new():
+            q = (client_search_var.get() or "").strip().lower()
+            if not q:
+                return sorted_clients_new[:30]
+            def _hit(c):
+                hay = " ".join([
+                    str(c.get("companyName") or ""),
+                    str(c.get("networkFolderName") or ""),
+                    str(c.get("aliases") or ""),
+                    str(c.get("contactName") or ""),
+                ]).lower()
+                return q in hay
+            return [c for c in sorted_clients_new if _hit(c)][:30]
+
+        def _render_client_list_new():
+            for child in client_inner.winfo_children():
+                child.destroy()
+            items = _filter_clients_new()
+            if not items:
+                tk.Label(client_inner,
+                         text="검색 결과 없음" if client_search_var.get().strip() else "거래처 없음",
+                         bg="white", fg=SUB_FG, font=("맑은 고딕", 10)).pack(pady=12)
+                return
+            for c in items:
+                row = tk.Frame(client_inner, bg="white", cursor="hand2")
+                row.pack(fill="x", padx=8, pady=2)
+                name = c.get("companyName") or "-"
+                contact = (c.get("contactName") or "").strip()
+                row_text = f"{name}    {contact}".strip()
+                lbl = tk.Label(row, text=row_text, bg="white", fg=TITLE_FG,
+                               font=("맑은 고딕", 10, "bold"), anchor="w")
+                lbl.pack(side="left", fill="x", expand=True, padx=8, pady=6)
+
+                def _make_pick_handler(client_local):
+                    return lambda _e=None: _on_pick_client_new(client_local)
+                handler_new = _make_pick_handler(c)
+                row.bind("<Button-1>", handler_new)
+                lbl.bind("<Button-1>", handler_new)
+
+        client_search_var.trace_add("write", lambda *_: _render_client_list_new())
+        _render_client_list_new()
 
     # ── [기존 변경] 탭 ─────────────────────────────────────
     # 두 페이지: pick_page(그리드) → chosen_page(라디오+폼). pack/unpack 으로 토글.
@@ -3574,6 +3732,13 @@ def _process_printed_pdf(pdf_path: Path):
     # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
     existing_worksheets = fetch_existing_worksheets()
 
+    # QR 없는 PDF + 큐 비어있는 케이스용 거래처 목록 — [신규 작성] 탭의 "거래처 검색 → 빈 주문 발급" 에 사용.
+    # qr_order_number 가 있거나 큐에 자동매칭된 주문이 있으면 거래처 검색이 필요 없으므로 fetch 생략(네트워크 절감).
+    if qr_order_number is None and not orders:
+        clients_for_new = _fetch_admin_clients() or []
+    else:
+        clients_for_new = []
+
     holder: dict = {"value": None, "done": threading.Event()}
 
     def _ask_on_ui():
@@ -3581,6 +3746,7 @@ def _process_printed_pdf(pdf_path: Path):
             holder["value"] = _ask_print_match_blocking(
                 orders, pdf_path, existing_worksheets,
                 qr_order_number=qr_order_number,
+                clients_for_new=clients_for_new,
             )
         except Exception as e:
             # 다이얼로그 자체가 터지면 사용자가 취소한 것처럼 조용히 묻혀 PDF24 인쇄가 무위로 끝나므로,
