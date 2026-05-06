@@ -3504,26 +3504,35 @@ def _ask_qr_paste_blocking(pdf_path: Path,
         ex_canvas.bind_all("<MouseWheel>", _on_ex_wheel, add="+")
 
         cols = 3
+        thumbnail_work: list[tuple[dict, "tk.Label"]] = []
         for idx, w in enumerate(sorted_ws):
             row, col = divmod(idx, cols)
             cell = tk.Frame(ex_inner, bg="#ffffff", bd=1, relief="solid",
-                            highlightbackground=BORDER, highlightthickness=1)
+                            highlightbackground=BORDER, highlightthickness=1,
+                            cursor="hand2")
             cell.grid(row=row, column=col, padx=6, pady=6, sticky="nw")
 
-            # 썸네일 영역(이번 commit 에선 placeholder; 다음 commit 에서 실제 thumbnailUrl 다운로드).
-            thumb = tk.Frame(cell, bg="#f4f4f5", width=THUMB_W, height=THUMB_H)
-            thumb.pack_propagate(False)
-            thumb.pack(padx=6, pady=(6, 4))
-            tk.Label(thumb, text="(썸네일)",
-                     bg="#f4f4f5", fg=SUB_FG, font=("맑은 고딕", 9)).pack(expand=True)
+            # 썸네일 — 고정 크기 frame 안의 label. _start_thumbnail_loader 가 백그라운드에서
+            # /api/public/worksheets/{n}/pdf 받아 PyMuPDF 로 1페이지 렌더 → ImageTk 부착.
+            thumb_frame = tk.Frame(cell, width=THUMB_W, height=THUMB_H, bg="#e4e4e7")
+            thumb_frame.pack_propagate(False)
+            thumb_frame.pack(padx=6, pady=(6, 4))
+            thumb_label = tk.Label(thumb_frame, bg="#e4e4e7",
+                                   text="…" if fitz is not None else "(미리보기 없음)",
+                                   fg=SUB_FG, font=("맑은 고딕", 11))
+            thumb_label.pack(fill="both", expand=True)
 
             company = w.get("companyName") or "-"
             order_no = w.get("orderNumber") or ""
             due = w.get("dueDate") or ""
-            tk.Label(cell, text=company, bg="#ffffff", fg=TITLE_FG,
-                     font=("맑은 고딕", 10, "bold"), wraplength=THUMB_W).pack(anchor="w", padx=6)
-            tk.Label(cell, text=f"{order_no}  ·  납기 {due or '미정'}",
-                     bg="#ffffff", fg=SUB_FG, font=("맑은 고딕", 9)).pack(anchor="w", padx=6, pady=(0, 6))
+            company_lbl = tk.Label(cell, text=company, bg="#ffffff", fg=TITLE_FG,
+                                   font=("맑은 고딕", 10, "bold"), wraplength=THUMB_W,
+                                   anchor="w", justify="left")
+            company_lbl.pack(anchor="w", padx=6, fill="x")
+            sub_lbl = tk.Label(cell, text=f"{order_no}  ·  납기 {due or '미정'}",
+                               bg="#ffffff", fg=SUB_FG, font=("맑은 고딕", 9),
+                               anchor="w", justify="left")
+            sub_lbl.pack(anchor="w", padx=6, pady=(0, 6), fill="x")
 
             def _on_pick_existing(ev=None, ws=w):
                 order_num = ws.get("orderNumber") or ""
@@ -3538,12 +3547,15 @@ def _ask_qr_paste_blocking(pdf_path: Path,
                 result["value"] = {"action": "qr_copied", "order_number": order_num}
                 dlg.destroy()
 
-            for child in (cell,) + tuple(cell.winfo_children()) + tuple(thumb.winfo_children()):
+            for child in (cell, thumb_frame, thumb_label, company_lbl, sub_lbl):
                 try:
                     child.bind("<Button-1>", _on_pick_existing)
-                    child.configure(cursor="hand2")
                 except Exception:
                     pass
+
+            thumbnail_work.append((w, thumb_label))
+
+        _start_thumbnail_loader(dlg, thumbnail_work, THUMB_W)
 
     # ── 탭 2: 새 주문 만들기 (거래처 선택) ────────────────────────────────────
     new_tab = tk.Frame(notebook, bg=BG_SOFT)
