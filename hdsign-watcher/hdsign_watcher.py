@@ -3315,6 +3315,280 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     return result["value"]
 
 
+def _ask_qr_paste_blocking(pdf_path: Path,
+                           existing_worksheets: list[dict],
+                           clients: list[dict]) -> dict | None:
+    """QR 없는 PDF 가 인쇄됐을 때 띄우는 다이얼로그.
+    어드민의 [기존지시서에 QR코드만 생성] 패널 + [QR 재생성] 두 흐름을 워처 안으로 통합.
+
+    탭 두 개:
+      [기존 지시서에 QR 추가] — 진행중 worksheet 썸네일 그리드(다음 commit 에서 유사도 정렬).
+                              클릭 → 그 주문번호의 QR 을 클립보드에 EMF 로 복사.
+      [새 주문 만들기]        — 거래처 검색 + 클릭. POST /qr-only 로 빈 주문 발급 후 그 QR 을 클립보드에.
+
+    하단:
+      [매칭 안 함] — 종이만 인쇄. 사용자가 의도적으로 "이 인쇄는 웹에 안 올림" 결정.
+
+    리턴값:
+      None                                              — Esc/X 취소(종이 인쇄도 생략, 호출자 판단).
+      {"action": "qr_copied", "order_number": "..."}    — 클립보드 복사 성공. 호출자는 종이 인쇄 안 하고 정리만.
+      {"action": "skip_paper_only"}                     — [매칭 안 함]: 종이만 인쇄.
+    """
+    BG = "#ffffff"
+    BG_SOFT = "#fafafa"
+    BORDER = "#e4e4e7"
+    TITLE_FG = "#18181b"
+    LABEL_FG = "#3f3f46"
+    SUB_FG = "#71717a"
+    ACCENT = "#10b981"
+    DANGER = "#dc2626"
+    DANGER_HOVER = "#b91c1c"
+
+    # 진행중 worksheet 정렬 — 우선 단순한 dueDate 임박순. 다음 commit 에서 perceptual hash 로 교체.
+    sorted_ws = sorted(
+        list(existing_worksheets or []),
+        key=lambda w: (w.get("dueDate") or "9999-12-31", w.get("orderNumber") or ""),
+    )
+    sorted_clients = sorted(
+        list(clients or []),
+        key=lambda c: (c.get("companyName") or "").lower(),
+    )
+
+    THUMB_W = 180
+    THUMB_H = int(THUMB_W * 1.414)
+
+    result: dict = {"value": None}
+
+    dlg = tk.Toplevel()
+    dlg.title("QR 클립보드 복사 — 인쇄된 PDF 에 QR 이 없습니다")
+    dlg.configure(bg=BG)
+    dlg.resizable(False, False)
+    dlg.attributes("-topmost", True)
+
+    DLG_W = 700
+    dlg.update_idletasks()
+    sw = dlg.winfo_screenwidth()
+    sh = dlg.winfo_screenheight()
+    DLG_H = min(880, max(720, sh - 80))
+    dlg_x = max(0, sw - DLG_W)
+    dlg_y = max(20, (sh - DLG_H) // 2)
+    dlg.geometry(f"{DLG_W}x{DLG_H}+{dlg_x}+{dlg_y}")
+
+    # 헤더 — 인쇄된 PDF 파일명 + 안내 문구.
+    header = tk.Frame(dlg, bg=BG)
+    header.pack(fill="x", padx=20, pady=(18, 6))
+    tk.Label(header, text="인쇄된 PDF 에 QR 이 없습니다",
+             bg=BG, fg=TITLE_FG, font=("맑은 고딕", 13, "bold")).pack(anchor="w")
+    tk.Label(header,
+             text=f"파일: {pdf_path.name}\n"
+                  "거래처/지시서를 골라 QR 을 클립보드에 복사하면 FlexSign 에서 Ctrl+V 후 다시 인쇄하세요.",
+             bg=BG, fg=SUB_FG, font=("맑은 고딕", 10), justify="left").pack(anchor="w", pady=(4, 0))
+
+    # 노트북(탭) — 기존 지시서 / 새 주문.
+    notebook = ttk.Notebook(dlg)
+    notebook.pack(fill="both", expand=True, padx=20, pady=(12, 8))
+
+    # ── 탭 1: 기존 지시서에 QR 추가 ───────────────────────────────────────────
+    existing_tab = tk.Frame(notebook, bg=BG_SOFT)
+    notebook.add(existing_tab, text=f"  기존 지시서에 QR 추가 ({len(sorted_ws)})  ")
+
+    if not sorted_ws:
+        tk.Label(existing_tab, text="진행중 작업지시서가 없습니다.",
+                 bg=BG_SOFT, fg=SUB_FG, font=("맑은 고딕", 10)).pack(pady=40)
+    else:
+        # 스크롤 캔버스에 3열 썸네일 그리드.
+        ex_canvas = tk.Canvas(existing_tab, bg=BG_SOFT, highlightthickness=0)
+        ex_scroll = ttk.Scrollbar(existing_tab, orient="vertical", command=ex_canvas.yview)
+        ex_canvas.configure(yscrollcommand=ex_scroll.set)
+        ex_canvas.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
+        ex_scroll.pack(side="right", fill="y", pady=8)
+        ex_inner = tk.Frame(ex_canvas, bg=BG_SOFT)
+        ex_canvas.create_window((0, 0), window=ex_inner, anchor="nw")
+        ex_inner.bind("<Configure>",
+                      lambda e: ex_canvas.configure(scrollregion=ex_canvas.bbox("all")))
+        # 마우스 휠 스크롤.
+        def _on_ex_wheel(e):
+            ex_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        ex_canvas.bind_all("<MouseWheel>", _on_ex_wheel, add="+")
+
+        cols = 3
+        for idx, w in enumerate(sorted_ws):
+            row, col = divmod(idx, cols)
+            cell = tk.Frame(ex_inner, bg="#ffffff", bd=1, relief="solid",
+                            highlightbackground=BORDER, highlightthickness=1)
+            cell.grid(row=row, column=col, padx=6, pady=6, sticky="nw")
+
+            # 썸네일 영역(이번 commit 에선 placeholder; 다음 commit 에서 실제 thumbnailUrl 다운로드).
+            thumb = tk.Frame(cell, bg="#f4f4f5", width=THUMB_W, height=THUMB_H)
+            thumb.pack_propagate(False)
+            thumb.pack(padx=6, pady=(6, 4))
+            tk.Label(thumb, text="(썸네일)",
+                     bg="#f4f4f5", fg=SUB_FG, font=("맑은 고딕", 9)).pack(expand=True)
+
+            company = w.get("companyName") or "-"
+            order_no = w.get("orderNumber") or ""
+            due = w.get("dueDate") or ""
+            tk.Label(cell, text=company, bg="#ffffff", fg=TITLE_FG,
+                     font=("맑은 고딕", 10, "bold"), wraplength=THUMB_W).pack(anchor="w", padx=6)
+            tk.Label(cell, text=f"{order_no}  ·  납기 {due or '미정'}",
+                     bg="#ffffff", fg=SUB_FG, font=("맑은 고딕", 9)).pack(anchor="w", padx=6, pady=(0, 6))
+
+            def _on_pick_existing(ev=None, ws=w):
+                order_num = ws.get("orderNumber") or ""
+                if not order_num:
+                    return
+                try:
+                    qr_to_clipboard(order_num)
+                except Exception as e:
+                    ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
+                    return
+                ui_log(f"{order_num} QR 클립보드 복사 완료 — FlexSign 에서 Ctrl+V")
+                result["value"] = {"action": "qr_copied", "order_number": order_num}
+                dlg.destroy()
+
+            for child in (cell,) + tuple(cell.winfo_children()) + tuple(thumb.winfo_children()):
+                try:
+                    child.bind("<Button-1>", _on_pick_existing)
+                    child.configure(cursor="hand2")
+                except Exception:
+                    pass
+
+    # ── 탭 2: 새 주문 만들기 (거래처 선택) ────────────────────────────────────
+    new_tab = tk.Frame(notebook, bg=BG_SOFT)
+    notebook.add(new_tab, text="  새 주문 만들기 (거래처 선택)  ")
+
+    tk.Label(new_tab, text="거래처를 선택하면 빈 주문이 발급되고 그 QR 이 클립보드에 복사됩니다.",
+             bg=BG_SOFT, fg=SUB_FG, font=("맑은 고딕", 10)).pack(anchor="w", padx=12, pady=(12, 6))
+
+    search_var = tk.StringVar()
+    search_entry = tk.Entry(new_tab, textvariable=search_var, font=("맑은 고딕", 11),
+                            bg="#ffffff", relief="solid", bd=1)
+    search_entry.pack(fill="x", padx=12, pady=(0, 8))
+
+    list_frame = tk.Frame(new_tab, bg=BG_SOFT)
+    list_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+    list_canvas = tk.Canvas(list_frame, bg="#ffffff", highlightthickness=1,
+                            highlightbackground=BORDER)
+    list_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=list_canvas.yview)
+    list_canvas.configure(yscrollcommand=list_scroll.set)
+    list_canvas.pack(side="left", fill="both", expand=True)
+    list_scroll.pack(side="right", fill="y")
+    list_inner = tk.Frame(list_canvas, bg="#ffffff")
+    list_canvas.create_window((0, 0), window=list_inner, anchor="nw")
+    list_inner.bind("<Configure>",
+                    lambda e: list_canvas.configure(scrollregion=list_canvas.bbox("all")))
+
+    submitting = {"flag": False}
+
+    def _render_clients():
+        for child in list_inner.winfo_children():
+            child.destroy()
+        q = (search_var.get() or "").strip().lower()
+        items = sorted_clients
+        if q:
+            def _hit(c):
+                hay = " ".join([
+                    str(c.get("companyName") or ""),
+                    str(c.get("networkFolderName") or ""),
+                    str(c.get("aliases") or ""),
+                    str(c.get("contactName") or ""),
+                ]).lower()
+                return q in hay
+            items = [c for c in sorted_clients if _hit(c)]
+        items = items[:30]
+
+        if not items:
+            tk.Label(list_inner, text="검색 결과 없음" if q else "거래처 없음",
+                     bg="#ffffff", fg=SUB_FG, font=("맑은 고딕", 10)).pack(pady=12)
+            return
+
+        for c in items:
+            row = tk.Frame(list_inner, bg="#ffffff", cursor="hand2")
+            row.pack(fill="x", padx=8, pady=2)
+            name = c.get("companyName") or "-"
+            contact = c.get("contactName") or ""
+            label_text = f"{name}    {contact}".strip()
+            lbl = tk.Label(row, text=label_text, bg="#ffffff", fg=TITLE_FG,
+                           font=("맑은 고딕", 10, "bold"), anchor="w")
+            lbl.pack(side="left", fill="x", expand=True, padx=8, pady=6)
+
+            def _on_pick_client(ev=None, client=c):
+                if submitting["flag"]:
+                    return
+                submitting["flag"] = True
+                try:
+                    created = _create_qr_only_order(int(client.get("id")))
+                    if not created or not created.get("orderNumber"):
+                        ui_log("빈 주문 생성 실패 — 워처 다이얼로그에서 다시 시도하세요.")
+                        submitting["flag"] = False
+                        return
+                    order_num = created.get("orderNumber")
+                    company = created.get("clientCompanyName") or client.get("companyName") or ""
+                    try:
+                        qr_to_clipboard(order_num)
+                    except Exception as e:
+                        ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
+                        submitting["flag"] = False
+                        return
+                    # 두 번째 인쇄 시 [신규 작성] 탭에서 자동 매칭되도록 워처 큐에 등록.
+                    remember_order_for_print(order_num, company, "", "", "")
+                    ui_log(f"{order_num} ({company}) 빈 주문 발급 + QR 클립보드 — FlexSign 에서 Ctrl+V")
+                    result["value"] = {"action": "qr_copied", "order_number": order_num}
+                    dlg.destroy()
+                except Exception as e:
+                    ui_log(f"새 주문 발급 중 오류: {e}")
+                    submitting["flag"] = False
+
+            for w in (row, lbl):
+                w.bind("<Button-1>", _on_pick_client)
+
+    search_var.trace_add("write", lambda *_: _render_clients())
+    _render_clients()
+
+    # ── 하단 버튼 — [매칭 안 함] / [취소] ─────────────────────────────────────
+    bottom = tk.Frame(dlg, bg=BG)
+    bottom.pack(fill="x", side="bottom", padx=20, pady=(4, 16))
+
+    def _on_skip():
+        result["value"] = {"action": "skip_paper_only"}
+        dlg.destroy()
+
+    def _on_cancel():
+        result["value"] = None
+        dlg.destroy()
+
+    skip_btn = tk.Button(bottom, text="매칭 안 함 (종이만 인쇄)",
+                         bg="#f4f4f5", fg=LABEL_FG, font=("맑은 고딕", 10, "bold"),
+                         relief="flat", bd=0, padx=14, pady=8, cursor="hand2",
+                         command=_on_skip)
+    skip_btn.pack(side="left")
+
+    cancel_btn = tk.Button(bottom, text="취소",
+                           bg=DANGER, fg="#ffffff", font=("맑은 고딕", 10, "bold"),
+                           relief="flat", bd=0, padx=14, pady=8, cursor="hand2",
+                           activebackground=DANGER_HOVER, activeforeground="#ffffff",
+                           command=_on_cancel)
+    cancel_btn.pack(side="right")
+
+    # ESC 로 취소.
+    dlg.bind("<Escape>", lambda e: _on_cancel())
+    dlg.protocol("WM_DELETE_WINDOW", _on_cancel)
+
+    # 첫 진입 시 검색 입력 포커스(거래처 빠른 검색).
+    def _focus_search():
+        try:
+            notebook.select(new_tab if not sorted_ws else existing_tab)
+            search_entry.focus_set()
+        except Exception:
+            pass
+    dlg.after(100, _focus_search)
+
+    dlg.grab_set()
+    dlg.wait_window()
+    return result["value"]
+
+
 def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 10):
     """종이 인쇄가 PDF 핸들을 닫을 시간을 벌고 백그라운드에서 unlink.
     SumatraPDF -exit-on-print 흐름에선 거의 즉시 핸들이 풀리므로 10초면 충분.
@@ -3460,23 +3734,63 @@ def _process_printed_pdf(pdf_path: Path):
     # print_pdf_to_paper 가 시스템 기본과 무관하게 삼성으로 직접 보낸다.
     # 워처 종료 시 on_close 에서 원래 프린터로 일괄 복구.
 
-    # PDF 안의 QR 인식 — 큐가 비어있어도 "기존 지시서 수정 후 인쇄" 흐름을 살리기 위해 먼저 시도.
-    # \\Main\현대공유\지시서프로그램 같은 공유 워처에서 사용자가 발주관리의 [지시서 자동작성하기]
-    # 를 거치지 않고 곧장 .ai 를 열어 수정/인쇄하면 큐는 비어있지만 PDF 의 QR 에는 그 주문번호가
-    # 박혀 있다. QR 매칭으로 다이얼로그가 [기존 변경] 자동 진입.
+    # PDF 안의 QR 인식 — 분기점. 있으면 매칭/업로드(기존), 없으면 QR 클립보드 복사 다이얼로그(신규).
     qr_order_number = decode_pdf_qr(pdf_path)
     if qr_order_number:
         ui_log(f"QR 인식: {qr_order_number}")
 
-    orders = list_recent_orders()
-    if not orders and not qr_order_number:
-        # 큐 비고 QR 도 못 찾아도 다이얼로그는 띄운다 — 사용자가 [기존 변경] 탭에서
-        # 진행중 worksheet 그리드를 보고 수동으로 골라 매칭하거나, [매칭 안 함] 으로
-        # 종이만 인쇄하기로 결정할 수 있게. (자동 매칭만 안 되는 것이지, 수동 흐름은 살림)
-        ui_log(f"인쇄 PDF 감지 — 큐/QR 자동 매칭 실패, 수동 매칭 다이얼로그 띄움: {pdf_path.name}")
-
     # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
     existing_worksheets = fetch_existing_worksheets()
+
+    # ── QR 없는 PDF 분기 — 어드민 [기존지시서에 QR코드만 생성]/[QR 재생성] 두 흐름을 워처 안으로 통합 ──
+    # 사용자가 일러스트에서 직접 그린 .ai(QR 미부착) 또는 옛 PDF 를 인쇄한 케이스. 백엔드에 PDF 업로드는
+    # 하지 않고 QR 만 클립보드에 복사 — 사용자가 FlexSign 에서 Ctrl+V 후 다시 인쇄하면 QR 박힌 PDF 가
+    # 들어와 자동 매칭(아래 elif 분기) 되어 정상 업로드된다.
+    if not qr_order_number:
+        clients = _fetch_admin_clients() or []
+        ui_log(f"인쇄 PDF 감지 — QR 없음, 클립보드 복사 다이얼로그 띄움: {pdf_path.name}")
+
+        paste_holder: dict = {"value": None, "done": threading.Event()}
+
+        def _ask_paste_on_ui():
+            try:
+                paste_holder["value"] = _ask_qr_paste_blocking(
+                    pdf_path, existing_worksheets, clients,
+                )
+            except Exception as e:
+                ui_log(f"QR 클립보드 다이얼로그 오류: {e}")
+            finally:
+                paste_holder["done"].set()
+
+        _ui_queue.put(("run", _ask_paste_on_ui))
+        paste_holder["done"].wait()
+
+        paste_sel = paste_holder["value"]
+        if paste_sel is None:
+            # Esc/X 취소 — 종이 인쇄까지 생략(매칭 다이얼로그의 "취소"와 동일한 의미).
+            ui_log(f"인쇄 — 사용자 취소: 종이 인쇄/업로드 모두 생략 ({pdf_path.name})")
+            return
+        action = paste_sel.get("action")
+        if action == "skip_paper_only":
+            ui_log(f"인쇄 — [매칭 안 함] 선택, 종이 인쇄만 진행 ({pdf_path.name})")
+            print_pdf_to_paper(pdf_path)
+            _schedule_printed_pdf_cleanup(pdf_path)
+            return
+        if action == "qr_copied":
+            # 클립보드 복사 완료 — 사용자가 FlexSign 에서 Ctrl+V 후 다시 인쇄해야 업로드 발생.
+            # 이 PDF 자체는 QR 없는 중간본이라 R2 업로드 안 함, 종이 인쇄도 생략(곧 다시 찍을 거라).
+            ui_log(f"인쇄 — QR 클립보드 복사 완료, FlexSign Ctrl+V 후 다시 인쇄: "
+                   f"{paste_sel.get('order_number')} ({pdf_path.name})")
+            _schedule_printed_pdf_cleanup(pdf_path)
+            return
+        # 알 수 없는 action — 안전하게 종이만.
+        ui_log(f"인쇄 — 알 수 없는 응답({action}), 종이만 인쇄: {pdf_path.name}")
+        print_pdf_to_paper(pdf_path)
+        _schedule_printed_pdf_cleanup(pdf_path)
+        return
+
+    # ── QR 있는 PDF 분기 — 기존 흐름 (매칭 + 납기/배송/내용 변경 + 업로드) ──
+    orders = list_recent_orders()
 
     holder: dict = {"value": None, "done": threading.Event()}
 
