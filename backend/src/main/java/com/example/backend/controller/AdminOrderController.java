@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -50,12 +51,48 @@ public class AdminOrderController {
     private final S3Client s3Client;
     private final WorksheetThumbnailService thumbnailService;
     private final WorksheetFlattenService flattenService;
+    private final JdbcTemplate jdbcTemplate;
 
     @Value("${r2.bucket}")
     private String bucket;
 
     @Value("${r2.public-url}")
     private String publicUrl;
+
+    // [임시] UTC → KST 일괄 마이그레이션 — Dockerfile TZ 설정 이전에 UTC 로 저장된 모든
+    // datetime/timestamp 컬럼을 +9시간. 한 번만 호출하면 됨(두 번 호출되면 +18 됨).
+    // information_schema 에서 동적으로 컬럼 목록을 받아 처리하므로 Order/WorkerCompletion 외에도
+    // ClientUser, Notice 등 모든 entity 의 LocalDateTime 컬럼이 함께 보정된다.
+    // 호출 후 다음 커밋에서 이 endpoint 는 제거 — 잘못된 두 번째 호출 위험 차단.
+    @PostMapping("/migrate-utc-to-kst")
+    public ResponseEntity<?> migrateUtcToKst() {
+        // 현재 DB 의 datetime/timestamp 컬럼 모두 검색.
+        List<Map<String, Object>> cols = jdbcTemplate.queryForList(
+                "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.columns " +
+                "WHERE table_schema = DATABASE() " +
+                "AND DATA_TYPE IN ('datetime', 'timestamp') " +
+                "ORDER BY TABLE_NAME, COLUMN_NAME"
+        );
+        Map<String, Object> result = new LinkedHashMap<>();
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (Map<String, Object> col : cols) {
+            String table = (String) col.get("TABLE_NAME");
+            String column = (String) col.get("COLUMN_NAME");
+            if (table == null || column == null) continue;
+            // 백틱으로 식별자 quote — 컬럼명이 SQL 예약어여도 안전.
+            String sql = String.format(
+                    "UPDATE `%s` SET `%s` = DATE_ADD(`%s`, INTERVAL 9 HOUR) WHERE `%s` IS NOT NULL",
+                    table, column, column, column);
+            int n = jdbcTemplate.update(sql);
+            counts.put(table + "." + column, n);
+            log.info("UTC→KST 마이그레이션 [{}].{} +9h: {} rows", table, column, n);
+        }
+        int total = counts.values().stream().mapToInt(Integer::intValue).sum();
+        result.put("total_rows_updated", total);
+        result.put("counts", counts);
+        result.put("note", "한 번만 실행. 다음 커밋에서 endpoint 제거 예정.");
+        return ResponseEntity.ok(result);
+    }
 
     // 관리자 대리 발주 — 메일/전화로 들어온 거래처 발주를 관리자가 직접 등록.
     // 거래처 로그인을 거치지 않고 clientId 만으로 동일한 발주 흐름을 태운다.
