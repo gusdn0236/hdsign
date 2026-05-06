@@ -100,10 +100,9 @@ const PERIOD_TABS = [
 
 export default function WorkStatus() {
   const { token } = useAuth();
-  // entries 의 한 row = 한 직원의 한 worksheet 완료 기록. 같은 worksheet 을 김진섭+김명수가
-  // 각자 처리하면 두 entry 가 만들어진다(per-worker independent). 한 worksheet 카드 1개에 여러
-  // 직원을 묶어 표시하는 대신 직원별로 펼쳐서 직원별 처리량 통계가 정확해진다.
-  const [entries, setEntries] = useState([]);
+  // 한 worksheet = 카드 1개. 카드 안에 완료자/대기자 두 그룹을 큼직한 칩으로 묶어 표시.
+  // 한 명이라도 완료한 worksheet 만 작업현황에 노출(아직 아무도 안 누른 건 발주관리에 있음).
+  const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [period, setPeriod] = useState("today");
@@ -119,23 +118,22 @@ export default function WorkStatus() {
       if (!res.ok) throw new Error("작업 목록을 불러오지 못했습니다.");
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
-      // 발주(ORDER) 의 workerCompletions row 별로 entry 펼치기.
-      const expanded = [];
+      const built = [];
       for (const o of list) {
         if (o.requestType !== "ORDER") continue;
         const wcs = Array.isArray(o.workerCompletions) ? o.workerCompletions : [];
-        for (const wc of wcs) {
-          if (!wc?.worker || !wc?.completedAt) continue;
-          expanded.push({
-            order: o,
-            worker: wc.worker,
-            completedAt: wc.completedAt,
-            // entry key 는 order.id + worker — 같은 worksheet 의 다른 직원 entry 를 구분.
-            key: `${o.id}__${wc.worker}`,
-          });
-        }
+        const completed = wcs
+          .filter((c) => c?.worker && c?.completedAt)
+          .sort((a, b) => new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime());
+        if (completed.length === 0) continue;
+        const slotWorkers = getWorkersForSlots(o.departmentSlots);
+        const doneSet = new Set(completed.map((c) => c.worker));
+        const pending = slotWorkers.filter((w) => !doneSet.has(w));
+        // 카드 정렬 기준 — 가장 최근 완료 시각(마지막 도장 찍힌 시점). 기간 필터도 동일.
+        const lastCompletedAt = completed[completed.length - 1].completedAt;
+        built.push({ order: o, completed, pending, lastCompletedAt });
       }
-      setEntries(expanded);
+      setCards(built);
     } catch (err) {
       setError(err.message || "오류가 발생했습니다.");
     } finally {
@@ -152,32 +150,34 @@ export default function WorkStatus() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // 기간 필터 — entry.completedAt 기준. 직원 필터는 카드 단계에서 별도 적용해 직원별 칩 건수에 영향 X.
+  // 기간 필터 — 카드의 마지막 완료 시각 기준.
   const periodFiltered = useMemo(
-    () => entries.filter((e) => periodMatches(e.completedAt, period)),
-    [entries, period],
+    () => cards.filter((c) => periodMatches(c.lastCompletedAt, period)),
+    [cards, period],
   );
 
-  // 직원별 건수 — 기간 필터 entry 모음 안에서. 같은 직원이 N건 처리하면 N으로 카운트.
+  // 직원별 건수 — 그 직원이 완료한 worksheet 수. 한 worksheet 에 여러 명이 완료해도 각 직원당 +1.
   const workerCounts = useMemo(() => {
     const m = new Map();
     for (const w of ALL_WORKERS) m.set(w, 0);
-    for (const e of periodFiltered) {
-      m.set(e.worker, (m.get(e.worker) || 0) + 1);
+    for (const card of periodFiltered) {
+      for (const wc of card.completed) {
+        m.set(wc.worker, (m.get(wc.worker) || 0) + 1);
+      }
     }
     return Array.from(m.entries())
-      .filter(([, c]) => c > 0)
+      .filter(([, n]) => n > 0)
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko"));
   }, [periodFiltered]);
 
-  // 직원 필터까지 적용 + 최근 완료순 정렬.
+  // 직원 필터 + 최근 완료순 정렬. 필터된 카드도 안에는 다른 직원의 완료/대기 정보 그대로 보임.
   const visible = useMemo(() => {
     const list = workerFilter === "ALL"
       ? periodFiltered
-      : periodFiltered.filter((e) => e.worker === workerFilter);
+      : periodFiltered.filter((c) => c.completed.some((wc) => wc.worker === workerFilter));
     return [...list].sort((a, b) => {
-      const ta = a.completedAt ? new Date(a.completedAt).getTime() : 0;
-      const tb = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+      const ta = a.lastCompletedAt ? new Date(a.lastCompletedAt).getTime() : 0;
+      const tb = b.lastCompletedAt ? new Date(b.lastCompletedAt).getTime() : 0;
       return tb - ta;
     });
   }, [periodFiltered, workerFilter]);
@@ -243,20 +243,11 @@ export default function WorkStatus() {
         </div>
       ) : (
         <div className="ws-status-grid">
-          {visible.map((e) => {
-            const o = e.order;
+          {visible.map((card) => {
+            const o = card.order;
             const dueBadge = getDueBadge(o.dueDate);
-            // 같은 슬롯을 공유하는 동료 — 같은 worksheet 을 처리해야 하는 다른 직원들.
-            // 그 중 이미 완료한 사람은 따로 표시(한 worksheet 의 다른 entry 카드로도 보임).
-            const slotWorkers = getWorkersForSlots(o.departmentSlots);
-            const completedSet = new Set(
-              (Array.isArray(o.workerCompletions) ? o.workerCompletions : []).map((c) => c.worker),
-            );
-            const otherWorkers = slotWorkers.filter((w) => w !== e.worker);
-            const stillPending = otherWorkers.filter((w) => !completedSet.has(w));
-            const hue = getWorkerHue(e.worker);
             return (
-              <div className="ws-status-card" key={e.key}>
+              <div className="ws-status-card" key={o.id}>
                 <div className="ws-status-thumb">
                   <WorksheetThumbnail
                     pdfUrl={o.worksheetPdfUrl || null}
@@ -267,17 +258,6 @@ export default function WorkStatus() {
                       </div>
                     }
                   />
-                  <div
-                    className="ws-status-worker-tag"
-                    style={{
-                      background: `hsl(${hue}, 65%, 96%)`,
-                      borderColor: `hsl(${hue}, 65%, 80%)`,
-                      color: `hsl(${hue}, 65%, 28%)`,
-                    }}
-                  >
-                    <WorkerDot name={e.worker} />
-                    <span>{e.worker}</span>
-                  </div>
                 </div>
                 <div className="ws-status-body">
                   <div className="ws-status-meta-row">
@@ -297,12 +277,46 @@ export default function WorkStatus() {
                   <div className="ws-status-foot">
                     <span className="ws-status-num">{o.orderNumber}</span>
                     <span className="ws-status-completed">
-                      완료 · {formatCompletedAt(e.completedAt)}
+                      최근 완료 · {formatCompletedAt(card.lastCompletedAt)}
                     </span>
                   </div>
-                  {stillPending.length > 0 && (
-                    <div className="ws-status-shared" title="같은 슬롯에서 아직 처리 안 한 동료">
-                      대기 {stillPending.join(", ")}
+
+                  {/* 완료자 — 초록 배경 chip + 체크 아이콘. 가장 빠른 완료자부터 시간순. */}
+                  {card.completed.length > 0 && (
+                    <div className="ws-people-row ws-people-row--done">
+                      <span className="ws-people-label ws-people-label--done">
+                        완료 {card.completed.length}
+                      </span>
+                      <div className="ws-people-chips">
+                        {card.completed.map((wc) => (
+                          <span
+                            key={wc.worker}
+                            className="ws-people-chip ws-people-chip--done"
+                            title={`${wc.worker} · ${formatCompletedAt(wc.completedAt)}`}
+                          >
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M3.5 8.5l3 3 6-7" />
+                            </svg>
+                            {wc.worker}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 대기자 — 빨간 점선 outline + 회색 글씨. 같은 슬롯 매핑인데 아직 안 누른 직원. */}
+                  {card.pending.length > 0 && (
+                    <div className="ws-people-row ws-people-row--pending">
+                      <span className="ws-people-label ws-people-label--pending">
+                        대기 {card.pending.length}
+                      </span>
+                      <div className="ws-people-chips">
+                        {card.pending.map((name) => (
+                          <span key={name} className="ws-people-chip ws-people-chip--pending">
+                            {name}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

@@ -292,6 +292,75 @@
   white-space: nowrap;
 }
 
+/* 완료/대기 두 그룹 — 카드 본문 하단에 큼직한 칩으로 한눈에 보이게.
+   완료=초록 채움+체크, 대기=빨강 점선 outline. 직원이 여러 명이어도 한 카드 안에 다 묶여 표시. */
+.ws-people-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ws-people-row--done + .ws-people-row--pending {
+  margin-top: 6px;
+}
+
+.ws-people-label {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #fff;
+  font-feature-settings: "tnum" 1;
+}
+.ws-people-label--done {
+  background: #16a34a;
+}
+.ws-people-label--pending {
+  background: #dc2626;
+}
+
+.ws-people-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ws-people-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  border: 1.5px solid;
+  white-space: nowrap;
+}
+.ws-people-chip--done {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+}
+.ws-people-chip--done svg {
+  width: 13px;
+  height: 13px;
+}
+.ws-people-chip--pending {
+  background: #fff;
+  border-color: #fca5a5;
+  color: #b91c1c;
+  border-style: dashed;
+}
+
 /* 발주관리에서 정의한 due-badge 시스템(.due-badge--today/tomorrow/overdue) 을 그대로 재사용.
    OrderAdmin.css 가 admin 영역에 import 되어 있어 여기서 별도 정의 불필요 — 안전하게 재선언만. */
 .due-badge {
