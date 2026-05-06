@@ -1669,92 +1669,6 @@ def restore_default_printer() -> None:
             ui_log(f"기본 프린터 복구: → {prev}")
 
 
-def start_print_dialog_autoconfirm() -> None:
-    """워처 백그라운드에서 표준 윈도우 인쇄 다이얼로그를 감지해 IDOK 자동 송신.
-    FlexSign [인쇄하기] 후 추가 Enter 없이 PDF24 로 직행 — 사무실 직원이 [인쇄하기] →
-    [Enter] 두 단계를 한 단계로 줄여 매칭 다이얼로그가 바로 뜨도록.
-
-    매칭 조건(보수적):
-      - 윈도우 클래스 정확히 '#32770' (표준 다이얼로그)
-      - 제목 정확히 '인쇄' 또는 'Print' ('인쇄 미리보기' / '인쇄 옵션' 등은 회피)
-
-    타이밍 — 사용자 Enter 와 충돌해 취소가 눌리는 회귀를 막기 위해 즉시 발화:
-      - 폴링 30ms (이전 300ms → 사용자 반응 시간 ~150ms 보다 훨씬 빠름)
-      - 감지 즉시 IDOK 송신(이전 0.15s 사전 sleep 제거 — PostMessage 는 비동기로
-        다이얼로그 메시지 큐에 들어가므로 다이얼로그가 완성되기 전에 보내도 안전)
-
-    안전장치:
-      - 같은 hwnd 는 5초 동안 재처리 안 함(다이얼로그 닫히는 데 걸리는 시간 보호).
-      - PDF24 가 시스템 기본 프린터로 전환된 상태가 전제(switch_default_to_pdf24 후 호출).
-    """
-    if sys.platform != "win32":
-        return
-
-    user32 = ctypes.windll.user32
-    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-    WM_COMMAND = 0x0111
-    IDOK = 1
-    PRINT_DIALOG_TITLES = {"인쇄", "Print"}
-    HANDLED_TTL = 5.0
-
-    handled: dict[int, float] = {}
-
-    def _scan_and_confirm():
-        targets: list[int] = []
-
-        def _proc(hwnd, _):
-            try:
-                if not hwnd or not user32.IsWindowVisible(hwnd):
-                    return True
-                cls_buf = ctypes.create_unicode_buffer(64)
-                user32.GetClassNameW(hwnd, cls_buf, 64)
-                if cls_buf.value != "#32770":
-                    return True
-                t_buf = ctypes.create_unicode_buffer(128)
-                user32.GetWindowTextW(hwnd, t_buf, 128)
-                if t_buf.value in PRINT_DIALOG_TITLES:
-                    targets.append(int(hwnd))
-            except Exception:
-                pass
-            return True
-
-        try:
-            user32.EnumWindows(EnumWindowsProc(_proc), 0)
-        except Exception:
-            return
-
-        now = time.time()
-        for h in [h for h, ts in handled.items() if now - ts > HANDLED_TTL]:
-            handled.pop(h, None)
-
-        for hwnd in targets:
-            if hwnd in handled:
-                continue
-            handled[hwnd] = now
-            try:
-                # 즉시 IDOK — 사전 sleep 없음. PostMessage 는 비동기라 다이얼로그가 IDOK
-                # 핸들러를 등록하기 전이라도 메시지 큐에 들어가 처리된다. 사용자의 즉발 Enter
-                # (~150ms) 와 시간 차로 충돌해 '취소' 가 눌려버리던 회귀 방지.
-                user32.PostMessageW(hwnd, WM_COMMAND, IDOK, 0)
-                ui_log(f"인쇄 다이얼로그 자동 확인(hwnd=0x{hwnd:x})")
-            except Exception as e:
-                ui_log(f"인쇄 다이얼로그 자동 확인 실패: {e}")
-
-    def _loop():
-        # 30ms 폴링 — EnumWindows 가 가벼운 호출이라 CPU 영향 작음(<1%). 사람 반응 시간보다
-        # 훨씬 빨라야 사용자 Enter 와 시간 차이 충돌이 없다.
-        while True:
-            try:
-                _scan_and_confirm()
-            except Exception:
-                pass
-            time.sleep(0.03)
-
-    threading.Thread(target=_loop, daemon=True).start()
-    ui_log("인쇄 다이얼로그 자동 확인 활성화")
-
-
 def _list_installed_printers() -> list[str]:
     try:
         import win32print
@@ -6082,10 +5996,6 @@ class App(tk.Tk):
             # FlexSign 에서 기존 지시서 열어 인쇄해도 자동으로 PDF24 로 가서
             # 매칭 다이얼로그가 뜨도록 보장. on_close 에서 원래 프린터로 복구.
             switch_default_to_pdf24()
-
-            # FlexSign [인쇄하기] → 인쇄 다이얼로그(PDF24 기본 선택) 가 뜨면 추가 Enter 없이
-            # 자동 OK — 사무실 직원이 두 번 누르는 혼란 제거. on_close 시 데몬 쓰레드 자동 종료.
-            start_print_dialog_autoconfirm()
 
         threading.Thread(target=_run, daemon=True).start()
 
