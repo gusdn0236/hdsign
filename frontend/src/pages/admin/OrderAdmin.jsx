@@ -153,7 +153,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [regeneratingHeaderId, setRegeneratingHeaderId] = useState(null);
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
-  const [bulkCompleting, setBulkCompleting] = useState(false);
+  // 지연 일괄 완료 검토 — queue 의 주문 한 건씩 PDF 와 적용 납기를 보면서 결정한다.
+  // decisions[id] = { action: 'complete' } 또는 { action: 'reschedule', newDate: 'yyyy-MM-dd' }.
+  // 모든 주문을 다 보면 selectedOrderId 가 null 로 풀리고 상단 sticky 패널에서 일괄 적용.
+  const [reviewSession, setReviewSession] = useState(null);
+  const [reviewChoice, setReviewChoice] = useState("complete"); // 'complete' | 'reschedule'
+  const [reviewStage, setReviewStage] = useState("choose"); // 'choose' | 'pickDate'
+  const [reviewDateInput, setReviewDateInput] = useState("");
+  const [bulkApplying, setBulkApplying] = useState(false);
   // QR 생성 패널 — 휴지통 탭 옆에서 펼쳐 거래처 한 번 고르면 빈 주문 + QR 클립보드.
   const [qrPanelOpen, setQrPanelOpen] = useState(false);
   const [qrPanelClients, setQrPanelClients] = useState([]);
@@ -456,14 +463,48 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const handler = (e) => {
       const tag = (e.target?.tagName || "").toLowerCase();
       const inField = tag === "input" || tag === "textarea" || tag === "select";
-      // ESC — lightbox 가 열려 있으면 lightbox 가 먼저 닫힘. 모달만 열려 있으면 모달 닫기.
+      // ESC — lightbox 가 열려 있으면 lightbox 가 먼저 닫힘.
+      // 검토 세션 중이면 그냥 닫지 않고 cancelReview 가 확인 다이얼로그를 띄움.
       if (e.key === "Escape") {
         if (lightboxIndex !== null) return;
         e.preventDefault();
-        setSelectedOrderId(null);
+        if (reviewSession) {
+          cancelReview();
+        } else {
+          setSelectedOrderId(null);
+        }
         return;
       }
       if (lightboxIndex !== null) return;
+
+      // 검토 세션 중 — 화살표는 선택 토글, Enter 는 확정. 일반 모드의 prev/next 는 끔.
+      if (reviewSession) {
+        if (reviewStage === "pickDate") {
+          // 날짜 입력 단계는 input 의 onKeyDown 이 처리. ESC 만 위에서 잡고 나머지는 통과.
+          return;
+        }
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          setReviewChoice("complete");
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          setReviewChoice("reschedule");
+        } else if (e.key === "Enter") {
+          if (inField) return;
+          e.preventDefault();
+          if (reviewChoice === "complete") {
+            commitDecisionAndAdvance({ action: "complete" });
+          } else {
+            // 적용 납기를 기본값으로 깔고 날짜 입력 단계로 진입.
+            const cur = orders.find((o) => o.id === selectedOrderId);
+            const dueStr = cur?.dueDate ? String(cur.dueDate).split("T")[0] : "";
+            setReviewDateInput(dueStr);
+            setReviewStage("pickDate");
+          }
+        }
+        return;
+      }
+
       if (inField) return;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
@@ -475,7 +516,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedOrderId, lightboxIndex, currentOrderIndex, filteredOrders]);
+  }, [selectedOrderId, lightboxIndex, currentOrderIndex, filteredOrders, reviewSession, reviewStage, reviewChoice, orders]);
 
   const filterTabs = [
     { key: "ALL", label: "전체", count: orders.length },
@@ -587,7 +628,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  const bulkCompleteOverdue = async () => {
+  // 지연 검토 시작 — 일괄 완료 버튼을 누르면 한 건씩 PDF 를 보면서 결정한다.
+  // 적용 납기가 지났지만 실제로는 미래 작업인 케이스(웹 적용 누락)를 한 번 더 거르기 위함.
+  const startBulkCompleteReview = () => {
     const pad = (n) => String(n).padStart(2, "0");
     const now = new Date();
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -601,39 +644,109 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setFeedback({ type: "error", msg: "지연된 요청이 없습니다." });
       return;
     }
-    if (!window.confirm(`지연된 요청 ${overdue.length}건을 모두 완료 처리하시겠습니까?`)) {
+    setReviewSession({
+      queue: overdue.map((o) => o.id),
+      cursor: 0,
+      decisions: {},
+    });
+    setReviewChoice("complete");
+    setReviewStage("choose");
+    setReviewDateInput("");
+    setSelectedOrderId(overdue[0].id);
+  };
+
+  // 한 건의 결정을 저장하고 다음 주문으로 이동. 마지막이면 모달 닫고 sticky 패널이 뜬다.
+  const commitDecisionAndAdvance = (decision) => {
+    if (!reviewSession) return;
+    const id = reviewSession.queue[reviewSession.cursor];
+    if (id == null) return;
+    const nextDecisions = { ...reviewSession.decisions, [id]: decision };
+    const nextCursor = reviewSession.cursor + 1;
+    if (nextCursor < reviewSession.queue.length) {
+      setReviewSession({ ...reviewSession, cursor: nextCursor, decisions: nextDecisions });
+      setSelectedOrderId(reviewSession.queue[nextCursor]);
+      setReviewChoice("complete");
+      setReviewStage("choose");
+      setReviewDateInput("");
+    } else {
+      setReviewSession({ ...reviewSession, cursor: nextCursor, decisions: nextDecisions });
+      setSelectedOrderId(null);
+      setReviewStage("choose");
+      setReviewDateInput("");
+    }
+  };
+
+  const cancelReview = () => {
+    if (!reviewSession) return;
+    const decided = Object.keys(reviewSession.decisions).length;
+    if (decided > 0 && !window.confirm(`검토 중인 결정 ${decided}건이 있습니다. 모두 버리고 종료할까요?`)) {
       return;
     }
-    setBulkCompleting(true);
+    setReviewSession(null);
+    setReviewChoice("complete");
+    setReviewStage("choose");
+    setReviewDateInput("");
+    setSelectedOrderId(null);
+  };
+
+  // 모든 검토가 끝난 뒤 "일괄 적용" — 완료 처리는 PUT /status, 납기 수정은 PUT /due-date.
+  // 둘 다 병렬로 보내고 결과를 합쳐서 한 번에 피드백.
+  const applyBulkReview = async () => {
+    if (!reviewSession || bulkApplying) return;
+    const entries = Object.entries(reviewSession.decisions);
+    if (entries.length === 0) {
+      setReviewSession(null);
+      return;
+    }
+    setBulkApplying(true);
     try {
-      const results = await Promise.allSettled(
-        overdue.map((order) =>
-          fetch(`${BASE_URL}/api/admin/orders/${order.id}/status`, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ status: "COMPLETED" }),
-          }).then(async (res) => {
-            if (!res.ok) throw new Error(String(order.id));
-            return res.json();
-          })
-        )
+      const completeIds = entries.filter(([, d]) => d.action === "complete").map(([id]) => Number(id));
+      const reschedules = entries
+        .filter(([, d]) => d.action === "reschedule" && d.newDate)
+        .map(([id, d]) => ({ id: Number(id), newDate: d.newDate }));
+
+      const completePromises = completeIds.map((id) =>
+        fetch(`${BASE_URL}/api/admin/orders/${id}/status`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ status: "COMPLETED" }),
+        }).then(async (res) => {
+          if (!res.ok) throw new Error(String(id));
+          return res.json();
+        })
       );
+      const reschedulePromises = reschedules.map(({ id, newDate }) =>
+        fetch(`${BASE_URL}/api/admin/orders/${id}/due-date`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ dueDate: newDate }),
+        }).then(async (res) => {
+          if (!res.ok) throw new Error(String(id));
+          return res.json();
+        })
+      );
+
+      const results = await Promise.allSettled([...completePromises, ...reschedulePromises]);
       const updated = results
         .filter((r) => r.status === "fulfilled")
         .map((r) => r.value);
+      const failed = results.length - updated.length;
       const updatedMap = new Map(updated.map((o) => [o.id, o]));
       setOrders((prev) => prev.map((o) => updatedMap.get(o.id) || o));
-      const failed = results.length - updated.length;
-      if (failed === 0) {
-        setFeedback({ type: "success", msg: `${updated.length}건을 완료 처리했습니다.` });
-      } else {
-        setFeedback({ type: "error", msg: `${updated.length}건 완료, ${failed}건 실패` });
-      }
+
+      const completedOk = updated.filter((o) => o.status === "COMPLETED" && completeIds.includes(o.id)).length;
+      const rescheduledOk = updated.length - completedOk;
+      const parts = [];
+      if (completedOk > 0) parts.push(`완료 ${completedOk}건`);
+      if (rescheduledOk > 0) parts.push(`납기 수정 ${rescheduledOk}건`);
+      if (failed > 0) parts.push(`실패 ${failed}건`);
+      setFeedback({
+        type: failed === 0 ? "success" : "error",
+        msg: parts.join(", ") || "변경 사항 없음",
+      });
+      setReviewSession(null);
     } finally {
-      setBulkCompleting(false);
+      setBulkApplying(false);
     }
   };
 
@@ -1183,15 +1296,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       {activeFilter !== "TRASH" && sortMode === "BY_DUE_DATE" && dueDateRange === "OVERDUE" && filteredOrders.length > 0 && (
         <div className="bulk-action-row bulk-action-row--complete">
           <span className="bulk-action-text bulk-action-text--complete">
-            지연 요청 {filteredOrders.length}건
+            지연 요청 {filteredOrders.length}건 · 한 건씩 보면서 완료/납기수정 결정
           </span>
           <button
             type="button"
             className="bulk-complete-btn"
-            onClick={bulkCompleteOverdue}
-            disabled={bulkCompleting}
+            onClick={startBulkCompleteReview}
+            disabled={!!reviewSession}
           >
-            {bulkCompleting ? "처리 중..." : "전부 완료 처리"}
+            {reviewSession ? "검토 중..." : "지연 검토 시작"}
           </button>
         </div>
       )}
@@ -1600,15 +1713,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           // click 이 backdrop(공통 조상) 에서 발사돼 모달이 닫히는 문제를 방지.
           // mousedown 은 시작 지점 기준이라 PDF 안에서 시작했으면 backdrop 으로 안 옴.
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setSelectedOrderId(null);
+            // 검토 세션 중에는 backdrop 클릭으로 실수로 끝나지 않도록 무시.
+            if (e.target === e.currentTarget && !reviewSession) setSelectedOrderId(null);
           }}
         >
           {/* 안쪽에 stopPropagation 을 걸면 react-zoom-pan-pinch 가 window 레벨에서
               듣는 mousedown 까지 막혀 PDF 드래그가 동작하지 않는다. backdrop 의
               e.target === e.currentTarget 체크만으로도 자식 클릭은 닫힘을 트리거하지
               않으므로 여기서는 propagation 을 막지 않는다. */}
-          <div className="order-preview-content">
-            <button type="button" className="order-modal-close" onClick={() => setSelectedOrderId(null)}>
+          <div className={`order-preview-content ${reviewSession ? "order-preview-content--review" : ""}`}>
+            <button
+              type="button"
+              className="order-modal-close"
+              onClick={() => (reviewSession ? cancelReview() : setSelectedOrderId(null))}
+            >
               ×
             </button>
 
@@ -1711,7 +1829,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 {selectedOrder.title || requestLabel(selectedOrder.requestType)}
               </h3>
 
-              {(hasPrevOrder || hasNextOrder) && (
+              {(hasPrevOrder || hasNextOrder) && !reviewSession && (
                 <div className="modal-order-nav-row">
                   <button
                     type="button"
@@ -1899,9 +2017,151 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </div>
               </div>
             </aside>
+
+            {reviewSession && (
+              <div className="review-bar">
+                <div className="review-bar-left">
+                  <span className="review-counter">
+                    {reviewSession.cursor + 1} / {reviewSession.queue.length}
+                  </span>
+                  <span className="review-applied">
+                    웹 적용 납기 <strong>{formatDate(selectedOrder.dueDate)}</strong>
+                  </span>
+                </div>
+
+                {reviewStage === "choose" ? (
+                  <div className="review-bar-mid">
+                    <button
+                      type="button"
+                      className={`review-choice ${reviewChoice === "complete" ? "active" : ""}`}
+                      onClick={() => {
+                        setReviewChoice("complete");
+                        commitDecisionAndAdvance({ action: "complete" });
+                      }}
+                      title="실제로 납기가 지났음 — 완료로 처리"
+                    >
+                      <span className="review-choice-key">Enter</span>
+                      <span className="review-choice-label">완료 처리</span>
+                    </button>
+                    <span className="review-arrow">→</span>
+                    <button
+                      type="button"
+                      className={`review-choice ${reviewChoice === "reschedule" ? "active" : ""}`}
+                      onClick={() => {
+                        setReviewChoice("reschedule");
+                        const cur = orders.find((o) => o.id === selectedOrderId);
+                        const dueStr = cur?.dueDate ? String(cur.dueDate).split("T")[0] : "";
+                        setReviewDateInput(dueStr);
+                        setReviewStage("pickDate");
+                      }}
+                      title="아직 안 지난 작업 — 납기를 새 날짜로 수정"
+                    >
+                      <span className="review-choice-key">→ Enter</span>
+                      <span className="review-choice-label">납기 수정</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="review-bar-mid review-bar-mid--date">
+                    <span className="review-date-label">새 납기:</span>
+                    <input
+                      type="date"
+                      className="review-date-input"
+                      value={reviewDateInput}
+                      onChange={(e) => setReviewDateInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (!reviewDateInput) return;
+                          commitDecisionAndAdvance({
+                            action: "reschedule",
+                            newDate: reviewDateInput,
+                          });
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setReviewStage("choose");
+                          setReviewChoice("reschedule");
+                        }
+                      }}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="review-confirm-btn"
+                      disabled={!reviewDateInput}
+                      onClick={() => {
+                        commitDecisionAndAdvance({
+                          action: "reschedule",
+                          newDate: reviewDateInput,
+                        });
+                      }}
+                    >
+                      저장 (Enter)
+                    </button>
+                    <button
+                      type="button"
+                      className="review-back-btn"
+                      onClick={() => {
+                        setReviewStage("choose");
+                        setReviewChoice("reschedule");
+                      }}
+                    >
+                      뒤로
+                    </button>
+                  </div>
+                )}
+
+                <div className="review-bar-right">
+                  <button type="button" className="review-cancel-btn" onClick={cancelReview}>
+                    검토 종료
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      {reviewSession && !selectedOrderId && (() => {
+        const decisions = Object.values(reviewSession.decisions);
+        const completes = decisions.filter((d) => d.action === "complete").length;
+        const reschedules = decisions.filter((d) => d.action === "reschedule").length;
+        return (
+          <div className="review-apply-overlay" role="dialog">
+            <div className="review-apply-card">
+              <h3 className="review-apply-title">검토 완료</h3>
+              <p className="review-apply-summary">
+                <span><strong>완료 처리</strong> {completes}건</span>
+                <span><strong>납기 수정</strong> {reschedules}건</span>
+              </p>
+              <p className="review-apply-hint">
+                일괄 적용을 누르면 완료 처리는 상태가 완료로 바뀌고, 납기 수정은 새 날짜로 갱신됩니다.
+              </p>
+              <div className="review-apply-actions">
+                <button
+                  type="button"
+                  className="review-apply-cancel"
+                  disabled={bulkApplying}
+                  onClick={() => {
+                    if (window.confirm("검토 결과를 모두 버리고 종료할까요?")) {
+                      setReviewSession(null);
+                    }
+                  }}
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  className="review-apply-go"
+                  disabled={bulkApplying || decisions.length === 0}
+                  onClick={applyBulkReview}
+                >
+                  {bulkApplying ? "적용 중..." : "일괄 적용"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

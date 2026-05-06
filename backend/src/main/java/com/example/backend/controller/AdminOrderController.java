@@ -132,6 +132,33 @@ public class AdminOrderController {
         return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
     }
 
+    // 납기 갱신 — 일괄 완료 검토에서 "지연으로 떠있지만 실제 납기는 미래"인 건의 dueDate 만 교체.
+    // 본문: { "dueDate": "yyyy-MM-dd" }. 같은 값으로 와도 변경 없음(배지 트리거 X).
+    @PutMapping("/{id}/due-date")
+    public ResponseEntity<?> updateDueDate(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body
+    ) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        if (body == null) body = Map.of();
+        String dueRaw = body.get("dueDate") instanceof String s ? s : null;
+        if (dueRaw == null || dueRaw.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "dueDate 가 필요합니다."));
+        }
+        java.time.LocalDate parsed;
+        try {
+            parsed = java.time.LocalDate.parse(dueRaw.trim());
+        } catch (java.time.format.DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "dueDate 포맷은 yyyy-MM-dd 입니다."));
+        }
+        if (!parsed.equals(order.getDueDate())) {
+            order.setDueDate(parsed);
+            order.setWorksheetUpdatedAt(LocalDateTime.now());
+        }
+        return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
+    }
+
     // 완료 주문을 휴지통으로 이동 (soft delete)
     @DeleteMapping("/{id}")
     public ResponseEntity<?> moveToTrash(@PathVariable Long id) {
