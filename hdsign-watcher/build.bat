@@ -2,7 +2,7 @@
 setlocal
 set SCRIPT_DIR=%~dp0
 set PYTHON=C:\Users\USER\AppData\Local\Programs\Python\Python39\python.exe
-REM --onedir 결과 폴더(이전 --onefile 시 단일 .exe). 시작 시간을 줄이려고 onedir 로 전환.
+REM --onedir output folder. Was a single EXE under --onefile.
 set TARGET_DIR=%SCRIPT_DIR%dist\hdsign_worksheet
 set TARGET=%TARGET_DIR%\hdsign_worksheet.exe
 
@@ -35,9 +35,8 @@ REM Stop any running watcher so PyInstaller can overwrite the existing .exe.
 REM /F forces, /T also kills child processes. Errors are suppressed via 2 nul.
 taskkill /F /IM hdsign_worksheet.exe /T >nul 2>nul
 
-REM --onedir 출력 폴더(`dist\hdsign_worksheet\`) 통째로 정리한다.
-REM 폴더 안에 EXE + 수백 개 DLL/asset 이 있어 PyInstaller 가 새로 채울 때 잔재가 남으면 충돌.
-REM 옛 onefile 잔재(`dist\hdsign_worksheet.exe`, `.old_*.exe`) 도 함께 청소.
+REM --onedir output folder dist\hdsign_worksheet\ - clean it whole.
+REM Old onefile leftovers (dist\hdsign_worksheet.exe, .old_*.exe) cleaned below.
 if exist "%TARGET_DIR%" (
     rmdir /s /q "%TARGET_DIR%" >nul 2>nul
 )
@@ -88,9 +87,9 @@ REM treats every print as "QR match failed".
 REM No --uac-admin: keep the exe at asInvoker (default) so it can run at either
 REM standard or admin level. Elevation is controlled per-shortcut by the deploy
 REM script, which creates one standard shortcut and one admin-flagged shortcut.
-REM --onedir + --noupx : 시작 시간 단축. onefile 은 매 실행마다 100MB+ 압축 묶음을
-REM 임시 폴더에 풀어서 5~15초가 걸렸음. onedir 는 풀린 상태로 두고 EXE 만 실행 → 1~3초.
-REM UPX 압축도 끔 — EXE 크기는 늘지만 디스크/네트워크에서 한 번 받으면 OS 캐시가 처리.
+REM --onedir + --noupx : faster startup. Onefile unpacked 100MB+ to temp every
+REM launch (5-15s). Onedir keeps everything extracted, only the small EXE runs (1-3s).
+REM UPX compression off too - EXE is bigger but OS cache handles it after first load.
 "%PYTHON%" -m PyInstaller --clean -y --onedir --windowed --noupx --name hdsign_worksheet --collect-all pymupdf --collect-all pyzbar --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import encodings.idna --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" "%SCRIPT_DIR%hdsign_watcher.py"
 if errorlevel 1 (
     echo.
@@ -106,9 +105,10 @@ echo  BUILD COMPLETE
 echo  Output folder: %TARGET_DIR%
 echo  EXE          : %TARGET%
 echo.
-echo  배포 — \\Main\현대공유\지시서프로그램 에 'hdsign_worksheet' 폴더
-echo  통째로 복사. 바로가기 대상은 폴더 안의 hdsign_worksheet.exe.
-echo  옛 단일 EXE (지시서프로그램\hdsign_worksheet.exe) 가 있으면 삭제.
+echo  Deploy: copy the WHOLE 'hdsign_worksheet' folder under dist
+echo  to \\Main\HD-share\Worksheet-Program\ . Update each PC shortcut
+echo  target to ...\hdsign_worksheet\hdsign_worksheet.exe (subfolder).
+echo  Delete the old single EXE if it remains in the share root.
 echo ============================================================
 popd
 pause
