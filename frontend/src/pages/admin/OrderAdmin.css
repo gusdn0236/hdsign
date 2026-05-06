@@ -42,6 +42,11 @@
   margin-bottom: 20px;
 }
 
+/* /admin/orders — 지연 카드 추가로 4컬럼. /admin/quotes 는 dueDate 가 없어 3컬럼 유지. */
+.order-summary--with-overdue {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .summary-card {
   background: #fff;
   border: 1px solid #e7e7e7;
@@ -76,6 +81,44 @@
 
 .summary-completed .summary-count {
   color: #047857;
+}
+
+/* 지연 카드 — 빨간 강조. 1건 이상이면 클릭으로 작업중·납기별·지연 점프.
+   0건이면 회색으로 죽이고 클릭 비활성. */
+.summary-overdue {
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.summary-overdue .summary-count {
+  color: #dc2626;
+}
+.summary-overdue.is-active {
+  cursor: pointer;
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+.summary-overdue.is-active:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(220, 38, 38, 0.18);
+  border-color: #fca5a5;
+  background: #ffecec;
+}
+.summary-overdue.is-active:focus-visible {
+  outline: 2px solid #dc2626;
+  outline-offset: 2px;
+}
+.summary-overdue.is-empty {
+  cursor: default;
+  opacity: 0.55;
+}
+.summary-overdue.is-empty .summary-count {
+  color: #a1a1aa;
+}
+
+/* 좁은 화면 — 4컬럼이 너무 빡빡하면 2x2 로 떨어뜨려 가독성 확보. */
+@media (max-width: 600px) {
+  .order-summary--with-overdue {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .order-filter-tabs {
@@ -774,21 +817,68 @@
   gap: 22px;
 }
 
+/* 카드 보기 그룹 헤더 — 모바일 /m/worksheets 와 동일한 가시성. 17px 굵게,
+   왼쪽에 컬러 배지(today/tomorrow/overdue), 우측에 갯수. */
 .order-card-group-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  margin: 0 4px 10px;
-  font-size: 13px;
-  font-weight: 700;
+  margin: 0 4px 12px;
+  font-size: 17px;
+  font-weight: 800;
   color: #18181b;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.order-card-group-date {
+  color: #18181b;
 }
 
 .order-card-group-count {
+  margin-left: auto;
   color: #71717a;
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* 납기 상태 배지 — 행 셀(.order-due-cell), 카드 메타(.order-card-due),
+   그룹 헤더(.order-card-group-head) 어디에서든 동일한 컬러 시스템.
+   행/카드용은 기본 크기(작게), 그룹 헤더용은 .due-badge--lg 로 강조. */
+.due-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #fff;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.due-badge--lg {
+  height: 22px;
+  padding: 0 10px;
   font-size: 12px;
+}
+.due-badge--today { background: #16a34a; }
+.due-badge--tomorrow { background: #f59e0b; }
+.due-badge--overdue { background: #dc2626; }
+
+/* 행 보기 납기 셀 — 배지 + 텍스트가 한 줄로. */
+.order-due-cell {
+  white-space: nowrap;
+}
+.order-due-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.order-due-text {
+  font-feature-settings: "tnum" 1;
 }
 
 .order-card-grid {
@@ -936,12 +1026,18 @@
   white-space: nowrap;
   flex: 1;
   min-width: 0;
+  font-weight: 700;
+  color: #18181b;
 }
 
 .order-card-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: #18181b;
   white-space: nowrap;
   font-feature-settings: "tnum" 1;
+  flex-shrink: 0;
 }
 
 .order-card-title {
@@ -999,6 +1095,19 @@
   }
   .order-card-title {
     font-size: 13px;
+  }
+  .order-card-group-head {
+    font-size: 16px;
+  }
+  .due-badge {
+    height: 17px;
+    padding: 0 6px;
+    font-size: 10.5px;
+  }
+  .due-badge--lg {
+    height: 20px;
+    padding: 0 9px;
+    font-size: 11.5px;
   }
 }
 

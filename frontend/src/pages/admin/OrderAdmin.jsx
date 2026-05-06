@@ -87,22 +87,33 @@ function formatDueDate(dueDate, deliveryMethod) {
   return delivery ? `${base} ${delivery}` : base;
 }
 
-// 카드 그리드의 납기 그룹 헤더 라벨 — 오늘/내일을 사람말로, 그 외엔 M월 D일 (요일).
-function formatGroupLabel(dateStr) {
+// 카드 그리드의 납기 그룹 헤더용 — '5월 6일 (수)' 만. 오늘/내일/지남 같은 상태는
+// getDueBadge 가 별도 컬러 배지로 반환해 헤더에서 함께 렌더한다(모바일 /m/worksheets 동일).
+function formatGroupDateLabel(dateStr) {
   if (!dateStr || dateStr === "none") return "납기 미정";
   const [y, m, d] = dateStr.split("-").map(Number);
   if (!y || !m || !d) return dateStr;
   const dt = new Date(y, m - 1, d);
   if (Number.isNaN(dt.getTime())) return dateStr;
+  return `${m}월 ${d}일 (${WEEKDAY_KO[dt.getDay()]})`;
+}
+
+// 납기 상태 배지 — 오늘/내일/지남 만. 일반 미래 일자는 null(텍스트만 노출).
+// dateStr 은 'YYYY-MM-DD' 또는 ISO. 행/카드/그룹헤더 모두 같은 함수로 결정.
+function getDueBadge(dateStr) {
+  if (!dateStr) return null;
+  const ymd = String(dateStr).split("T")[0];
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((dt.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
-  const md = `${m}월 ${d}일`;
-  const dow = WEEKDAY_KO[dt.getDay()];
-  if (diffDays === 0) return `오늘 · ${md} (${dow})`;
-  if (diffDays === 1) return `내일 · ${md} (${dow})`;
-  if (diffDays < 0) return `지연 · ${md} (${dow})`;
-  return `${md} (${dow})`;
+  const diffDays = Math.round((dt.getTime() - today.getTime()) / 86400000);
+  if (diffDays < 0) return { kind: "overdue", text: `${-diffDays}일 지남` };
+  if (diffDays === 0) return { kind: "today", text: "오늘" };
+  if (diffDays === 1) return { kind: "tomorrow", text: "내일" };
+  return null;
 }
 
 function formatDateTime(value) {
@@ -348,6 +359,31 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return counts;
   }, [orders]);
 
+  // 지연 건 — 작업중/접수 단계에서 dueDate 가 오늘보다 과거. 완료/휴지통은 제외.
+  // 요약 카드의 [지연] 카운트와 점프 동작에서 같은 기준을 사용한다.
+  const overdueCount = useMemo(() => {
+    if (!isOrderPage) return 0;
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    return orders.reduce((acc, o) => {
+      if (!o.dueDate) return acc;
+      if (o.status === "COMPLETED") return acc;
+      const due = String(o.dueDate).split("T")[0];
+      return due < today ? acc + 1 : acc;
+    }, 0);
+  }, [orders, isOrderPage]);
+
+  // 요약 카드 [지연] 클릭 시 한 번에 작업중 + 납기별 + 지연 필터로 점프.
+  const jumpToOverdue = () => {
+    if (overdueCount <= 0) return;
+    setActiveFilter("IN_PROGRESS");
+    setSortMode("BY_DUE_DATE");
+    setDueDateRange("OVERDUE");
+    setClientFilter("");
+    setClientSearch("");
+  };
+
   const statusFilteredOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
     if (activeFilter === "ALL") return orders;
@@ -428,10 +464,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   // 카드 보기 — 납기별 정렬일 때만 dueDate 로 그룹핑(모바일 /m/worksheets 와 동일).
   // 그 외 모드(기본/거래처별/휴지통)에선 단일 그룹 한 덩어리로 보여 시각적 산만함을 줄인다.
+  // 그룹 헤더는 dateLabel(텍스트) + badge(컬러) 로 분리해 빨강/주황/초록을 한눈에 띄게 한다.
   const cardGroups = useMemo(() => {
     const useDateGroups = activeFilter !== "TRASH" && sortMode === "BY_DUE_DATE";
     if (!useDateGroups) {
-      return [{ key: "_all", label: null, list: filteredOrders }];
+      return [{ key: "_all", dateLabel: null, badge: null, list: filteredOrders }];
     }
     const map = new Map();
     filteredOrders.forEach((o) => {
@@ -445,7 +482,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         if (b === "none") return -1;
         return a.localeCompare(b);
       })
-      .map(([key, list]) => ({ key, label: formatGroupLabel(key), list }));
+      .map(([key, list]) => ({
+        key,
+        dateLabel: formatGroupDateLabel(key),
+        badge: key === "none" ? null : getDueBadge(key),
+        list,
+      }));
   }, [filteredOrders, sortMode, activeFilter]);
 
   const currentOrderIndex = useMemo(() => {
@@ -1112,7 +1154,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     <div className="order-admin-page">
       {feedback && <div className={`order-feedback ${feedback.type}`}>{feedback.msg}</div>}
 
-      <div className="order-summary">
+      <div className={`order-summary ${isOrderPage ? "order-summary--with-overdue" : ""}`}>
         <div className="summary-card summary-received">
           <span className="summary-count">{statusCounts.RECEIVED}</span>
           <span className="summary-label">접수</span>
@@ -1125,6 +1167,25 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           <span className="summary-count">{statusCounts.COMPLETED}</span>
           <span className="summary-label">완료</span>
         </div>
+        {isOrderPage && (
+          <div
+            className={`summary-card summary-overdue ${overdueCount > 0 ? "is-active" : "is-empty"}`}
+            onClick={jumpToOverdue}
+            role={overdueCount > 0 ? "button" : undefined}
+            tabIndex={overdueCount > 0 ? 0 : undefined}
+            onKeyDown={(e) => {
+              if (overdueCount <= 0) return;
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                jumpToOverdue();
+              }
+            }}
+            title={overdueCount > 0 ? "클릭 → 작업중·납기별·지연으로 이동" : "지연된 요청이 없습니다"}
+          >
+            <span className="summary-count">{overdueCount}</span>
+            <span className="summary-label">지연</span>
+          </div>
+        )}
       </div>
 
       <div className="order-filter-tabs">
@@ -1514,7 +1575,21 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </td>
                   <td>{order.clientCompanyName || "-"}</td>
                   <td className="order-title">{order.title || requestLabel(order.requestType)}</td>
-                  {isOrderPage && <td>{formatDueDate(order.dueDate, order.deliveryMethod)}</td>}
+                  {isOrderPage && (() => {
+                    const dueBadge = getDueBadge(order.dueDate);
+                    return (
+                      <td className="order-due-cell">
+                        <span className="order-due-inline">
+                          {dueBadge && (
+                            <span className={`due-badge due-badge--${dueBadge.kind}`}>{dueBadge.text}</span>
+                          )}
+                          <span className="order-due-text">
+                            {formatDueDate(order.dueDate, order.deliveryMethod)}
+                          </span>
+                        </span>
+                      </td>
+                    );
+                  })()}
                   <td>
                     {isTrash ? (
                       <span className="status-badge status-trash">
@@ -1619,9 +1694,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           ) : (
             cardGroups.map((group) => (
               <section className="order-card-group" key={group.key}>
-                {group.label && (
+                {group.dateLabel && (
                   <h2 className="order-card-group-head">
-                    <span>{group.label}</span>
+                    {group.badge && (
+                      <span className={`due-badge due-badge--lg due-badge--${group.badge.kind}`}>
+                        {group.badge.text}
+                      </span>
+                    )}
+                    <span className="order-card-group-date">{group.dateLabel}</span>
                     <span className="order-card-group-count">{group.list.length}건</span>
                   </h2>
                 )}
@@ -1715,9 +1795,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                         <div className="order-card-body">
                           <div className="order-card-meta-row">
                             <span className="order-card-company">{order.clientCompanyName || "-"}</span>
-                            <span className="order-card-due">
-                              {formatDueDate(order.dueDate, order.deliveryMethod)}
-                            </span>
+                            {(() => {
+                              const dueBadge = getDueBadge(order.dueDate);
+                              return (
+                                <span className="order-card-due">
+                                  {dueBadge && (
+                                    <span className={`due-badge due-badge--${dueBadge.kind}`}>{dueBadge.text}</span>
+                                  )}
+                                  <span className="order-due-text">
+                                    {formatDueDate(order.dueDate, order.deliveryMethod)}
+                                  </span>
+                                </span>
+                              );
+                            })()}
                           </div>
                           <h3 className="order-card-title">
                             {order.title || requestLabel(order.requestType)}
