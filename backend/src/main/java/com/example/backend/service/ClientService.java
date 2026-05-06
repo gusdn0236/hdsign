@@ -517,8 +517,22 @@ public class ClientService {
     private String generateOrderNumber(RequestType requestType) {
         String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMdd"));
         String prefix = (requestType == RequestType.QUOTE ? "견적-" : "주문-") + date + "-";
-        long count = orderRepository.countByOrderNumberStartingWith(prefix) + 1;
-        return String.format("%s%02d", prefix, count);
+        // count(prefix) + 1 은 중간에 삭제된 row 가 있으면 이미 사용 중인 번호를 다시 만들어
+        // unique 제약 위반(2026-05-06 운영 중 발생). MAX(suffix) + 1 로 채번해 빈 슬롯을 건너뛴다.
+        // 비표준 번호(예: 수기로 넣은 "주문-260506-EXTRA")는 0 으로 무시 — 정상 NN 만 카운트.
+        int maxSuffix = orderRepository.findByOrderNumberStartingWith(prefix).stream()
+                .map(Order::getOrderNumber)
+                .map(num -> num.substring(prefix.length()))
+                .mapToInt(s -> {
+                    try {
+                        return Integer.parseInt(s);
+                    } catch (NumberFormatException e) {
+                        return 0;
+                    }
+                })
+                .max()
+                .orElse(0);
+        return String.format("%s%02d", prefix, maxSuffix + 1);
     }
 
     private MailService.OrderNotification buildOrderNotification(Order order, ClientUser client) {

@@ -24,7 +24,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     List<Order> findByDeletedAtIsNotNullOrderByDeletedAtDesc();
 
     List<Order> findByDeletedAtBefore(LocalDateTime cutoff);
-    long countByOrderNumberStartingWith(String prefix);
+    // 발주번호 채번에 사용 — count(11) + 1 = 12 라도 중간에 삭제로 빈 슬롯이 생기면
+    // 이미 -12 가 존재해 unique 충돌이 났다(2026-05-06). MAX(suffix) + 1 로 바꾸기 위해
+    // 같은 prefix 의 모든 번호를 가져와 Java 에서 max 계산. 하루 최대 ~수십 건이라 비용 미미.
+    List<Order> findByOrderNumberStartingWith(String prefix);
 
     // 백필 — worksheetPdfUrl 은 있는데 worksheetThumbnailUrl 이 비어있는 주문.
     // admin POST /backfill-worksheet-thumbnails 에서 페이지 단위로 처리.

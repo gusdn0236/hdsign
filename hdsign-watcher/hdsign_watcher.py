@@ -1351,12 +1351,41 @@ def change_tracked_folder_async(initial_dir: str | None = None):
     _ui_queue.put(("run", _ask))
 
 
-def open_qr_create_dialog_async():
+def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
     """GUI [QR 코드 만들기] 버튼에서 호출.
     독립 다이얼로그로 거래처를 검색해 빈 발주를 발급하고 그 QR 을 클립보드에 복사한다.
     인쇄 다이얼로그(_ask_print_match_blocking) 와 분리된 흐름 — 사용자는 FlexSign 에서
     지시서를 그리기 *전에* 이 버튼을 눌러 QR 부터 받고, 캔버스에 붙인 뒤 디자인을 시작.
-    그러면 첫 인쇄 PDF 에 이미 QR 이 박혀있어 매칭 다이얼로그가 곧장 [기존 변경] 으로 진입한다."""
+    그러면 첫 인쇄 PDF 에 이미 QR 이 박혀있어 매칭 다이얼로그가 곧장 [기존 변경] 으로 진입한다.
+
+    print_routing_context: PDF 가 QR 없이 인쇄되어 _process_printed_pdf 에서 진입할 때만
+    전달. 다이얼로그에 [기존지시서 변경하기] 버튼을 띄우고, 종료 시 ctx["result"] 채운 뒤
+    ctx["done"].set(). 형태:
+        {
+          "pdf_path": Path,
+          "orders": list[dict], "existing_worksheets": list[dict],
+          "clients_for_new": list[dict],
+          "result": dict,            # 다이얼로그가 채움
+          "done": threading.Event(), # 다이얼로그가 set
+        }
+    result["action"] ∈ {"qr_created", "modify_existing", "cancel"}.
+    "modify_existing" 이면 result["sel"] 에 _ask_print_match_blocking 결과 dict 들어감."""
+    ctx = print_routing_context
+    # _signal 을 _open 외부에 둬서 _open 초기화 도중에 예외가 나도 워커가 영구 블록되지 않게 한다.
+    signaled = {"flag": False}
+
+    def _signal(action: str, **extra):
+        """ctx 가 있을 때만 의미 있음. 한 번만 set — 중복 호출 방어."""
+        if ctx is None or signaled["flag"]:
+            return
+        signaled["flag"] = True
+        payload = {"action": action}
+        payload.update(extra)
+        ctx["result"] = payload
+        done_evt = ctx.get("done")
+        if done_evt is not None:
+            done_evt.set()
+
     def _open():
         # 거래처 목록 — 모달 띄우기 전에 백그라운드로 받아두면 첫 화면 빠르게 뜬다.
         # 실패 시 빈 리스트로 진행 — 다이얼로그 안에서 안내 표시.
@@ -1468,6 +1497,9 @@ def open_qr_create_dialog_async():
                         f"발주번호 {order_num} 는 등록되었지만 QR 복사에 실패했습니다.\n"
                         f"어드민 페이지에서 QR 을 다시 발급해 사용해주세요.",
                     )
+                # 인쇄 흐름에서 진입한 경우만 의미 — _process_printed_pdf 가 깨어나
+                # 종이/업로드 생략 + 임시 PDF 정리로 빠진다.
+                _signal("qr_created", order_number=order_num)
             except Exception as e:
                 submitting["flag"] = False
                 ui_log(f"QR 코드 만들기 중 오류: {e}")
@@ -1528,14 +1560,73 @@ def open_qr_create_dialog_async():
             if filtered:
                 _on_pick(filtered[0])
         search_entry.bind("<Return>", _on_enter)
-        dlg.bind("<Escape>", lambda _e: dlg.destroy())
-        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+
+        # 인쇄 흐름에서 진입했을 때만 [기존지시서 변경하기] 버튼 표시 — QR 이 있는데 인식이
+        # 안 된 드문 경우(찢김/색상/스캔 노이즈 등)에만 사용. 클릭하면 이 다이얼로그를 닫고
+        # _ask_print_match_blocking 으로 위임 — qr_order_number=None 이라 자동으로
+        # [기존 변경] 탭이 선택된다.
+        if ctx is not None:
+            def _on_modify_existing():
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+                sel = None
+                try:
+                    sel = _ask_print_match_blocking(
+                        ctx.get("orders") or [],
+                        ctx["pdf_path"],
+                        ctx.get("existing_worksheets") or [],
+                        qr_order_number=None,
+                        clients_for_new=ctx.get("clients_for_new") or [],
+                    )
+                except Exception as e:
+                    ui_log(f"[기존지시서 변경하기] 다이얼로그 오류: {e}")
+                _signal("modify_existing", sel=sel)
+
+            tk.Button(
+                body, text="기존지시서 변경하기 (QR 인식 안 됨)",
+                bg="#ffffff", fg="#52525b",
+                activebackground="#f4f4f5", activeforeground="#18181b",
+                font=("맑은 고딕", 9),
+                relief="solid", bd=1, cursor="hand2",
+                padx=12, pady=8,
+                command=_on_modify_existing,
+            ).pack(fill="x", pady=(8, 0))
+
+        def _on_cancel(_e=None):
+            # 사용자 취소(X / Esc) — 인쇄 흐름에서 들어온 경우 종이/업로드 모두 생략.
+            _signal("cancel")
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+        dlg.bind("<Escape>", _on_cancel)
+        dlg.protocol("WM_DELETE_WINDOW", _on_cancel)
+
+        # 인쇄 다이얼로그(_ask_print_match_blocking)가 grab_set() 으로 입력을 잡고 있는
+        # 상태에서 [QR 코드 만들기 열기] 로 진입하면, 여기서 grab 을 가져와야 사용자가
+        # 검색창에 글자를 칠 수 있다. 매핑 직후에 시도(아직 viewable 이 아니면 실패).
+        def _take_grab():
+            try:
+                dlg.grab_set()
+            except Exception:
+                pass
         try:
             dlg.after(50, search_entry.focus_set)
+            dlg.after(60, _take_grab)
         except Exception:
             pass
 
-    _ui_queue.put(("run", _open))
+    def _open_safe():
+        try:
+            _open()
+        except Exception as e:
+            ui_log(f"[QR 코드 만들기] 다이얼로그 초기화 실패: {e}")
+            # ctx 가 있으면 워커 스레드가 done.wait() 에 걸려있다 — 반드시 cancel 신호.
+            _signal("cancel")
+
+    _ui_queue.put(("run", _open_safe))
 
 
 # ── 새 발주/견적 알림 ───────────────────────────────────────────────────────
@@ -1668,7 +1759,20 @@ def _create_qr_only_order(client_id: int,
         if e.code in (401, 403):
             with _admin_token_lock:
                 _admin_token_cache["token"] = None
-        ui_log(f"빈 주문 생성 실패(HTTP {e.code}): {e.reason}")
+        # 백엔드 에러 메시지를 로그에 남겨 디버깅 가능하게(특히 500 시 스택트레이스 단서).
+        body_excerpt = ""
+        try:
+            raw = e.read()
+            if raw:
+                body_excerpt = raw.decode("utf-8", errors="replace").strip()
+                if len(body_excerpt) > 500:
+                    body_excerpt = body_excerpt[:500] + "…"
+        except Exception:
+            pass
+        if body_excerpt:
+            ui_log(f"빈 주문 생성 실패(HTTP {e.code}): {e.reason} — {body_excerpt}")
+        else:
+            ui_log(f"빈 주문 생성 실패(HTTP {e.code}): {e.reason}")
         return None
     except Exception as e:
         ui_log(f"빈 주문 생성 실패: {e}")
@@ -3826,26 +3930,53 @@ def _process_printed_pdf(pdf_path: Path):
     # 메인 GUI [QR 코드 만들기] 모달에서만 일어나고, 거기서 자기 데이터를 따로 받는다.
     clients_for_new: list[dict] = []
 
-    holder: dict = {"value": None, "done": threading.Event()}
+    # PDF 에 QR 이 없을 때(보통 케이스) — [QR 코드 만들기] 모달을 1차 진입점으로 띄운다.
+    # 거래처를 골라 새 발주를 발급받거나, [기존지시서 변경하기] 버튼으로 _ask_print_match_blocking
+    # 의 [기존 변경] 탭으로 위임. QR 이 디코드된 경우엔 종전대로 곧장 _ask_print_match_blocking.
+    sel: dict | None = None
+    if qr_order_number is None:
+        routing_ctx: dict = {
+            "pdf_path": pdf_path,
+            "orders": orders,
+            "existing_worksheets": existing_worksheets,
+            "clients_for_new": clients_for_new,
+            "result": {"action": "cancel"},
+            "done": threading.Event(),
+        }
+        open_qr_create_dialog_async(print_routing_context=routing_ctx)
+        routing_ctx["done"].wait()
+        action = (routing_ctx.get("result") or {}).get("action") or "cancel"
+        if action == "cancel":
+            ui_log(f"인쇄 — [QR 코드 만들기] 취소: 종이/업로드 모두 생략 ({pdf_path.name})")
+            return
+        if action == "qr_created":
+            order_num = (routing_ctx["result"].get("order_number") or "").strip()
+            ui_log(f"인쇄 — QR 발급({order_num}) 후 재인쇄 대기: 이번 PDF 는 종이/업로드 생략 ({pdf_path.name})")
+            _schedule_printed_pdf_cleanup(pdf_path)
+            return
+        # action == "modify_existing" — _ask_print_match_blocking 가 ctx 안에서 이미 실행됨.
+        sel = (routing_ctx.get("result") or {}).get("sel")
+    else:
+        holder: dict = {"value": None, "done": threading.Event()}
 
-    def _ask_on_ui():
-        try:
-            holder["value"] = _ask_print_match_blocking(
-                orders, pdf_path, existing_worksheets,
-                qr_order_number=qr_order_number,
-                clients_for_new=clients_for_new,
-            )
-        except Exception as e:
-            # 다이얼로그 자체가 터지면 사용자가 취소한 것처럼 조용히 묻혀 PDF24 인쇄가 무위로 끝나므로,
-            # UI 로그에 명시 — 'PDF24 보냈는데 왜 취소되지?' 류 디버깅을 위해 흔적 남김.
-            ui_log(f"인쇄 매칭 다이얼로그 오류: {e}")
-        finally:
-            holder["done"].set()
+        def _ask_on_ui():
+            try:
+                holder["value"] = _ask_print_match_blocking(
+                    orders, pdf_path, existing_worksheets,
+                    qr_order_number=qr_order_number,
+                    clients_for_new=clients_for_new,
+                )
+            except Exception as e:
+                # 다이얼로그 자체가 터지면 사용자가 취소한 것처럼 조용히 묻혀 PDF24 인쇄가 무위로 끝나므로,
+                # UI 로그에 명시 — 'PDF24 보냈는데 왜 취소되지?' 류 디버깅을 위해 흔적 남김.
+                ui_log(f"인쇄 매칭 다이얼로그 오류: {e}")
+            finally:
+                holder["done"].set()
 
-    _ui_queue.put(("run", _ask_on_ui))
-    holder["done"].wait()
+        _ui_queue.put(("run", _ask_on_ui))
+        holder["done"].wait()
+        sel = holder["value"]
 
-    sel = holder["value"]
     if sel is None:
         ui_log(f"인쇄 — 사용자 취소: 종이 인쇄/업로드 모두 생략 ({pdf_path.name})")
         return
