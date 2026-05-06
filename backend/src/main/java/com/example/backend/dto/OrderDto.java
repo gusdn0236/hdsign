@@ -38,6 +38,11 @@ public class OrderDto {
         private LocalDateTime worksheetUpdatedAt;
         private String worksheetChangeNote;
         private LocalDateTime adminViewedAt;
+        // 작업현황 탭과 모바일 "내 지시서만 보기" 본인 완료 제외에 사용. null = 아직 작업중.
+        private String workerCompletedBy;
+        private LocalDateTime workerCompletedAt;
+        // 워처가 분배함에서 클릭한 슬롯 라벨 — 작업현황에서 "이 지시서가 어느 직원들에게 배정됐었는가" 표시용.
+        private List<String> departmentSlots;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
@@ -103,9 +108,22 @@ public class OrderDto {
                 .worksheetUpdatedAt(order.getWorksheetUpdatedAt())
                 .worksheetChangeNote(order.getWorksheetChangeNote())
                 .adminViewedAt(order.getAdminViewedAt())
+                .workerCompletedBy(order.getWorkerCompletedBy())
+                .workerCompletedAt(order.getWorkerCompletedAt())
+                .departmentSlots(splitCsv(order.getDepartmentSlots()))
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .deletedAt(order.getDeletedAt())
                 .build();
+    }
+
+    private static List<String> splitCsv(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        java.util.ArrayList<String> out = new java.util.ArrayList<>();
+        for (String part : csv.split(",")) {
+            String t = part.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
     }
 }

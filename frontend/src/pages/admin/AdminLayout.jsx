@@ -11,6 +11,7 @@ const AdminLayout = () => {
 
     const adminMenu = [
         { name: '발주 관리', path: '/admin/orders' },
+        { name: '작업 현황', path: '/admin/work-status' },
         { name: '견적 관리', path: '/admin/quotes' },
         { name: '대리 발주', path: '/admin/proxy-order' },
         { name: '거래처 관리', path: '/admin/clients' },

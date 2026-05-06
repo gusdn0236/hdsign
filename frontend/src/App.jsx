@@ -109,6 +109,7 @@ const AdminLayout      = lazyWithRetry(() => import('./pages/admin/AdminLayout.j
 const GalleryUpload    = lazyWithRetry(() => import('./pages/admin/GalleryUpload.jsx'))
 const NoticeAdmin      = lazyWithRetry(() => import('./pages/admin/NoticeAdmin.jsx'))
 const OrderAdmin       = lazyWithRetry(() => import('./pages/admin/OrderAdmin.jsx'))
+const WorkStatus       = lazyWithRetry(() => import('./pages/admin/WorkStatus.jsx'))
 const ProxyOrder       = lazyWithRetry(() => import('./pages/admin/ProxyOrder.jsx'))
 const ClientAdmin      = lazyWithRetry(() => import('./pages/admin/ClientAdmin.jsx'))
 const ClientLogin      = lazyWithRetry(() => import('./pages/client/ClientLogin.jsx'))
@@ -178,6 +179,7 @@ function App() {
                             <Route index element={<Navigate to="orders" replace />} />
                             <Route path="gallery-upload" element={<GalleryUpload />} />
                             <Route path="orders" element={<OrderAdmin requestType="ORDER" />} />
+                            <Route path="work-status" element={<WorkStatus />} />
                             <Route path="quotes" element={<OrderAdmin requestType="QUOTE" />} />
                             <Route path="proxy-order" element={<ProxyOrder />} />
                             <Route path="clients" element={<ClientAdmin />} />

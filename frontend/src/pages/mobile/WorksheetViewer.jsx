@@ -5,14 +5,14 @@ import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './WorksheetViewer.css';
+import { ALL_WORKERS } from '../../data/workers.js';
 
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-const DEPT_KEY = 'hdsign_uploader_department';
-const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시부', '아크릴가공부(5층)', '배송팀', '도장부', '후레임부'];
-const MAX_DEPT_LEN = 100;
+// 모바일 직원 식별 — WorksheetList 와 같은 키 공유. 휴대폰 단말 단위로 본인 이름을 한 번 설정.
+const WORKER_KEY = 'hdsign_uploader_worker';
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
@@ -63,18 +63,18 @@ async function compressImage(file) {
     return new File([blob], baseName + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
 }
 
-function getStoredDept() {
+function getStoredWorker() {
     try {
-        const v = localStorage.getItem(DEPT_KEY);
+        const v = localStorage.getItem(WORKER_KEY);
         return v ? v.trim() : '';
     } catch {
         return '';
     }
 }
-function setStoredDept(value) {
+function setStoredWorker(value) {
     try {
-        if (value) localStorage.setItem(DEPT_KEY, value);
-        else localStorage.removeItem(DEPT_KEY);
+        if (value) localStorage.setItem(WORKER_KEY, value);
+        else localStorage.removeItem(WORKER_KEY);
     } catch { /* ignore */ }
 }
 
@@ -109,14 +109,18 @@ export default function WorksheetViewer() {
     // PDF 한 번 탭 → 변경사항 카드 토글. 더블탭(줌 토글)과 충돌 막으려고 280ms 디바운스.
     const [changeNoteVisible, setChangeNoteVisible] = useState(false);
     const stageTapTimerRef = useRef(null);
-    const [department, setDepartment] = useState(() => getStoredDept());
-    const [showDeptModal, setShowDeptModal] = useState(false);
-    const [deptDraft, setDeptDraft] = useState('');
+    const [worker, setWorker] = useState(() => getStoredWorker());
+    const [showWorkerModal, setShowWorkerModal] = useState(false);
+    const [workerDraft, setWorkerDraft] = useState('');
     const [queued, setQueued] = useState([]);
     const [compressing, setCompressing] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadResult, setUploadResult] = useState(null);
     const [uploadError, setUploadError] = useState('');
+    // 작업완료 신고 — 본인이 누르면 백엔드에 workerCompletedBy/At 기록되고, 모바일 리스트에서
+    // 본인뿐 아니라 같은 슬롯 동료에게서도 사라진다(claim 모델). 멱등 — 이미 완료된 건이면 200.
+    const [completing, setCompleting] = useState(false);
+    const [completeError, setCompleteError] = useState('');
     const [pdfViewKey, setPdfViewKey] = useState(0);
     const transformRef = useRef(null);
 
@@ -397,9 +401,9 @@ export default function WorksheetViewer() {
 
     const triggerCamera = () => {
         if (compressing || uploading) return;
-        if (!department) {
-            setDeptDraft('');
-            setShowDeptModal(true);
+        if (!worker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
             return;
         }
         cameraInputRef.current?.click();
@@ -407,9 +411,9 @@ export default function WorksheetViewer() {
 
     const triggerGallery = () => {
         if (compressing || uploading) return;
-        if (!department) {
-            setDeptDraft('');
-            setShowDeptModal(true);
+        if (!worker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
             return;
         }
         galleryInputRef.current?.click();
@@ -417,9 +421,9 @@ export default function WorksheetViewer() {
 
     const handleUpload = async () => {
         if (!queued.length || uploading) return;
-        if (!department) {
-            setDeptDraft('');
-            setShowDeptModal(true);
+        if (!worker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
             return;
         }
         setUploading(true);
@@ -427,7 +431,9 @@ export default function WorksheetViewer() {
         setUploadResult(null);
         try {
             const fd = new FormData();
-            fd.append('department', department);
+            // 백엔드 evidence API 의 'department' 필드명은 그대로(uploadedDepartment 컬럼) — 의미만
+            // "업로더 식별자" 로 확장돼 직원 이름이 들어간다. 관리자 모달의 표시 라벨은 동일하게 잘 동작.
+            fd.append('department', worker);
             queued.forEach((q) => fd.append('files', q.file, q.file.name));
             const res = await fetch(
                 `${BASE_URL}/api/public/orders/${encodeURIComponent(orderNumber)}/evidence`,
@@ -448,16 +454,47 @@ export default function WorksheetViewer() {
         }
     };
 
-    const submitDept = () => {
-        const v = (deptDraft || '').trim().slice(0, MAX_DEPT_LEN);
-        if (!v) return;
-        setDepartment(v);
-        setStoredDept(v);
-        setShowDeptModal(false);
+    // [작업완료] — 본인 작업이 끝났음을 신고. 성공 시 모바일 리스트로 이동(자동으로 본인/동료에게서 사라짐).
+    const handleWorkerComplete = async () => {
+        if (completing) return;
+        if (!worker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
+            return;
+        }
+        setCompleting(true);
+        setCompleteError('');
+        try {
+            const res = await fetch(
+                `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/worker-complete`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ worker }),
+                }
+            );
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.message || '작업완료 신고에 실패했습니다.');
+            }
+            navigate('/m/worksheets');
+        } catch (err) {
+            setCompleteError(err.message || '작업완료 처리 중 오류');
+        } finally {
+            setCompleting(false);
+        }
     };
-    const openChangeDept = () => {
-        setDeptDraft(department || '');
-        setShowDeptModal(true);
+
+    const submitWorker = () => {
+        const v = (workerDraft || '').trim();
+        if (!v) return;
+        setWorker(v);
+        setStoredWorker(v);
+        setShowWorkerModal(false);
+    };
+    const openChangeWorker = () => {
+        setWorkerDraft(worker || '');
+        setShowWorkerModal(true);
     };
 
     const totalSize = useMemo(
@@ -756,12 +793,34 @@ export default function WorksheetViewer() {
                         </div>
 
                         <div className="wsv-dept-row">
-                            <span className="wsv-dept-label">촬영 부서</span>
-                            <span className="wsv-dept-value">{department || '미설정'}</span>
-                            <button type="button" className="wsv-dept-change" onClick={openChangeDept}>
+                            <span className="wsv-dept-label">담당</span>
+                            <span className="wsv-dept-value">{worker || '미설정'}</span>
+                            <button type="button" className="wsv-dept-change" onClick={openChangeWorker}>
                                 변경
                             </button>
                         </div>
+
+                        {/* 작업완료 — 본인 작업 끝나면 누르고, 같은 슬롯 동료에게서도 자동으로 사라짐.
+                            업로드 영역 위에 큰 빨간 버튼으로 분명하게 표시. 이미 완료된 건이 다시 떠 있는
+                            드문 케이스(서버 동기화 지연)에는 detail 의 workerCompletedAt 으로 disable. */}
+                        {detail?.workerCompletedAt ? (
+                            <div className="wsv-complete-done">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M3 8l3.5 3.5L13 5" />
+                                </svg>
+                                <span>{detail.workerCompletedBy || '직원'} 님이 작업완료 처리</span>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                className="wsv-complete-btn"
+                                onClick={handleWorkerComplete}
+                                disabled={completing}
+                            >
+                                {completing ? '처리 중…' : '작업완료'}
+                            </button>
+                        )}
+                        {completeError && <div className="wsv-feedback error">{completeError}</div>}
 
                         {compressing ? (
                             <button type="button" className="wsv-camera-btn" disabled>
@@ -857,46 +916,37 @@ export default function WorksheetViewer() {
                 </div>
             )}
 
-            {showDeptModal && (
-                <div className="wsv-modal-backdrop" onClick={() => department && setShowDeptModal(false)}>
+            {showWorkerModal && (
+                <div className="wsv-modal-backdrop" onClick={() => worker && setShowWorkerModal(false)}>
                     <div className="wsv-modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>촬영 부서 입력</h2>
+                        <h2>내 정보 설정</h2>
                         <p className="wsv-modal-desc">
-                            이 휴대폰에서 올린 사진이 어느 부서에서 올린 건지 표시됩니다. 한 번만 입력하면 다음부터 자동 사용됩니다.
+                            이 휴대폰을 쓰는 본인 이름을 선택하세요. 워처 분배함의 본인 슬롯에 꽂힌
+                            지시서만 보이고, [작업완료] 누르면 같은 슬롯 동료에게서도 사라집니다.
                         </p>
                         <div className="wsv-quick-chips">
-                            {QUICK_DEPTS.map((d) => (
+                            {ALL_WORKERS.map((name) => (
                                 <button
-                                    key={d}
+                                    key={name}
                                     type="button"
-                                    className={`wsv-chip ${deptDraft === d ? 'active' : ''}`}
-                                    onClick={() => setDeptDraft(d)}
-                                >{d}</button>
+                                    className={`wsv-chip ${workerDraft === name ? 'active' : ''}`}
+                                    onClick={() => setWorkerDraft(name)}
+                                >{name}</button>
                             ))}
                         </div>
-                        <input
-                            type="text"
-                            className="wsv-dept-input"
-                            placeholder="직접 입력"
-                            value={deptDraft}
-                            maxLength={MAX_DEPT_LEN}
-                            onChange={(e) => setDeptDraft(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') submitDept(); }}
-                            autoFocus
-                        />
                         <div className="wsv-modal-actions">
-                            {department && (
+                            {worker && (
                                 <button
                                     type="button"
                                     className="wsv-modal-cancel"
-                                    onClick={() => setShowDeptModal(false)}
+                                    onClick={() => setShowWorkerModal(false)}
                                 >취소</button>
                             )}
                             <button
                                 type="button"
                                 className="wsv-modal-confirm"
-                                onClick={submitDept}
-                                disabled={!deptDraft.trim()}
+                                onClick={submitWorker}
+                                disabled={!workerDraft.trim()}
                             >저장</button>
                         </div>
                     </div>

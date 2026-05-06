@@ -1,28 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
+import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
 import './WorksheetList.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
-// 모바일 뷰어 부서 식별 — WorksheetViewer / EvidenceCapture 와 같은 키 공유.
-// 휴대폰 단말 단위로 "이 폰은 어느 부서 폰" 으로 한 번 설정해두면 자동 적용.
-const DEPT_KEY = 'hdsign_uploader_department';
-const QUICK_DEPTS = ['완조립부', 'CNC가공부', 'LED조립부', '에폭시부', '아크릴가공부(5층)', '배송팀', '도장부', '후레임부'];
-const MAX_DEPT_LEN = 100;
+// 모바일 뷰어 직원 식별 — WorksheetViewer / EvidenceCapture 와 같은 키 공유.
+// 휴대폰 단말 단위로 "이 폰은 누구의 폰" 으로 한 번 설정해두면 자동 적용.
+// 워처 분배함은 부서 기준 그대로 유지하고, 모바일 필터만 직원 기준으로 매칭한다(workers.js 매핑).
+const WORKER_KEY = 'hdsign_uploader_worker';
 
-function getStoredDept() {
+function getStoredWorker() {
     try {
-        const v = localStorage.getItem(DEPT_KEY);
+        const v = localStorage.getItem(WORKER_KEY);
         return v ? v.trim() : '';
     } catch {
         return '';
     }
 }
-function setStoredDept(value) {
+function setStoredWorker(value) {
     try {
-        if (value) localStorage.setItem(DEPT_KEY, value);
-        else localStorage.removeItem(DEPT_KEY);
+        if (value) localStorage.setItem(WORKER_KEY, value);
+        else localStorage.removeItem(WORKER_KEY);
     } catch { /* ignore */ }
 }
 
@@ -87,37 +87,38 @@ export default function WorksheetList() {
     const [companySearch, setCompanySearch] = useState('');
     // 'due' = 납기 임박순(날짜 그룹), 'uploaded' = 최근 업로드순(평탄 리스트, 방금 올린 게 최상단).
     const [sortMode, setSortMode] = useState('due');
-    // 체크 시 내 부서 태그가 붙은 지시서만 노출. 태그가 비어있는(워처 도입 이전) 지시서는
-    // 자연스럽게 빠지므로 누락 방지 차원에서 기본은 off.
+    // 체크 시 내 슬롯에 매핑된 지시서만 노출. 본인 또는 같은 슬롯 다른 직원이 [작업완료] 를 누르면
+    // workerCompletedAt 이 차서 자동으로 본인 리스트에서도 사라진다(claim 모델).
+    // 슬롯 매핑이 없는(워처 도입 이전) 지시서는 mineOnly 에서 빠지고 off 에서만 보여 누락 방지.
     const [mineOnly, setMineOnly] = useState(false);
-    const [department, setDepartment] = useState(() => getStoredDept());
-    const [showDeptModal, setShowDeptModal] = useState(false);
-    const [deptDraft, setDeptDraft] = useState('');
+    const [worker, setWorker] = useState(() => getStoredWorker());
+    const [showWorkerModal, setShowWorkerModal] = useState(false);
+    const [workerDraft, setWorkerDraft] = useState('');
     const [lastSyncedAt, setLastSyncedAt] = useState(null);
     const aliveRef = useRef(true);
 
-    const myDept = department.trim();
+    const myWorker = worker.trim();
 
-    // mineOnly 체크했는데 부서 미설정이면 자동으로 부서 설정 모달을 띄워 준다.
-    // 모달을 닫고 부서를 안 정하면 myDept 가 빈 문자열이라 결과는 off 와 동일하게 노출 — 동작 안전.
+    // mineOnly 체크했는데 직원 미설정이면 자동으로 설정 모달을 띄워 준다.
+    // 모달을 닫고 안 정하면 myWorker 가 빈 문자열이라 결과는 off 와 동일하게 노출 — 동작 안전.
     useEffect(() => {
-        if (mineOnly && !myDept) {
-            setDeptDraft('');
-            setShowDeptModal(true);
+        if (mineOnly && !myWorker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
         }
-    }, [mineOnly, myDept]);
+    }, [mineOnly, myWorker]);
 
-    const submitDept = () => {
-        const v = deptDraft.trim().slice(0, MAX_DEPT_LEN);
+    const submitWorker = () => {
+        const v = workerDraft.trim();
         if (!v) return;
-        setDepartment(v);
-        setStoredDept(v);
-        setShowDeptModal(false);
+        setWorker(v);
+        setStoredWorker(v);
+        setShowWorkerModal(false);
     };
 
-    const openDeptModal = () => {
-        setDeptDraft(department || '');
-        setShowDeptModal(true);
+    const openWorkerModal = () => {
+        setWorkerDraft(worker || '');
+        setShowWorkerModal(true);
     };
 
     // 캐시버스터 + cache: no-store — 모바일/CDN 캐시로 인해 옛 데이터가 보이는 문제 방지.
@@ -229,22 +230,23 @@ export default function WorksheetList() {
         return searchFilteredItems.filter((it) => it.companyName === companyFilter);
     }, [searchFilteredItems, companyFilter]);
 
-    // mineOnly 가 true + 부서 설정됨일 때만 태그 매칭으로 좁힌다. 그 외엔 전체 통과.
-    // 태그가 비어있는(워처 도입 이전) 지시서는 mineOnly 에서 빠지고 off 에서만 보여 누락 방지.
+    // mineOnly 가 true + 직원 설정됨일 때만 슬롯 매칭으로 좁힌다.
+    // 본인 또는 같은 슬롯 동료가 작업완료 누른 건(workerCompletedAt!=null) 은 자동 제외 — claim 모델.
+    // 슬롯이 비어있는(워처 도입 이전) 지시서는 mineOnly 에서 빠지고 off 에서만 보여 누락 방지.
     const filtered = useMemo(() => {
-        if (!mineOnly || !myDept) return companyFilteredItems;
+        if (!mineOnly || !myWorker) return companyFilteredItems;
         return companyFilteredItems.filter((it) =>
-            Array.isArray(it.departmentTags) && it.departmentTags.includes(myDept)
+            !it.workerCompletedAt && matchesWorker(it.departmentSlots, myWorker)
         );
-    }, [companyFilteredItems, mineOnly, myDept]);
+    }, [companyFilteredItems, mineOnly, myWorker]);
 
-    // 토글 라벨용 카운트(부서 태그가 붙은 지시서 개수).
+    // 토글 라벨용 카운트(본인 슬롯이 매칭된 미완료 지시서 개수).
     const myCount = useMemo(() => {
-        if (!myDept) return 0;
+        if (!myWorker) return 0;
         return companyFilteredItems.filter((it) =>
-            Array.isArray(it.departmentTags) && it.departmentTags.includes(myDept)
+            !it.workerCompletedAt && matchesWorker(it.departmentSlots, myWorker)
         ).length;
-    }, [companyFilteredItems, myDept]);
+    }, [companyFilteredItems, myWorker]);
 
     const groups = useMemo(() => {
         // 최근 업로드순 — 그룹 분리 없이 평탄 리스트. 방금 올린 게 최상단.
@@ -395,12 +397,12 @@ export default function WorksheetList() {
                         />
                         <span className="ws-mine-text">
                             내 지시서만 보기
-                            {myDept && <span className="ws-mine-count"> · {myCount}건</span>}
+                            {myWorker && <span className="ws-mine-count"> · {myCount}건</span>}
                         </span>
                     </label>
-                    <button type="button" className="ws-dept-chip-btn" onClick={openDeptModal}>
-                        <span className="ws-dept-chip-prefix">부서</span>
-                        <span className="ws-dept-chip-text">{department || '미설정'}</span>
+                    <button type="button" className="ws-dept-chip-btn" onClick={openWorkerModal}>
+                        <span className="ws-dept-chip-prefix">담당</span>
+                        <span className="ws-dept-chip-text">{worker || '미설정'}</span>
                     </button>
                 </div>
             </header>
@@ -470,54 +472,45 @@ export default function WorksheetList() {
                 );
             })}
 
-            {showDeptModal && (
+            {showWorkerModal && (
                 <div
                     className="ws-dept-modal-backdrop"
                     onClick={() => {
-                        // 부서 미설정 상태에서 백드롭 클릭으로 닫으면 mineOnly 자동 해제 — 무한 모달 방지.
-                        setShowDeptModal(false);
-                        if (!department && mineOnly) setMineOnly(false);
+                        // 직원 미설정 상태에서 백드롭 클릭으로 닫으면 mineOnly 자동 해제 — 무한 모달 방지.
+                        setShowWorkerModal(false);
+                        if (!worker && mineOnly) setMineOnly(false);
                     }}
                 >
                     <div className="ws-dept-modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>내 부서 설정</h2>
+                        <h2>내 정보 설정</h2>
                         <p className="ws-dept-modal-desc">
-                            이 휴대폰을 사용하는 부서를 선택하세요. "내 지시서만 보기"에서 해당 부서 태그가 붙은 지시서만 보입니다.
+                            이 휴대폰을 쓰는 본인 이름을 선택하세요. 워처 분배함에서 본인 슬롯에 꽂힌 지시서만 보이고,
+                            [작업완료] 를 누르면 같은 슬롯 동료에게서도 사라집니다.
                         </p>
                         <div className="ws-dept-quick-chips">
-                            {QUICK_DEPTS.map((d) => (
+                            {ALL_WORKERS.map((name) => (
                                 <button
-                                    key={d}
+                                    key={name}
                                     type="button"
-                                    className={`ws-dept-quick-chip ${deptDraft === d ? 'active' : ''}`}
-                                    onClick={() => setDeptDraft(d)}
-                                >{d}</button>
+                                    className={`ws-dept-quick-chip ${workerDraft === name ? 'active' : ''}`}
+                                    onClick={() => setWorkerDraft(name)}
+                                >{name}</button>
                             ))}
                         </div>
-                        <input
-                            type="text"
-                            className="ws-dept-modal-input"
-                            placeholder="직접 입력"
-                            value={deptDraft}
-                            maxLength={MAX_DEPT_LEN}
-                            onChange={(e) => setDeptDraft(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') submitDept(); }}
-                            autoFocus
-                        />
                         <div className="ws-dept-modal-actions">
                             <button
                                 type="button"
                                 className="ws-dept-modal-cancel"
                                 onClick={() => {
-                                    setShowDeptModal(false);
-                                    if (!department && mineOnly) setMineOnly(false);
+                                    setShowWorkerModal(false);
+                                    if (!worker && mineOnly) setMineOnly(false);
                                 }}
                             >취소</button>
                             <button
                                 type="button"
                                 className="ws-dept-modal-confirm"
-                                onClick={submitDept}
-                                disabled={!deptDraft.trim()}
+                                onClick={submitWorker}
+                                disabled={!workerDraft.trim()}
                             >저장</button>
                         </div>
                     </div>

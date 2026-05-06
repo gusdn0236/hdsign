@@ -12,6 +12,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,6 +23,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -172,7 +175,48 @@ public class PublicWorksheetController {
         // 워처 다이얼로그에서 "변경된 내용" 텍스트 박스를 이전에 입력한 메모로 그대로 복원하기 위함.
         // 모바일 뷰어는 detail 엔드포인트에서 별도로 받아 PDF 탭 시 노출 — list 와 detail 양쪽에 노출.
         item.put("worksheetChangeNote", o.getWorksheetChangeNote());
+        // 모바일 "내 지시서만 보기" — 본인이 처리한 건은 자동 제외 위해. 다른 직원이 처리한 건도 사라짐(claim).
+        item.put("workerCompletedBy", o.getWorkerCompletedBy());
+        item.put("workerCompletedAt", o.getWorkerCompletedAt() != null ? o.getWorkerCompletedAt().toString() : null);
         return item;
+    }
+
+    /**
+     * 모바일 [작업완료] — 직원이 본인 작업이 끝났음을 신고.
+     * body: { "worker": "신문식" }. 인증 없음(IN_PROGRESS PDF 노출과 동일한 보안 수준).
+     * 멱등 — 이미 완료된 건이어도 200, 워커 이름은 최초 1회만 기록(다른 직원이 덮어쓰지 않음).
+     * 성공 후 모든 직원의 모바일 리스트에서 사라짐(claim 모델 — 같은 슬롯 공유자 포함).
+     */
+    @PostMapping("/{orderNumber}/worker-complete")
+    public ResponseEntity<?> workerComplete(
+            @PathVariable String orderNumber,
+            @RequestBody Map<String, Object> body
+    ) {
+        String worker = body == null ? null : (body.get("worker") instanceof String s ? s.trim() : null);
+        if (worker == null || worker.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "worker 이름이 필요합니다."));
+        }
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null || order.getDeletedAt() != null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
+        }
+        if (order.getStatus() == Order.OrderStatus.COMPLETED) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "이미 마감된 작업입니다."));
+        }
+        // 최초 1회만 기록 — 두 번째 누른 사람의 이름이 덮어써지지 않게.
+        if (order.getWorkerCompletedAt() == null) {
+            order.setWorkerCompletedBy(worker);
+            order.setWorkerCompletedAt(LocalDateTime.now());
+            orderRepository.save(order);
+            log.info("작업완료 신고 [{}] by {}", orderNumber, worker);
+        }
+        return ResponseEntity.ok(Map.of(
+                "orderNumber", orderNumber,
+                "workerCompletedBy", order.getWorkerCompletedBy(),
+                "workerCompletedAt", order.getWorkerCompletedAt() != null ? order.getWorkerCompletedAt().toString() : null
+        ));
     }
 
     private static boolean shouldServeOriginalPdf(String userAgent) {

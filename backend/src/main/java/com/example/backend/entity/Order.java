@@ -122,6 +122,16 @@ public class Order {
     @Column
     private LocalDateTime evidenceLastUploadedAt;
 
+    // 모바일 지시서 뷰어에서 직원이 [작업완료] 버튼을 눌러 자기 작업이 끝났음을 신고한 시점.
+    // 발주관리의 OrderStatus(RECEIVED/IN_PROGRESS/COMPLETED) 와는 별개 — 사장님의 거래처 마감 처리와
+    // 현장 직원의 작업 완료는 시점이 다르기 때문에 분리. 같은 슬롯을 공유하는 다른 직원도 함께 사라짐(claim 모델).
+    // null 이면 아직 작업중. 한 번 셋되면 모바일 "내 지시서만 보기" 에서 제외되고 작업현황 탭에 표시.
+    @Column(length = 50)
+    private String workerCompletedBy;
+
+    @Column
+    private LocalDateTime workerCompletedAt;
+
     // 워처가 PDF24로 지시서 PDF를 (재)업로드한 시각. 납기/지시서 변경의 최종 신호.
     @Column
     private LocalDateTime worksheetUpdatedAt;

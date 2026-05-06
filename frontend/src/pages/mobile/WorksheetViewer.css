@@ -656,6 +656,54 @@ body:has(.wsv-page) {
     cursor: not-allowed;
 }
 
+/* 작업완료 버튼 — 본인 작업이 끝났을 때. 사진 업로드의 초록과 구분되는 빨강 톤으로
+   "마감 신호" 인 점을 시각적으로 분리. 같은 슬롯 동료에게서도 자동으로 사라지므로 누르면 책임 있는 액션. */
+.wsv-complete-btn {
+    width: 100%;
+    margin-top: 12px;
+    background: #dc2626;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    height: 52px;
+    padding: 0 16px;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    transition: background 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.wsv-complete-btn:active {
+    background: #b91c1c;
+}
+.wsv-complete-btn:disabled {
+    background: #fca5a5;
+    cursor: not-allowed;
+}
+.wsv-complete-done {
+    width: 100%;
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: #ecfdf5;
+    color: #065f46;
+    border: 1px solid #a7f3d0;
+    border-radius: 12px;
+    height: 48px;
+    padding: 0 16px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+}
+.wsv-complete-done svg {
+    width: 16px;
+    height: 16px;
+}
+
 /* 피드백 ---------------------------------------------------------- */
 .wsv-feedback {
     display: flex;
