@@ -20,8 +20,12 @@ HD사인_프로그램_배포/
 HD사인_프로그램_배포.zip
 
 # SumatraPDF 포터블 — 공식 사이트에서 재다운로드 가능, 20MB 이진 파일이라 제외.
+# build.bat 가 hdsign-watcher\ 옆의 SumatraPDF.exe(+settings) 를 dist 에 자동 복사하므로
+# 빌드 PC 한 번만 두면 됨 — 저장소엔 안 올라감.
 hdsign-watcher/sumatra/
 hdsign-watcher/dist/sumatra/
+hdsign-watcher/SumatraPDF*.exe
+hdsign-watcher/SumatraPDF*.txt
 
 # 빌드 로그 / 파이썬 캐시 / 임시 파일.
 scripts/build_log.txt

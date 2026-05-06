@@ -100,6 +100,22 @@ if errorlevel 1 (
 )
 
 echo.
+echo === Bundling SumatraPDF (if present alongside this script) ===
+REM Drop SumatraPDF.exe + SumatraPDF-settings.txt into hdsign-watcher\ once;
+REM every subsequent build copies them next to hdsign_worksheet.exe so the
+REM watcher's find_sumatra_exe() finds it without manual deploy steps.
+if exist "%SCRIPT_DIR%SumatraPDF.exe" (
+    copy /Y "%SCRIPT_DIR%SumatraPDF.exe" "%TARGET_DIR%\" >nul
+    echo  [bundled] SumatraPDF.exe
+) else (
+    echo  [skip] SumatraPDF.exe not found in %SCRIPT_DIR%
+)
+if exist "%SCRIPT_DIR%SumatraPDF-settings.txt" (
+    copy /Y "%SCRIPT_DIR%SumatraPDF-settings.txt" "%TARGET_DIR%\" >nul
+    echo  [bundled] SumatraPDF-settings.txt
+)
+
+echo.
 echo ============================================================
 echo  BUILD COMPLETE
 echo  Output folder: %TARGET_DIR%
