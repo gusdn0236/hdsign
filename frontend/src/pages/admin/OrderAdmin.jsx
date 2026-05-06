@@ -153,6 +153,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [regeneratingHeaderId, setRegeneratingHeaderId] = useState(null);
   const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
+  // 다중 선택 모드 — 행을 클릭하면 모달 대신 선택 토글. 선택한 건들은 한 번에 작업완료로.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkSelectCompleting, setBulkSelectCompleting] = useState(false);
   // 지연 일괄 완료 검토 — queue 의 주문 한 건씩 PDF 와 적용 납기를 보면서 결정한다.
   // decisions[id] = { action: 'complete' } 또는 { action: 'reschedule', newDate: 'yyyy-MM-dd' }.
   // 모든 주문을 다 보면 selectedOrderId 가 null 로 풀리고 상단 sticky 패널에서 일괄 적용.
@@ -628,9 +632,62 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
+  // 다중 선택 — 한 건 토글, 모드 진입/종료, 일괄 작업완료.
+  const toggleSelectId = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+  const selectAllVisible = () => {
+    setSelectedIds(new Set(filteredOrders.map((o) => o.id)));
+  };
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const completeSelected = async () => {
+    if (selectedIds.size === 0 || bulkSelectCompleting) return;
+    if (!window.confirm(`선택한 ${selectedIds.size}건을 모두 작업완료로 변경하시겠습니까?`)) return;
+    setBulkSelectCompleting(true);
+    try {
+      const ids = Array.from(selectedIds);
+      const results = await Promise.allSettled(
+        ids.map((id) =>
+          fetch(`${BASE_URL}/api/admin/orders/${id}/status`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ status: "COMPLETED" }),
+          }).then(async (res) => {
+            if (!res.ok) throw new Error(String(id));
+            return res.json();
+          })
+        )
+      );
+      const updated = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+      const updatedMap = new Map(updated.map((o) => [o.id, o]));
+      setOrders((prev) => prev.map((o) => updatedMap.get(o.id) || o));
+      const failed = results.length - updated.length;
+      setFeedback({
+        type: failed === 0 ? "success" : "error",
+        msg: failed === 0
+          ? `${updated.length}건을 작업완료 처리했습니다.`
+          : `${updated.length}건 완료, ${failed}건 실패`,
+      });
+      exitSelectMode();
+    } finally {
+      setBulkSelectCompleting(false);
+    }
+  };
+
   // 지연 검토 시작 — 일괄 완료 버튼을 누르면 한 건씩 PDF 를 보면서 결정한다.
   // 적용 납기가 지났지만 실제로는 미래 작업인 케이스(웹 적용 누락)를 한 번 더 거르기 위함.
   const startBulkCompleteReview = () => {
+    if (selectMode) exitSelectMode();
     const pad = (n) => String(n).padStart(2, "0");
     const now = new Date();
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
@@ -1248,6 +1305,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             )}
           </>
         )}
+        {activeFilter !== "TRASH" && !reviewSession && (
+          <button
+            type="button"
+            className={`select-mode-toggle ${selectMode ? "active" : ""}`}
+            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            title={selectMode ? "선택 모드 종료" : "여러 건 선택해 한 번에 작업완료"}
+          >
+            {selectMode ? "선택 모드 끄기" : "여러개 선택"}
+          </button>
+        )}
         <div className="view-mode-toggle">
           <button
             type="button"
@@ -1331,6 +1398,24 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       <table className="order-admin-table">
         <thead>
           <tr>
+            {selectMode && (() => {
+              const allFilteredSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
+              const someFilteredSelected = !allFilteredSelected && filteredOrders.some((o) => selectedIds.has(o.id));
+              return (
+                <th className="order-select-cell" aria-label="선택">
+                  <input
+                    type="checkbox"
+                    className="order-select-checkbox"
+                    checked={allFilteredSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someFilteredSelected;
+                    }}
+                    onChange={(e) => (e.target.checked ? selectAllVisible() : clearSelection())}
+                    aria-label="현재 화면 전체 선택"
+                  />
+                </th>
+              );
+            })()}
             <th>요청번호</th>
             <th>거래처</th>
             <th>제목</th>
@@ -1342,13 +1427,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           </tr>
         </thead>
         <tbody>
-          {loading ? (
+          {(() => {
+            const baseCols = isOrderPage ? 8 : 6;
+            const colSpan = selectMode ? baseCols + 1 : baseCols;
+            return loading ? (
             <tr>
-              <td colSpan={isOrderPage ? 8 : 6} className="order-empty">요청 목록을 불러오는 중입니다.</td>
+              <td colSpan={colSpan} className="order-empty">요청 목록을 불러오는 중입니다.</td>
             </tr>
           ) : filteredOrders.length === 0 ? (
             <tr>
-              <td colSpan={isOrderPage ? 8 : 6} className="order-empty">
+              <td colSpan={colSpan} className="order-empty">
                 {activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "표시할 요청이 없습니다."}
               </td>
             </tr>
@@ -1377,20 +1465,36 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
 
               const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
+              const isSelected = selectMode && selectedIds.has(order.id);
+              const handleRowActivate = () => {
+                if (selectMode) toggleSelectId(order.id);
+                else setSelectedOrderId(order.id);
+              };
               return (
                 <tr
                   key={order.id}
-                  className={`order-row ${isTrash ? "trash-row" : ""} order-row--${typeKey}`}
-                  onClick={() => setSelectedOrderId(order.id)}
+                  className={`order-row ${isTrash ? "trash-row" : ""} order-row--${typeKey} ${isSelected ? "order-row--selected" : ""}`}
+                  onClick={handleRowActivate}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setSelectedOrderId(order.id);
+                      handleRowActivate();
                     }
                   }}
                 >
+                  {selectMode && (
+                    <td className="order-select-cell" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="order-select-checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectId(order.id)}
+                        aria-label={`${order.orderNumber} 선택`}
+                      />
+                    </td>
+                  )}
                   <td className="order-num">
                     <span className="order-num-text">{order.orderNumber}</span>
                     {(hasNewEvidence || hasNewWorksheet) && (
@@ -1508,7 +1612,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </tr>
               );
             })
-          )}
+          );
+          })()}
         </tbody>
       </table>
       ) : (
@@ -1550,20 +1655,35 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
                     const isOrderType = order.requestType === "ORDER";
 
+                    const isSelectedCard = selectMode && selectedIds.has(order.id);
+                    const handleCardActivate = () => {
+                      if (selectMode) toggleSelectId(order.id);
+                      else setSelectedOrderId(order.id);
+                    };
                     return (
                       <div
                         key={order.id}
-                        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""}`}
-                        onClick={() => setSelectedOrderId(order.id)}
+                        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${isSelectedCard ? "order-card--selected" : ""}`}
+                        onClick={handleCardActivate}
                         role="button"
                         tabIndex={0}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            setSelectedOrderId(order.id);
+                            handleCardActivate();
                           }
                         }}
                       >
+                        {selectMode && (
+                          <div
+                            className="order-card-select-mark"
+                            aria-hidden="true"
+                          >
+                            <span className={`order-card-select-box ${isSelectedCard ? "checked" : ""}`}>
+                              {isSelectedCard ? "✓" : ""}
+                            </span>
+                          </div>
+                        )}
                         <div className="order-card-thumb-wrap">
                           <WorksheetThumbnail
                             pdfUrl={order.worksheetPdfUrl || null}
@@ -1705,6 +1825,43 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         onClose={() => setLightboxIndex(null)}
         onIndexChange={setLightboxIndex}
       />
+
+      {selectMode && (() => {
+        const allFilteredSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
+        return (
+        <div className="select-bar" role="region" aria-label="선택 모드">
+          <span className="select-bar-count">
+            <strong>{selectedIds.size}</strong>건 선택 / {filteredOrders.length}건
+          </span>
+          <div className="select-bar-actions">
+            <button
+              type="button"
+              className="select-bar-btn select-bar-btn--ghost"
+              onClick={allFilteredSelected ? clearSelection : selectAllVisible}
+              disabled={filteredOrders.length === 0}
+            >
+              {allFilteredSelected ? "선택 해제" : "현재 화면 전체 선택"}
+            </button>
+            <button
+              type="button"
+              className="select-bar-btn select-bar-btn--primary"
+              onClick={completeSelected}
+              disabled={selectedIds.size === 0 || bulkSelectCompleting}
+            >
+              {bulkSelectCompleting ? "처리 중..." : `작업완료 (${selectedIds.size})`}
+            </button>
+            <button
+              type="button"
+              className="select-bar-btn select-bar-btn--ghost"
+              onClick={exitSelectMode}
+              disabled={bulkSelectCompleting}
+            >
+              종료
+            </button>
+          </div>
+        </div>
+        );
+      })()}
 
       {selectedOrder && (
         <div

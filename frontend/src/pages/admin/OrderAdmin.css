@@ -1571,6 +1571,159 @@
   }
 }
 
+/* ─── 다중 선택 모드 ─── */
+.select-mode-toggle {
+  border: 1px solid #d4d4d4;
+  background: #fff;
+  color: #444;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  margin-right: 6px;
+}
+.select-mode-toggle:hover {
+  border-color: #0f172a;
+  color: #0f172a;
+}
+.select-mode-toggle.active {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
+/* 표 — 체크박스 셀 + 선택된 행 강조 */
+.order-select-cell {
+  width: 36px;
+  text-align: center;
+  padding: 8px 6px;
+}
+.order-select-checkbox {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: #0f172a;
+}
+.order-row--selected {
+  background: #fef9c3 !important;
+}
+.order-row--selected:hover {
+  background: #fde68a !important;
+}
+
+/* 카드 — 우상단 체크박스 마크 + 선택된 카드 테두리 */
+.order-card-select-mark {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  pointer-events: none;
+}
+.order-card-select-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 2px solid #fff;
+  background: rgba(15, 23, 42, 0.5);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+.order-card-select-box.checked {
+  background: #f59e0b;
+  border-color: #fde68a;
+}
+.order-card--selected {
+  outline: 3px solid #f59e0b;
+  outline-offset: -3px;
+  box-shadow: 0 6px 18px rgba(245, 158, 11, 0.35) !important;
+}
+
+/* 하단 sticky 작업 바 — 선택 모드 ON 일 때만 표시 */
+.select-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 20px;
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 999px;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.4);
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.select-bar-count {
+  font-size: 14px;
+  color: #cbd5f5;
+  white-space: nowrap;
+}
+.select-bar-count strong {
+  color: #fde68a;
+  font-size: 18px;
+  font-weight: 800;
+  margin-right: 2px;
+}
+.select-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.select-bar-btn {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.15s, background 0.15s;
+}
+.select-bar-btn--ghost {
+  background: transparent;
+  color: #cbd5f5;
+}
+.select-bar-btn--ghost:hover:not(:disabled) {
+  background: #1e293b;
+  color: #fff;
+}
+.select-bar-btn--primary {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #1f1407;
+}
+.select-bar-btn--primary:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.select-bar-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 720px) {
+  .select-bar {
+    bottom: 10px;
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  .select-bar-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+}
+
 /* ─── 지연 일괄 완료 검토 — 모달 하단 sticky 바 ─── */
 /* 검토 중일 때 좌/우 pane 의 콘텐츠가 sticky 바에 가려지지 않도록 하단 여백 확보. */
 .order-preview-content--review .order-preview-left,
