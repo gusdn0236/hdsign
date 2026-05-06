@@ -1523,43 +1523,104 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
                 return q in hay
             return [c for c in sorted_clients if _hit(c)][:30]
 
+        # 키보드 네비게이션 — 검색창에서 ↓/↑ 로 행 이동, Enter 로 선택. 클릭도 그대로 동작.
+        # _render 가 매번 다시 그리기 때문에 행 위젯 참조를 캐시해 _apply_highlight 가 빠르게.
+        selected_idx = {"value": 0}
+        row_widgets: list[tuple[tk.Frame, tk.Label]] = []
+
+        def _apply_highlight():
+            for i, (row, lbl) in enumerate(row_widgets):
+                if i == selected_idx["value"]:
+                    row.configure(bg="#f0fdf4")
+                    lbl.configure(bg="#f0fdf4",
+                                  font=("맑은 고딕", 10, "bold"))
+                else:
+                    row.configure(bg="white")
+                    lbl.configure(bg="white",
+                                  font=("맑은 고딕", 10, "normal"))
+
+        def _scroll_to_selected():
+            if not row_widgets:
+                return
+            idx = selected_idx["value"]
+            if not (0 <= idx < len(row_widgets)):
+                return
+            try:
+                canvas.update_idletasks()
+                row, _ = row_widgets[idx]
+                row_y = row.winfo_y()
+                row_h = row.winfo_height()
+                canvas_h = canvas.winfo_height()
+                inner_h = inner.winfo_height()
+                if inner_h <= canvas_h:
+                    return
+                top_y = canvas.yview()[0] * inner_h
+                bottom_y = top_y + canvas_h
+                if row_y < top_y:
+                    canvas.yview_moveto(row_y / inner_h)
+                elif row_y + row_h > bottom_y:
+                    canvas.yview_moveto((row_y + row_h - canvas_h) / inner_h)
+            except Exception:
+                pass
+
+        def _move_selection(delta: int):
+            if not filtered:
+                return "break"
+            new_idx = max(0, min(len(filtered) - 1,
+                                 selected_idx["value"] + delta))
+            if new_idx != selected_idx["value"]:
+                selected_idx["value"] = new_idx
+                _apply_highlight()
+                _scroll_to_selected()
+            return "break"
+
         def _render():
             for child in inner.winfo_children():
                 child.destroy()
+            row_widgets.clear()
             items = _filter()
             filtered.clear()
             filtered.extend(items)
+            # 검색어 바뀔 때마다 첫 행으로 리셋 — 직원이 글자 더 치고 ↓ 누르면 다시 처음부터.
+            selected_idx["value"] = 0
             if not items:
                 tk.Label(inner,
                          text="검색 결과 없음" if search_var.get().strip() else "거래처 없음",
                          bg="white", fg=SUB_FG, font=("맑은 고딕", 10)
                          ).pack(pady=12)
                 return
-            for idx, c in enumerate(items):
-                row_bg = "#f0fdf4" if idx == 0 else "white"
-                row = tk.Frame(inner, bg=row_bg, cursor="hand2")
+            for c in items:
+                row = tk.Frame(inner, bg="white", cursor="hand2")
                 row.pack(fill="x", padx=8, pady=2)
                 name = c.get("companyName") or "-"
                 contact = (c.get("contactName") or "").strip()
                 row_text = f"{name}    {contact}".strip()
-                lbl = tk.Label(row, text=row_text, bg=row_bg, fg=TITLE_FG,
-                               font=("맑은 고딕", 10, "bold" if idx == 0 else "normal"),
+                lbl = tk.Label(row, text=row_text, bg="white", fg=TITLE_FG,
+                               font=("맑은 고딕", 10, "normal"),
                                anchor="w")
                 lbl.pack(side="left", fill="x", expand=True, padx=8, pady=6)
+                row_widgets.append((row, lbl))
 
                 def _make(c_local):
                     return lambda _e=None: _on_pick(c_local)
                 handler = _make(c)
                 row.bind("<Button-1>", handler)
                 lbl.bind("<Button-1>", handler)
+            _apply_highlight()
 
         search_var.trace_add("write", lambda *_: _render())
         _render()
 
         def _on_enter(_e=None):
-            if filtered:
-                _on_pick(filtered[0])
+            if not filtered:
+                return "break"
+            idx = selected_idx["value"]
+            if 0 <= idx < len(filtered):
+                _on_pick(filtered[idx])
+            return "break"
         search_entry.bind("<Return>", _on_enter)
+        search_entry.bind("<Down>", lambda _e: _move_selection(1))
+        search_entry.bind("<Up>", lambda _e: _move_selection(-1))
 
         # 인쇄 흐름에서 진입했을 때만 [기존지시서 변경하기] 버튼 표시 — QR 이 있는데 인식이
         # 안 된 드문 경우(찢김/색상/스캔 노이즈 등)에만 사용. 클릭하면 이 다이얼로그를 닫고
