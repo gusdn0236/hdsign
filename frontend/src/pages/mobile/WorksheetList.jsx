@@ -95,6 +95,12 @@ export default function WorksheetList() {
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
     const [lastSyncedAt, setLastSyncedAt] = useState(null);
+    // 다중 선택 모드 — 카드 탭으로 토글, 하단 sticky 바의 [작업완료] 로 N건 한꺼번에 처리.
+    // 각각 들어가서 처리하는 흐름은 그대로 유지(선택 모드 OFF 일 때 Link 가 동작).
+    const [selectMode, setSelectMode] = useState(false);
+    const [selectedNumbers, setSelectedNumbers] = useState(() => new Set());
+    const [bulkCompleting, setBulkCompleting] = useState(false);
+    const [bulkError, setBulkError] = useState('');
     const aliveRef = useRef(true);
 
     const myWorker = worker.trim();
@@ -119,6 +125,30 @@ export default function WorksheetList() {
     const openWorkerModal = () => {
         setWorkerDraft(worker || '');
         setShowWorkerModal(true);
+    };
+
+    // 선택 모드 토글 — ON 진입 시 직원 미설정이면 모달부터 띄움(작업완료 시점에 어차피 필요).
+    const toggleSelectMode = () => {
+        if (!selectMode && !worker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
+            return;
+        }
+        setSelectMode((prev) => {
+            const next = !prev;
+            if (!next) setSelectedNumbers(new Set());
+            return next;
+        });
+        setBulkError('');
+    };
+
+    const toggleSelected = (orderNumber) => {
+        setSelectedNumbers((prev) => {
+            const next = new Set(prev);
+            if (next.has(orderNumber)) next.delete(orderNumber);
+            else next.add(orderNumber);
+            return next;
+        });
     };
 
     // 캐시버스터 + cache: no-store — 모바일/CDN 캐시로 인해 옛 데이터가 보이는 문제 방지.
@@ -231,21 +261,25 @@ export default function WorksheetList() {
     }, [searchFilteredItems, companyFilter]);
 
     // mineOnly 가 true + 직원 설정됨일 때만 슬롯 매칭으로 좁힌다.
-    // 본인 또는 같은 슬롯 동료가 작업완료 누른 건(workerCompletedAt!=null) 은 자동 제외 — claim 모델.
-    // 슬롯이 비어있는(워처 도입 이전) 지시서는 mineOnly 에서 빠지고 off 에서만 보여 누락 방지.
+    // 본인이 [작업완료] 누른 건은 본인 리스트에서만 제외(per-worker independent) — 같은 슬롯
+    // 동료에게는 그대로 보임. 슬롯이 비어있는(워처 도입 이전) 지시서는 off 에서만 보여 누락 방지.
     const filtered = useMemo(() => {
         if (!mineOnly || !myWorker) return companyFilteredItems;
-        return companyFilteredItems.filter((it) =>
-            !it.workerCompletedAt && matchesWorker(it.departmentSlots, myWorker)
-        );
+        return companyFilteredItems.filter((it) => {
+            const done = Array.isArray(it.workerCompletions)
+                && it.workerCompletions.some((c) => c.worker === myWorker);
+            return !done && matchesWorker(it.departmentSlots, myWorker);
+        });
     }, [companyFilteredItems, mineOnly, myWorker]);
 
-    // 토글 라벨용 카운트(본인 슬롯이 매칭된 미완료 지시서 개수).
+    // 토글 라벨용 카운트(본인 슬롯이 매칭된, 본인이 아직 안 끝낸 지시서 개수).
     const myCount = useMemo(() => {
         if (!myWorker) return 0;
-        return companyFilteredItems.filter((it) =>
-            !it.workerCompletedAt && matchesWorker(it.departmentSlots, myWorker)
-        ).length;
+        return companyFilteredItems.filter((it) => {
+            const done = Array.isArray(it.workerCompletions)
+                && it.workerCompletions.some((c) => c.worker === myWorker);
+            return !done && matchesWorker(it.departmentSlots, myWorker);
+        }).length;
     }, [companyFilteredItems, myWorker]);
 
     const groups = useMemo(() => {
@@ -272,6 +306,74 @@ export default function WorksheetList() {
             return a.localeCompare(b);
         });
     }, [filtered, sortMode]);
+
+    // 선택 모드에서 사라진(다른 디바이스에서 처리) 항목은 자동으로 선택 해제.
+    useEffect(() => {
+        if (!selectMode) return;
+        const visibleSet = new Set(filtered.map((it) => it.orderNumber));
+        setSelectedNumbers((prev) => {
+            let changed = false;
+            const next = new Set();
+            prev.forEach((n) => {
+                if (visibleSet.has(n)) next.add(n);
+                else changed = true;
+            });
+            return changed ? next : prev;
+        });
+    }, [filtered, selectMode]);
+
+    const visibleAllSelected = filtered.length > 0
+        && filtered.every((it) => selectedNumbers.has(it.orderNumber));
+
+    const toggleAllVisible = () => {
+        if (visibleAllSelected) {
+            setSelectedNumbers(new Set());
+        } else {
+            setSelectedNumbers(new Set(filtered.map((it) => it.orderNumber)));
+        }
+    };
+
+    // 일괄 작업완료 — 선택된 건들에 worker-complete 병렬 호출. 일부 실패해도 성공한 건은 그대로 반영.
+    // 멱등(이미 완료된 건은 200) — 다른 직원이 같은 슬롯 동료로 먼저 완료한 경우에도 안전.
+    const handleBulkComplete = async () => {
+        if (!selectedNumbers.size || bulkCompleting) return;
+        if (!worker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
+            return;
+        }
+        setBulkCompleting(true);
+        setBulkError('');
+        const targets = Array.from(selectedNumbers);
+        try {
+            const results = await Promise.allSettled(
+                targets.map((orderNumber) =>
+                    fetch(
+                        `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/worker-complete`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ worker }),
+                        },
+                    ).then((r) => {
+                        if (!r.ok) throw new Error(`${orderNumber}`);
+                        return orderNumber;
+                    }),
+                ),
+            );
+            const failed = results.filter((r) => r.status === 'rejected').length;
+            if (failed > 0) {
+                setBulkError(`${failed}건 처리 실패 — 잠시 후 다시 시도해 주세요.`);
+            }
+            setSelectedNumbers(new Set());
+            setSelectMode(false);
+            await fetchList({ manual: true });
+        } catch (err) {
+            setBulkError(err.message || '일괄 처리 중 오류');
+        } finally {
+            setBulkCompleting(false);
+        }
+    };
 
     const formatSyncedAt = (d) => {
         if (!d) return '';
@@ -405,6 +507,21 @@ export default function WorksheetList() {
                         <span className="ws-dept-chip-text">{worker || '미설정'}</span>
                     </button>
                 </div>
+
+                {/* 다중 선택 모드 — 카드 탭으로 N건 선택해 한 번에 작업완료. 선택 모드 OFF 시 카드는
+                    그대로 Link 동작(각각 들어가서 처리). 발주관리 selectMode 와 같은 패턴. */}
+                <div className="ws-action-row">
+                    <button
+                        type="button"
+                        className={`ws-select-toggle ${selectMode ? 'active' : ''}`}
+                        onClick={toggleSelectMode}
+                        disabled={bulkCompleting}
+                    >
+                        {selectMode
+                            ? `선택 모드 끄기${selectedNumbers.size > 0 ? ` · ${selectedNumbers.size}건` : ''}`
+                            : '여러 개 선택해 일괄 완료'}
+                    </button>
+                </div>
             </header>
 
             {loading && <div className="ws-empty">불러오는 중…</div>}
@@ -437,16 +554,23 @@ export default function WorksheetList() {
                         <div className="ws-grid">
                             {list.map((it) => {
                                 const cardBadge = isUploaded ? getDueBadge(it.dueDate) : null;
-                                return (
-                                    <Link
-                                        key={it.orderNumber}
-                                        to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
-                                        className="ws-grid-card"
-                                    >
+                                const isSelected = selectedNumbers.has(it.orderNumber);
+                                const cardClass = `ws-grid-card${selectMode ? ' select-mode' : ''}${isSelected ? ' selected' : ''}`;
+                                const cardContent = (
+                                    <>
                                         <WorksheetThumbnail
                                             pdfUrl={it.worksheetPdfUrl}
                                             thumbnailUrl={it.worksheetThumbnailUrl}
                                         />
+                                        {selectMode && (
+                                            <span className={`ws-grid-check ${isSelected ? 'on' : ''}`} aria-hidden="true">
+                                                {isSelected && (
+                                                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                                        <path d="M3.5 8.5l3 3 6-7" />
+                                                    </svg>
+                                                )}
+                                            </span>
+                                        )}
                                         <div className="ws-thumb-meta">
                                             <div className="ws-thumb-company">
                                                 {it.companyName || '거래처 미상'}
@@ -464,6 +588,28 @@ export default function WorksheetList() {
                                                 </div>
                                             )}
                                         </div>
+                                    </>
+                                );
+                                if (selectMode) {
+                                    return (
+                                        <button
+                                            type="button"
+                                            key={it.orderNumber}
+                                            className={cardClass}
+                                            onClick={() => toggleSelected(it.orderNumber)}
+                                            aria-pressed={isSelected}
+                                        >
+                                            {cardContent}
+                                        </button>
+                                    );
+                                }
+                                return (
+                                    <Link
+                                        key={it.orderNumber}
+                                        to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
+                                        className={cardClass}
+                                    >
+                                        {cardContent}
                                     </Link>
                                 );
                             })}
@@ -471,6 +617,33 @@ export default function WorksheetList() {
                     </section>
                 );
             })}
+
+            {selectMode && (
+                <div className="ws-select-bar" role="region" aria-label="선택 모드">
+                    {bulkError && <div className="ws-select-bar-error">{bulkError}</div>}
+                    <div className="ws-select-bar-row">
+                        <span className="ws-select-bar-count">
+                            <strong>{selectedNumbers.size}</strong>건 / {filtered.length}
+                        </span>
+                        <button
+                            type="button"
+                            className="ws-select-bar-ghost"
+                            onClick={toggleAllVisible}
+                            disabled={filtered.length === 0 || bulkCompleting}
+                        >
+                            {visibleAllSelected ? '해제' : '전체'}
+                        </button>
+                        <button
+                            type="button"
+                            className="ws-select-bar-complete"
+                            onClick={handleBulkComplete}
+                            disabled={selectedNumbers.size === 0 || bulkCompleting}
+                        >
+                            {bulkCompleting ? '처리 중…' : `${selectedNumbers.size > 0 ? `${selectedNumbers.size}건 ` : ''}작업완료`}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {showWorkerModal && (
                 <div

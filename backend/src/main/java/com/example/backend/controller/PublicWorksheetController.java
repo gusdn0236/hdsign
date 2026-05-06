@@ -1,7 +1,9 @@
 package com.example.backend.controller;
 
 import com.example.backend.entity.Order;
+import com.example.backend.entity.WorkerCompletion;
 import com.example.backend.repository.OrderRepository;
+import com.example.backend.repository.WorkerCompletionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,7 +25,6 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -49,6 +50,7 @@ import java.util.Map;
 public class PublicWorksheetController {
 
     private final OrderRepository orderRepository;
+    private final WorkerCompletionRepository workerCompletionRepository;
     private final S3Client s3Client;
 
     @Value("${r2.bucket}")
@@ -175,17 +177,25 @@ public class PublicWorksheetController {
         // 워처 다이얼로그에서 "변경된 내용" 텍스트 박스를 이전에 입력한 메모로 그대로 복원하기 위함.
         // 모바일 뷰어는 detail 엔드포인트에서 별도로 받아 PDF 탭 시 노출 — list 와 detail 양쪽에 노출.
         item.put("worksheetChangeNote", o.getWorksheetChangeNote());
-        // 모바일 "내 지시서만 보기" — 본인이 처리한 건은 자동 제외 위해. 다른 직원이 처리한 건도 사라짐(claim).
-        item.put("workerCompletedBy", o.getWorkerCompletedBy());
-        item.put("workerCompletedAt", o.getWorkerCompletedAt() != null ? o.getWorkerCompletedAt().toString() : null);
+        // per-worker 완료 신고 목록. 모바일은 자기 worker 가 이 안에 있는지 체크해 본인 리스트에서만
+        // 제외(다른 직원에겐 그대로 보임). 작업현황 탭은 이 목록을 직원별 카드로 펼친다.
+        List<Map<String, Object>> wcs = new ArrayList<>();
+        for (WorkerCompletion wc : o.getWorkerCompletions()) {
+            Map<String, Object> entry = new HashMap<>();
+            entry.put("worker", wc.getWorker());
+            entry.put("completedAt", wc.getCompletedAt() != null ? wc.getCompletedAt().toString() : null);
+            wcs.add(entry);
+        }
+        item.put("workerCompletions", wcs);
         return item;
     }
 
     /**
-     * 모바일 [작업완료] — 직원이 본인 작업이 끝났음을 신고.
+     * 모바일 [작업완료] — 직원이 본인 작업이 끝났음을 신고. per-worker independent.
      * body: { "worker": "신문식" }. 인증 없음(IN_PROGRESS PDF 노출과 동일한 보안 수준).
-     * 멱등 — 이미 완료된 건이어도 200, 워커 이름은 최초 1회만 기록(다른 직원이 덮어쓰지 않음).
-     * 성공 후 모든 직원의 모바일 리스트에서 사라짐(claim 모델 — 같은 슬롯 공유자 포함).
+     *
+     * <p>같은 직원이 같은 지시서를 두 번 누르면 두 번째는 멱등(no-op). 다른 직원이 같은 지시서를
+     * 누르면 row 가 추가됨 — 다른 직원에게는 영향 없음(같은 슬롯 동료라도 그대로 보임).
      */
     @PostMapping("/{orderNumber}/worker-complete")
     public ResponseEntity<?> workerComplete(
@@ -205,17 +215,19 @@ public class PublicWorksheetController {
             return ResponseEntity.badRequest()
                     .body(Map.of("message", "이미 마감된 작업입니다."));
         }
-        // 최초 1회만 기록 — 두 번째 누른 사람의 이름이 덮어써지지 않게.
-        if (order.getWorkerCompletedAt() == null) {
-            order.setWorkerCompletedBy(worker);
-            order.setWorkerCompletedAt(LocalDateTime.now());
-            orderRepository.save(order);
+        // (order, worker) 기준 멱등 — 같은 직원이 또 누르면 무시. 다른 직원의 row 는 그대로.
+        var existing = workerCompletionRepository.findByOrder_IdAndWorker(order.getId(), worker);
+        if (existing.isEmpty()) {
+            WorkerCompletion wc = WorkerCompletion.builder()
+                    .order(order)
+                    .worker(worker)
+                    .build();
+            workerCompletionRepository.save(wc);
             log.info("작업완료 신고 [{}] by {}", orderNumber, worker);
         }
         return ResponseEntity.ok(Map.of(
                 "orderNumber", orderNumber,
-                "workerCompletedBy", order.getWorkerCompletedBy(),
-                "workerCompletedAt", order.getWorkerCompletedAt() != null ? order.getWorkerCompletedAt().toString() : null
+                "worker", worker
         ));
     }
 

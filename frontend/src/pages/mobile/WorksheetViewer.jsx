@@ -800,26 +800,34 @@ export default function WorksheetViewer() {
                             </button>
                         </div>
 
-                        {/* 작업완료 — 본인 작업 끝나면 누르고, 같은 슬롯 동료에게서도 자동으로 사라짐.
-                            업로드 영역 위에 큰 빨간 버튼으로 분명하게 표시. 이미 완료된 건이 다시 떠 있는
-                            드문 케이스(서버 동기화 지연)에는 detail 의 workerCompletedAt 으로 disable. */}
-                        {detail?.workerCompletedAt ? (
-                            <div className="wsv-complete-done">
-                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                    <path d="M3 8l3.5 3.5L13 5" />
-                                </svg>
-                                <span>{detail.workerCompletedBy || '직원'} 님이 작업완료 처리</span>
-                            </div>
-                        ) : (
-                            <button
-                                type="button"
-                                className="wsv-complete-btn"
-                                onClick={handleWorkerComplete}
-                                disabled={completing}
-                            >
-                                {completing ? '처리 중…' : '작업완료'}
-                            </button>
-                        )}
+                        {/* 작업완료 — 본인 작업 끝나면 누르고, 본인 모바일에서만 사라짐(per-worker).
+                            같은 슬롯 동료에게는 그대로 보여 각자 따로 누름. 본인이 이미 누른 건은
+                            done 카드로 비활성. */}
+                        {(() => {
+                            const completedByMe = worker
+                                && Array.isArray(detail?.workerCompletions)
+                                && detail.workerCompletions.some((c) => c.worker === worker);
+                            if (completedByMe) {
+                                return (
+                                    <div className="wsv-complete-done">
+                                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                            <path d="M3 8l3.5 3.5L13 5" />
+                                        </svg>
+                                        <span>{worker} 님 작업완료 처리됨</span>
+                                    </div>
+                                );
+                            }
+                            return (
+                                <button
+                                    type="button"
+                                    className="wsv-complete-btn"
+                                    onClick={handleWorkerComplete}
+                                    disabled={completing}
+                                >
+                                    {completing ? '처리 중…' : '작업완료'}
+                                </button>
+                            );
+                        })()}
                         {completeError && <div className="wsv-feedback error">{completeError}</div>}
 
                         {compressing ? (

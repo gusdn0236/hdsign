@@ -38,14 +38,24 @@ public class OrderDto {
         private LocalDateTime worksheetUpdatedAt;
         private String worksheetChangeNote;
         private LocalDateTime adminViewedAt;
-        // 작업현황 탭과 모바일 "내 지시서만 보기" 본인 완료 제외에 사용. null = 아직 작업중.
-        private String workerCompletedBy;
-        private LocalDateTime workerCompletedAt;
+        // per-worker 완료 신고 목록. 같은 지시서를 여러 직원이 각자 따로 처리하면 row 가 여러 개.
+        // 모바일은 본인 worker 가 이 안에 있는지 체크해 자기 리스트에서만 빼고, 작업현황 탭은
+        // 이 목록을 row 별로 펼쳐 직원별 카드로 보여준다.
+        private List<WorkerCompletionInfo> workerCompletions;
         // 워처가 분배함에서 클릭한 슬롯 라벨 — 작업현황에서 "이 지시서가 어느 직원들에게 배정됐었는가" 표시용.
         private List<String> departmentSlots;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
+    }
+
+    @Getter
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class WorkerCompletionInfo {
+        private String worker;
+        private LocalDateTime completedAt;
     }
 
     @Getter
@@ -108,8 +118,12 @@ public class OrderDto {
                 .worksheetUpdatedAt(order.getWorksheetUpdatedAt())
                 .worksheetChangeNote(order.getWorksheetChangeNote())
                 .adminViewedAt(order.getAdminViewedAt())
-                .workerCompletedBy(order.getWorkerCompletedBy())
-                .workerCompletedAt(order.getWorkerCompletedAt())
+                .workerCompletions(order.getWorkerCompletions().stream()
+                        .map(wc -> WorkerCompletionInfo.builder()
+                                .worker(wc.getWorker())
+                                .completedAt(wc.getCompletedAt())
+                                .build())
+                        .toList())
                 .departmentSlots(splitCsv(order.getDepartmentSlots()))
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())

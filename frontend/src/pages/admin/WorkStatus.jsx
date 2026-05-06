@@ -100,11 +100,14 @@ const PERIOD_TABS = [
 
 export default function WorkStatus() {
   const { token } = useAuth();
-  const [orders, setOrders] = useState([]);
+  // entries 의 한 row = 한 직원의 한 worksheet 완료 기록. 같은 worksheet 을 김진섭+김명수가
+  // 각자 처리하면 두 entry 가 만들어진다(per-worker independent). 한 worksheet 카드 1개에 여러
+  // 직원을 묶어 표시하는 대신 직원별로 펼쳐서 직원별 처리량 통계가 정확해진다.
+  const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [period, setPeriod] = useState("today");
-  const [workerFilter, setWorkerFilter] = useState("ALL"); // 'ALL' or 직원 이름
+  const [workerFilter, setWorkerFilter] = useState("ALL");
 
   const loadOrders = async () => {
     setLoading(true);
@@ -115,9 +118,24 @@ export default function WorkStatus() {
       });
       if (!res.ok) throw new Error("작업 목록을 불러오지 못했습니다.");
       const data = await res.json();
-      // 발주(ORDER) + workerCompletedAt 있는 것만. 견적은 작업현황 대상 아님.
       const list = Array.isArray(data) ? data : [];
-      setOrders(list.filter((o) => o.requestType === "ORDER" && o.workerCompletedAt));
+      // 발주(ORDER) 의 workerCompletions row 별로 entry 펼치기.
+      const expanded = [];
+      for (const o of list) {
+        if (o.requestType !== "ORDER") continue;
+        const wcs = Array.isArray(o.workerCompletions) ? o.workerCompletions : [];
+        for (const wc of wcs) {
+          if (!wc?.worker || !wc?.completedAt) continue;
+          expanded.push({
+            order: o,
+            worker: wc.worker,
+            completedAt: wc.completedAt,
+            // entry key 는 order.id + worker — 같은 worksheet 의 다른 직원 entry 를 구분.
+            key: `${o.id}__${wc.worker}`,
+          });
+        }
+      }
+      setEntries(expanded);
     } catch (err) {
       setError(err.message || "오류가 발생했습니다.");
     } finally {
@@ -134,20 +152,18 @@ export default function WorkStatus() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // 기간 필터 적용 (직원 필터는 카드 단계에서 별도 적용 — 직원별 건수 칩에 영향 주지 않기 위해).
+  // 기간 필터 — entry.completedAt 기준. 직원 필터는 카드 단계에서 별도 적용해 직원별 칩 건수에 영향 X.
   const periodFiltered = useMemo(
-    () => orders.filter((o) => periodMatches(o.workerCompletedAt, period)),
-    [orders, period],
+    () => entries.filter((e) => periodMatches(e.completedAt, period)),
+    [entries, period],
   );
 
-  // 직원별 건수 — 기간 필터 결과 안에서. ALL_WORKERS 순서대로(가나다), 0건도 노출 안 함.
+  // 직원별 건수 — 기간 필터 entry 모음 안에서. 같은 직원이 N건 처리하면 N으로 카운트.
   const workerCounts = useMemo(() => {
     const m = new Map();
     for (const w of ALL_WORKERS) m.set(w, 0);
-    for (const o of periodFiltered) {
-      const name = o.workerCompletedBy;
-      if (!name) continue;
-      m.set(name, (m.get(name) || 0) + 1);
+    for (const e of periodFiltered) {
+      m.set(e.worker, (m.get(e.worker) || 0) + 1);
     }
     return Array.from(m.entries())
       .filter(([, c]) => c > 0)
@@ -158,10 +174,10 @@ export default function WorkStatus() {
   const visible = useMemo(() => {
     const list = workerFilter === "ALL"
       ? periodFiltered
-      : periodFiltered.filter((o) => o.workerCompletedBy === workerFilter);
+      : periodFiltered.filter((e) => e.worker === workerFilter);
     return [...list].sort((a, b) => {
-      const ta = a.workerCompletedAt ? new Date(a.workerCompletedAt).getTime() : 0;
-      const tb = b.workerCompletedAt ? new Date(b.workerCompletedAt).getTime() : 0;
+      const ta = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+      const tb = b.completedAt ? new Date(b.completedAt).getTime() : 0;
       return tb - ta;
     });
   }, [periodFiltered, workerFilter]);
@@ -227,13 +243,20 @@ export default function WorkStatus() {
         </div>
       ) : (
         <div className="ws-status-grid">
-          {visible.map((o) => {
+          {visible.map((e) => {
+            const o = e.order;
             const dueBadge = getDueBadge(o.dueDate);
+            // 같은 슬롯을 공유하는 동료 — 같은 worksheet 을 처리해야 하는 다른 직원들.
+            // 그 중 이미 완료한 사람은 따로 표시(한 worksheet 의 다른 entry 카드로도 보임).
             const slotWorkers = getWorkersForSlots(o.departmentSlots);
-            const otherWorkers = slotWorkers.filter((w) => w !== o.workerCompletedBy);
-            const hue = getWorkerHue(o.workerCompletedBy);
+            const completedSet = new Set(
+              (Array.isArray(o.workerCompletions) ? o.workerCompletions : []).map((c) => c.worker),
+            );
+            const otherWorkers = slotWorkers.filter((w) => w !== e.worker);
+            const stillPending = otherWorkers.filter((w) => !completedSet.has(w));
+            const hue = getWorkerHue(e.worker);
             return (
-              <div className="ws-status-card" key={o.id}>
+              <div className="ws-status-card" key={e.key}>
                 <div className="ws-status-thumb">
                   <WorksheetThumbnail
                     pdfUrl={o.worksheetPdfUrl || null}
@@ -252,8 +275,8 @@ export default function WorkStatus() {
                       color: `hsl(${hue}, 65%, 28%)`,
                     }}
                   >
-                    <WorkerDot name={o.workerCompletedBy} />
-                    <span>{o.workerCompletedBy || "직원"}</span>
+                    <WorkerDot name={e.worker} />
+                    <span>{e.worker}</span>
                   </div>
                 </div>
                 <div className="ws-status-body">
@@ -274,12 +297,12 @@ export default function WorkStatus() {
                   <div className="ws-status-foot">
                     <span className="ws-status-num">{o.orderNumber}</span>
                     <span className="ws-status-completed">
-                      완료 · {formatCompletedAt(o.workerCompletedAt)}
+                      완료 · {formatCompletedAt(e.completedAt)}
                     </span>
                   </div>
-                  {otherWorkers.length > 0 && (
-                    <div className="ws-status-shared" title="같은 슬롯을 공유한 동료">
-                      공유 {otherWorkers.join(", ")}
+                  {stillPending.length > 0 && (
+                    <div className="ws-status-shared" title="같은 슬롯에서 아직 처리 안 한 동료">
+                      대기 {stillPending.join(", ")}
                     </div>
                   )}
                 </div>

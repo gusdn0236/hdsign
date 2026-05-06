@@ -615,6 +615,178 @@
     cursor: not-allowed;
 }
 
+/* 다중 선택 모드 — 헤더 토글 + 카드 토글 + 하단 sticky 바 ----------- */
+.ws-action-row {
+    display: flex;
+    margin-top: 10px;
+}
+.ws-select-toggle {
+    flex: 1;
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fafafa;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease, border-color 0.12s ease;
+    letter-spacing: -0.01em;
+}
+.ws-select-toggle:active {
+    background: rgba(255, 255, 255, 0.12);
+}
+.ws-select-toggle.active {
+    background: #dc2626;
+    border-color: #dc2626;
+    color: #fff;
+}
+.ws-select-toggle.active:active {
+    background: #b91c1c;
+}
+.ws-select-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 카드가 button 으로 바뀌는 select-mode — 기본 button 스타일을 Link 와 동일하게 보이게 reset */
+.ws-grid-card.select-mode {
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    -webkit-tap-highlight-color: transparent;
+    /* Link 와 동일한 grid 셀 동작 위해 width/inline-flex 정리 */
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+}
+.ws-grid-card.selected {
+    outline: 3px solid #dc2626;
+    outline-offset: 2px;
+    border-radius: 10px;
+}
+
+/* 카드 좌상단 체크 인디케이터 — 선택 모드일 때만 노출, 선택되면 빨간색으로 채워짐. */
+.ws-grid-check {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.92);
+    border: 2px solid rgba(220, 38, 38, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    z-index: 2;
+    pointer-events: none;
+}
+.ws-grid-check.on {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+.ws-grid-check svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+}
+
+/* 하단 sticky 액션바 — fixed 로 화면 하단에 깔리고, 마지막 그룹이 가려지지 않도록
+   페이지 하단 padding 추가가 필요하지만 모바일은 자연스러운 스크롤이라 80px 정도면 충분. */
+.ws-select-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: #18181b;
+    color: #fff;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.ws-select-bar-error {
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    background: #7f1d1d;
+    color: #fee2e2;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+.ws-select-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.ws-select-bar-count {
+    color: #fafafa;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+    letter-spacing: -0.01em;
+}
+.ws-select-bar-count strong {
+    font-size: 16px;
+    margin-right: 2px;
+}
+.ws-select-bar-ghost {
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    background: transparent;
+    color: #fafafa;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    flex-shrink: 0;
+}
+.ws-select-bar-ghost:active {
+    background: rgba(255, 255, 255, 0.08);
+}
+.ws-select-bar-ghost:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.ws-select-bar-complete {
+    flex: 1;
+    height: 44px;
+    border-radius: 10px;
+    border: none;
+    background: #dc2626;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.12s ease;
+}
+.ws-select-bar-complete:active {
+    background: #b91c1c;
+}
+.ws-select-bar-complete:disabled {
+    background: #7f1d1d;
+    color: #fca5a5;
+    cursor: not-allowed;
+}
+
+/* 선택 모드일 때 마지막 카드가 sticky 바에 가려지지 않게 페이지 하단 여유. */
+.ws-list-page:has(.ws-select-bar) {
+    padding-bottom: 110px;
+}
+
 /* 좁은 폰(아이폰 SE/미니, ~360px) 대응 ---------------------------- */
 @media (max-width: 360px) {
     .ws-list-page {
