@@ -1351,6 +1351,193 @@ def change_tracked_folder_async(initial_dir: str | None = None):
     _ui_queue.put(("run", _ask))
 
 
+def open_qr_create_dialog_async():
+    """GUI [QR 코드 만들기] 버튼에서 호출.
+    독립 다이얼로그로 거래처를 검색해 빈 발주를 발급하고 그 QR 을 클립보드에 복사한다.
+    인쇄 다이얼로그(_ask_print_match_blocking) 와 분리된 흐름 — 사용자는 FlexSign 에서
+    지시서를 그리기 *전에* 이 버튼을 눌러 QR 부터 받고, 캔버스에 붙인 뒤 디자인을 시작.
+    그러면 첫 인쇄 PDF 에 이미 QR 이 박혀있어 매칭 다이얼로그가 곧장 [기존 변경] 으로 진입한다."""
+    def _open():
+        # 거래처 목록 — 모달 띄우기 전에 백그라운드로 받아두면 첫 화면 빠르게 뜬다.
+        # 실패 시 빈 리스트로 진행 — 다이얼로그 안에서 안내 표시.
+        clients = _fetch_admin_clients() or []
+        sorted_clients = sorted(
+            clients, key=lambda c: (c.get("companyName") or "").lower()
+        )
+
+        BG = "#ffffff"
+        BG_SOFT = "#fafafa"
+        BORDER = "#e4e4e7"
+        TITLE_FG = "#18181b"
+        SUB_FG = "#71717a"
+        ACCENT = "#10b981"
+
+        dlg = tk.Toplevel()
+        dlg.title("QR 코드 만들기")
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.attributes("-topmost", True)
+        DLG_W, DLG_H = 380, 480
+        try:
+            sw = dlg.winfo_screenwidth()
+            sh = dlg.winfo_screenheight()
+            x = (sw - DLG_W) // 2
+            y = (sh - DLG_H) // 2
+            dlg.geometry(f"{DLG_W}x{DLG_H}+{x}+{y}")
+        except Exception:
+            dlg.geometry(f"{DLG_W}x{DLG_H}")
+
+        body = tk.Frame(dlg, bg=BG)
+        body.pack(fill="both", expand=True, padx=14, pady=14)
+
+        tk.Label(body, text="QR 코드 만들기",
+                 bg=BG, fg=TITLE_FG,
+                 font=("맑은 고딕", 13, "bold"), anchor="w"
+                 ).pack(fill="x")
+        tk.Label(body,
+                 text="거래처를 골라 Enter — 새 발주번호의 QR 이 클립보드에 복사됩니다.\n"
+                      "FlexSign 캔버스에 Ctrl+V 로 붙이고 지시서를 그린 뒤 인쇄하세요.",
+                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 9),
+                 anchor="w", justify="left", wraplength=DLG_W - 28
+                 ).pack(fill="x", pady=(4, 10))
+
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(body, textvariable=search_var,
+                                font=("맑은 고딕", 11), bg="white",
+                                relief="solid", bd=1, highlightthickness=0)
+        search_entry.pack(fill="x")
+        tk.Label(body, text="거래처 / 별칭 / 담당자 검색",
+                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 8),
+                 anchor="w").pack(fill="x", pady=(2, 6))
+
+        list_outer = tk.Frame(body, bg=BG, highlightbackground=BORDER, highlightthickness=1)
+        list_outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(list_outer, bg="white", highlightthickness=0)
+        scroll = ttk.Scrollbar(list_outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        inner = tk.Frame(canvas, bg="white")
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(inner_id, width=e.width))
+
+        submitting = {"flag": False}
+        filtered: list[dict] = []
+
+        def _on_pick(client):
+            if submitting["flag"]:
+                return
+            client_id = client.get("id")
+            if client_id is None:
+                return
+            submitting["flag"] = True
+            try:
+                created = _create_qr_only_order(int(client_id))
+                if not created or not created.get("orderNumber"):
+                    submitting["flag"] = False
+                    messagebox.showerror(
+                        "발주 발급 실패",
+                        "빈 발주 생성에 실패했습니다.\n잠시 후 다시 시도하거나 워처 로그/백엔드 로그를 확인해주세요.",
+                        parent=dlg,
+                    )
+                    return
+                order_num = (created.get("orderNumber") or "").strip()
+                company = (created.get("clientCompanyName")
+                           or client.get("companyName") or "").strip()
+                ui_log(f"{order_num} ({company}) 빈 주문 발급 완료")
+                qr_copy_ok = False
+                try:
+                    qr_to_clipboard(order_num)
+                    qr_copy_ok = True
+                except Exception as e:
+                    ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
+                dlg.destroy()
+                if qr_copy_ok:
+                    messagebox.showinfo(
+                        "QR 코드 복사 완료",
+                        f"발주번호 {order_num} 의 QR 이 클립보드에 복사되었습니다.\n\n"
+                        f"FlexSign 캔버스에 Ctrl+V 로 붙여넣고 지시서를 그린 뒤\n"
+                        f"인쇄하시면 자동으로 매칭됩니다.",
+                    )
+                else:
+                    messagebox.showwarning(
+                        "QR 클립보드 복사 실패",
+                        f"발주번호 {order_num} 는 등록되었지만 QR 복사에 실패했습니다.\n"
+                        f"어드민 페이지에서 QR 을 다시 발급해 사용해주세요.",
+                    )
+            except Exception as e:
+                submitting["flag"] = False
+                ui_log(f"QR 코드 만들기 중 오류: {e}")
+                messagebox.showerror(
+                    "오류",
+                    f"발주 발급 중 오류가 발생했습니다.\n{e}",
+                    parent=dlg,
+                )
+
+        def _filter():
+            q = (search_var.get() or "").strip().lower()
+            if not q:
+                return sorted_clients[:30]
+            def _hit(c):
+                hay = " ".join([
+                    str(c.get("companyName") or ""),
+                    str(c.get("networkFolderName") or ""),
+                    str(c.get("aliases") or ""),
+                    str(c.get("contactName") or ""),
+                ]).lower()
+                return q in hay
+            return [c for c in sorted_clients if _hit(c)][:30]
+
+        def _render():
+            for child in inner.winfo_children():
+                child.destroy()
+            items = _filter()
+            filtered.clear()
+            filtered.extend(items)
+            if not items:
+                tk.Label(inner,
+                         text="검색 결과 없음" if search_var.get().strip() else "거래처 없음",
+                         bg="white", fg=SUB_FG, font=("맑은 고딕", 10)
+                         ).pack(pady=12)
+                return
+            for idx, c in enumerate(items):
+                row_bg = "#f0fdf4" if idx == 0 else "white"
+                row = tk.Frame(inner, bg=row_bg, cursor="hand2")
+                row.pack(fill="x", padx=8, pady=2)
+                name = c.get("companyName") or "-"
+                contact = (c.get("contactName") or "").strip()
+                row_text = f"{name}    {contact}".strip()
+                lbl = tk.Label(row, text=row_text, bg=row_bg, fg=TITLE_FG,
+                               font=("맑은 고딕", 10, "bold" if idx == 0 else "normal"),
+                               anchor="w")
+                lbl.pack(side="left", fill="x", expand=True, padx=8, pady=6)
+
+                def _make(c_local):
+                    return lambda _e=None: _on_pick(c_local)
+                handler = _make(c)
+                row.bind("<Button-1>", handler)
+                lbl.bind("<Button-1>", handler)
+
+        search_var.trace_add("write", lambda *_: _render())
+        _render()
+
+        def _on_enter(_e=None):
+            if filtered:
+                _on_pick(filtered[0])
+        search_entry.bind("<Return>", _on_enter)
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        try:
+            dlg.after(50, search_entry.focus_set)
+        except Exception:
+            pass
+
+    _ui_queue.put(("run", _open))
+
+
 # ── 새 발주/견적 알림 ───────────────────────────────────────────────────────
 # 백엔드 /api/admin/orders 를 30초 간격으로 폴링해 새 주문(발주/견적)이 들어오면
 # 작업장 PC 에서 사운드 + 창 raise + 빨간 배너로 즉시 인지하게 한다.
@@ -2345,136 +2532,40 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                  anchor="w", justify="left", wraplength=240,
                  ).pack(fill="x", padx=2, pady=(0, 8))
     else:
-        # ── (B) QR 없는 첫 인쇄 — 거래처만 골라서 발주번호+QR 생성, 클립보드 복사. ──
-        # 사용자는 클립보드 QR 을 FlexSign 에 붙이고 저장 후 다시 인쇄. 두 번째 인쇄는
-        # QR 매칭으로 [기존 변경] 탭에 자동 라우팅돼 거기서 납기/배송/분배함 입력 후 업로드.
-        sorted_clients_new = sorted(
-            list(clients_for_new or []),
-            key=lambda c: (c.get("companyName") or "").lower(),
-        )
-
-        tk.Label(new_tab, text="QR 코드 만들기",
+        # ── (B) QR 없는 첫 인쇄 — 거래처/발주 발급 흐름은 메인 GUI [QR 코드 만들기] 가 담당. ──
+        # 인쇄 다이얼로그 안에서는 발주를 만들지 않는다. 사용자는 한 단계 뒤로 돌아가
+        # 메인의 [QR 코드 만들기] 로 발주번호를 만들고 FlexSign 에 붙여넣은 뒤 다시 인쇄해야 한다.
+        # 또는 [기존 변경] 탭에서 이미 등록된 작업을 골라 매칭할 수도 있음.
+        tk.Label(new_tab, text="QR 이 없는 인쇄본",
                  bg=BG, fg=TITLE_FG,
-                 font=("맑은 고딕", 11, "bold"), anchor="w").pack(fill="x", padx=2, pady=(10, 2))
+                 font=("맑은 고딕", 11, "bold"), anchor="w"
+                 ).pack(fill="x", padx=2, pady=(10, 4))
         tk.Label(new_tab,
-                 text="이 인쇄본에 QR 이 없습니다.\n"
-                      "거래처를 클릭(또는 Enter)하면 새 발주번호의 QR 이 클립보드에 복사됩니다.\n"
-                      "FlexSign 에 붙여넣고 저장 → 다시 인쇄하면 납기/배송 입력 단계로 진행됩니다.",
+                 text="이 PDF 안에서 QR 코드를 찾지 못했습니다.\n\n"
+                      "[QR 코드 만들기] 버튼으로 발주번호 QR 을 먼저 만든 뒤\n"
+                      "FlexSign 에 붙여넣고 다시 인쇄해주세요.\n\n"
+                      "또는 우측 [기존 변경] 탭에서 이미 등록된 작업지시서를\n"
+                      "직접 선택해 매칭할 수 있습니다.",
                  bg=BG, fg=SUB_FG, font=("맑은 고딕", 9),
                  anchor="w", justify="left", wraplength=240
-                 ).pack(fill="x", padx=2, pady=(0, 8))
+                 ).pack(fill="x", padx=2, pady=(0, 10))
 
-        client_search_var = tk.StringVar()
-        client_search_entry = tk.Entry(new_tab, textvariable=client_search_var,
-                                       font=("맑은 고딕", 11), bg="white",
-                                       relief="solid", bd=1, highlightthickness=0)
-        client_search_entry.pack(fill="x", padx=2, pady=(0, 2))
-        tk.Label(new_tab, text="거래처 / 별칭 / 담당자 검색",
-                 bg=BG, fg=SUB_FG, font=("맑은 고딕", 8),
-                 anchor="w").pack(fill="x", padx=4, pady=(0, 4))
-
-        client_list_outer = tk.Frame(new_tab, bg=BG,
-                                     highlightbackground=BORDER, highlightthickness=1)
-        client_list_outer.pack(fill="both", expand=True, padx=2, pady=(0, 8))
-        client_canvas = tk.Canvas(client_list_outer, bg="white", highlightthickness=0)
-        client_scroll = ttk.Scrollbar(client_list_outer, orient="vertical",
-                                      command=client_canvas.yview)
-        client_canvas.configure(yscrollcommand=client_scroll.set)
-        client_canvas.pack(side="left", fill="both", expand=True)
-        client_scroll.pack(side="right", fill="y")
-        client_inner = tk.Frame(client_canvas, bg="white")
-        client_inner_id = client_canvas.create_window((0, 0), window=client_inner, anchor="nw")
-        client_inner.bind("<Configure>",
-                          lambda e: client_canvas.configure(scrollregion=client_canvas.bbox("all")))
-        client_canvas.bind("<Configure>",
-                           lambda e: client_canvas.itemconfig(client_inner_id, width=e.width))
-
-        # 클릭/엔터 한 번으로 끝나는 흐름. 더블서밋 가드.
-        new_submitting = {"flag": False}
-        # 검색 결과 캐시 — Enter 시 가장 위 항목으로 즉시 발주.
-        new_filtered_cache: list[dict] = []
-
-        def _on_pick_client_new(client):
-            if new_submitting["flag"]:
-                return
-            client_id = client.get("id")
-            if client_id is None:
-                return
-            new_submitting["flag"] = True
+        def _on_open_qr_create():
+            # 인쇄 다이얼로그를 그대로 둔 채 별도 모달을 띄움. 사용자가 거기서 QR 만들고
+            # FlexSign 으로 돌아가 작업할 수 있도록 한다.
             try:
-                created = _create_qr_only_order(int(client_id))
-                if not created or not created.get("orderNumber"):
-                    ui_log("빈 주문 생성 실패 — 잠시 후 다시 시도해 주세요.")
-                    new_submitting["flag"] = False
-                    return
-                order_num = (created.get("orderNumber") or "").strip()
-                company = (created.get("clientCompanyName")
-                           or client.get("companyName") or "").strip()
-                ui_log(f"{order_num} ({company}) 빈 주문 발급 — 다음 인쇄 시 자동 매칭")
-                # qr_only_copy 모드 — 호출자(_process_printed_pdf) 가 클립보드 복사 + 안내.
-                result["value"] = {"qr_only_copy": True, "order_number": order_num}
-                dlg.destroy()
+                open_qr_create_dialog_async()
             except Exception as e:
-                ui_log(f"새 주문 발급 중 오류: {e}")
-                new_submitting["flag"] = False
+                ui_log(f"[QR 코드 만들기] 열기 실패: {e}")
 
-        def _filter_clients_new():
-            q = (client_search_var.get() or "").strip().lower()
-            if not q:
-                return sorted_clients_new[:30]
-            def _hit(c):
-                hay = " ".join([
-                    str(c.get("companyName") or ""),
-                    str(c.get("networkFolderName") or ""),
-                    str(c.get("aliases") or ""),
-                    str(c.get("contactName") or ""),
-                ]).lower()
-                return q in hay
-            return [c for c in sorted_clients_new if _hit(c)][:30]
-
-        def _render_client_list_new():
-            for child in client_inner.winfo_children():
-                child.destroy()
-            items = _filter_clients_new()
-            new_filtered_cache.clear()
-            new_filtered_cache.extend(items)
-            if not items:
-                tk.Label(client_inner,
-                         text="검색 결과 없음" if client_search_var.get().strip() else "거래처 없음",
-                         bg="white", fg=SUB_FG, font=("맑은 고딕", 10)).pack(pady=12)
-                return
-            for idx, c in enumerate(items):
-                # 첫 행은 강조 — Enter 키로 누르면 이게 발주됨을 시각적으로 안내.
-                row_bg = "#f0fdf4" if idx == 0 else "white"
-                row = tk.Frame(client_inner, bg=row_bg, cursor="hand2")
-                row.pack(fill="x", padx=8, pady=2)
-                name = c.get("companyName") or "-"
-                contact = (c.get("contactName") or "").strip()
-                row_text = f"{name}    {contact}".strip()
-                lbl = tk.Label(row, text=row_text, bg=row_bg, fg=TITLE_FG,
-                               font=("맑은 고딕", 10, "bold" if idx == 0 else "normal"),
-                               anchor="w")
-                lbl.pack(side="left", fill="x", expand=True, padx=8, pady=6)
-
-                def _make_pick_handler(client_local):
-                    return lambda _e=None: _on_pick_client_new(client_local)
-                handler_new = _make_pick_handler(c)
-                row.bind("<Button-1>", handler_new)
-                lbl.bind("<Button-1>", handler_new)
-
-        client_search_var.trace_add("write", lambda *_: _render_client_list_new())
-        _render_client_list_new()
-
-        # Enter 키 → 검색 결과 첫 항목으로 즉시 발주(편의 흐름).
-        def _on_search_enter(_e=None):
-            if new_filtered_cache:
-                _on_pick_client_new(new_filtered_cache[0])
-        client_search_entry.bind("<Return>", _on_search_enter)
-        # 다이얼로그 진입 시점에 검색창에 포커스 — 사용자가 바로 거래처 이름 타이핑하도록.
-        try:
-            dlg.after(50, client_search_entry.focus_set)
-        except Exception:
-            pass
+        tk.Button(
+            new_tab, text="QR 코드 만들기 열기",
+            bg="#10b981", fg="white",
+            activebackground="#059669", activeforeground="white",
+            font=("맑은 고딕", 10, "bold"),
+            relief="flat", bd=0, padx=14, pady=8, cursor="hand2",
+            command=_on_open_qr_create,
+        ).pack(fill="x", padx=2, pady=(0, 6))
 
     # ── [기존 변경] 탭 ─────────────────────────────────────
     # 두 페이지: pick_page(그리드) → chosen_page(라디오+폼). pack/unpack 으로 토글.
@@ -2956,13 +3047,23 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             except Exception as e:
                 ui_log(f"QR 자동 라우팅(신규) 실패: {e}")
         else:
-            # QR 디코드 실패(잘림/누락) 또는 디코드는 됐지만 진행중/큐 어디에도 없음 → 신규 작성 흐름.
+            # QR 디코드 실패(잘림/누락) 또는 디코드는 됐지만 진행중/큐 어디에도 없음.
+            # qr_order_number 가 없는(=PDF 에 QR 자체가 없음) 케이스는 [기존 변경] 탭으로 보내
+            # 사용자가 등록된 지시서 중에서 직접 매칭하거나 [QR 코드 만들기] 로 가게 한다.
+            # qr_order_number 가 있는데 매칭 실패한 케이스는 [신규 작성] 폴백 안내 탭.
             try:
-                _show_qr_banner(
-                    "QR코드 매칭에 실패했습니다. 새로운 지시서를 작성합니다.",
-                    kind="warn",
-                )
-                notebook.select(new_tab)
+                if qr_order_number is None:
+                    _show_qr_banner(
+                        "이 인쇄본에 QR 이 없습니다. 메인 [QR 코드 만들기] 로 먼저 QR 을 만들어 주세요.",
+                        kind="warn",
+                    )
+                    notebook.select(modify_tab)
+                else:
+                    _show_qr_banner(
+                        "QR 매칭 실패 — 등록된 지시서가 아닙니다.",
+                        kind="warn",
+                    )
+                    notebook.select(new_tab)
                 _schedule_dialog_redraw()
             except Exception:
                 pass
@@ -3721,13 +3822,9 @@ def _process_printed_pdf(pdf_path: Path):
     # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
     existing_worksheets = fetch_existing_worksheets()
 
-    # [신규 작성] 탭의 "거래처 검색 → 빈 주문 발급" 에 사용 — qr_order_number 가 없으면(=PDF 에
-    # QR 미박힘) 무조건 폼 흐름으로 간다. 큐 헤드 자동 매칭은 더이상 [신규 작성] 으로 강제하지 않고
-    # QR 자동라우팅이 [기존 변경] 으로 보낸다(또는 매칭 실패 시 사용자가 직접 선택).
-    if qr_order_number is None:
-        clients_for_new = _fetch_admin_clients() or []
-    else:
-        clients_for_new = []
+    # [신규 작성] 탭에서 더 이상 거래처를 직접 고르지 않으므로 fetch 생략 — 거래처 발주 발급은
+    # 메인 GUI [QR 코드 만들기] 모달에서만 일어나고, 거기서 자기 데이터를 따로 받는다.
+    clients_for_new: list[dict] = []
 
     holder: dict = {"value": None, "done": threading.Event()}
 
@@ -5642,6 +5739,18 @@ class App(tk.Tk):
             command=change_flexsign_path_async,
         )
         flex_btn.pack(side="left", padx=(8, 0))
+        # 메인 액션 — 손작업 지시서를 위한 QR 코드를 인쇄 흐름과 무관하게 즉시 발급.
+        # 액센트 컬러로 강조해 사장님/직원이 자주 쓰는 버튼임을 시각적으로 구분.
+        qr_btn = tk.Button(
+            act, text="QR 코드 만들기",
+            bg="#10b981", fg="white",
+            activebackground="#059669", activeforeground="white",
+            font=("맑은 고딕", 9, "bold"),
+            relief="flat", bd=0, highlightthickness=0,
+            cursor="hand2", padx=12, pady=6,
+            command=open_qr_create_dialog_async,
+        )
+        qr_btn.pack(side="left", padx=(8, 0))
 
         # 현재 추적 경로를 작게 표시 — 매년 1월 폴더 옮긴 후 사장님이 확인 용도.
         self._tracked_lbl = tk.Label(
