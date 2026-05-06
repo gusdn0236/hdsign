@@ -25,6 +25,7 @@ except Exception:
     winsound = None  # type: ignore
 from datetime import date, timedelta
 from tkinter import filedialog, messagebox, ttk
+import io
 import urllib.error
 import urllib.request
 import zipfile
@@ -1418,6 +1419,99 @@ def play_alert_sound() -> None:
                            winsound.SND_ALIAS | winsound.SND_ASYNC)
     except Exception:
         pass
+
+
+# ── 이미지 유사도(dHash) — QR 클립보드 다이얼로그 [기존 지시서] 탭 그리드 정렬에 사용 ──
+# perceptual hash 자체 구현(64-bit dHash) — imagehash 패키지 의존성 추가 없이 PIL 만으로.
+# QR 만 새로 박는 흐름은 PDF 본체가 기존 worksheet 와 거의 동일해 hamming 거리 매우 작음 → 강 매칭.
+
+# 같은 worksheetUpdatedAt 조건에서 thumbnail 은 안 변하므로 메모리 캐시로 N+1 다운로드 회피.
+_thumbnail_dhash_cache: dict[str, int] = {}
+
+
+def _dhash_pil(pil_img, hash_size: int = 8) -> int:
+    """8x8 dHash — 64-bit 정수. 이미지 → grayscale → (hash_size+1, hash_size) 리사이즈 →
+    같은 행에서 좌·우 픽셀 비교. 좌 > 우 면 1, 아니면 0 → 64비트로 패킹."""
+    img = pil_img.convert("L").resize((hash_size + 1, hash_size), Image.LANCZOS)
+    pixels = list(img.getdata())
+    h = 0
+    for row in range(hash_size):
+        for col in range(hash_size):
+            left = pixels[row * (hash_size + 1) + col]
+            right = pixels[row * (hash_size + 1) + col + 1]
+            if left > right:
+                h |= 1 << (row * hash_size + col)
+    return h
+
+
+def _hamming(a: int, b: int) -> int:
+    """두 64-bit hash 의 hamming 거리(다른 비트 수)."""
+    return bin(a ^ b).count("1")
+
+
+def _pdf_first_page_dhash(pdf_path: Path) -> int | None:
+    """인쇄된 PDF 1페이지를 PIL 로 렌더해 dHash. 실패 시 None."""
+    try:
+        doc = fitz.open(str(pdf_path))
+    except Exception as e:
+        ui_log(f"PDF dHash — fitz.open 실패: {e}")
+        return None
+    try:
+        if doc.page_count == 0:
+            return None
+        page = doc.load_page(0)
+        # 100dpi 면 dHash(8x8) 입력으론 충분(어차피 9x8 로 다운샘플).
+        mat = fitz.Matrix(100 / 72, 100 / 72)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        return _dhash_pil(img)
+    except Exception as e:
+        ui_log(f"PDF dHash 계산 실패: {e}")
+        return None
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+
+def _worksheet_thumbnail_dhash(ws: dict) -> int | None:
+    """worksheetThumbnailUrl 다운로드 → dHash. 같은 worksheetUpdatedAt 이면 캐시 재사용."""
+    url = ws.get("worksheetThumbnailUrl") or ""
+    if not url:
+        return None
+    cache_key = f"{ws.get('orderNumber','')}|{ws.get('worksheetUpdatedAt','')}"
+    if cache_key in _thumbnail_dhash_cache:
+        return _thumbnail_dhash_cache[cache_key]
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            data = resp.read()
+        img = Image.open(io.BytesIO(data))
+        h = _dhash_pil(img)
+        _thumbnail_dhash_cache[cache_key] = h
+        return h
+    except Exception as e:
+        ui_log(f"worksheet 썸네일 dHash 실패 ({ws.get('orderNumber')}): {e}")
+        return None
+
+
+def _sort_worksheets_by_similarity(worksheets: list[dict], pdf_hash: int | None) -> list[dict]:
+    """pdf_hash 와 hamming 거리 오름차순 정렬. hash 못 계산한 항목은 dueDate 임박순으로 후순위.
+    pdf_hash 가 None 이면 단순 dueDate 임박순(폴백)."""
+    if pdf_hash is None:
+        return sorted(
+            worksheets,
+            key=lambda w: (w.get("dueDate") or "9999-12-31", w.get("orderNumber") or ""),
+        )
+
+    def _score(w):
+        wh = _worksheet_thumbnail_dhash(w)
+        if wh is None:
+            # hash 실패 — 거리 매우 큰 값으로 후순위 + dueDate 보조 정렬.
+            return (1000, w.get("dueDate") or "9999-12-31", w.get("orderNumber") or "")
+        return (_hamming(pdf_hash, wh), w.get("dueDate") or "9999-12-31", w.get("orderNumber") or "")
+
+    return sorted(worksheets, key=_score)
 
 
 def _request_type_label(req_type: str | None) -> str:
@@ -3344,11 +3438,9 @@ def _ask_qr_paste_blocking(pdf_path: Path,
     DANGER = "#dc2626"
     DANGER_HOVER = "#b91c1c"
 
-    # 진행중 worksheet 정렬 — 우선 단순한 dueDate 임박순. 다음 commit 에서 perceptual hash 로 교체.
-    sorted_ws = sorted(
-        list(existing_worksheets or []),
-        key=lambda w: (w.get("dueDate") or "9999-12-31", w.get("orderNumber") or ""),
-    )
+    # 진행중 worksheet 정렬 — 호출자(_process_printed_pdf)가 이미 dHash 유사도 순으로 정렬해
+    # 넘기므로 여기선 그 순서를 신뢰. (existing_worksheets 가 비어있으면 빈 그리드 표시)
+    sorted_ws = list(existing_worksheets or [])
     sorted_clients = sorted(
         list(clients or []),
         key=lambda c: (c.get("companyName") or "").lower(),
@@ -3750,12 +3842,19 @@ def _process_printed_pdf(pdf_path: Path):
         clients = _fetch_admin_clients() or []
         ui_log(f"인쇄 PDF 감지 — QR 없음, 클립보드 복사 다이얼로그 띄움: {pdf_path.name}")
 
+        # 인쇄 PDF 1페이지 dHash 계산 후 진행중 worksheet 들과 hamming 거리 비교 → 유사도 정렬.
+        # 강 매칭(거리 매우 작음)은 좌상단에 배치돼 사용자가 한눈에 클릭. hash 실패 시 dueDate 폴백.
+        pdf_hash = _pdf_first_page_dhash(pdf_path)
+        if pdf_hash is None:
+            ui_log("PDF dHash 계산 실패 — worksheet 정렬은 dueDate 임박순으로 폴백")
+        sorted_existing = _sort_worksheets_by_similarity(existing_worksheets, pdf_hash)
+
         paste_holder: dict = {"value": None, "done": threading.Event()}
 
         def _ask_paste_on_ui():
             try:
                 paste_holder["value"] = _ask_qr_paste_blocking(
-                    pdf_path, existing_worksheets, clients,
+                    pdf_path, sorted_existing, clients,
                 )
             except Exception as e:
                 ui_log(f"QR 클립보드 다이얼로그 오류: {e}")
