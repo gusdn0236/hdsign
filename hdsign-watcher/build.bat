@@ -90,7 +90,7 @@ REM script, which creates one standard shortcut and one admin-flagged shortcut.
 REM --onedir + --noupx : faster startup. Onefile unpacked 100MB+ to temp every
 REM launch (5-15s). Onedir keeps everything extracted, only the small EXE runs (1-3s).
 REM UPX compression off too - EXE is bigger but OS cache handles it after first load.
-"%PYTHON%" -m PyInstaller --clean -y --onedir --windowed --noupx --name hdsign_worksheet --collect-all pymupdf --collect-all pyzbar --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import encodings.idna --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" "%SCRIPT_DIR%hdsign_watcher.py"
+"%PYTHON%" -m PyInstaller --clean -y --onedir --windowed --noupx --name hdsign_worksheet --icon "%SCRIPT_DIR%hdsign_worksheet.ico" --collect-all pymupdf --collect-all pyzbar --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import encodings.idna --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" --add-data "%SCRIPT_DIR%hdsign_worksheet.ico;." "%SCRIPT_DIR%hdsign_watcher.py"
 if errorlevel 1 (
     echo.
     echo [ERROR] PyInstaller build failed. See output above.

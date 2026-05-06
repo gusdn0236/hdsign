@@ -119,11 +119,18 @@ public class AdminOrderController {
     }
 
     // 수동 작성 지시서용 — FlexSign 에 이미 그려놓은 지시서에 QR + 주문번호만 덧붙여
-    // PDF24 로 웹에 등록하기 위한 빈 주문. 거래처만 받고 나머지(제목/납기/배송)는
-    // 인쇄 매칭 다이얼로그에서 채운다.
+    // PDF24 로 웹에 등록하기 위한 빈 주문. 거래처는 필수, 제목/납기/배송은 워처
+    // [신규 작성] 폼에서 같이 받아 채워둔다(미입력은 null 유지).
     @PostMapping("/qr-only")
-    public ResponseEntity<OrderDto.Response> createQrOnlyOrder(@RequestParam Long clientId) {
-        return ResponseEntity.ok(clientService.createQrOnlyOrder(clientId));
+    public ResponseEntity<OrderDto.Response> createQrOnlyOrder(
+            @RequestParam Long clientId,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String dueDate,
+            @RequestParam(required = false) String deliveryMethod,
+            @RequestParam(required = false) String deliveryAddress
+    ) {
+        return ResponseEntity.ok(clientService.createQrOnlyOrder(
+                clientId, title, dueDate, deliveryMethod, deliveryAddress));
     }
 
     // 전체 작업 목록 조회 (휴지통 제외, 최신순)
