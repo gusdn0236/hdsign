@@ -3418,11 +3418,10 @@ def _process_printed_pdf(pdf_path: Path):
 
     orders = list_recent_orders()
     if not orders and not qr_order_number:
-        # 큐 비고 QR 도 못 찾음 — 정말 매칭할 데가 없음. 종이만 인쇄하고 정리.
-        ui_log(f"인쇄 PDF 감지 — 큐 비음 + QR 없음, 종이 인쇄만 진행: {pdf_path.name}")
-        print_pdf_to_paper(pdf_path)
-        _schedule_printed_pdf_cleanup(pdf_path)
-        return
+        # 큐 비고 QR 도 못 찾아도 다이얼로그는 띄운다 — 사용자가 [기존 변경] 탭에서
+        # 진행중 worksheet 그리드를 보고 수동으로 골라 매칭하거나, [매칭 안 함] 으로
+        # 종이만 인쇄하기로 결정할 수 있게. (자동 매칭만 안 되는 것이지, 수동 흐름은 살림)
+        ui_log(f"인쇄 PDF 감지 — 큐/QR 자동 매칭 실패, 수동 매칭 다이얼로그 띄움: {pdf_path.name}")
 
     # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
     existing_worksheets = fetch_existing_worksheets()
