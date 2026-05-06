@@ -561,6 +561,8 @@ DELIVERY_ENUM_TO_KO = {
     "DIRECT":      "직접 배송",
     "PICKUP":      "직접 수령",
     "LOCAL_CARGO": "지방화물차 배송",
+    # 인쇄 시점에 배송 방법 미정인 경우 — 어드민에서 나중에 변경.
+    "TBD":         "배송 추후결정",
 }
 DELIVERY_KO_TO_ENUM = {v: k for k, v in DELIVERY_ENUM_TO_KO.items()}
 
@@ -1955,21 +1957,26 @@ def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
             if order_num in _thumbnail_pil_cache:
                 _publish(order_num)
                 continue
-            # 1차: 백엔드가 미리 만들어 R2 에 올린 작은 JPEG 썸네일(worksheetThumbnailUrl) — 가장 빠름.
-            # 모바일 목록 카드와 같은 데이터를 그대로 받기 때문에 PDF 다운로드+렌더 대비 5~10배 빠르게 표시.
-            thumb_url = (ws.get("worksheetThumbnailUrl") or "").strip()
-            if thumb_url:
-                try:
-                    with urllib.request.urlopen(_safe_url(thumb_url), timeout=10) as resp:
-                        data = resp.read()
-                    pil = Image.open(io.BytesIO(data))
-                    # 비율 유지 리사이즈 — target_width 안 넘게.
-                    pil.thumbnail((target_width, target_width * 4), Image.LANCZOS)
-                    _thumbnail_pil_cache[order_num] = pil
-                    _publish(order_num)
-                    continue
-                except Exception as e:
-                    ui_log(f"썸네일 JPEG 다운로드 실패 [{order_num}]: {e} — PDF 폴백")
+            # 1차: 백엔드 썸네일 프록시(/api/public/worksheets/{n}/thumbnail) — 가장 빠름.
+            # R2 가 워처 PC 의 직접 GET 을 403 으로 막는 환경(=일부 사무실 PC) 에서도 백엔드를 거쳐
+            # 항상 받을 수 있다. PDF 다운로드+렌더 대비 5~10배 빠르게 표시.
+            thumb_proxy_url = f"{API_BASE}/api/public/worksheets/{quote(order_num, safe='')}/thumbnail"
+            try:
+                with urllib.request.urlopen(_safe_url(thumb_proxy_url), timeout=10) as resp:
+                    data = resp.read()
+                pil = Image.open(io.BytesIO(data))
+                # 비율 유지 리사이즈 — target_width 안 넘게.
+                pil.thumbnail((target_width, target_width * 4), Image.LANCZOS)
+                _thumbnail_pil_cache[order_num] = pil
+                _publish(order_num)
+                continue
+            except urllib.error.HTTPError as e:
+                # 404 (worksheetThumbnailUrl 미생성 옛 데이터) 는 정상 — PDF 폴백 조용히.
+                # 그 외(500/배드 게이트웨이/네트워크) 는 로그.
+                if e.code != 404:
+                    ui_log(f"썸네일 프록시 실패 [{order_num}]: HTTP {e.code} — PDF 폴백")
+            except Exception as e:
+                ui_log(f"썸네일 프록시 실패 [{order_num}]: {e} — PDF 폴백")
 
             # 2차: PDF 받아 PyMuPDF 로 첫 페이지 렌더 — 옛 데이터(thumbnailUrl 미생성) 폴백.
             raw_pdf_url = ws.get("worksheetPdfUrl") or ""

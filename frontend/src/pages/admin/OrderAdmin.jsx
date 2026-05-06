@@ -47,6 +47,7 @@ const DELIVERY_SHORT_LABELS = {
   DIRECT: "직접배송",
   PICKUP: "직접수령",
   LOCAL_CARGO: "지방화물",
+  TBD: "추후결정",
 };
 
 const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];

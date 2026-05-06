@@ -546,6 +546,7 @@ public class ClientService {
             case DIRECT -> "직접 배송";
             case PICKUP -> "직접 수령";
             case LOCAL_CARGO -> "지방화물차 배송";
+            case TBD -> "배송 추후결정";
         };
     }
 }

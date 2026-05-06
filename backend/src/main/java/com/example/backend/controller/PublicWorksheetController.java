@@ -142,6 +142,44 @@ public class PublicWorksheetController {
         }
     }
 
+    /**
+     * 썸네일 JPEG 프록시 — PDF 프록시(/pdf) 와 동일 패턴. R2 가 워처 PC 의 직접 GET 을 403 으로
+     * 막는 환경에서 백엔드를 거쳐 받게 한다(CORS/access policy 무관). 워처 [기존 변경] 탭 그리드의
+     * 1차 빠른 로드를 항상 성공시키는 게 목적 — 실패하면 PDF 폴백으로 5~10배 느려졌었음.
+     */
+    @GetMapping("/{orderNumber}/thumbnail")
+    public ResponseEntity<?> proxyThumbnail(@PathVariable String orderNumber) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null || order.getDeletedAt() != null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String thumbUrl = order.getWorksheetThumbnailUrl();
+        if (thumbUrl == null || thumbUrl.isBlank()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String key = extractKey(thumbUrl);
+        if (key == null) {
+            log.warn("썸네일 프록시 — key 추출 실패 [{}], url={}", orderNumber, thumbUrl);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        try {
+            ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
+                    GetObjectRequest.builder().bucket(bucket).key(key).build()
+            );
+            long contentLength = stream.response().contentLength();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.IMAGE_JPEG);
+            headers.setContentLength(contentLength);
+            // 썸네일은 worksheetUpdatedAt 갱신 시 R2 키 자체가 바뀌므로 길게 캐시해도 안전.
+            headers.setCacheControl("public, max-age=600");
+            headers.setContentDispositionFormData("inline", "worksheet-thumb.jpg");
+            return new ResponseEntity<>(new InputStreamResource(stream), headers, HttpStatus.OK);
+        } catch (Exception e) {
+            log.warn("썸네일 프록시 실패 [{}/{}]: {}", orderNumber, key, e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
+        }
+    }
+
     private String extractKey(String url) {
         if (url == null || url.isBlank()) return null;
         if (publicUrl == null || publicUrl.isBlank()) return null;

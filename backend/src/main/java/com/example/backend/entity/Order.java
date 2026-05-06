@@ -171,6 +171,9 @@ public class Order {
         QUICK,
         DIRECT,
         PICKUP,
-        LOCAL_CARGO
+        LOCAL_CARGO,
+        // 배송 방법을 아직 결정하지 않은 상태 — 워처 인쇄 다이얼로그에서 선택 가능.
+        // 나중에 결정되면 어드민에서 다시 변경.
+        TBD
     }
 }
