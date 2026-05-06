@@ -3408,23 +3408,24 @@ def _process_printed_pdf(pdf_path: Path):
     # print_pdf_to_paper 가 시스템 기본과 무관하게 삼성으로 직접 보낸다.
     # 워처 종료 시 on_close 에서 원래 프린터로 일괄 복구.
 
+    # PDF 안의 QR 인식 — 큐가 비어있어도 "기존 지시서 수정 후 인쇄" 흐름을 살리기 위해 먼저 시도.
+    # \\Main\현대공유\지시서프로그램 같은 공유 워처에서 사용자가 발주관리의 [지시서 자동작성하기]
+    # 를 거치지 않고 곧장 .ai 를 열어 수정/인쇄하면 큐는 비어있지만 PDF 의 QR 에는 그 주문번호가
+    # 박혀 있다. QR 매칭으로 다이얼로그가 [기존 변경] 자동 진입.
+    qr_order_number = decode_pdf_qr(pdf_path)
+    if qr_order_number:
+        ui_log(f"QR 인식: {qr_order_number}")
+
     orders = list_recent_orders()
-    if not orders:
-        # 매칭할 주문이 큐에 없으면 일단 종이만 인쇄. 직원이 따로 처리할 수 있도록 로그만 남김.
-        ui_log(f"인쇄 PDF 감지 — 큐에 주문 없음, 종이 인쇄만 진행: {pdf_path.name}")
+    if not orders and not qr_order_number:
+        # 큐 비고 QR 도 못 찾음 — 정말 매칭할 데가 없음. 종이만 인쇄하고 정리.
+        ui_log(f"인쇄 PDF 감지 — 큐 비음 + QR 없음, 종이 인쇄만 진행: {pdf_path.name}")
         print_pdf_to_paper(pdf_path)
-        # 큐 빈 상태에서의 인쇄는 더 이상 쓸 데 없는 PDF — 누적 방지로 정리.
         _schedule_printed_pdf_cleanup(pdf_path)
         return
 
     # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
     existing_worksheets = fetch_existing_worksheets()
-
-    # PDF 안의 QR 인식 시도 — 성공하면 다이얼로그가 자동 매칭/모드 분기.
-    # 실패해도 흐름은 그대로(평소 수동 선택). UI 스레드 차단 회피로 이 단계에서 미리 처리.
-    qr_order_number = decode_pdf_qr(pdf_path)
-    if qr_order_number:
-        ui_log(f"QR 인식: {qr_order_number}")
 
     holder: dict = {"value": None, "done": threading.Event()}
 
