@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -85,9 +85,36 @@ const DELIVERY_LABELS = {
 export default function WorksheetViewer() {
     const { orderNumber } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const cameraInputRef = useRef(null);
     const galleryInputRef = useRef(null);
     const stageRef = useRef(null);
+    // 스와이프 좌/우 → 같은 필터링/정렬 순서의 다음·이전 지시서로 이동.
+    // List 페이지에서 navigate state 로 전달된 orderNumber 배열을 그대로 사용.
+    // 직접 URL 진입(state 없음) 시 빈 배열 → 스와이프 무시.
+    const siblings = useMemo(() => {
+        const list = location.state?.siblings;
+        return Array.isArray(list) ? list : [];
+    }, [location.state]);
+    const currentIdx = useMemo(
+        () => (siblings.length ? siblings.indexOf(orderNumber) : -1),
+        [siblings, orderNumber],
+    );
+    const prevSibling = currentIdx > 0 ? siblings[currentIdx - 1] : null;
+    const nextSibling = currentIdx >= 0 && currentIdx < siblings.length - 1
+        ? siblings[currentIdx + 1]
+        : null;
+    const navigateSibling = useCallback((target) => {
+        if (!target) return;
+        navigate(`/m/worksheets/${encodeURIComponent(target)}`, {
+            state: { siblings },
+            replace: true, // 히스토리 폭주 방지 — 뒤로가기는 항상 목록으로.
+        });
+    }, [navigate, siblings]);
+    // 터치 시작점 — 스와이프 판별용. 스케일 1 상태에서만 좌우 스와이프를 네비로 가로챈다.
+    // 줌 상태(scale > 1)에서는 사용자가 PDF 를 패닝 중이라 가로채면 안 됨.
+    const swipeStartRef = useRef(null);
+    const swipeNavigatedRef = useRef(false);
 
     const [detail, setDetail] = useState(null);
     const [detailError, setDetailError] = useState('');
@@ -104,10 +131,11 @@ export default function WorksheetViewer() {
     // 돌려서 읽으면 자연스럽게 landscape 로 보임. 0 = 회전 없음(=PDF 자체 /Rotate 사용).
     const [pageRotation, setPageRotation] = useState(0);
 
-    // 시트 (탭하면 열림)
+    // 시트 (사진 큐가 있을 때 자동으로 열림 — 사용자가 직접 토글하진 않음)
     const [sheetOpen, setSheetOpen] = useState(false);
-    // PDF 한 번 탭 → 변경사항 카드 토글. 더블탭(줌 토글)과 충돌 막으려고 280ms 디바운스.
-    const [changeNoteVisible, setChangeNoteVisible] = useState(false);
+    // PDF 한 번 탭 → 상단/하단 chrome 보임/숨김 토글. 더블탭(줌 토글)과 충돌 막으려고 280ms 디바운스.
+    // 처음 진입 시엔 보이게 시작 — 작업자가 액션 버튼을 인지할 수 있도록.
+    const [chromeVisible, setChromeVisible] = useState(true);
     const stageTapTimerRef = useRef(null);
     const [worker, setWorker] = useState(() => getStoredWorker());
     const [showWorkerModal, setShowWorkerModal] = useState(false);
@@ -138,15 +166,18 @@ export default function WorksheetViewer() {
         if (stageTapTimerRef.current) clearTimeout(stageTapTimerRef.current);
     }, []);
 
-    // PDF 영역 한 번 탭 → 변경사항/추가요청사항 오버레이 토글.
+    // PDF 영역 한 번 탭 → 상단/하단 chrome(주문번호바, 액션바) 토글.
     // react-zoom-pan-pinch 가 패닝/핀치 중에는 click 합성을 막아주므로 여기엔 단순 탭만 들어온다.
     // 더블탭(줌 토글) 과 충돌하지 않도록 280ms 디바운스: 두 번째 탭이 빠르게 오면 단발 탭 액션은
     // 취소(=라이브러리가 doubleClick 줌으로 처리하도록 양보).
+    // 스와이프로 인해 발생한 합성 click 은 swipeNavigatedRef 로 차단.
     const handleStageTap = useCallback((e) => {
-        // 페이저 등 자체 핸들러가 있는 자식은 stopPropagation 으로 이미 차단됨.
+        if (swipeNavigatedRef.current) {
+            swipeNavigatedRef.current = false;
+            return;
+        }
         if (e?.target instanceof Element) {
             const t = e.target;
-            // wsv-msg(불러오는 중 텍스트)나 페이저 영역이면 무시.
             if (t.closest('.wsv-pager')) return;
         }
         if (stageTapTimerRef.current) {
@@ -156,9 +187,45 @@ export default function WorksheetViewer() {
         }
         stageTapTimerRef.current = setTimeout(() => {
             stageTapTimerRef.current = null;
-            setChangeNoteVisible((v) => !v);
+            setChromeVisible((v) => !v);
         }, 280);
     }, []);
+
+    // 한 손가락 좌/우 스와이프 → 다음·이전 지시서. 두 손가락 핀치/패닝과 분리.
+    // 스케일 > 1.05(사용자가 줌인한 상태) 면 라이브러리가 패닝을 처리해야 하므로 가로채지 않음.
+    const handleStageTouchStart = useCallback((e) => {
+        if (e.touches.length !== 1) {
+            swipeStartRef.current = null;
+            return;
+        }
+        const scale = transformRef.current?.instance?.transformState?.scale ?? 1;
+        if (scale > 1.05) {
+            swipeStartRef.current = null;
+            return;
+        }
+        const t = e.touches[0];
+        swipeStartRef.current = {
+            x: t.clientX,
+            y: t.clientY,
+            time: Date.now(),
+        };
+    }, []);
+
+    const handleStageTouchEnd = useCallback((e) => {
+        const start = swipeStartRef.current;
+        swipeStartRef.current = null;
+        if (!start || !e.changedTouches?.[0]) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        const dt = Date.now() - start.time;
+        if (Math.abs(dx) < 60 || Math.abs(dy) > 60 || dt > 600) return;
+        // 좌→우(dx > 0) = 이전, 우→좌(dx < 0) = 다음. 자연스러운 책 페이지 넘기기 방향.
+        const target = dx < 0 ? nextSibling : prevSibling;
+        if (!target) return;
+        swipeNavigatedRef.current = true;
+        navigateSibling(target);
+    }, [nextSibling, prevSibling, navigateSibling]);
 
     // iOS PWA standalone 에서 click 이벤트가 안 발사되는 케이스를 보강.
     // touchend 시점에 액션을 즉시 트리거하고 후속 synthetic click 은 preventDefault
@@ -502,9 +569,14 @@ export default function WorksheetViewer() {
         [queued]
     );
 
+    // 본인이 이미 [작업완료] 누른 건 — 액션바의 작업완료 버튼을 회색 "완료됨" 으로 비활성.
+    const completedByMe = !!worker
+        && Array.isArray(detail?.workerCompletions)
+        && detail.workerCompletions.some((c) => c.worker === worker);
+
     return (
         <div className="wsv-page">
-            <header className="wsv-topbar">
+            <header className={`wsv-topbar${chromeVisible ? '' : ' wsv-topbar-hidden'}`}>
                 {/* Link + onClick 조합:
                     - PWA standalone 에서 평범한 <a href> 는 외부 사파리로 빠져나가는 케이스가
                       있어 React Router 의 SPA 내비게이션(pushState) 으로 처리해야 PWA 안에서
@@ -540,10 +612,16 @@ export default function WorksheetViewer() {
                 )}
             </header>
 
-            {/* stage onClick — PDF 영역 한 번 탭 → 변경사항/추가요청사항 오버레이 토글.
-                옛 버전엔 stage 탭 = 업로드 시트 열기였으나 사진찍기 버튼으로 분리됐고,
-                지금은 워처에서 작업자가 입력한 변경 메모를 즉석에서 띄우는 데 쓴다. */}
-            <div className="wsv-stage" ref={stageRef} onClick={handleStageTap}>
+            {/* stage onClick — PDF 영역 한 번 탭 → 상단/하단 chrome 보임/숨김 토글.
+                stage onTouchStart/End — 한 손가락 좌·우 스와이프 → 다음·이전 지시서.
+                줌인 상태(scale > 1)에선 라이브러리 패닝과 충돌하지 않도록 가로채지 않음. */}
+            <div
+                className="wsv-stage"
+                ref={stageRef}
+                onClick={handleStageTap}
+                onTouchStart={handleStageTouchStart}
+                onTouchEnd={handleStageTouchEnd}
+            >
                 {loadingDetail && <div className="wsv-msg">불러오는 중…</div>}
                 {!loadingDetail && detailError && <div className="wsv-msg error">{detailError}</div>}
                 {!loadingDetail && !detailError && !pdfFile && (
@@ -564,7 +642,9 @@ export default function WorksheetViewer() {
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
                         wheel={{
                             step: 0.18,
-                            excluded: ['wsv-back', 'wsv-action-reset', 'wsv-action-camera'],
+                            excluded: ['wsv-back', 'wsv-action-btn', 'wsv-action-reset',
+                                       'wsv-action-camera', 'wsv-action-gallery',
+                                       'wsv-action-complete', 'wsv-action-completed'],
                         }}
                         pinch={{ step: 5 }}
                         panning={{
@@ -572,9 +652,10 @@ export default function WorksheetViewer() {
                             // 라이브러리가 window mousedown 을 듣는데, 만에 하나 버튼 영역
                             // 탭이 흘러들어가면 preventDefault 가 click 합성을 막을 수 있음.
                             // 명시적으로 제외해 라이브러리가 절대 가로채지 못하게.
-                            excluded: ['wsv-back', 'wsv-action-reset', 'wsv-action-camera',
-                                       'wsv-action-reset-icon', 'wsv-action-reset-text',
-                                       'wsv-action-camera-icon', 'wsv-action-camera-text',
+                            excluded: ['wsv-back', 'wsv-action-btn', 'wsv-action-reset',
+                                       'wsv-action-camera', 'wsv-action-gallery',
+                                       'wsv-action-complete', 'wsv-action-completed',
+                                       'wsv-action-icon', 'wsv-action-text',
                                        'wsv-pager-btn'],
                         }}
                     >
@@ -629,64 +710,11 @@ export default function WorksheetViewer() {
                 )}
                 {pdfError && <div className="wsv-msg error">{pdfError}</div>}
 
-                {changeNoteVisible && (() => {
-                    const note = (detail?.note || '').trim();
-                    const items = (detail?.additionalItems || '').trim();
-                    const change = (detail?.worksheetChangeNote || '').trim();
-                    const dueDateLabel = (() => {
-                        if (!change || !detail?.dueDate) return '';
-                        const d = detail.dueDate;
-                        // YYYY-MM-DD → "M월 D일" + 시간 있으면 추가.
-                        const parts = d.split('-');
-                        if (parts.length === 3) {
-                            const m = parseInt(parts[1], 10);
-                            const day = parseInt(parts[2], 10);
-                            return `${m}월 ${day}일${detail.dueTime ? ` ${detail.dueTime}` : ''}`;
-                        }
-                        return d + (detail.dueTime ? ` ${detail.dueTime}` : '');
-                    })();
-                    const hasAny = note || items || change;
-                    return (
-                        <div className="wsv-change-overlay" aria-live="polite">
-                            <div className="wsv-change-card">
-                                {note && (
-                                    <div className="wsv-change-section">
-                                        <div className="wsv-change-key">거래처 추가요청사항</div>
-                                        <div className="wsv-change-text">{note}</div>
-                                    </div>
-                                )}
-                                {items && (
-                                    <div className="wsv-change-section">
-                                        <div className="wsv-change-key">추가물품</div>
-                                        <div className="wsv-change-text">{items}</div>
-                                    </div>
-                                )}
-                                {change && (
-                                    <div className="wsv-change-section">
-                                        <div className="wsv-change-key wsv-change-key-warn">변경사항</div>
-                                        <div className="wsv-change-text">{change}</div>
-                                    </div>
-                                )}
-                                {change && dueDateLabel && (
-                                    <div className="wsv-change-section">
-                                        <div className="wsv-change-key wsv-change-key-warn">납품날짜</div>
-                                        <div className="wsv-change-text">{dueDateLabel}</div>
-                                    </div>
-                                )}
-                                {!hasAny && (
-                                    <div className="wsv-change-section">
-                                        <div className="wsv-change-text wsv-change-empty">
-                                            추가요청사항이 없습니다.
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })()}
-
                 {numPages > 1 && (
-                    <div className="wsv-pager" onClick={(e) => e.stopPropagation()}>
+                    <div
+                        className={`wsv-pager${chromeVisible ? '' : ' wsv-pager-chrome-hidden'}`}
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <button
                             type="button"
                             className="wsv-pager-btn"
@@ -720,14 +748,14 @@ export default function WorksheetViewer() {
                 )}
             </div>
 
-            <div className="wsv-actionbar">
+            <div className={`wsv-actionbar${chromeVisible ? '' : ' wsv-actionbar-hidden'}`}>
                 <button
                     type="button"
-                    className="wsv-action-reset"
+                    className="wsv-action-btn wsv-action-reset"
                     onClick={resetPdfView}
                     onTouchEnd={tapHandler(resetPdfView)}
                 >
-                    <span className="wsv-action-reset-icon" aria-hidden="true">
+                    <span className="wsv-action-icon" aria-hidden="true">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M3 7V3h4" />
                             <path d="M17 7V3h-4" />
@@ -735,24 +763,66 @@ export default function WorksheetViewer() {
                             <path d="M17 13v4h-4" />
                         </svg>
                     </span>
-                    <span className="wsv-action-reset-text">전체보기</span>
+                    <span className="wsv-action-text">전체보기</span>
                 </button>
                 <button
                     type="button"
-                    className="wsv-action-camera"
-                    onClick={() => setSheetOpen(true)}
-                    onTouchEnd={tapHandler(() => setSheetOpen(true))}
-                    aria-label="사진찍기"
+                    className="wsv-action-btn wsv-action-camera"
+                    onClick={triggerCamera}
+                    onTouchEnd={tapHandler(triggerCamera)}
+                    disabled={uploading || compressing}
                 >
-                    <span className="wsv-action-camera-icon" aria-hidden="true">
+                    <span className="wsv-action-icon" aria-hidden="true">
                         <svg viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M4 7.5h2.5l1.5-2h6l1.5 2H18a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 18 18.5H4A1.5 1.5 0 0 1 2.5 17V9A1.5 1.5 0 0 1 4 7.5z" />
                             <circle cx="11" cy="13" r="3.2" />
                         </svg>
                     </span>
-                    <span className="wsv-action-camera-text">사진찍기</span>
+                    <span className="wsv-action-text">사진찍기</span>
                 </button>
+                <button
+                    type="button"
+                    className="wsv-action-btn wsv-action-gallery"
+                    onClick={triggerGallery}
+                    onTouchEnd={tapHandler(triggerGallery)}
+                    disabled={uploading || compressing}
+                >
+                    <span className="wsv-action-icon" aria-hidden="true">
+                        <svg viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="4" width="16" height="13" rx="2" />
+                            <circle cx="8" cy="9" r="1.5" />
+                            <path d="M3 14l4.5-4 4 4 3-2.5 4.5 4" />
+                        </svg>
+                    </span>
+                    <span className="wsv-action-text">사진선택</span>
+                </button>
+                {completedByMe ? (
+                    <div className="wsv-action-btn wsv-action-completed" aria-disabled="true">
+                        <span className="wsv-action-icon" aria-hidden="true">
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 9l4 4 8-9" />
+                            </svg>
+                        </span>
+                        <span className="wsv-action-text">완료됨</span>
+                    </div>
+                ) : (
+                    <button
+                        type="button"
+                        className="wsv-action-btn wsv-action-complete"
+                        onClick={handleWorkerComplete}
+                        onTouchEnd={tapHandler(handleWorkerComplete)}
+                        disabled={completing}
+                    >
+                        <span className="wsv-action-icon" aria-hidden="true">
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 9l4 4 8-9" />
+                            </svg>
+                        </span>
+                        <span className="wsv-action-text">{completing ? '처리 중' : '작업완료'}</span>
+                    </button>
+                )}
             </div>
+            {completeError && <div className="wsv-toast error">{completeError}</div>}
             <input
                 ref={cameraInputRef}
                 type="file"
@@ -799,36 +869,6 @@ export default function WorksheetViewer() {
                                 변경
                             </button>
                         </div>
-
-                        {/* 작업완료 — 본인 작업 끝나면 누르고, 본인 모바일에서만 사라짐(per-worker).
-                            같은 슬롯 동료에게는 그대로 보여 각자 따로 누름. 본인이 이미 누른 건은
-                            done 카드로 비활성. */}
-                        {(() => {
-                            const completedByMe = worker
-                                && Array.isArray(detail?.workerCompletions)
-                                && detail.workerCompletions.some((c) => c.worker === worker);
-                            if (completedByMe) {
-                                return (
-                                    <div className="wsv-complete-done">
-                                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                            <path d="M3 8l3.5 3.5L13 5" />
-                                        </svg>
-                                        <span>{worker} 님 작업완료 처리됨</span>
-                                    </div>
-                                );
-                            }
-                            return (
-                                <button
-                                    type="button"
-                                    className="wsv-complete-btn"
-                                    onClick={handleWorkerComplete}
-                                    disabled={completing}
-                                >
-                                    {completing ? '처리 중…' : '작업완료'}
-                                </button>
-                            );
-                        })()}
-                        {completeError && <div className="wsv-feedback error">{completeError}</div>}
 
                         {compressing ? (
                             <button type="button" className="wsv-camera-btn" disabled>

@@ -26,19 +26,33 @@ body:has(.wsv-page) {
 }
 
 /* 상단바 -------------------------------------------------------- */
+/* PDF 가 항상 화면 전체를 차지하도록 topbar/actionbar 는 absolute 오버레이.
+   chrome 가시 상태에서만 슬라이드인 — 토글 시 PDF 캔버스 크기 자체는 변화 없음. */
 .wsv-topbar {
-    flex-shrink: 0;
-    position: relative;
-    z-index: 200;  /* actionbar 와 동일하게 — PDF stage 내부 어떤 오버레이도 못 가림 */
-    background: #18181b;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    background: rgba(24, 24, 27, 0.92);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     color: #fff;
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
     padding-top: max(10px, env(safe-area-inset-top));
-    border-bottom: 1px solid #27272a;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     pointer-events: auto;
+    /* PDF 화면 한 번 탭 → 슬라이드 업으로 사라짐. 다시 탭하면 다시 내려옴. */
+    transition: transform 0.22s ease, opacity 0.22s ease;
+    will-change: transform, opacity;
+}
+.wsv-topbar-hidden {
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
 }
 .wsv-back {
     display: flex;
@@ -115,14 +129,13 @@ body:has(.wsv-page) {
 
 /* PDF 스테이지 ---------------------------------------------------- */
 .wsv-stage {
-    flex: 1;
-    min-height: 0;
+    position: absolute;
+    inset: 0;
     background: #18181b;
     display: flex;
     align-items: stretch;
     justify-content: center;
     overflow: hidden;
-    position: relative;
 }
 .wsv-msg {
     color: #d4d4d8;
@@ -178,78 +191,16 @@ body:has(.wsv-page) {
     height: auto !important;
 }
 
-/* PDF 한 번 탭 시 떠오르는 변경사항/추가요청사항 카드.
-   pointer-events:none — 카드는 입력을 흡수하지 않고, 다음 탭이 stage onClick 으로 흘러
-   들어가 오버레이를 닫는다. (핀치/패닝도 그대로 통과) */
-.wsv-change-overlay {
-    position: absolute;
-    inset: 0;
-    z-index: 30;
-    pointer-events: none;
-    display: flex;
-    /* 가운데가 아닌 상단에 정렬 — 작업자가 PDF 의 헤더(제목/거래처/일자) 영역을
-       가리지 않고 본문 위쪽 여백 위에 카드가 떠 있도록. */
-    align-items: flex-start;
-    justify-content: center;
-    padding: 12px 16px;
-    animation: wsv-fade-in 0.18s ease;
-}
-.wsv-change-card {
-    pointer-events: none;
-    width: 100%;
-    max-width: 460px;
-    max-height: calc(100% - 24px);
-    overflow-y: auto;
-    background: rgba(24, 24, 27, 0.94);
-    color: #f4f4f5;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 14px;
-    padding: 14px 16px;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-.wsv-change-section {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.wsv-change-section + .wsv-change-section {
-    padding-top: 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-.wsv-change-key {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    color: #a1a1aa;
-    text-transform: none;
-}
-/* 변경사항/납품날짜 — 워처/웹에서 새로 적용된 변동분이라 노랑색으로 강조. */
-.wsv-change-key-warn {
-    color: #fbbf24;
-}
-.wsv-change-text {
-    font-size: 14px;
-    line-height: 1.55;
-    color: #fafafa;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-.wsv-change-empty {
-    color: #a1a1aa;
-}
-
 /* 페이저(다중 페이지) -------------------------------------------- */
+/* chromeVisible 시 액션바 위로(액션바 ~76-100px) 떠 있고, chrome 숨김 시 안전영역 위까지 내려옴.
+   transform 은 translateX 만 두고 bottom 값을 직접 트랜지션 — 위치 자연스럽게 변함. */
 .wsv-pager {
     position: absolute;
     left: 50%;
-    bottom: 14px;
+    bottom: calc(86px + env(safe-area-inset-bottom));
     transform: translateX(-50%);
-    z-index: 20;
+    z-index: 210; /* actionbar(200) 위 */
+    transition: bottom 0.22s ease;
     display: flex;
     align-items: center;
     gap: 2px;
@@ -298,81 +249,144 @@ body:has(.wsv-page) {
     line-height: 1;
     letter-spacing: 0.02em;
 }
+.wsv-pager-chrome-hidden {
+    bottom: calc(14px + env(safe-area-inset-bottom));
+}
 
 /* 액션바(하단 고정) ---------------------------------------------- */
+/* 4 버튼 균등 분할: 전체보기 / 사진찍기 / 사진선택 / 작업완료. 아이콘 + 짧은 텍스트 세로 스택.
+   absolute 오버레이로 PDF 위에 떠 있고, chromeVisible=false 시 슬라이드 다운으로 숨김. */
 .wsv-actionbar {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px max(10px, env(safe-area-inset-bottom));
-    background: #18181b;
-    border-top: 1px solid #27272a;
-    /* z-index 최상위 — PDF stage 내부의 어떤 절대위치 오버레이도 actionbar 위에
-       올라오지 못하게. PDF wrapper 의 absolute 자식들은 z-index 5~20 범위. */
-    position: relative;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px 8px max(10px, env(safe-area-inset-bottom));
+    background: rgba(24, 24, 27, 0.92);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
     z-index: 200;
     pointer-events: auto;
+    transition: transform 0.22s ease, opacity 0.22s ease;
+    will-change: transform, opacity;
 }
-.wsv-action-reset,
-.wsv-action-camera {
-    display: inline-flex;
+.wsv-actionbar-hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+}
+.wsv-action-btn {
+    display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    height: 52px;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    height: 56px;
     border: none;
-    border-radius: 14px;
-    font-size: 15px;
-    font-weight: 800;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 700;
     line-height: 1;
     cursor: pointer;
+    padding: 6px 4px;
     -webkit-tap-highlight-color: transparent;
     pointer-events: auto !important;
     touch-action: manipulation;
     user-select: none;
     -webkit-user-select: none;
     letter-spacing: -0.01em;
-    transition: background 0.12s ease, transform 0.06s ease;
+    transition: background 0.12s ease, transform 0.06s ease, opacity 0.12s ease;
+    box-sizing: border-box;
 }
-.wsv-action-reset {
-    flex-shrink: 0;
-    padding: 0 16px;
-    background: #27272a;
-    color: #e4e4e7;
-}
-.wsv-action-reset:active {
+.wsv-action-btn:active {
     transform: translateY(1px);
-    background: #3f3f46;
 }
-.wsv-action-camera {
-    flex: 1;
-    padding: 0 18px;
-    background: #2563eb;
-    color: #fff;
-    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.4);
+.wsv-action-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
 }
-.wsv-action-camera:active {
-    transform: translateY(1px);
-    background: #1d4ed8;
-}
-.wsv-action-camera-icon,
-.wsv-action-reset-icon {
-    /* 자식 span 이 클릭 이벤트를 가로채지 않도록 — 탭은 항상 부모 button 으로 */
+.wsv-action-icon {
     pointer-events: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
 }
-.wsv-action-camera-icon svg,
-.wsv-action-reset-icon svg {
+.wsv-action-icon svg {
     display: block;
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
 }
-.wsv-action-camera-text,
-.wsv-action-reset-text {
+.wsv-action-text {
     pointer-events: none;
+    white-space: nowrap;
+}
+/* 전체보기 — 보조 회색 */
+.wsv-action-reset {
+    background: #3f3f46;
+    color: #e4e4e7;
+}
+.wsv-action-reset:active {
+    background: #52525b;
+}
+/* 사진찍기 — 파랑 CTA */
+.wsv-action-camera {
+    background: #2563eb;
+    color: #fff;
+}
+.wsv-action-camera:active {
+    background: #1d4ed8;
+}
+/* 사진선택 — 파랑 아웃라인 */
+.wsv-action-gallery {
+    background: rgba(37, 99, 235, 0.18);
+    color: #93c5fd;
+    border: 1px solid rgba(37, 99, 235, 0.45);
+}
+.wsv-action-gallery:active {
+    background: rgba(37, 99, 235, 0.28);
+}
+/* 작업완료 — 빨강 (마감 신호) */
+.wsv-action-complete {
+    background: #dc2626;
+    color: #fff;
+}
+.wsv-action-complete:active {
+    background: #b91c1c;
+}
+/* 완료됨 — 초록 비활성 표시 */
+.wsv-action-completed {
+    background: #064e3b;
+    color: #a7f3d0;
+    border: 1px solid #065f46;
+    cursor: default;
+}
+
+/* 작업완료 실패 토스트 — chrome 토글과 무관하게 안전영역 위 띄움 */
+.wsv-toast {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    z-index: 220;
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    animation: wsv-fade-in 0.2s ease;
+}
+.wsv-toast.error {
+    background: #7f1d1d;
+    color: #fee2e2;
+    border: 1px solid #991b1b;
 }
 
 /* 바닥 시트(사진 업로드) ---------------------------------------- */
@@ -885,17 +899,19 @@ body:has(.wsv-page) {
 
 /* 좁은 폰(아이폰 SE/미니, ~360px) 대응 ---------------------------- */
 @media (max-width: 360px) {
-    .wsv-action-reset,
-    .wsv-action-camera {
-        font-size: 14px;
-        height: 48px;
-        gap: 6px;
+    .wsv-actionbar {
+        gap: 4px;
+        padding: 6px 6px max(8px, env(safe-area-inset-bottom));
     }
-    .wsv-action-reset {
-        padding: 0 12px;
+    .wsv-action-btn {
+        height: 52px;
+        font-size: 11px;
+        gap: 3px;
+        padding: 4px 2px;
     }
-    .wsv-action-camera {
-        padding: 0 14px;
+    .wsv-action-icon svg {
+        width: 20px;
+        height: 20px;
     }
     .wsv-camera-btn,
     .wsv-gallery-btn {

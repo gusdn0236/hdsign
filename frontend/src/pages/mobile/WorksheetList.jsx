@@ -344,6 +344,13 @@ export default function WorksheetList() {
         });
     }, [filtered, sortMode]);
 
+    // 뷰어로 진입 시 좌·우 스와이프 네비게이션에 쓸 형제 orderNumber 배열.
+    // 현재 화면에 보이는 그룹 순서대로 평탄화 — 사용자가 보는 순서 그대로 다음/이전.
+    const siblingOrderNumbers = useMemo(
+        () => groups.flatMap(([, list]) => list.map((it) => it.orderNumber)),
+        [groups],
+    );
+
     // 선택 모드에서 사라진(다른 디바이스에서 처리) 항목은 자동으로 선택 해제.
     useEffect(() => {
         if (!selectMode) return;
@@ -644,6 +651,7 @@ export default function WorksheetList() {
                                     <Link
                                         key={it.orderNumber}
                                         to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
+                                        state={{ siblings: siblingOrderNumbers }}
                                         className={cardClass}
                                     >
                                         {cardContent}
