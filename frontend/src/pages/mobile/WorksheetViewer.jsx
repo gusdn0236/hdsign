@@ -6,6 +6,14 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './WorksheetViewer.css';
 import { ALL_WORKERS } from '../../data/workers.js';
+import {
+    peekPdfBytes,
+    fetchAndCachePdfBytes,
+    peekDetail,
+    rememberDetail,
+    buildThumbnailUrl,
+    prefetchSiblingByOrderNumber,
+} from './pdfPrefetch.js';
 
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
@@ -33,57 +41,6 @@ const PINCH_MAX_SCALE = 5;
 // 35% 까지 내려가도 deviceDpr 3 환경에선 여전히 6 DPR 안팎이라 옛 설정(MAX=14)과
 // 비슷한 화질이 유지된다. 마지막 단계까지 가도 안 되면 거기서 멈춤(무한루프 방지).
 const PDF_RENDER_FALLBACK_FACTORS = [1, 0.7, 0.5, 0.35];
-
-// versioned URL → PDF 바이트(Uint8Array) LRU 캐시. 같은 지시서 재진입이나
-// 좌·우 스와이프(prev/next 미리 워밍업) 시 네트워크 0회로 즉시 표시.
-// pdf.js 가 worker 로 ArrayBuffer 를 transfer 하면서 원본을 detach 하므로,
-// 매 사용 시 .slice() 로 새 사본을 넘겨 캐시 원본을 보존한다.
-// 모바일 RAM 보호를 위해 최근 N개만 보관.
-const PDF_BYTES_CACHE_LIMIT = 5;
-const pdfBytesCache = new Map();
-
-// 동기 조회 — 캐시 히트면 즉시 바이트 반환, LRU touch. 시청자(viewer) 가 await 없이
-// 첫 렌더에서 바로 setPdfData 할 수 있어 캐시 히트 시 로딩 표시 한 프레임도 깜빡이지 않는다.
-function peekPdfBytes(url) {
-    if (!url) return null;
-    const hit = pdfBytesCache.get(url);
-    if (!hit) return null;
-    pdfBytesCache.delete(url);
-    pdfBytesCache.set(url, hit);
-    return hit;
-}
-
-async function fetchAndCachePdfBytes(url, signal) {
-    const res = await fetch(url, { signal });
-    if (!res.ok) throw new Error(`PDF 다운로드 실패 (${res.status})`);
-    const buf = await res.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    pdfBytesCache.set(url, bytes);
-    while (pdfBytesCache.size > PDF_BYTES_CACHE_LIMIT) {
-        const oldest = pdfBytesCache.keys().next().value;
-        if (oldest === undefined) break;
-        pdfBytesCache.delete(oldest);
-    }
-    return bytes;
-}
-
-// 백그라운드 prefetch — prev/next 지시서의 detail 을 먼저 가져와 versioned PDF URL 을
-// 만든 뒤 바이트를 캐시에 채워넣는다. 실패는 조용히 무시.
-async function prefetchSiblingPdf(orderNumber, baseUrl) {
-    if (!orderNumber) return;
-    try {
-        const res = await fetch(
-            `${baseUrl}/api/public/worksheets/${encodeURIComponent(orderNumber)}`
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data?.worksheetPdfUrl) return;
-        const version = data.worksheetUpdatedAt || data.worksheetPdfUrl;
-        const url = `${baseUrl}/api/public/worksheets/${encodeURIComponent(orderNumber)}/pdf?v=${encodeURIComponent(version)}`;
-        if (pdfBytesCache.has(url)) return;
-        await fetchAndCachePdfBytes(url);
-    } catch { /* 백그라운드 — 무시 */ }
-}
 
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
@@ -171,9 +128,12 @@ export default function WorksheetViewer() {
     // 1 로 떨어지던 문제(확대 후 한 손가락 패닝 → 스와이프 네비로 오인) 방지.
     const currentScaleRef = useRef(1);
 
-    const [detail, setDetail] = useState(null);
+    // 진입 즉시 캐시된 detail(목록 페이지가 채웠거나 직전에 본 지시서) 을 사용해
+    // 회사명/제목/납기 와 PDF URL 을 즉시 표시. fetchDetail 은 백그라운드에서 새로
+    // 가져와 갱신(stale-while-revalidate). 진입 시 첫 렌더부터 빈 화면이 사라진다.
+    const [detail, setDetail] = useState(() => peekDetail(orderNumber));
     const [detailError, setDetailError] = useState('');
-    const [loadingDetail, setLoadingDetail] = useState(true);
+    const [loadingDetail, setLoadingDetail] = useState(() => !peekDetail(orderNumber));
     const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
@@ -339,13 +299,18 @@ export default function WorksheetViewer() {
     // 주문 상세 — 캐시버스터(_) + cache:'no-store' 로 워처가 방금 저장한 worksheetChangeNote
     // 등이 모바일/CDN 캐시 때문에 옛 값으로 보이는 문제 방지. 백→포(visibilitychange) /
     // 창 포커스 복귀에도 재조회 — 작업자가 뷰어를 띄워둔 상태에서 워처가 업데이트해도 곧 갱신.
+    // ★ 진입 시: peekDetail() 로 채워둔 캐시가 있으면 initialState 가 이미 채워졌으므로
+    //   fetch 는 백그라운드 갱신만 수행 — loading UI 는 안 보이고 사용자는 즉시 화면을 본다.
     useEffect(() => {
         if (!orderNumber) return;
         let alive = true;
         const aliveCheck = () => alive;
+        // initial 의미 — 첫 화면이 비어있을 때만 loading/error 를 UI 에 표시(true).
+        // 캐시로 이미 채워져 있으면 false → 조용히 백그라운드 갱신.
+        const hadCachedDetail = !!peekDetail(orderNumber);
 
         const fetchDetail = async ({ initial = false } = {}) => {
-            if (initial) setLoadingDetail(true);
+            if (initial && !hadCachedDetail) setLoadingDetail(true);
             try {
                 const res = await fetch(
                     `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}?_=${Date.now()}`,
@@ -357,13 +322,15 @@ export default function WorksheetViewer() {
                 }
                 const data = await res.json();
                 if (!aliveCheck()) return;
+                rememberDetail(orderNumber, data);
                 setDetail(data);
                 setDetailError('');
             } catch (err) {
                 if (!aliveCheck()) return;
-                if (initial) setDetailError(err.message || '오류가 발생했습니다.');
+                // 캐시 데이터로 화면이 이미 차있으면 굳이 에러를 띄워 사용자 흐름을 끊지 않는다.
+                if (initial && !hadCachedDetail) setDetailError(err.message || '오류가 발생했습니다.');
             } finally {
-                if (initial && aliveCheck()) setLoadingDetail(false);
+                if (initial && !hadCachedDetail && aliveCheck()) setLoadingDetail(false);
             }
         };
 
@@ -383,6 +350,20 @@ export default function WorksheetViewer() {
         };
     }, [orderNumber]);
 
+    // orderNumber 가 바뀌면(스와이프) detail 을 새 캐시로 교체. 새 orderNumber 에 캐시가
+    // 있으면 즉시, 없으면 잠시 null → fetchDetail 이 채움.
+    useEffect(() => {
+        const cached = peekDetail(orderNumber);
+        if (cached) {
+            setDetail(cached);
+            setLoadingDetail(false);
+            setDetailError('');
+        } else {
+            setDetail(null);
+            setLoadingDetail(true);
+        }
+    }, [orderNumber]);
+
     // 미리보기 URL revoke
     useEffect(() => () => {
         queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
@@ -400,7 +381,7 @@ export default function WorksheetViewer() {
         const t = setTimeout(() => {
             if (cancelled) return;
             targets.forEach((order) => {
-                prefetchSiblingPdf(order, BASE_URL);
+                prefetchSiblingByOrderNumber(BASE_URL, order);
             });
         }, 200);
         return () => {
@@ -416,6 +397,30 @@ export default function WorksheetViewer() {
             url: `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/pdf?v=${encodeURIComponent(version)}`,
         };
     }, [detail?.worksheetPdfUrl, detail?.worksheetUpdatedAt, orderNumber]);
+
+    // 썸네일 — PDF.js 가 첫 페이지를 파싱·렌더하는 동안(50~150ms) "탭 → 곧장 화면 차오름"
+    // 인상을 주기 위한 placeholder. 백엔드가 PDF 업로드 시 첫 페이지 JPEG 으로 자동 생성해
+    // R2 에 저장(Cache-Control 10분). 목록에서도 같은 URL 을 쓰므로 브라우저 HTTP 캐시
+    // 히트율이 높아 거의 즉시 표시된다. PDF 가 그려지면 위로 페이드.
+    const thumbnailUrl = useMemo(() => {
+        if (!detail?.worksheetThumbnailUrl || !orderNumber) return null;
+        return buildThumbnailUrl(BASE_URL, orderNumber);
+    }, [detail?.worksheetThumbnailUrl, orderNumber]);
+    // 썸네일이 가로(landscape) 면 PDF 와 동일하게 +90° 회전해 portrait 로 채운다.
+    // PDF.js 가 PDF 자체 /Rotate 를 적용한 dim 을 돌려주므로 동일 규칙.
+    const [thumbRotated, setThumbRotated] = useState(false);
+    useEffect(() => {
+        // 새 지시서로 바뀌면 회전 상태 초기화 — 기본 portrait 가정.
+        setThumbRotated(false);
+    }, [thumbnailUrl]);
+    const handleThumbLoad = useCallback((e) => {
+        const img = e.currentTarget;
+        if (!img) return;
+        if (img.naturalWidth > 0 && img.naturalHeight > 0
+            && img.naturalWidth > img.naturalHeight) {
+            setThumbRotated(true);
+        }
+    }, []);
 
     // versioned URL 이 바뀌면 캐시 동기 조회 → 히트면 즉시 setPdfData(별도 await 없음)
     // → 미스면 abortable fetch. 히트 케이스에서 첫 렌더부터 pdfData 가 채워져
@@ -763,11 +768,26 @@ export default function WorksheetViewer() {
                 {!loadingDetail && !detailError && !pdfFile && (
                     <div className="wsv-msg">PDF 가 아직 등록되지 않았습니다.</div>
                 )}
-                {/* 메시지 가시화 — 바이트가 아직 도착 안 했을 때만. 캐시 히트 시엔
-                    pdfData 가 즉시 채워져 메시지 깜빡임 없이 곧장 PDF 가 표시된다.
-                    (네트워크 폴백 경로에서는 react-pdf 자체 로드가 끝날 때까지 표시) */}
+                {/* 썸네일 placeholder — PDF.js 파싱 끝나기 전까지 화면을 채워 "탭 → 즉시" 인상을
+                    준다. pdfReady 시점에 페이드아웃되며 PDF 캔버스가 자연스럽게 드러남. */}
+                {pdfFile && thumbnailUrl && (
+                    <img
+                        src={thumbnailUrl}
+                        alt=""
+                        aria-hidden="true"
+                        className={
+                            'wsv-thumb-placeholder'
+                            + (thumbRotated ? ' wsv-thumb-rotated' : '')
+                            + (pdfReady ? ' wsv-thumb-hidden' : '')
+                        }
+                        onLoad={handleThumbLoad}
+                        draggable={false}
+                    />
+                )}
+                {/* 메시지 가시화 — 썸네일이 없을 때만 텍스트 메시지 노출.
+                    썸네일이 있으면 그게 placeholder 역할 → 텍스트 안 띄움. */}
                 {pdfFile && pageWidth > 0 && !pdfError && !pdfReady
-                    && (pdfFetchError || !pdfData) && (
+                    && (pdfFetchError || !pdfData) && !thumbnailUrl && (
                     <div className="wsv-msg wsv-pdf-loading">PDF 불러오는 중…</div>
                 )}
                 {pdfFile && pageWidth > 0 && (

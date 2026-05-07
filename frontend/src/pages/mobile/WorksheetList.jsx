@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
+import { rememberAllListItems, prefetchTopItemPdfs } from './pdfPrefetch.js';
 import './WorksheetList.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -239,6 +240,26 @@ export default function WorksheetList() {
             document.removeEventListener('visibilitychange', onVisible);
         };
     }, [fetchList]);
+
+    // 목록이 갱신될 때마다:
+    //  1) 모든 항목의 detail 을 메모리 캐시에 저장 — 사용자가 어떤 카드를 탭해도 뷰어 진입
+    //     시점에 회사명/제목/납기/PDF URL 이 이미 채워져 있어 첫 화면 빈공간이 없음.
+    //  2) 상위 3개의 PDF 바이트를 백그라운드로 미리 받아둔다 — 탭 즉시 즉시 표시.
+    //     이미 캐시에 있는 항목은 helper 가 no-op 처리하므로 폴링마다 다운로드 폭증 없음.
+    //     첫 화면 렌더 잠식을 피하려 setTimeout 으로 약간 지연.
+    useEffect(() => {
+        if (!items || items.length === 0) return undefined;
+        rememberAllListItems(items);
+        let cancelled = false;
+        const t = setTimeout(() => {
+            if (cancelled) return;
+            prefetchTopItemPdfs(BASE_URL, items, 3);
+        }, 300);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [items]);
 
     const counts = useMemo(() => {
         let today = 0;

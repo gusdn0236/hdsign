@@ -137,6 +137,39 @@ body:has(.wsv-page) {
     justify-content: center;
     overflow: hidden;
 }
+
+/* 썸네일 placeholder — PDF.js 가 첫 페이지를 파싱·렌더하는 동안(50~150ms)
+   화면을 즉시 채워 카카오톡식 "탭 → 곧장 보임" 인상을 만든다.
+   pdfReady 시점에 페이드아웃되며 PDF 캔버스가 자연스럽게 드러난다.
+   - object-fit: contain 으로 비율 유지하며 stage 안에 맞춤
+   - landscape PDF 의 경우 wsv-thumb-rotated 가 +90° 회전 적용 (PDF 와 동일 방향) */
+.wsv-thumb-placeholder {
+    position: absolute;
+    inset: 8px;
+    margin: auto;
+    max-width: calc(100% - 16px);
+    max-height: calc(100% - 16px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    opacity: 1;
+    transition: opacity 0.18s ease-out;
+    z-index: 1;
+    /* 어두운 캔버스 위에서 흰 PDF 가 살짝 떠 보이도록 — 정지된 이미지지만
+       약한 음영을 줘 PDF 캔버스와 자연스럽게 정합. */
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    background: #fff;
+}
+.wsv-thumb-rotated {
+    /* landscape PDF — onPageLoad 에서 +90° 회전 적용하는 PDF 와 동일 방향. */
+    transform: rotate(90deg);
+}
+.wsv-thumb-hidden {
+    opacity: 0;
+}
 .wsv-msg {
     color: #d4d4d8;
     font-size: 14px;
