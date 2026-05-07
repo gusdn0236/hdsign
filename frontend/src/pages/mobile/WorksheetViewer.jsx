@@ -34,6 +34,57 @@ const PINCH_MAX_SCALE = 5;
 // 비슷한 화질이 유지된다. 마지막 단계까지 가도 안 되면 거기서 멈춤(무한루프 방지).
 const PDF_RENDER_FALLBACK_FACTORS = [1, 0.7, 0.5, 0.35];
 
+// versioned URL → PDF 바이트(Uint8Array) LRU 캐시. 같은 지시서 재진입이나
+// 좌·우 스와이프(prev/next 미리 워밍업) 시 네트워크 0회로 즉시 표시.
+// pdf.js 가 worker 로 ArrayBuffer 를 transfer 하면서 원본을 detach 하므로,
+// 매 사용 시 .slice() 로 새 사본을 넘겨 캐시 원본을 보존한다.
+// 모바일 RAM 보호를 위해 최근 N개만 보관.
+const PDF_BYTES_CACHE_LIMIT = 5;
+const pdfBytesCache = new Map();
+
+// 동기 조회 — 캐시 히트면 즉시 바이트 반환, LRU touch. 시청자(viewer) 가 await 없이
+// 첫 렌더에서 바로 setPdfData 할 수 있어 캐시 히트 시 로딩 표시 한 프레임도 깜빡이지 않는다.
+function peekPdfBytes(url) {
+    if (!url) return null;
+    const hit = pdfBytesCache.get(url);
+    if (!hit) return null;
+    pdfBytesCache.delete(url);
+    pdfBytesCache.set(url, hit);
+    return hit;
+}
+
+async function fetchAndCachePdfBytes(url, signal) {
+    const res = await fetch(url, { signal });
+    if (!res.ok) throw new Error(`PDF 다운로드 실패 (${res.status})`);
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    pdfBytesCache.set(url, bytes);
+    while (pdfBytesCache.size > PDF_BYTES_CACHE_LIMIT) {
+        const oldest = pdfBytesCache.keys().next().value;
+        if (oldest === undefined) break;
+        pdfBytesCache.delete(oldest);
+    }
+    return bytes;
+}
+
+// 백그라운드 prefetch — prev/next 지시서의 detail 을 먼저 가져와 versioned PDF URL 을
+// 만든 뒤 바이트를 캐시에 채워넣는다. 실패는 조용히 무시.
+async function prefetchSiblingPdf(orderNumber, baseUrl) {
+    if (!orderNumber) return;
+    try {
+        const res = await fetch(
+            `${baseUrl}/api/public/worksheets/${encodeURIComponent(orderNumber)}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data?.worksheetPdfUrl) return;
+        const version = data.worksheetUpdatedAt || data.worksheetPdfUrl;
+        const url = `${baseUrl}/api/public/worksheets/${encodeURIComponent(orderNumber)}/pdf?v=${encodeURIComponent(version)}`;
+        if (pdfBytesCache.has(url)) return;
+        await fetchAndCachePdfBytes(url);
+    } catch { /* 백그라운드 — 무시 */ }
+}
+
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
     let bitmap;
@@ -154,6 +205,10 @@ export default function WorksheetViewer() {
     const [completing, setCompleting] = useState(false);
     const [completeError, setCompleteError] = useState('');
     const [pdfViewKey, setPdfViewKey] = useState(0);
+    // 캐시에서 받아온(또는 fetch 후 캐시에 저장된) PDF 바이트. react-pdf 에 url 대신
+    // data 로 넘겨야 같은 바이트를 메모리에서 즉시 재사용 가능 — 네트워크/HTTP캐시 미경유.
+    const [pdfData, setPdfData] = useState(null);
+    const [pdfFetchError, setPdfFetchError] = useState(false);
     const transformRef = useRef(null);
 
     const resetPdfView = useCallback((e) => {
@@ -333,6 +388,27 @@ export default function WorksheetViewer() {
         queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
     }, [queued]);
 
+    // 현재 PDF 가 화면에 그려진 직후, prev/next 지시서를 백그라운드로 미리 받아 캐시에 저장.
+    // 첫 렌더 대역폭과 경합하지 않도록 pdfReady 시점까지 기다린다. 실패는 조용히 무시.
+    useEffect(() => {
+        if (!pdfReady || siblings.length === 0) return undefined;
+        const targets = [];
+        if (prevSibling) targets.push(prevSibling);
+        if (nextSibling) targets.push(nextSibling);
+        if (targets.length === 0) return undefined;
+        let cancelled = false;
+        const t = setTimeout(() => {
+            if (cancelled) return;
+            targets.forEach((order) => {
+                prefetchSiblingPdf(order, BASE_URL);
+            });
+        }, 200);
+        return () => {
+            cancelled = true;
+            clearTimeout(t);
+        };
+    }, [pdfReady, prevSibling, nextSibling, siblings.length]);
+
     const pdfFile = useMemo(() => {
         if (!detail?.worksheetPdfUrl || !orderNumber) return null;
         const version = detail.worksheetUpdatedAt || detail.worksheetPdfUrl;
@@ -340,6 +416,53 @@ export default function WorksheetViewer() {
             url: `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/pdf?v=${encodeURIComponent(version)}`,
         };
     }, [detail?.worksheetPdfUrl, detail?.worksheetUpdatedAt, orderNumber]);
+
+    // versioned URL 이 바뀌면 캐시 동기 조회 → 히트면 즉시 setPdfData(별도 await 없음)
+    // → 미스면 abortable fetch. 히트 케이스에서 첫 렌더부터 pdfData 가 채워져
+    // 로딩 메시지가 한 프레임도 깜빡이지 않는다.
+    useEffect(() => {
+        const url = pdfFile?.url;
+        if (!url) {
+            setPdfData(null);
+            setPdfFetchError(false);
+            return undefined;
+        }
+        const cached = peekPdfBytes(url);
+        if (cached) {
+            setPdfData(cached);
+            setPdfFetchError(false);
+            return undefined;
+        }
+        // 미스 — 이전 PDF 의 바이트가 남아있으면 잠깐이라도 옛 PDF 가 보이므로 비운다.
+        setPdfData(null);
+        setPdfFetchError(false);
+        const ac = new AbortController();
+        let alive = true;
+        (async () => {
+            try {
+                const bytes = await fetchAndCachePdfBytes(url, ac.signal);
+                if (!alive) return;
+                setPdfData(bytes);
+            } catch (err) {
+                if (!alive || err?.name === 'AbortError') return;
+                // 네트워크 일시 실패 — react-pdf 에 url 로 폴백시켜 라이브러리가 알아서 재시도.
+                setPdfFetchError(true);
+            }
+        })();
+        return () => {
+            alive = false;
+            ac.abort();
+        };
+    }, [pdfFile?.url]);
+
+    // Document 에 넘길 file 객체 — 바이트가 있으면 data 모드, 없거나 실패면 url 폴백.
+    // pdf.js 는 data 의 ArrayBuffer 를 worker 로 transfer 하면서 detach 하므로,
+    // 매번 .slice() 로 새 사본을 만들어 넘긴다(원본 캐시 항상 무사).
+    const pdfFileForDoc = useMemo(() => {
+        if (pdfData) return { data: pdfData.slice() };
+        if (pdfFetchError && pdfFile?.url) return { url: pdfFile.url };
+        return null;
+    }, [pdfData, pdfFetchError, pdfFile?.url]);
 
     const pdfOptions = useMemo(() => ({
         canvasMaxAreaInBytes: PDF_JS_MAX_IMAGE_BYTES,
@@ -640,7 +763,11 @@ export default function WorksheetViewer() {
                 {!loadingDetail && !detailError && !pdfFile && (
                     <div className="wsv-msg">PDF 가 아직 등록되지 않았습니다.</div>
                 )}
-                {pdfFile && pageWidth > 0 && !pdfReady && !pdfError && (
+                {/* 메시지 가시화 — 바이트가 아직 도착 안 했을 때만. 캐시 히트 시엔
+                    pdfData 가 즉시 채워져 메시지 깜빡임 없이 곧장 PDF 가 표시된다.
+                    (네트워크 폴백 경로에서는 react-pdf 자체 로드가 끝날 때까지 표시) */}
+                {pdfFile && pageWidth > 0 && !pdfError && !pdfReady
+                    && (pdfFetchError || !pdfData) && (
                     <div className="wsv-msg wsv-pdf-loading">PDF 불러오는 중…</div>
                 )}
                 {pdfFile && pageWidth > 0 && (
@@ -686,8 +813,9 @@ export default function WorksheetViewer() {
                             wrapperClass="wsv-pdf-wrapper"
                             contentClass="wsv-pdf-content"
                         >
+                            {pdfFileForDoc && (
                             <Document
-                                file={pdfFile}
+                                file={pdfFileForDoc}
                                 options={pdfOptions}
                                 onLoadSuccess={onDocLoad}
                                 onLoadError={onDocError}
@@ -728,6 +856,7 @@ export default function WorksheetViewer() {
                                     />
                                 )}
                             </Document>
+                            )}
                         </TransformComponent>
                     </TransformWrapper>
                 )}
