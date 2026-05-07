@@ -115,6 +115,10 @@ export default function WorksheetViewer() {
     // 줌 상태(scale > 1)에서는 사용자가 PDF 를 패닝 중이라 가로채면 안 됨.
     const swipeStartRef = useRef(null);
     const swipeNavigatedRef = useRef(false);
+    // TransformWrapper 의 onTransformed 콜백으로 매 transform 변화 시점에 갱신 — touchstart 에서
+    // ref.instance.transformState 를 직접 읽으면 라이브러리 버전에 따라 path 가 안 잡혀
+    // 1 로 떨어지던 문제(확대 후 한 손가락 패닝 → 스와이프 네비로 오인) 방지.
+    const currentScaleRef = useRef(1);
 
     const [detail, setDetail] = useState(null);
     const [detailError, setDetailError] = useState('');
@@ -192,14 +196,13 @@ export default function WorksheetViewer() {
     }, []);
 
     // 한 손가락 좌/우 스와이프 → 다음·이전 지시서. 두 손가락 핀치/패닝과 분리.
-    // 스케일 > 1.05(사용자가 줌인한 상태) 면 라이브러리가 패닝을 처리해야 하므로 가로채지 않음.
+    // 스케일 > 1.01(사용자가 줌인한 상태) 면 라이브러리가 패닝을 처리해야 하므로 가로채지 않음.
     const handleStageTouchStart = useCallback((e) => {
         if (e.touches.length !== 1) {
             swipeStartRef.current = null;
             return;
         }
-        const scale = transformRef.current?.instance?.transformState?.scale ?? 1;
-        if (scale > 1.05) {
+        if (currentScaleRef.current > 1.01) {
             swipeStartRef.current = null;
             return;
         }
@@ -215,6 +218,8 @@ export default function WorksheetViewer() {
         const start = swipeStartRef.current;
         swipeStartRef.current = null;
         if (!start || !e.changedTouches?.[0]) return;
+        // 터치 도중 라이브러리가 줌을 변경했을 가능성 — touchend 시점에서 한 번 더 확인.
+        if (currentScaleRef.current > 1.01) return;
         const t = e.changedTouches[0];
         const dx = t.clientX - start.x;
         const dy = t.clientY - start.y;
@@ -640,6 +645,10 @@ export default function WorksheetViewer() {
                         centerOnInit
                         centerZoomedOut
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
+                        onTransformed={(_, state) => {
+                            // 매 줌/패닝 변경마다 호출 — 스와이프 네비 가드용 currentScaleRef 갱신.
+                            currentScaleRef.current = state?.scale ?? 1;
+                        }}
                         wheel={{
                             step: 0.18,
                             excluded: ['wsv-back', 'wsv-action-btn', 'wsv-action-reset',
