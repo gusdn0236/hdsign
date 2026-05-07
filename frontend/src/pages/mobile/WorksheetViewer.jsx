@@ -195,6 +195,14 @@ export default function WorksheetViewer() {
         }, 280);
     }, []);
 
+    // v4 ref 의 state 는 라이브러리가 매 프레임 동기로 갱신 — 직접 읽어 항상 최신 값.
+    // currentScaleRef 는 onTransform 콜백 보조용 (둘 중 큰 값으로 보수적 판정).
+    const getCurrentScale = useCallback(() => {
+        const fromRef = transformRef.current?.state?.scale;
+        const fromCb = currentScaleRef.current;
+        return Math.max(typeof fromRef === 'number' ? fromRef : 1, fromCb || 1);
+    }, []);
+
     // 한 손가락 좌/우 스와이프 → 다음·이전 지시서. 두 손가락 핀치/패닝과 분리.
     // 스케일 > 1.01(사용자가 줌인한 상태) 면 라이브러리가 패닝을 처리해야 하므로 가로채지 않음.
     const handleStageTouchStart = useCallback((e) => {
@@ -202,7 +210,7 @@ export default function WorksheetViewer() {
             swipeStartRef.current = null;
             return;
         }
-        if (currentScaleRef.current > 1.01) {
+        if (getCurrentScale() > 1.01) {
             swipeStartRef.current = null;
             return;
         }
@@ -212,14 +220,14 @@ export default function WorksheetViewer() {
             y: t.clientY,
             time: Date.now(),
         };
-    }, []);
+    }, [getCurrentScale]);
 
     const handleStageTouchEnd = useCallback((e) => {
         const start = swipeStartRef.current;
         swipeStartRef.current = null;
         if (!start || !e.changedTouches?.[0]) return;
         // 터치 도중 라이브러리가 줌을 변경했을 가능성 — touchend 시점에서 한 번 더 확인.
-        if (currentScaleRef.current > 1.01) return;
+        if (getCurrentScale() > 1.01) return;
         const t = e.changedTouches[0];
         const dx = t.clientX - start.x;
         const dy = t.clientY - start.y;
@@ -230,7 +238,7 @@ export default function WorksheetViewer() {
         if (!target) return;
         swipeNavigatedRef.current = true;
         navigateSibling(target);
-    }, [nextSibling, prevSibling, navigateSibling]);
+    }, [getCurrentScale, nextSibling, prevSibling, navigateSibling]);
 
     // iOS PWA standalone 에서 click 이벤트가 안 발사되는 케이스를 보강.
     // touchend 시점에 액션을 즉시 트리거하고 후속 synthetic click 은 preventDefault
@@ -645,9 +653,15 @@ export default function WorksheetViewer() {
                         centerOnInit
                         centerZoomedOut
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
-                        onTransformed={(_, state) => {
-                            // 매 줌/패닝 변경마다 호출 — 스와이프 네비 가드용 currentScaleRef 갱신.
+                        onTransform={(_, state) => {
+                            // v4 콜백명은 onTransform (onTransformed 아님). 매 변환마다 ref 갱신.
                             currentScaleRef.current = state?.scale ?? 1;
+                        }}
+                        onPinchStart={(ref) => {
+                            currentScaleRef.current = ref?.state?.scale ?? currentScaleRef.current;
+                        }}
+                        onZoomStop={(ref) => {
+                            currentScaleRef.current = ref?.state?.scale ?? currentScaleRef.current;
                         }}
                         wheel={{
                             step: 0.18,
