@@ -36,6 +36,10 @@ dependencies {
     implementation 'software.amazon.awssdk:s3:2.25.27'
     // 작업지시서 PDF 1페이지를 카드용 JPEG 썸네일로 렌더 (admin/모바일 카드 빠른 로딩).
     implementation 'org.apache.pdfbox:pdfbox:3.0.3'
+    // 증거 사진을 공용 구글 드라이브에 백업 (홈페이지 R2 와 별도, 외부에서 폰으로 열람 목적).
+    implementation 'com.google.api-client:google-api-client:2.7.0'
+    implementation 'com.google.oauth-client:google-oauth-client-jetty:1.36.0'
+    implementation 'com.google.apis:google-api-services-drive:v3-rev20241027-2.0.0'
 }
 tasks.named('test') {
     useJUnitPlatform()

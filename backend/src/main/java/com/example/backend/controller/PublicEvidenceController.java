@@ -5,6 +5,7 @@ import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderFileRepository;
 import com.example.backend.repository.OrderRepository;
+import com.example.backend.service.GoogleDriveBackupService;
 import com.example.backend.service.WorksheetFlattenService;
 import com.example.backend.service.WorksheetThumbnailService;
 import lombok.RequiredArgsConstructor;
@@ -48,6 +49,7 @@ public class PublicEvidenceController {
     private final S3Client s3Client;
     private final WorksheetThumbnailService thumbnailService;
     private final WorksheetFlattenService flattenService;
+    private final GoogleDriveBackupService driveBackupService;
 
     @Value("${r2.bucket}")
     private String bucket;
@@ -106,19 +108,31 @@ public class PublicEvidenceController {
                     : ".jpg";
             String key = "orders/" + order.getOrderNumber() + "/evidence/" + UUID.randomUUID() + extension;
 
-            try (java.io.InputStream in = file.getInputStream()) {
+            // 바이트로 한 번 읽어 R2 + 드라이브 백업 양쪽에 재사용. 사진은 보통 수 MB 라 메모리 비용 미미.
+            byte[] bytes;
+            try {
+                bytes = file.getBytes();
+            } catch (Exception e) {
+                log.warn("증거 사진 읽기 실패 [{}/{}]: {}", order.getOrderNumber(), originalName, e.getMessage());
+                continue;
+            }
+
+            try {
                 s3Client.putObject(
                         PutObjectRequest.builder()
                                 .bucket(bucket)
                                 .key(key)
                                 .contentType(file.getContentType() != null ? file.getContentType() : "image/jpeg")
                                 .build(),
-                        RequestBody.fromInputStream(in, file.getSize())
+                        RequestBody.fromBytes(bytes)
                 );
             } catch (Exception e) {
                 log.warn("증거 사진 업로드 실패 [{}/{}]: {}", order.getOrderNumber(), originalName, e.getMessage());
                 continue;
             }
+
+            // R2 성공한 사진만 드라이브에도 백업. 비동기 — 응답 지연 0, 실패해도 흐름 영향 없음.
+            driveBackupService.uploadEvidenceAsync(order, originalName, file.getContentType(), bytes);
 
             OrderFile saved = orderFileRepository.save(OrderFile.builder()
                     .order(order)
