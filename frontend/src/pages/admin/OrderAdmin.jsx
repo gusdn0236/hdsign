@@ -313,16 +313,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return counts;
   }, [orders]);
 
-  // 지연 건 — 작업중/접수 단계에서 dueDate 가 오늘보다 과거. 완료/휴지통은 제외.
-  // 요약 카드의 [지연] 카운트와 점프 동작에서 같은 기준을 사용한다.
+  // 지연 건 — 휴지통 안 간 모든 주문(IN_PROGRESS·COMPLETED·접수) 중 dueDate 가 오늘 이전.
+  // COMPLETED 도 포함하는 이유: 이전 워크플로우에서 완료 처리만 되고 휴지통으로 안 간 옛 데이터가
+  // 새 [완료 검토] 흐름에서도 정리 대상이어야 하므로. 카운트와 일괄 검토 큐 모두 같은 기준.
   const overdueCount = useMemo(() => {
     if (!isOrderPage) return 0;
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const today = formatYmd(new Date());
     return orders.reduce((acc, o) => {
       if (!o.dueDate) return acc;
-      if (o.status === "COMPLETED") return acc;
       const due = String(o.dueDate).split("T")[0];
       return due < today ? acc + 1 : acc;
     }, 0);
@@ -615,11 +613,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       queue = specificOrders;
     } else {
       const today = formatYmd(new Date());
+      // overdueCount 와 동일 기준 — IN_PROGRESS / COMPLETED / RECEIVED 가리지 않고
+      // dueDate 가 지난 모든 활성(휴지통 안 간) 주문이 검토 대상.
       queue = orders.filter(
-        (o) =>
-          o.dueDate &&
-          String(o.dueDate).split("T")[0] < today &&
-          o.status !== "COMPLETED"
+        (o) => o.dueDate && String(o.dueDate).split("T")[0] < today
       );
     }
     if (queue.length === 0) {
@@ -1059,18 +1056,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     {updating ? "변경 중..." : "다음 단계"}
                   </button>
                 )}
-                {order.status === "IN_PROGRESS" && getDueBadge(order.dueDate)?.kind === "overdue" && (
-                  <button
-                    type="button"
-                    className="next-status-btn action-review"
-                    onClick={() => startBulkCompleteReview([order])}
-                    disabled={!!reviewSession}
-                    title="이 주문 완료 / 납기 수정 결정"
-                  >
-                    완료 검토
-                  </button>
-                )}
-                {order.status === "COMPLETED" && (
+                {(order.status === "IN_PROGRESS" || order.status === "COMPLETED") &&
+                  getDueBadge(order.dueDate)?.kind === "overdue" && (
+                    <button
+                      type="button"
+                      className="next-status-btn action-review"
+                      onClick={() => startBulkCompleteReview([order])}
+                      disabled={!!reviewSession}
+                      title="이 주문 완료 / 납기 수정 결정"
+                    >
+                      완료 검토
+                    </button>
+                  )}
+                {order.status === "COMPLETED" && getDueBadge(order.dueDate)?.kind !== "overdue" && (
                   <button
                     type="button"
                     className="next-status-btn action-trash"
@@ -1643,17 +1641,18 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           {statusUpdatingId === selectedOrder.id ? "변경 중..." : "다음 단계"}
                         </button>
                       )}
-                      {selectedOrder.status === "IN_PROGRESS" && getDueBadge(selectedOrder.dueDate)?.kind === "overdue" && (
-                        <button
-                          type="button"
-                          className="next-status-btn action-review"
-                          disabled={!!reviewSession}
-                          onClick={() => startBulkCompleteReview([selectedOrder])}
-                        >
-                          완료 검토
-                        </button>
-                      )}
-                      {selectedOrder.status === "COMPLETED" && (
+                      {(selectedOrder.status === "IN_PROGRESS" || selectedOrder.status === "COMPLETED") &&
+                        getDueBadge(selectedOrder.dueDate)?.kind === "overdue" && (
+                          <button
+                            type="button"
+                            className="next-status-btn action-review"
+                            disabled={!!reviewSession}
+                            onClick={() => startBulkCompleteReview([selectedOrder])}
+                          >
+                            완료 검토
+                          </button>
+                        )}
+                      {selectedOrder.status === "COMPLETED" && getDueBadge(selectedOrder.dueDate)?.kind !== "overdue" && (
                         <button
                           type="button"
                           className="next-status-btn action-trash"
