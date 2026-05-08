@@ -452,11 +452,18 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   };
   const calendarShowAll = () => setSelectedCalendarDate(null);
 
-  // 모달 prev/next 의 "현재 화면" 대상 — 휴지통/지연이면 평면 그리드 전체,
+  // 지연 필터 진입 시 자동 전체보기 — 과거 날짜 산재라 단일 일자 뷰면 빈 화면이 흔함.
+  // 한 번에 모든 지연 카드를 날짜별 그룹으로 보여줘야 즉시 작업 가능.
+  useEffect(() => {
+    if (activeFilter === "OVERDUE") {
+      setSelectedCalendarDate(null);
+    }
+  }, [activeFilter]);
+
+  // 모달 prev/next 의 "현재 화면" 대상 — 휴지통은 평면 그리드 전체,
   // 달력 전체보기면 필터된 모든 주문, 그 외엔 선택 일자 카드.
   const visibleOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
-    if (activeFilter === "OVERDUE") return calendarOrdersBase;
     if (isAllView) return calendarOrdersBase;
     return calendarSelectedOrders;
   }, [activeFilter, trashOrders, isAllView, calendarOrdersBase, calendarSelectedOrders]);
@@ -1205,9 +1212,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         </div>
       )}
 
-      {/* 일괄 완료 검토 — 납기가 지난 IN_PROGRESS 가 있을 때 항상 노출.
-          상단 [지연] 요약카드 클릭과 같은 액션. */}
-      {activeFilter !== "TRASH" && overdueCount > 0 && (
+      {/* 일괄 완료 검토 — overdue 가 있을 때 노출.
+          접수 탭: 안 보임 (작업중에서 처리할 일).
+          작업중 탭: 전체보기 모드일 때만 (단일 일자 작업 시엔 시야 방해 없게).
+          지연 탭: 항상 (이 탭의 본 목적). */}
+      {(
+        (activeFilter === "OVERDUE" && overdueCount > 0) ||
+        (activeFilter === "IN_PROGRESS" && isAllView && overdueCount > 0)
+      ) && (
         <div className="bulk-action-row bulk-action-row--complete">
           <span className="bulk-action-text bulk-action-text--complete">
             완료 검토 대상 {overdueCount}건 · 한 건씩 PDF 보며 완료(휴지통) / 납기수정 결정
@@ -1250,29 +1262,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           ) : (
             <div className="order-card-grid">
               {trashOrders.map(renderOrderCard)}
-            </div>
-          )}
-        </div>
-      ) : activeFilter === "OVERDUE" ? (
-        // 지연 — 과거 날짜 산재라 달력보단 평면 카드 그리드(가까운 지연 먼저). 거래처 칩 필터는 동일하게 적용.
-        <div className="order-card-view">
-          {loading ? (
-            <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
-          ) : calendarOrdersBase.length === 0 ? (
-            <div className="order-empty">
-              {calendarClientChips.length > 0 || clientSearch.trim()
-                ? "필터에 맞는 지연 요청이 없습니다."
-                : "지연된 요청이 없습니다."}
-            </div>
-          ) : (
-            <div className="order-card-grid">
-              {[...calendarOrdersBase]
-                .sort((a, b) => {
-                  const da = a.dueDate ? String(a.dueDate).split("T")[0] : "";
-                  const db = b.dueDate ? String(b.dueDate).split("T")[0] : "";
-                  return da.localeCompare(db);
-                })
-                .map(renderOrderCard)}
             </div>
           )}
         </div>
