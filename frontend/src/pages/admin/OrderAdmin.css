@@ -57,6 +57,37 @@
   gap: 4px;
   align-items: center;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.summary-card:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.08);
+}
+.summary-card:focus-visible {
+  outline: 2px solid #18181b;
+  outline-offset: 2px;
+}
+.summary-card:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+/* 선택된 필터 — 짙은 보더와 약한 배경 틴트로 현재 보고 있는 카테고리를 명확히. */
+.summary-card.is-selected {
+  border-color: #18181b;
+  border-width: 2px;
+  padding: 17px 15px; /* 보더 굵어진 만큼 패딩 보정 */
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
+}
+.summary-received.is-selected {
+  background: #fffbeb;
+  border-color: #b45309;
+}
+.summary-in-progress.is-selected {
+  background: #eff6ff;
+  border-color: #1d4ed8;
 }
 
 .summary-count {
@@ -83,35 +114,20 @@
   color: #047857;
 }
 
-/* 지연 카드 — 빨간 강조. 1건 이상이면 클릭으로 작업중·납기별·지연 점프.
-   0건이면 회색으로 죽이고 클릭 비활성. */
-.summary-overdue {
-  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
+/* 지연 필터 카드 — 빨간 강조. 0건이면 회색으로 죽이고 비활성. */
 .summary-overdue .summary-count {
   color: #dc2626;
 }
 .summary-overdue.is-active {
-  cursor: pointer;
   border-color: #fecaca;
   background: #fff5f5;
 }
-.summary-overdue.is-active:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 14px rgba(220, 38, 38, 0.18);
-  border-color: #fca5a5;
-  background: #ffecec;
-}
-.summary-overdue.is-active:focus-visible {
-  outline: 2px solid #dc2626;
-  outline-offset: 2px;
-}
-.summary-overdue.is-empty {
-  cursor: default;
-  opacity: 0.55;
-}
 .summary-overdue.is-empty .summary-count {
   color: #a1a1aa;
+}
+.summary-overdue.is-selected {
+  background: #fee2e2;
+  border-color: #dc2626;
 }
 
 /* 좁은 화면 — 4컬럼이 너무 빡빡하면 2x2 로 떨어뜨려 가독성 확보. */

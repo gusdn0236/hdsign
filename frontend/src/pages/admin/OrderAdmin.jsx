@@ -326,16 +326,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }, 0);
   }, [orders, isOrderPage]);
 
-  // [지연] 요약카드 클릭 — 지연된 요청을 한 건씩 보면서 완료/납기수정 결정하는 검토 세션을 즉시 시작.
-  // (이전엔 정렬모드+범위필터로 점프했지만, 정렬모드를 없애고 달력 단일 뷰로 바꾼 뒤로는
-  //  검토 세션을 바로 여는 게 가장 빠른 접근.)
-  const jumpToOverdue = () => {
-    if (overdueCount <= 0) return;
-    startBulkCompleteReview();
-  };
-
   const statusFilteredOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
+    // 지연 — 휴지통 가지 않은 모든 활성 주문 중 dueDate 가 오늘 이전. 상태(IN_PROGRESS/COMPLETED/RECEIVED)
+    // 무관 — overdueCount 와 같은 기준이라 수치와 보이는 카드 수가 일치.
+    if (activeFilter === "OVERDUE") {
+      const today = formatYmd(new Date());
+      return orders.filter((o) => o.dueDate && String(o.dueDate).split("T")[0] < today);
+    }
     // 작업중 탭은 IN_PROGRESS + 휴지통에 가지 않은 COMPLETED 도 포함 — 새 워크플로우에서 COMPLETED 는
     // 완료검토를 거쳐 바로 휴지통으로 가지만, 이전 데이터(휴지통 안 보낸 COMPLETED) 가 사라지지 않도록.
     if (activeFilter === "IN_PROGRESS") {
@@ -454,10 +452,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   };
   const calendarShowAll = () => setSelectedCalendarDate(null);
 
-  // 모달 prev/next, 선택모드의 "현재 화면" 대상 — 휴지통이면 trashOrders 전체,
-  // 전체보기면 거래처 필터 적용된 모든 주문, 그 외엔 선택 일자 카드.
+  // 모달 prev/next 의 "현재 화면" 대상 — 휴지통/지연이면 평면 그리드 전체,
+  // 달력 전체보기면 필터된 모든 주문, 그 외엔 선택 일자 카드.
   const visibleOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
+    if (activeFilter === "OVERDUE") return calendarOrdersBase;
     if (isAllView) return calendarOrdersBase;
     return calendarSelectedOrders;
   }, [activeFilter, trashOrders, isAllView, calendarOrdersBase, calendarSelectedOrders]);
@@ -536,12 +535,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return () => window.removeEventListener("keydown", handler);
   }, [selectedOrderId, lightboxIndex, currentOrderIndex, visibleOrders, reviewSession, reviewStage, reviewChoice, orders]);
 
-  // 탭은 접수 / 작업중 / 휴지통 3개. 완료(COMPLETED) 는 더 이상 별도 탭이 아니다 —
-  // 일괄 완료검토에서 '완료' 결정한 건은 바로 휴지통(=완료 아카이브) 으로 보내고,
-  // 잔존 COMPLETED 는 작업중 탭 안에 함께 보여 휴지통으로 보내도록 유도.
+  // 메인 필터(접수/작업중/지연) 는 상단 큰 요약카드 클릭. 휴지통만 별도의 작은 탭으로 유지.
   const filterTabs = [
-    { key: "RECEIVED", label: STATUS_META.RECEIVED.label, count: statusCounts.RECEIVED },
-    { key: "IN_PROGRESS", label: STATUS_META.IN_PROGRESS.label, count: statusCounts.IN_PROGRESS + statusCounts.COMPLETED },
     { key: "TRASH", label: "휴지통", count: trashOrders.length },
   ];
 
@@ -605,20 +600,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  // 완료 검토 시작 — 한 건씩 PDF 를 보면서 완료(휴지통 직행) / 납기 수정 결정.
-  // 인자 없으면 overdue 전체(일괄), 카드의 [완료 검토] 버튼은 [order] 단건으로 호출.
-  const startBulkCompleteReview = (specificOrders) => {
-    let queue;
-    if (Array.isArray(specificOrders) && specificOrders.length > 0) {
-      queue = specificOrders;
-    } else {
-      const today = formatYmd(new Date());
-      // overdueCount 와 동일 기준 — IN_PROGRESS / COMPLETED / RECEIVED 가리지 않고
-      // dueDate 가 지난 모든 활성(휴지통 안 간) 주문이 검토 대상.
-      queue = orders.filter(
-        (o) => o.dueDate && String(o.dueDate).split("T")[0] < today
-      );
-    }
+  // 완료 검토 시작 — overdue 전체 큐. 한 건씩 PDF 보면서 완료(휴지통 직행) / 납기 수정.
+  // overdueCount 와 동일 기준 — 휴지통 안 간 주문 중 dueDate 가 지난 모든 건(상태 무관).
+  const startBulkCompleteReview = () => {
+    const today = formatYmd(new Date());
+    const queue = orders.filter(
+      (o) => o.dueDate && String(o.dueDate).split("T")[0] < today
+    );
     if (queue.length === 0) {
       setFeedback({ type: "error", msg: "검토할 요청이 없습니다." });
       return;
@@ -1056,18 +1044,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     {updating ? "변경 중..." : "다음 단계"}
                   </button>
                 )}
-                {(order.status === "IN_PROGRESS" || order.status === "COMPLETED") &&
-                  getDueBadge(order.dueDate)?.kind === "overdue" && (
-                    <button
-                      type="button"
-                      className="next-status-btn action-review"
-                      onClick={() => startBulkCompleteReview([order])}
-                      disabled={!!reviewSession}
-                      title="이 주문 완료 / 납기 수정 결정"
-                    >
-                      완료 검토
-                    </button>
-                  )}
+                {/* 카드 단건 [완료 검토] 버튼은 제거 — 상단 [지연] 필터 → [일괄 완료 검토] 가
+                    유일한 진입점. (개별 버튼은 review 중 키보드 트랩 / 중복 트리거 위험.) */}
                 {order.status === "COMPLETED" && getDueBadge(order.dueDate)?.kind !== "overdue" && (
                   <button
                     type="button"
@@ -1091,33 +1069,41 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     <div className="order-admin-page">
       {feedback && <div className={`order-feedback ${feedback.type}`}>{feedback.msg}</div>}
 
+      {/* 메인 필터 — 큰 요약카드 자체가 필터 버튼. review session 중에도 안전하게
+          작동하도록 button 으로 만들고, review 중엔 disabled 로 막아 중복 트리거 방지. */}
       <div className={`order-summary ${isOrderPage ? "order-summary--with-overdue" : ""}`}>
-        <div className="summary-card summary-received">
+        <button
+          type="button"
+          className={`summary-card summary-received ${activeFilter === "RECEIVED" ? "is-selected" : ""}`}
+          onClick={() => setActiveFilter("RECEIVED")}
+          disabled={!!reviewSession}
+          aria-pressed={activeFilter === "RECEIVED"}
+        >
           <span className="summary-count">{statusCounts.RECEIVED}</span>
           <span className="summary-label">접수</span>
-        </div>
-        <div className="summary-card summary-in-progress">
+        </button>
+        <button
+          type="button"
+          className={`summary-card summary-in-progress ${activeFilter === "IN_PROGRESS" ? "is-selected" : ""}`}
+          onClick={() => setActiveFilter("IN_PROGRESS")}
+          disabled={!!reviewSession}
+          aria-pressed={activeFilter === "IN_PROGRESS"}
+        >
           <span className="summary-count">{statusCounts.IN_PROGRESS + statusCounts.COMPLETED}</span>
           <span className="summary-label">작업중</span>
-        </div>
+        </button>
         {isOrderPage && (
-          <div
-            className={`summary-card summary-overdue ${overdueCount > 0 ? "is-active" : "is-empty"}`}
-            onClick={jumpToOverdue}
-            role={overdueCount > 0 ? "button" : undefined}
-            tabIndex={overdueCount > 0 ? 0 : undefined}
-            onKeyDown={(e) => {
-              if (overdueCount <= 0) return;
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                jumpToOverdue();
-              }
-            }}
-            title={overdueCount > 0 ? "클릭 → 일괄 완료 검토 (한 건씩 PDF 보며 완료/납기수정 결정)" : "검토할 지연 요청이 없습니다"}
+          <button
+            type="button"
+            className={`summary-card summary-overdue ${overdueCount > 0 ? "is-active" : "is-empty"} ${activeFilter === "OVERDUE" ? "is-selected" : ""}`}
+            onClick={() => setActiveFilter("OVERDUE")}
+            disabled={!!reviewSession}
+            aria-pressed={activeFilter === "OVERDUE"}
+            title={overdueCount > 0 ? "지연된 주문만 보기" : "지연된 요청이 없습니다"}
           >
             <span className="summary-count">{overdueCount}</span>
             <span className="summary-label">지연</span>
-          </div>
+          </button>
         )}
       </div>
 
@@ -1264,6 +1250,29 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           ) : (
             <div className="order-card-grid">
               {trashOrders.map(renderOrderCard)}
+            </div>
+          )}
+        </div>
+      ) : activeFilter === "OVERDUE" ? (
+        // 지연 — 과거 날짜 산재라 달력보단 평면 카드 그리드(가까운 지연 먼저). 거래처 칩 필터는 동일하게 적용.
+        <div className="order-card-view">
+          {loading ? (
+            <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
+          ) : calendarOrdersBase.length === 0 ? (
+            <div className="order-empty">
+              {calendarClientChips.length > 0 || clientSearch.trim()
+                ? "필터에 맞는 지연 요청이 없습니다."
+                : "지연된 요청이 없습니다."}
+            </div>
+          ) : (
+            <div className="order-card-grid">
+              {[...calendarOrdersBase]
+                .sort((a, b) => {
+                  const da = a.dueDate ? String(a.dueDate).split("T")[0] : "";
+                  const db = b.dueDate ? String(b.dueDate).split("T")[0] : "";
+                  return da.localeCompare(db);
+                })
+                .map(renderOrderCard)}
             </div>
           )}
         </div>
@@ -1641,17 +1650,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           {statusUpdatingId === selectedOrder.id ? "변경 중..." : "다음 단계"}
                         </button>
                       )}
-                      {(selectedOrder.status === "IN_PROGRESS" || selectedOrder.status === "COMPLETED") &&
-                        getDueBadge(selectedOrder.dueDate)?.kind === "overdue" && (
-                          <button
-                            type="button"
-                            className="next-status-btn action-review"
-                            disabled={!!reviewSession}
-                            onClick={() => startBulkCompleteReview([selectedOrder])}
-                          >
-                            완료 검토
-                          </button>
-                        )}
+                      {/* 모달 단건 [완료 검토] 도 제거 — 상단 [지연] 필터 → [일괄 완료 검토] 가 단일 진입점. */}
                       {selectedOrder.status === "COMPLETED" && getDueBadge(selectedOrder.dueDate)?.kind !== "overdue" && (
                         <button
                           type="button"
