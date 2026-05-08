@@ -152,11 +152,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
   const [bulkPurging, setBulkPurging] = useState(false);
-  // 다중 선택 모드 — 행을 클릭하면 모달 대신 선택 토글. 선택한 건들은 한 번에 작업완료로.
-  const [selectMode, setSelectMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const [bulkSelectCompleting, setBulkSelectCompleting] = useState(false);
-  // 지연 일괄 완료 검토 — queue 의 주문 한 건씩 PDF 와 적용 납기를 보면서 결정한다.
+  // 일괄 완료 검토 — queue 의 주문 한 건씩 PDF 와 적용 납기를 보면서 결정한다.
   // decisions[id] = { action: 'complete' } 또는 { action: 'reschedule', newDate: 'yyyy-MM-dd' }.
   // 모든 주문을 다 보면 selectedOrderId 가 null 로 풀리고 상단 sticky 패널에서 일괄 적용.
   const [reviewSession, setReviewSession] = useState(null);
@@ -611,76 +607,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  // 다중 선택 — 한 건 토글, 모드 진입/종료, 일괄 작업완료.
-  const toggleSelectId = (id) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-  const exitSelectMode = () => {
-    setSelectMode(false);
-    setSelectedIds(new Set());
-  };
-  const selectAllVisible = () => {
-    setSelectedIds(new Set(visibleOrders.map((o) => o.id)));
-  };
-  const clearSelection = () => setSelectedIds(new Set());
-
-  // 다중 선택 일괄 완료 — DELETE 한 번으로 휴지통 이동(서버에서 status=COMPLETED 자동 처리).
-  // 새 워크플로우에선 완료 = 휴지통(=완료 아카이브) 이동 한 단계.
-  const completeSelected = async () => {
-    if (selectedIds.size === 0 || bulkSelectCompleting) return;
-    if (!window.confirm(`선택한 ${selectedIds.size}건을 모두 완료 처리하고 휴지통으로 보낼까요?`)) return;
-    setBulkSelectCompleting(true);
-    try {
-      const ids = Array.from(selectedIds);
-      const results = await Promise.allSettled(
-        ids.map((id) =>
-          fetch(`${BASE_URL}/api/admin/orders/${id}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          }).then((res) => {
-            if (!res.ok) throw new Error(String(id));
-            return id;
-          })
-        )
-      );
-      const trashedIds = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
-      const trashedSet = new Set(trashedIds);
-      const nowIso = new Date().toISOString();
-      setOrders((prev) => {
-        const moved = [];
-        const next = [];
-        prev.forEach((o) => {
-          if (trashedSet.has(o.id)) {
-            moved.push({ ...o, status: "COMPLETED", deletedAt: nowIso });
-          } else {
-            next.push(o);
-          }
-        });
-        if (moved.length > 0) setTrashOrders((trash) => [...moved, ...trash]);
-        return next;
-      });
-      const failed = results.length - trashedIds.length;
-      setFeedback({
-        type: failed === 0 ? "success" : "error",
-        msg: failed === 0
-          ? `${trashedIds.length}건 완료·휴지통 이동`
-          : `${trashedIds.length}건 처리, ${failed}건 실패`,
-      });
-      exitSelectMode();
-    } finally {
-      setBulkSelectCompleting(false);
-    }
-  };
-
   // 완료 검토 시작 — 한 건씩 PDF 를 보면서 완료(휴지통 직행) / 납기 수정 결정.
   // 인자 없으면 overdue 전체(일괄), 카드의 [완료 검토] 버튼은 [order] 단건으로 호출.
   const startBulkCompleteReview = (specificOrders) => {
-    if (selectMode) exitSelectMode();
     let queue;
     if (Array.isArray(specificOrders) && specificOrders.length > 0) {
       queue = specificOrders;
@@ -1008,32 +937,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
     const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
     const isOrderType = order.requestType === "ORDER";
-    const isSelectedCard = selectMode && selectedIds.has(order.id);
-    const handleCardActivate = () => {
-      if (selectMode) toggleSelectId(order.id);
-      else setSelectedOrderId(order.id);
-    };
     return (
       <div
         key={order.id}
-        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${isSelectedCard ? "order-card--selected" : ""}`}
-        onClick={handleCardActivate}
+        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""}`}
+        onClick={() => setSelectedOrderId(order.id)}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            handleCardActivate();
+            setSelectedOrderId(order.id);
           }
         }}
       >
-        {selectMode && (
-          <div className="order-card-select-mark" aria-hidden="true">
-            <span className={`order-card-select-box ${isSelectedCard ? "checked" : ""}`}>
-              {isSelectedCard ? "✓" : ""}
-            </span>
-          </div>
-        )}
         <div className="order-card-thumb-wrap">
           <WorksheetThumbnail
             pdfUrl={order.worksheetPdfUrl || null}
@@ -1137,7 +1054,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     type="button"
                     className="next-status-btn action-start"
                     onClick={() => updateOrderStatus(order.id, nextStatus)}
-                    disabled={updating || selectMode}
+                    disabled={updating}
                   >
                     {updating ? "변경 중..." : "다음 단계"}
                   </button>
@@ -1147,7 +1064,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     type="button"
                     className="next-status-btn action-review"
                     onClick={() => startBulkCompleteReview([order])}
-                    disabled={!!reviewSession || selectMode}
+                    disabled={!!reviewSession}
                     title="이 주문 완료 / 납기 수정 결정"
                   >
                     완료 검토
@@ -1301,16 +1218,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             {calendarOrdersBase.filter((o) => !o.dueDate).length > 0 &&
               ` / 납기 미정 ${calendarOrdersBase.filter((o) => !o.dueDate).length}건`}
           </span>
-          {!reviewSession && (
-            <button
-              type="button"
-              className={`select-mode-toggle ${selectMode ? "active" : ""}`}
-              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-              title={selectMode ? "선택 모드 종료" : "선택한 일자의 카드를 여러 건 골라 한 번에 작업완료"}
-            >
-              {selectMode ? "선택 모드 끄기" : "여러개 선택"}
-            </button>
-          )}
         </div>
       )}
 
@@ -1519,43 +1426,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         onClose={() => setLightboxIndex(null)}
         onIndexChange={setLightboxIndex}
       />
-
-      {selectMode && (() => {
-        const allVisibleSelected = visibleOrders.length > 0 && visibleOrders.every((o) => selectedIds.has(o.id));
-        return (
-        <div className="select-bar" role="region" aria-label="선택 모드">
-          <span className="select-bar-count">
-            <strong>{selectedIds.size}</strong>건 선택 / {visibleOrders.length}건
-          </span>
-          <div className="select-bar-actions">
-            <button
-              type="button"
-              className="select-bar-btn select-bar-btn--ghost"
-              onClick={allVisibleSelected ? clearSelection : selectAllVisible}
-              disabled={visibleOrders.length === 0}
-            >
-              {allVisibleSelected ? "선택 해제" : "현재 화면 전체 선택"}
-            </button>
-            <button
-              type="button"
-              className="select-bar-btn select-bar-btn--primary"
-              onClick={completeSelected}
-              disabled={selectedIds.size === 0 || bulkSelectCompleting}
-            >
-              {bulkSelectCompleting ? "처리 중..." : `작업완료 (${selectedIds.size})`}
-            </button>
-            <button
-              type="button"
-              className="select-bar-btn select-bar-btn--ghost"
-              onClick={exitSelectMode}
-              disabled={bulkSelectCompleting}
-            >
-              종료
-            </button>
-          </div>
-        </div>
-        );
-      })()}
 
       {selectedOrder && (
         <div
