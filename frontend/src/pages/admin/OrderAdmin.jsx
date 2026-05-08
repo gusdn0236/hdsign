@@ -501,7 +501,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       }
       if (lightboxIndex !== null) return;
 
-      // 검토 세션 중 — 화살표는 선택 토글, Enter 는 확정. 일반 모드의 prev/next 는 끔.
+      // 검토 세션 중 — ←: 이전 지시서로 되돌아가기(잘못 누른 Enter 회복용),
+      // →: 납기수정 선택, Enter: 현재 선택 확정. 일반 모드의 prev/next 는 끔.
       if (reviewSession) {
         if (reviewStage === "pickDate") {
           // 날짜 입력 단계는 input 의 onKeyDown 이 처리. ESC 만 위에서 잡고 나머지는 통과.
@@ -509,7 +510,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         }
         if (e.key === "ArrowLeft") {
           e.preventDefault();
-          setReviewChoice("complete");
+          // 이전 지시서로 되돌리기 — 이미 결정한 항목도 다시 보고 변경 가능.
+          if (reviewSession.cursor > 0) {
+            const newCursor = reviewSession.cursor - 1;
+            setReviewSession({ ...reviewSession, cursor: newCursor });
+            setSelectedOrderId(reviewSession.queue[newCursor]);
+            setReviewChoice("complete");
+            setReviewStage("choose");
+            setReviewDateInput("");
+          }
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
           setReviewChoice("reschedule");
@@ -1725,6 +1734,24 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
                 {reviewStage === "choose" ? (
                   <div className="review-bar-mid">
+                    <button
+                      type="button"
+                      className="review-back"
+                      onClick={() => {
+                        if (reviewSession.cursor <= 0) return;
+                        const newCursor = reviewSession.cursor - 1;
+                        setReviewSession({ ...reviewSession, cursor: newCursor });
+                        setSelectedOrderId(reviewSession.queue[newCursor]);
+                        setReviewChoice("complete");
+                        setReviewStage("choose");
+                        setReviewDateInput("");
+                      }}
+                      disabled={reviewSession.cursor <= 0}
+                      title="이전 지시서로 돌아가기 (Enter 잘못 눌렀을 때 회복)"
+                    >
+                      <span className="review-choice-key">←</span>
+                      <span className="review-choice-label">이전</span>
+                    </button>
                     <button
                       type="button"
                       className={`review-choice ${reviewChoice === "complete" ? "active" : ""}`}

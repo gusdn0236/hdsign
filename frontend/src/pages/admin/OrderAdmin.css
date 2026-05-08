@@ -1801,6 +1801,32 @@
   color: #64748b;
   font-size: 18px;
 }
+
+/* 이전 지시서 버튼 — 검토 세션 안에서 ← 키 / 클릭 양쪽으로 직전 항목 회복.
+   complete/reschedule 버튼과 같은 칩 스타일이지만 비-액션이라 톤다운. */
+.review-back {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px;
+  border: 1px solid #334155;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.review-back:hover:not(:disabled) {
+  border-color: #94a3b8;
+  color: #fff;
+  background: rgba(148, 163, 184, 0.12);
+}
+.review-back:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 .review-date-label {
   font-size: 13px;
   color: #cbd5f5;
