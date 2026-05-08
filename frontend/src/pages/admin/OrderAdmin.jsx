@@ -1275,13 +1275,32 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               onClick={calendarShowAll}
               title="필터 결과 전체를 한 화면에 (날짜별 그룹)"
             >전체 보기</button>
-            {(calendarClientChips.length > 0 || clientSearch.trim()) && (
-              <span className="calendar-filter-pill">
-                {calendarClientChips.length > 0
-                  ? `필터: ${calendarClientChips.join(", ")}${clientSearch.trim() ? ` + ${clientSearch.trim()}` : ""}`
-                  : `필터: ${clientSearch.trim()}`}
-              </span>
-            )}
+            {/* 우측 끝 그룹 — 필터 알약 + 일괄 완료 검토 버튼.
+                계산된 노출 조건: 작업중+전체보기 또는 지연 탭에서 overdue 있을 때 버튼 노출.
+                툴바 위치 고정이라 토글 시 달력은 안 움직이고, 빨간 배경으로 한눈에 띔. */}
+            <div className="calendar-toolbar-end">
+              {(calendarClientChips.length > 0 || clientSearch.trim()) && (
+                <span className="calendar-filter-pill">
+                  {calendarClientChips.length > 0
+                    ? `필터: ${calendarClientChips.join(", ")}${clientSearch.trim() ? ` + ${clientSearch.trim()}` : ""}`
+                    : `필터: ${clientSearch.trim()}`}
+                </span>
+              )}
+              {(
+                (activeFilter === "OVERDUE" && overdueCount > 0) ||
+                (activeFilter === "IN_PROGRESS" && isAllView && overdueCount > 0)
+              ) && (
+                <button
+                  type="button"
+                  className="calendar-review-btn"
+                  onClick={() => startBulkCompleteReview()}
+                  disabled={!!reviewSession}
+                  title={`완료 검토 대상 ${overdueCount}건 · 한 건씩 PDF 보며 완료(휴지통) / 납기수정 결정`}
+                >
+                  {reviewSession ? "검토 중..." : `완료 검토 ${overdueCount}건`}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="calendar-grid">
@@ -1326,27 +1345,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               );
             })}
           </div>
-
-          {/* 일괄 완료 검토 — 달력 그리드 아래에 두어 토글 시 달력 위치가 흔들리지 않게.
-              접수: 안 보임. 작업중: 전체보기 + overdue. 지연: overdue 있으면 항상. */}
-          {(
-            (activeFilter === "OVERDUE" && overdueCount > 0) ||
-            (activeFilter === "IN_PROGRESS" && isAllView && overdueCount > 0)
-          ) && (
-            <div className="bulk-action-row bulk-action-row--complete">
-              <span className="bulk-action-text bulk-action-text--complete">
-                완료 검토 대상 {overdueCount}건 · 한 건씩 PDF 보며 완료(휴지통) / 납기수정 결정
-              </span>
-              <button
-                type="button"
-                className="bulk-complete-btn"
-                onClick={() => startBulkCompleteReview()}
-                disabled={!!reviewSession}
-              >
-                {reviewSession ? "검토 중..." : "일괄 완료 검토"}
-              </button>
-            </div>
-          )}
 
           <section className="calendar-selected-section">
             {isAllView ? (
