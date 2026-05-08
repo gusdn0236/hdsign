@@ -143,15 +143,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [trashOrders, setTrashOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState(null);
-  const [activeFilter, setActiveFilter] = useState("ALL");
+  // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
+  const [activeFilter, setActiveFilter] = useState("IN_PROGRESS");
   const [selectedOrderId, setSelectedOrderId] = useState(null);
-  const [pendingStatus, setPendingStatus] = useState("");
   const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [trashingOrderId, setTrashingOrderId] = useState(null);
   const [restoringOrderId, setRestoringOrderId] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
-  const [bulkTrashing, setBulkTrashing] = useState(false);
   const [bulkPurging, setBulkPurging] = useState(false);
   // 다중 선택 모드 — 행을 클릭하면 모달 대신 선택 토글. 선택한 건들은 한 번에 작업완료로.
   const [selectMode, setSelectMode] = useState(false);
@@ -249,14 +248,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   }, [selectedOrder]);
 
   useEffect(() => {
-    if (!selectedOrder) {
-      setPendingStatus("");
-      return;
-    }
-    setPendingStatus(selectedOrder.status);
-  }, [selectedOrder]);
-
-  useEffect(() => {
     setLightboxIndex(null);
     setCarouselIndex(0);
   }, [selectedOrderId]);
@@ -351,7 +342,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   const statusFilteredOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
-    if (activeFilter === "ALL") return orders;
+    // 작업중 탭은 IN_PROGRESS + 휴지통에 가지 않은 COMPLETED 도 포함 — 새 워크플로우에서 COMPLETED 는
+    // 완료검토를 거쳐 바로 휴지통으로 가지만, 이전 데이터(휴지통 안 보낸 COMPLETED) 가 사라지지 않도록.
+    if (activeFilter === "IN_PROGRESS") {
+      return orders.filter((o) => o.status === "IN_PROGRESS" || o.status === "COMPLETED");
+    }
     return orders.filter((order) => order.status === activeFilter);
   }, [activeFilter, orders, trashOrders]);
 
@@ -520,11 +515,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return () => window.removeEventListener("keydown", handler);
   }, [selectedOrderId, lightboxIndex, currentOrderIndex, visibleOrders, reviewSession, reviewStage, reviewChoice, orders]);
 
+  // 탭은 접수 / 작업중 / 휴지통 3개. 완료(COMPLETED) 는 더 이상 별도 탭이 아니다 —
+  // 일괄 완료검토에서 '완료' 결정한 건은 바로 휴지통(=완료 아카이브) 으로 보내고,
+  // 잔존 COMPLETED 는 작업중 탭 안에 함께 보여 휴지통으로 보내도록 유도.
   const filterTabs = [
-    { key: "ALL", label: "전체", count: orders.length },
     { key: "RECEIVED", label: STATUS_META.RECEIVED.label, count: statusCounts.RECEIVED },
-    { key: "IN_PROGRESS", label: STATUS_META.IN_PROGRESS.label, count: statusCounts.IN_PROGRESS },
-    { key: "COMPLETED", label: STATUS_META.COMPLETED.label, count: statusCounts.COMPLETED },
+    { key: "IN_PROGRESS", label: STATUS_META.IN_PROGRESS.label, count: statusCounts.IN_PROGRESS + statusCounts.COMPLETED },
     { key: "TRASH", label: "휴지통", count: trashOrders.length },
   ];
 
@@ -588,48 +584,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  const bulkMoveCompletedToTrash = async () => {
-    const completed = orders.filter((o) => o.status === "COMPLETED");
-    if (completed.length === 0) {
-      setFeedback({ type: "error", msg: "휴지통으로 이동할 완료 요청이 없습니다." });
-      return;
-    }
-    if (!window.confirm(`완료 요청 ${completed.length}건을 모두 휴지통으로 이동하시겠습니까?\n${TRASH_RETENTION_DAYS}일 후 자동 삭제되며, 그 전에 복원할 수 있습니다.`)) {
-      return;
-    }
-    setBulkTrashing(true);
-    try {
-      const results = await Promise.allSettled(
-        completed.map((order) =>
-          fetch(`${BASE_URL}/api/admin/orders/${order.id}`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          }).then((res) => {
-            if (!res.ok) throw new Error(String(order.id));
-            return order;
-          })
-        )
-      );
-      const moved = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
-      const movedIds = new Set(moved.map((o) => o.id));
-      const now = new Date().toISOString();
-      setOrders((prev) => prev.filter((o) => !movedIds.has(o.id)));
-      setTrashOrders((prev) => [
-        ...moved.map((o) => ({ ...o, deletedAt: now })),
-        ...prev,
-      ]);
-      if (selectedOrderId && movedIds.has(selectedOrderId)) setSelectedOrderId(null);
-      const failed = results.length - moved.length;
-      if (failed === 0) {
-        setFeedback({ type: "success", msg: `${moved.length}건을 휴지통으로 이동했습니다.` });
-      } else {
-        setFeedback({ type: "error", msg: `${moved.length}건 이동, ${failed}건 실패` });
-      }
-    } finally {
-      setBulkTrashing(false);
-    }
-  };
-
   // 다중 선택 — 한 건 토글, 모드 진입/종료, 일괄 작업완료.
   const toggleSelectId = (id) => {
     setSelectedIds((prev) => {
@@ -648,33 +602,47 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   };
   const clearSelection = () => setSelectedIds(new Set());
 
+  // 다중 선택 일괄 완료 — DELETE 한 번으로 휴지통 이동(서버에서 status=COMPLETED 자동 처리).
+  // 새 워크플로우에선 완료 = 휴지통(=완료 아카이브) 이동 한 단계.
   const completeSelected = async () => {
     if (selectedIds.size === 0 || bulkSelectCompleting) return;
-    if (!window.confirm(`선택한 ${selectedIds.size}건을 모두 작업완료로 변경하시겠습니까?`)) return;
+    if (!window.confirm(`선택한 ${selectedIds.size}건을 모두 완료 처리하고 휴지통으로 보낼까요?`)) return;
     setBulkSelectCompleting(true);
     try {
       const ids = Array.from(selectedIds);
       const results = await Promise.allSettled(
         ids.map((id) =>
-          fetch(`${BASE_URL}/api/admin/orders/${id}/status`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ status: "COMPLETED" }),
-          }).then(async (res) => {
+          fetch(`${BASE_URL}/api/admin/orders/${id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((res) => {
             if (!res.ok) throw new Error(String(id));
-            return res.json();
+            return id;
           })
         )
       );
-      const updated = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
-      const updatedMap = new Map(updated.map((o) => [o.id, o]));
-      setOrders((prev) => prev.map((o) => updatedMap.get(o.id) || o));
-      const failed = results.length - updated.length;
+      const trashedIds = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+      const trashedSet = new Set(trashedIds);
+      const nowIso = new Date().toISOString();
+      setOrders((prev) => {
+        const moved = [];
+        const next = [];
+        prev.forEach((o) => {
+          if (trashedSet.has(o.id)) {
+            moved.push({ ...o, status: "COMPLETED", deletedAt: nowIso });
+          } else {
+            next.push(o);
+          }
+        });
+        if (moved.length > 0) setTrashOrders((trash) => [...moved, ...trash]);
+        return next;
+      });
+      const failed = results.length - trashedIds.length;
       setFeedback({
         type: failed === 0 ? "success" : "error",
         msg: failed === 0
-          ? `${updated.length}건을 작업완료 처리했습니다.`
-          : `${updated.length}건 완료, ${failed}건 실패`,
+          ? `${trashedIds.length}건 완료·휴지통 이동`
+          : `${trashedIds.length}건 처리, ${failed}건 실패`,
       });
       exitSelectMode();
     } finally {
@@ -682,32 +650,35 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  // 지연 검토 시작 — 일괄 완료 버튼을 누르면 한 건씩 PDF 를 보면서 결정한다.
-  // 적용 납기가 지났지만 실제로는 미래 작업인 케이스(웹 적용 누락)를 한 번 더 거르기 위함.
-  const startBulkCompleteReview = () => {
+  // 완료 검토 시작 — 한 건씩 PDF 를 보면서 완료(휴지통 직행) / 납기 수정 결정.
+  // 인자 없으면 overdue 전체(일괄), 카드의 [완료 검토] 버튼은 [order] 단건으로 호출.
+  const startBulkCompleteReview = (specificOrders) => {
     if (selectMode) exitSelectMode();
-    const pad = (n) => String(n).padStart(2, "0");
-    const now = new Date();
-    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const overdue = orders.filter(
-      (o) =>
-        o.dueDate &&
-        String(o.dueDate).split("T")[0] < today &&
-        o.status !== "COMPLETED"
-    );
-    if (overdue.length === 0) {
-      setFeedback({ type: "error", msg: "지연된 요청이 없습니다." });
+    let queue;
+    if (Array.isArray(specificOrders) && specificOrders.length > 0) {
+      queue = specificOrders;
+    } else {
+      const today = formatYmd(new Date());
+      queue = orders.filter(
+        (o) =>
+          o.dueDate &&
+          String(o.dueDate).split("T")[0] < today &&
+          o.status !== "COMPLETED"
+      );
+    }
+    if (queue.length === 0) {
+      setFeedback({ type: "error", msg: "검토할 요청이 없습니다." });
       return;
     }
     setReviewSession({
-      queue: overdue.map((o) => o.id),
+      queue: queue.map((o) => o.id),
       cursor: 0,
       decisions: {},
     });
     setReviewChoice("complete");
     setReviewStage("choose");
     setReviewDateInput("");
-    setSelectedOrderId(overdue[0].id);
+    setSelectedOrderId(queue[0].id);
   };
 
   // 한 건의 결정을 저장하고 다음 주문으로 이동. 마지막이면 모달 닫고 sticky 패널이 뜬다.
@@ -744,8 +715,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setSelectedOrderId(null);
   };
 
-  // 모든 검토가 끝난 뒤 "일괄 적용" — 완료 처리는 PUT /status, 납기 수정은 PUT /due-date.
-  // 둘 다 병렬로 보내고 결과를 합쳐서 한 번에 피드백.
+  // 모든 검토가 끝난 뒤 "일괄 적용". 완료 = DELETE 로 휴지통 직행(서버에서 status=COMPLETED
+  // 자동 처리), 납기 수정 = PUT /due-date. 둘 다 병렬로 보내고 결과를 합쳐 한 번에 피드백.
   const applyBulkReview = async () => {
     if (!reviewSession || bulkApplying) return;
     const entries = Object.entries(reviewSession.decisions);
@@ -760,14 +731,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         .filter(([, d]) => d.action === "reschedule" && d.newDate)
         .map(([id, d]) => ({ id: Number(id), newDate: d.newDate }));
 
-      const completePromises = completeIds.map((id) =>
-        fetch(`${BASE_URL}/api/admin/orders/${id}/status`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ status: "COMPLETED" }),
-        }).then(async (res) => {
+      const trashPromises = completeIds.map((id) =>
+        fetch(`${BASE_URL}/api/admin/orders/${id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }).then((res) => {
           if (!res.ok) throw new Error(String(id));
-          return res.json();
+          return id;
         })
       );
       const reschedulePromises = reschedules.map(({ id, newDate }) =>
@@ -781,19 +751,40 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         })
       );
 
-      const results = await Promise.allSettled([...completePromises, ...reschedulePromises]);
-      const updated = results
+      const [trashResults, rescheduleResults] = await Promise.all([
+        Promise.allSettled(trashPromises),
+        Promise.allSettled(reschedulePromises),
+      ]);
+      const trashedIds = trashResults
         .filter((r) => r.status === "fulfilled")
         .map((r) => r.value);
-      const failed = results.length - updated.length;
-      const updatedMap = new Map(updated.map((o) => [o.id, o]));
-      setOrders((prev) => prev.map((o) => updatedMap.get(o.id) || o));
+      const rescheduled = rescheduleResults
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value);
+      const trashedSet = new Set(trashedIds);
+      const rescheduledMap = new Map(rescheduled.map((o) => [o.id, o]));
+      const nowIso = new Date().toISOString();
 
-      const completedOk = updated.filter((o) => o.status === "COMPLETED" && completeIds.includes(o.id)).length;
-      const rescheduledOk = updated.length - completedOk;
+      // 완료 결정 → 휴지통 이동(active 에서 빼고 trash 에 추가, status=COMPLETED 로 표시).
+      setOrders((prev) => {
+        const next = [];
+        const moved = [];
+        prev.forEach((o) => {
+          if (trashedSet.has(o.id)) {
+            moved.push({ ...o, status: "COMPLETED", deletedAt: nowIso });
+            return;
+          }
+          next.push(rescheduledMap.get(o.id) || o);
+        });
+        if (moved.length > 0) setTrashOrders((trash) => [...moved, ...trash]);
+        return next;
+      });
+
+      const failed =
+        (trashResults.length - trashedIds.length) + (rescheduleResults.length - rescheduled.length);
       const parts = [];
-      if (completedOk > 0) parts.push(`완료 ${completedOk}건`);
-      if (rescheduledOk > 0) parts.push(`납기 수정 ${rescheduledOk}건`);
+      if (trashedIds.length > 0) parts.push(`완료·휴지통 이동 ${trashedIds.length}건`);
+      if (rescheduled.length > 0) parts.push(`납기 수정 ${rescheduled.length}건`);
       if (failed > 0) parts.push(`실패 ${failed}건`);
       setFeedback({
         type: failed === 0 ? "success" : "error",
@@ -1101,7 +1092,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </>
             ) : (
               <>
-                {/* 파일 없는 주문(QR-only) 은 자동지시서작성 대상 아님 — 버튼 숨김. */}
+                {/* 새 워크플로우: 작업완료 / 다음 단계 버튼 제거. IN_PROGRESS 카드는 납기가 지나면
+                    자동으로 [완료 검토] 버튼만 노출. RECEIVED 는 지시서 자동작성(파일 있는 ORDER) 또는
+                    수동 [다음 단계] (QUOTE/QR-only) 만 유지. COMPLETED 는 검토 누락분 휴지통으로. */}
                 {isOrderType && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 && (
                   <button
                     type="button"
@@ -1112,27 +1105,34 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     {downloadingId === order.id ? "준비 중..." : "지시서 자동작성"}
                   </button>
                 )}
-                {nextStatus && !(isOrderType && order.status === "RECEIVED") && (
+                {order.status === "RECEIVED" && !(isOrderType && (order.files?.length ?? 0) > 0) && nextStatus && (
                   <button
                     type="button"
-                    className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
+                    className="next-status-btn action-start"
                     onClick={() => updateOrderStatus(order.id, nextStatus)}
                     disabled={updating || selectMode}
-                    title={selectMode ? "선택 모드 종료 후 사용 가능 (하단 [작업완료] 로 일괄 처리)" : undefined}
                   >
-                    {updating
-                      ? "변경 중..."
-                      : order.status === "IN_PROGRESS"
-                        ? "작업완료"
-                        : "다음 단계"}
+                    {updating ? "변경 중..." : "다음 단계"}
                   </button>
                 )}
-                {!nextStatus && (
+                {order.status === "IN_PROGRESS" && getDueBadge(order.dueDate)?.kind === "overdue" && (
+                  <button
+                    type="button"
+                    className="next-status-btn action-review"
+                    onClick={() => startBulkCompleteReview([order])}
+                    disabled={!!reviewSession || selectMode}
+                    title="이 주문 완료 / 납기 수정 결정"
+                  >
+                    완료 검토
+                  </button>
+                )}
+                {order.status === "COMPLETED" && (
                   <button
                     type="button"
                     className="next-status-btn action-trash"
                     onClick={() => moveCompletedToTrash(order)}
                     disabled={trashing}
+                    title="이미 완료 — 휴지통으로 이동"
                   >
                     {trashing ? "이동 중..." : "휴지통으로"}
                   </button>
@@ -1155,12 +1155,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           <span className="summary-label">접수</span>
         </div>
         <div className="summary-card summary-in-progress">
-          <span className="summary-count">{statusCounts.IN_PROGRESS}</span>
+          <span className="summary-count">{statusCounts.IN_PROGRESS + statusCounts.COMPLETED}</span>
           <span className="summary-label">작업중</span>
-        </div>
-        <div className="summary-card summary-completed">
-          <span className="summary-count">{statusCounts.COMPLETED}</span>
-          <span className="summary-label">완료</span>
         </div>
         {isOrderPage && (
           <div
@@ -1175,7 +1171,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 jumpToOverdue();
               }
             }}
-            title={overdueCount > 0 ? "클릭 → 지연 검토 시작 (한 건씩 PDF 보며 완료/납기수정 결정)" : "지연된 요청이 없습니다"}
+            title={overdueCount > 0 ? "클릭 → 일괄 완료 검토 (한 건씩 PDF 보며 완료/납기수정 결정)" : "검토할 지연 요청이 없습니다"}
           >
             <span className="summary-count">{overdueCount}</span>
             <span className="summary-label">지연</span>
@@ -1291,32 +1287,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         </div>
       )}
 
-      {activeFilter === "COMPLETED" && statusCounts.COMPLETED > 0 && (
-        <div className="bulk-action-row">
-          <span className="bulk-action-text">완료 요청 {statusCounts.COMPLETED}건</span>
-          <button
-            type="button"
-            className="bulk-delete-btn"
-            onClick={bulkMoveCompletedToTrash}
-            disabled={bulkTrashing}
-          >
-            {bulkTrashing ? "이동 중..." : "전부 휴지통으로 보내기"}
-          </button>
-        </div>
-      )}
-      {/* 지연 검토 — overdue 가 있을 때 항상 노출. 상단 [지연] 카드 클릭으로도 같은 액션. */}
+      {/* 일괄 완료 검토 — 납기가 지난 IN_PROGRESS 가 있을 때 항상 노출.
+          상단 [지연] 요약카드 클릭과 같은 액션. */}
       {activeFilter !== "TRASH" && overdueCount > 0 && (
         <div className="bulk-action-row bulk-action-row--complete">
           <span className="bulk-action-text bulk-action-text--complete">
-            지연 요청 {overdueCount}건 · 한 건씩 PDF 보며 완료/납기수정 결정
+            완료 검토 대상 {overdueCount}건 · 한 건씩 PDF 보며 완료(휴지통) / 납기수정 결정
           </span>
           <button
             type="button"
             className="bulk-complete-btn"
-            onClick={startBulkCompleteReview}
+            onClick={() => startBulkCompleteReview()}
             disabled={!!reviewSession}
           >
-            {reviewSession ? "검토 중..." : "지연 검토 시작"}
+            {reviewSession ? "검토 중..." : "일괄 완료 검토"}
           </button>
         </div>
       )}
@@ -1703,7 +1687,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     </>
                   ) : (
                     <>
-                      {/* 파일 없는 주문(QR-only) 은 자동지시서작성 대상 아님. */}
+                      {/* 새 워크플로우: 카드와 동일하게 작업완료/다음 단계 수동 변경 제거.
+                          RECEIVED → 지시서 자동작성(ORDER+files) 또는 다음 단계(QUOTE/QR-only).
+                          IN_PROGRESS 납기 지나면 [완료 검토] (단건 review session).
+                          COMPLETED 잔존분은 [휴지통으로]. */}
                       {selectedOrder.status === "RECEIVED" && selectedOrder.requestType === "ORDER" && (selectedOrder.files?.length ?? 0) > 0 && (
                         <button
                           type="button"
@@ -1714,29 +1701,26 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           {downloadingId === selectedOrder.id ? "준비 중..." : "지시서 자동작성하기"}
                         </button>
                       )}
-                      <select
-                        value={pendingStatus || selectedOrder.status}
-                        onChange={(e) => setPendingStatus(e.target.value)}
-                        disabled={statusUpdatingId === selectedOrder.id}
-                      >
-                        {STATUS_ORDER.map((statusKey) => (
-                          <option key={statusKey} value={statusKey}>
-                            {STATUS_META[statusKey].label}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="next-status-btn action-start"
-                        disabled={
-                          statusUpdatingId === selectedOrder.id ||
-                          !pendingStatus ||
-                          pendingStatus === selectedOrder.status
-                        }
-                        onClick={() => updateOrderStatus(selectedOrder.id, pendingStatus)}
-                      >
-                        {statusUpdatingId === selectedOrder.id ? "변경 중..." : "상태 변경"}
-                      </button>
+                      {selectedOrder.status === "RECEIVED" && !(selectedOrder.requestType === "ORDER" && (selectedOrder.files?.length ?? 0) > 0) && (
+                        <button
+                          type="button"
+                          className="next-status-btn action-start"
+                          disabled={statusUpdatingId === selectedOrder.id}
+                          onClick={() => updateOrderStatus(selectedOrder.id, "IN_PROGRESS")}
+                        >
+                          {statusUpdatingId === selectedOrder.id ? "변경 중..." : "다음 단계"}
+                        </button>
+                      )}
+                      {selectedOrder.status === "IN_PROGRESS" && getDueBadge(selectedOrder.dueDate)?.kind === "overdue" && (
+                        <button
+                          type="button"
+                          className="next-status-btn action-review"
+                          disabled={!!reviewSession}
+                          onClick={() => startBulkCompleteReview([selectedOrder])}
+                        >
+                          완료 검토
+                        </button>
+                      )}
                       {selectedOrder.status === "COMPLETED" && (
                         <button
                           type="button"

@@ -203,7 +203,8 @@ public class AdminOrderController {
         return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
     }
 
-    // 완료 주문을 휴지통으로 이동 (soft delete)
+    // 휴지통으로 이동 (soft delete) — 어떤 상태에서도 가능. COMPLETED 가 아니면
+    // 동시에 COMPLETED 로 바꿔 의미를 통일한다(휴지통 = 완료 아카이브).
     @DeleteMapping("/{id}")
     public ResponseEntity<?> moveToTrash(@PathVariable Long id) {
         Order order = orderRepository.findById(id)
@@ -213,11 +214,10 @@ public class AdminOrderController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("message", "이미 휴지통에 있는 작업입니다."));
         }
-        if (order.getStatus() != Order.OrderStatus.COMPLETED) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("message", "완료된 작업만 휴지통으로 이동할 수 있습니다."));
-        }
 
+        if (order.getStatus() != Order.OrderStatus.COMPLETED) {
+            order.setStatus(Order.OrderStatus.COMPLETED);
+        }
         order.setDeletedAt(LocalDateTime.now());
         orderRepository.save(order);
         return ResponseEntity.noContent().build();
