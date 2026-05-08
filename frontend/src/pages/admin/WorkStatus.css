@@ -402,3 +402,48 @@
     font-size: 13px;
   }
 }
+
+/* 맨 위로 버튼 — 카드 많아서 스크롤이 길어졌을 때만 우측 하단 페이드인.
+   pointer-events 로 숨김 상태에서 클릭 막아 다른 영역 클릭 방해 안 함. */
+.ws-scroll-top {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #1a1a2e;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s ease;
+  z-index: 50;
+}
+.ws-scroll-top.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.ws-scroll-top:hover {
+  background: #2d2d4e;
+}
+.ws-scroll-top:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .ws-scroll-top {
+    right: 16px;
+    bottom: 16px;
+    width: 44px;
+    height: 44px;
+  }
+}
