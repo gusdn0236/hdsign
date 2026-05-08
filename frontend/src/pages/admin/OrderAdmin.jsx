@@ -5,22 +5,6 @@ import PdfViewer from "../../components/common/PdfViewer.jsx";
 import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import "./OrderAdmin.css";
 
-const VIEW_MODE_KEY = "hdsign_admin_orders_view_mode";
-
-function getStoredViewMode() {
-  try {
-    const v = localStorage.getItem(VIEW_MODE_KEY);
-    return v === "cards" ? "cards" : "table";
-  } catch {
-    return "table";
-  }
-}
-function setStoredViewMode(value) {
-  try {
-    localStorage.setItem(VIEW_MODE_KEY, value);
-  } catch { /* ignore */ }
-}
-
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
 const STATUS_META = {
@@ -60,6 +44,11 @@ const REQUEST_TYPE_LABELS = {
 function formatDate(value) {
   if (!value) return "-";
   return String(value).split("T")[0];
+}
+
+function formatYmd(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function formatDateWithDay(value) {
@@ -144,7 +133,7 @@ function getNextStatus(status) {
 
 // requestType prop 으로 한 페이지 = 한 요청유형. /admin/orders → ORDER, /admin/quotes → QUOTE.
 // 둘 다 같은 백엔드 API(/api/admin/orders) 를 쓰지만 클라이언트에서 fetch 직후 한 번 필터링.
-// 이렇게 하면 statusCounts/summary/filteredOrders/bulk 액션 등 하위 로직이 자동으로 해당 유형
+// 이렇게 하면 statusCounts/summary/달력 데이터/bulk 액션 등 하위 로직이 자동으로 해당 유형
 // 으로 좁혀져 분기 코드를 최소화할 수 있다.
 export default function OrderAdmin({ requestType = "ORDER" }) {
   const { token } = useAuth();
@@ -178,15 +167,23 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [bulkApplying, setBulkApplying] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
-  const [sortMode, setSortMode] = useState("DEFAULT");
-  const [clientFilter, setClientFilter] = useState("");
   const [clientSearch, setClientSearch] = useState("");
-  const [dueDateRange, setDueDateRange] = useState("ALL");
-  const [viewMode, setViewMode] = useState(() => getStoredViewMode());
-
-  const switchViewMode = (mode) => {
-    setViewMode(mode);
-    setStoredViewMode(mode);
+  // 달력 — 보고 있는 월의 1일, 카드 영역에 보여줄 선택 일자(YYYY-MM-DD).
+  // 진입 시 오늘이 자동 선택되어 즉시 그날 납기 카드가 보이도록 한다.
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => formatYmd(new Date()));
+  // 거래처 칩 — 엔터/드롭다운 선택으로 추가, 여러 거래처 동시 OR 매칭.
+  const [calendarClientChips, setCalendarClientChips] = useState([]);
+  const addCalendarChip = (raw) => {
+    const v = String(raw || "").trim();
+    if (!v) return;
+    setCalendarClientChips((arr) => (arr.includes(v) ? arr : [...arr, v]));
+  };
+  const removeCalendarChip = (chip) => {
+    setCalendarClientChips((arr) => arr.filter((c) => c !== chip));
   };
 
   const loadOrders = async () => {
@@ -292,10 +289,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }).catch(() => {});
   }, [selectedOrderId, token]);
 
-  useEffect(() => {
-    setClientFilter("");
-  }, [activeFilter]);
-
   const evidencePhotos = useMemo(
     () =>
       selectedFiles.evidence.map((file) => ({
@@ -348,14 +341,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }, 0);
   }, [orders, isOrderPage]);
 
-  // 요약 카드 [지연] 클릭 시 한 번에 작업중 + 납기별 + 지연 필터로 점프.
+  // [지연] 요약카드 클릭 — 지연된 요청을 한 건씩 보면서 완료/납기수정 결정하는 검토 세션을 즉시 시작.
+  // (이전엔 정렬모드+범위필터로 점프했지만, 정렬모드를 없애고 달력 단일 뷰로 바꾼 뒤로는
+  //  검토 세션을 바로 여는 게 가장 빠른 접근.)
   const jumpToOverdue = () => {
     if (overdueCount <= 0) return;
-    setActiveFilter("IN_PROGRESS");
-    setSortMode("BY_DUE_DATE");
-    setDueDateRange("OVERDUE");
-    setClientFilter("");
-    setClientSearch("");
+    startBulkCompleteReview();
   };
 
   const statusFilteredOrders = useMemo(() => {
@@ -372,110 +363,101 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return Array.from(set).sort((a, b) => a.localeCompare(b, "ko"));
   }, [statusFilteredOrders]);
 
-  const filteredOrders = useMemo(() => {
-    if (activeFilter === "TRASH") return statusFilteredOrders;
-
-    let result = [...statusFilteredOrders];
-
-    const searchTerm = clientSearch.trim().toLowerCase();
-    if (searchTerm) {
-      result = result.filter((o) =>
-        (o.clientCompanyName || "").toLowerCase().includes(searchTerm)
-      );
-    }
-
-    if (sortMode === "BY_CLIENT") {
-      if (clientFilter) {
-        result = result.filter((o) => (o.clientCompanyName || "") === clientFilter);
-      }
-      result.sort((a, b) => {
-        const ca = a.clientCompanyName || "";
-        const cb = b.clientCompanyName || "";
-        if (ca === cb) {
-          const da = a.dueDate ? String(a.dueDate).split("T")[0] : "";
-          const db = b.dueDate ? String(b.dueDate).split("T")[0] : "";
-          if (!da && !db) return 0;
-          if (!da) return 1;
-          if (!db) return -1;
-          return da.localeCompare(db);
-        }
-        return ca.localeCompare(cb, "ko");
-      });
-    } else if (sortMode === "BY_DUE_DATE") {
-      const now = new Date();
-      const pad = (n) => String(n).padStart(2, "0");
-      const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-      const weekEnd = new Date(now);
-      weekEnd.setDate(weekEnd.getDate() + 7);
-      const weekEndStr = `${weekEnd.getFullYear()}-${pad(weekEnd.getMonth() + 1)}-${pad(weekEnd.getDate())}`;
-
-      if (dueDateRange === "TODAY") {
-        result = result.filter((o) => o.dueDate && String(o.dueDate).split("T")[0] === today);
-      } else if (dueDateRange === "WEEK") {
-        result = result.filter((o) => {
-          if (!o.dueDate) return false;
-          const d = String(o.dueDate).split("T")[0];
-          return d >= today && d <= weekEndStr;
-        });
-      } else if (dueDateRange === "OVERDUE") {
-        result = result.filter((o) => {
-          if (!o.dueDate) return false;
-          return String(o.dueDate).split("T")[0] < today && o.status !== "COMPLETED";
-        });
-      }
-      result.sort((a, b) => {
-        const da = a.dueDate ? String(a.dueDate).split("T")[0] : "";
-        const db = b.dueDate ? String(b.dueDate).split("T")[0] : "";
-        if (!da && !db) return 0;
-        if (!da) return 1;
-        if (!db) return -1;
-        return da.localeCompare(db);
-      });
-    }
-
-    return result;
-  }, [statusFilteredOrders, sortMode, clientFilter, clientSearch, dueDateRange, activeFilter]);
-
-  // 카드 보기 — 납기별 정렬일 때만 dueDate 로 그룹핑(모바일 /m/worksheets 와 동일).
-  // 그 외 모드(기본/거래처별/휴지통)에선 단일 그룹 한 덩어리로 보여 시각적 산만함을 줄인다.
-  // 그룹 헤더는 dateLabel(텍스트) + badge(컬러) 로 분리해 빨강/주황/초록을 한눈에 띄게 한다.
-  const cardGroups = useMemo(() => {
-    const useDateGroups = activeFilter !== "TRASH" && sortMode === "BY_DUE_DATE";
-    if (!useDateGroups) {
-      return [{ key: "_all", dateLabel: null, badge: null, list: filteredOrders }];
-    }
-    const map = new Map();
-    filteredOrders.forEach((o) => {
-      const key = o.dueDate ? String(o.dueDate).split("T")[0] : "none";
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(o);
+  // 달력 뷰 — 칩 OR 필터 + 입력버퍼 라이브 매칭. 정렬/납기범위는 무시(달력이 날짜 피커).
+  // 칩이 N개면 부분일치 OR. 입력 중인 버퍼도 한 개의 임시 칩처럼 OR 에 포함시켜,
+  // 엔터를 누르기 전부터 결과가 미리 줄어들어 사용자가 의도를 확인할 수 있다.
+  const calendarOrdersBase = useMemo(() => {
+    const tokens = [...calendarClientChips];
+    const buf = clientSearch.trim();
+    if (buf) tokens.push(buf);
+    if (tokens.length === 0) return statusFilteredOrders;
+    const lc = tokens.map((t) => t.toLowerCase());
+    return statusFilteredOrders.filter((o) => {
+      const name = (o.clientCompanyName || "").toLowerCase();
+      return lc.some((t) => name.includes(t));
     });
-    return Array.from(map.entries())
-      .sort(([a], [b]) => {
-        if (a === "none") return 1;
-        if (b === "none") return -1;
-        return a.localeCompare(b);
-      })
-      .map(([key, list]) => ({
-        key,
-        dateLabel: formatGroupDateLabel(key),
-        badge: key === "none" ? null : getDueBadge(key),
-        list,
-      }));
-  }, [filteredOrders, sortMode, activeFilter]);
+  }, [statusFilteredOrders, clientSearch, calendarClientChips]);
+
+  // 'YYYY-MM-DD' → 그 날짜에 납기인 주문 수.
+  const calendarCountByDate = useMemo(() => {
+    const map = new Map();
+    calendarOrdersBase.forEach((o) => {
+      if (!o.dueDate) return;
+      const d = String(o.dueDate).split("T")[0];
+      map.set(d, (map.get(d) || 0) + 1);
+    });
+    return map;
+  }, [calendarOrdersBase]);
+
+  // 6주 × 7일 = 42칸. 첫째 주는 이전 달, 마지막 주는 다음 달로 채워 항상 6줄.
+  const calendarCells = useMemo(() => {
+    const first = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const startWeekday = first.getDay();
+    const cells = [];
+    for (let i = startWeekday - 1; i >= 0; i--) {
+      const d = new Date(first);
+      d.setDate(first.getDate() - (i + 1));
+      cells.push({ date: d, currentMonth: false });
+    }
+    const monthDays = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
+    for (let i = 1; i <= monthDays; i++) {
+      cells.push({
+        date: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), i),
+        currentMonth: true,
+      });
+    }
+    while (cells.length < 42) {
+      const last = cells[cells.length - 1].date;
+      const d = new Date(last);
+      d.setDate(d.getDate() + 1);
+      cells.push({ date: d, currentMonth: false });
+    }
+    return cells;
+  }, [calendarMonth]);
+
+  // 선택 일자에 납기인 주문들 — 가까운 등록 순(최근 등록 먼저)으로.
+  const calendarSelectedOrders = useMemo(() => {
+    if (!selectedCalendarDate) return [];
+    return calendarOrdersBase
+      .filter((o) => o.dueDate && String(o.dueDate).split("T")[0] === selectedCalendarDate)
+      .sort((a, b) => {
+        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+  }, [calendarOrdersBase, selectedCalendarDate]);
+
+  const todayYmd = useMemo(() => formatYmd(new Date()), []);
+
+  const calendarPrevMonth = () =>
+    setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
+  const calendarNextMonth = () =>
+    setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
+  const calendarGoToToday = () => {
+    const d = new Date();
+    setCalendarMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    setSelectedCalendarDate(formatYmd(d));
+  };
+
+  // 모달 prev/next, 선택모드의 "현재 화면" 대상 — 휴지통이면 trashOrders 전체,
+  // 그 외엔 달력에서 선택된 일자의 카드들.
+  const visibleOrders = useMemo(() => {
+    if (activeFilter === "TRASH") return trashOrders;
+    return calendarSelectedOrders;
+  }, [activeFilter, trashOrders, calendarSelectedOrders]);
 
   const currentOrderIndex = useMemo(() => {
     if (!selectedOrderId) return -1;
-    return filteredOrders.findIndex((o) => o.id === selectedOrderId);
-  }, [filteredOrders, selectedOrderId]);
+    return visibleOrders.findIndex((o) => o.id === selectedOrderId);
+  }, [visibleOrders, selectedOrderId]);
 
   const hasPrevOrder = currentOrderIndex > 0;
-  const hasNextOrder = currentOrderIndex >= 0 && currentOrderIndex < filteredOrders.length - 1;
+  const hasNextOrder = currentOrderIndex >= 0 && currentOrderIndex < visibleOrders.length - 1;
   const goToPrevOrder = () => {
-    if (hasPrevOrder) setSelectedOrderId(filteredOrders[currentOrderIndex - 1].id);
+    if (hasPrevOrder) setSelectedOrderId(visibleOrders[currentOrderIndex - 1].id);
   };
   const goToNextOrder = () => {
-    if (hasNextOrder) setSelectedOrderId(filteredOrders[currentOrderIndex + 1].id);
+    if (hasNextOrder) setSelectedOrderId(visibleOrders[currentOrderIndex + 1].id);
   };
 
   useEffect(() => {
@@ -536,7 +518,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedOrderId, lightboxIndex, currentOrderIndex, filteredOrders, reviewSession, reviewStage, reviewChoice, orders]);
+  }, [selectedOrderId, lightboxIndex, currentOrderIndex, visibleOrders, reviewSession, reviewStage, reviewChoice, orders]);
 
   const filterTabs = [
     { key: "ALL", label: "전체", count: orders.length },
@@ -662,7 +644,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setSelectedIds(new Set());
   };
   const selectAllVisible = () => {
-    setSelectedIds(new Set(filteredOrders.map((o) => o.id)));
+    setSelectedIds(new Set(visibleOrders.map((o) => o.id)));
   };
   const clearSelection = () => setSelectedIds(new Set());
 
@@ -986,6 +968,183 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   const requestLabel = (requestType) => REQUEST_TYPE_LABELS[requestType] || "요청";
 
+  // 주문 카드 1건 렌더 — 카드 뷰와 달력 뷰(선택 일자 카드 영역) 양쪽에서 동일한 마크업 재사용.
+  // 클로저로 활성 필터/선택모드/로딩 플래그/핸들러를 모두 캡처하므로 인자는 order 하나면 충분.
+  const renderOrderCard = (order) => {
+    const isTrash = activeFilter === "TRASH";
+    const statusMeta = STATUS_META[order.status] || STATUS_META.RECEIVED;
+    const nextStatus = getNextStatus(order.status);
+    const updating = statusUpdatingId === order.id;
+    const trashing = trashingOrderId === order.id;
+    const restoring = restoringOrderId === order.id;
+    const deleting = deletingOrderId === order.id;
+    const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
+    const viewedAt = order.adminViewedAt ? new Date(order.adminViewedAt).getTime() : 0;
+    const evidenceAt = order.evidenceLastUploadedAt
+      ? new Date(order.evidenceLastUploadedAt).getTime()
+      : 0;
+    const worksheetAt = order.worksheetUpdatedAt
+      ? new Date(order.worksheetUpdatedAt).getTime()
+      : 0;
+    const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
+    const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
+    const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
+    const isOrderType = order.requestType === "ORDER";
+    const isSelectedCard = selectMode && selectedIds.has(order.id);
+    const handleCardActivate = () => {
+      if (selectMode) toggleSelectId(order.id);
+      else setSelectedOrderId(order.id);
+    };
+    return (
+      <div
+        key={order.id}
+        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${isSelectedCard ? "order-card--selected" : ""}`}
+        onClick={handleCardActivate}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleCardActivate();
+          }
+        }}
+      >
+        {selectMode && (
+          <div className="order-card-select-mark" aria-hidden="true">
+            <span className={`order-card-select-box ${isSelectedCard ? "checked" : ""}`}>
+              {isSelectedCard ? "✓" : ""}
+            </span>
+          </div>
+        )}
+        <div className="order-card-thumb-wrap">
+          <WorksheetThumbnail
+            pdfUrl={order.worksheetPdfUrl || null}
+            thumbnailUrl={order.worksheetThumbnailUrl || null}
+            fallback={
+              <div className="order-card-thumb-empty">
+                <span className="order-card-thumb-empty-title">
+                  {order.title || (isOrderPage ? "지시서 없음" : "견적 문의")}
+                </span>
+              </div>
+            }
+          />
+          <div className="order-card-thumb-top">
+            <span aria-hidden="true" />
+            {isTrash ? (
+              <span className="status-badge status-trash">
+                {daysLeft === null ? "휴지통" : `${daysLeft}일 남음`}
+              </span>
+            ) : (
+              <span className={`status-badge ${statusMeta.className}`}>
+                {statusMeta.label}
+              </span>
+            )}
+          </div>
+          {(hasNewEvidence || hasNewWorksheet) && (
+            <div className="order-card-thumb-badges">
+              {hasNewEvidence && (
+                <span className="row-badge badge-evidence" title="새 작업 사진이 올라왔습니다">사진</span>
+              )}
+              {hasNewWorksheet && (
+                <span className="row-badge badge-worksheet" title="지시서/납기가 변경되었습니다">변경</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="order-card-body">
+          <div className="order-card-meta-row">
+            <span className="order-card-company">{order.clientCompanyName || "-"}</span>
+            {(() => {
+              const dueBadge = getDueBadge(order.dueDate);
+              return (
+                <span className="order-card-due">
+                  {dueBadge && (
+                    <span className={`due-badge due-badge--${dueBadge.kind}`}>{dueBadge.text}</span>
+                  )}
+                  <span className="order-due-text">
+                    {formatDueDate(order.dueDate, order.deliveryMethod)}
+                  </span>
+                </span>
+              );
+            })()}
+          </div>
+          <h3 className="order-card-title">
+            {order.title || requestLabel(order.requestType)}
+          </h3>
+          <div className="order-card-foot">
+            <span className="order-card-num">{order.orderNumber}</span>
+            <span className="order-card-date">
+              {formatDateWithDay(isTrash ? order.deletedAt : order.createdAt)}
+            </span>
+          </div>
+
+          <div className="order-card-actions" onClick={(e) => e.stopPropagation()}>
+            {isTrash ? (
+              <>
+                <button
+                  type="button"
+                  className="next-status-btn action-restore"
+                  onClick={() => restoreFromTrash(order)}
+                  disabled={restoring || deleting}
+                >
+                  {restoring ? "복원 중..." : "복원"}
+                </button>
+                <button
+                  type="button"
+                  className="next-status-btn action-delete"
+                  onClick={() => deletePermanently(order)}
+                  disabled={deleting || restoring}
+                >
+                  {deleting ? "삭제 중..." : "영구삭제"}
+                </button>
+              </>
+            ) : (
+              <>
+                {/* 파일 없는 주문(QR-only) 은 자동지시서작성 대상 아님 — 버튼 숨김. */}
+                {isOrderType && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    className="next-status-btn action-worksheet"
+                    onClick={(e) => downloadWorksheet(e, order)}
+                    disabled={downloadingId === order.id}
+                  >
+                    {downloadingId === order.id ? "준비 중..." : "지시서 자동작성"}
+                  </button>
+                )}
+                {nextStatus && !(isOrderType && order.status === "RECEIVED") && (
+                  <button
+                    type="button"
+                    className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
+                    onClick={() => updateOrderStatus(order.id, nextStatus)}
+                    disabled={updating || selectMode}
+                    title={selectMode ? "선택 모드 종료 후 사용 가능 (하단 [작업완료] 로 일괄 처리)" : undefined}
+                  >
+                    {updating
+                      ? "변경 중..."
+                      : order.status === "IN_PROGRESS"
+                        ? "작업완료"
+                        : "다음 단계"}
+                  </button>
+                )}
+                {!nextStatus && (
+                  <button
+                    type="button"
+                    className="next-status-btn action-trash"
+                    onClick={() => moveCompletedToTrash(order)}
+                    disabled={trashing}
+                  >
+                    {trashing ? "이동 중..." : "휴지통으로"}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="order-admin-page">
       {feedback && <div className={`order-feedback ${feedback.type}`}>{feedback.msg}</div>}
@@ -1016,7 +1175,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 jumpToOverdue();
               }
             }}
-            title={overdueCount > 0 ? "클릭 → 작업중·납기별·지연으로 이동" : "지연된 요청이 없습니다"}
+            title={overdueCount > 0 ? "클릭 → 지연 검토 시작 (한 건씩 PDF 보며 완료/납기수정 결정)" : "지연된 요청이 없습니다"}
           >
             <span className="summary-count">{overdueCount}</span>
             <span className="summary-label">지연</span>
@@ -1038,127 +1197,99 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         ))}
       </div>
 
-      <div className="order-sort-row">
-        {activeFilter !== "TRASH" && (
-          <>
-            <div className="sort-buttons">
-              <button
-                type="button"
-                className={`sort-btn ${sortMode === "DEFAULT" ? "active" : ""}`}
-                onClick={() => {
-                  setSortMode("DEFAULT");
-                  setClientFilter("");
-                  setClientSearch("");
-                  setDueDateRange("ALL");
-                }}
-              >
-                기본
-              </button>
-              <button
-                type="button"
-                className={`sort-btn ${sortMode === "BY_CLIENT" ? "active" : ""}`}
-                onClick={() => setSortMode("BY_CLIENT")}
-              >
-                거래처별
-              </button>
-              <button
-                type="button"
-                className={`sort-btn ${sortMode === "BY_DUE_DATE" ? "active" : ""}`}
-                onClick={() => setSortMode("BY_DUE_DATE")}
-              >
-                납기별
-              </button>
-            </div>
-            <div className="client-search-box">
-              <input
-                type="search"
-                className="client-search-input"
-                placeholder="거래처 검색"
-                value={clientSearch}
-                onChange={(e) => setClientSearch(e.target.value)}
-              />
-              {clientSearch && (
+      {activeFilter !== "TRASH" && (
+        <div className="order-sort-row">
+          {/* 거래처 필터 — 입력 후 Enter 로 칩 추가, 여러 거래처 OR 매칭. 입력만 하고 Enter
+              안 눌러도 라이브 미리보기. 백스페이스로 마지막 칩 제거. */}
+          <div className="calendar-chip-box">
+            {calendarClientChips.map((chip) => (
+              <span key={chip} className="calendar-chip">
+                {chip}
                 <button
                   type="button"
-                  className="client-search-clear"
-                  onClick={() => setClientSearch("")}
-                  aria-label="검색어 지우기"
-                  title="지우기"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-            {sortMode === "BY_CLIENT" && (
-              <select
-                className="sort-select"
-                value={clientFilter}
-                onChange={(e) => setClientFilter(e.target.value)}
-              >
-                <option value="">전체 거래처 (이름순)</option>
-                {availableClients.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            )}
-            {sortMode === "BY_DUE_DATE" && (
-              <select
-                className="sort-select"
-                value={dueDateRange}
-                onChange={(e) => setDueDateRange(e.target.value)}
-              >
-                <option value="ALL">전체 (가까운 납기순)</option>
-                <option value="TODAY">오늘 납기</option>
-                <option value="WEEK">7일 이내</option>
-                <option value="OVERDUE">지연 (완료 제외)</option>
-              </select>
-            )}
-            {(sortMode !== "DEFAULT" || clientSearch.trim()) && (
-              <span className="sort-result-count">{filteredOrders.length}건</span>
-            )}
-          </>
-        )}
-        {activeFilter !== "TRASH" && !reviewSession && (
-          <button
-            type="button"
-            className={`select-mode-toggle ${selectMode ? "active" : ""}`}
-            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-            title={selectMode ? "선택 모드 종료" : "여러 건 선택해 한 번에 작업완료"}
+                  className="calendar-chip-x"
+                  onClick={() => removeCalendarChip(chip)}
+                  aria-label={`${chip} 제거`}
+                  title="제거"
+                >×</button>
+              </span>
+            ))}
+            <input
+              type="search"
+              className="calendar-chip-input"
+              placeholder={
+                calendarClientChips.length === 0
+                  ? "거래처 검색 — Enter 로 추가 (여러 곳 가능)"
+                  : "거래처 추가..."
+              }
+              value={clientSearch}
+              onChange={(e) => setClientSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (clientSearch.trim()) {
+                    addCalendarChip(clientSearch);
+                    setClientSearch("");
+                  }
+                } else if (
+                  e.key === "Backspace" &&
+                  clientSearch === "" &&
+                  calendarClientChips.length > 0
+                ) {
+                  e.preventDefault();
+                  setCalendarClientChips((arr) => arr.slice(0, -1));
+                }
+              }}
+            />
+          </div>
+          <select
+            className="sort-select"
+            value=""
+            onChange={(e) => {
+              if (e.target.value) {
+                addCalendarChip(e.target.value);
+                e.target.value = "";
+              }
+            }}
+            title="거래처를 골라 칩으로 추가"
           >
-            {selectMode ? "선택 모드 끄기" : "여러개 선택"}
-          </button>
-        )}
-        <div className="view-mode-toggle">
-          <button
-            type="button"
-            className={`view-mode-btn ${viewMode === "table" ? "active" : ""}`}
-            onClick={() => switchViewMode("table")}
-            title="표 보기"
-            aria-label="표 보기"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <rect x="2" y="3" width="12" height="10" rx="1.5" />
-              <path d="M2 7h12M2 10h12M6 3v10" />
-            </svg>
-            <span>표</span>
-          </button>
-          <button
-            type="button"
-            className={`view-mode-btn ${viewMode === "cards" ? "active" : ""}`}
-            onClick={() => switchViewMode("cards")}
-            title="카드 보기"
-            aria-label="카드 보기"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <rect x="2" y="2" width="5.5" height="5.5" rx="1" />
-              <rect x="8.5" y="2" width="5.5" height="5.5" rx="1" />
-              <rect x="2" y="8.5" width="5.5" height="5.5" rx="1" />
-              <rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1" />
-            </svg>
-            <span>카드</span>
-          </button>
+            <option value="">+ 거래처 선택</option>
+            {availableClients
+              .filter((name) => !calendarClientChips.includes(name))
+              .map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+          </select>
+          {(calendarClientChips.length > 0 || clientSearch.trim()) && (
+            <button
+              type="button"
+              className="sort-btn"
+              onClick={() => {
+                setCalendarClientChips([]);
+                setClientSearch("");
+              }}
+              title="모든 거래처 필터 해제"
+            >
+              필터 해제
+            </button>
+          )}
+          <span className="sort-result-count">
+            {calendarOrdersBase.filter((o) => !!o.dueDate).length}건
+            {calendarOrdersBase.filter((o) => !o.dueDate).length > 0 &&
+              ` / 납기 미정 ${calendarOrdersBase.filter((o) => !o.dueDate).length}건`}
+          </span>
+          {!reviewSession && (
+            <button
+              type="button"
+              className={`select-mode-toggle ${selectMode ? "active" : ""}`}
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              title={selectMode ? "선택 모드 종료" : "선택한 일자의 카드를 여러 건 골라 한 번에 작업완료"}
+            >
+              {selectMode ? "선택 모드 끄기" : "여러개 선택"}
+            </button>
+          )}
         </div>
-      </div>
+      )}
 
       {activeFilter === "COMPLETED" && statusCounts.COMPLETED > 0 && (
         <div className="bulk-action-row">
@@ -1173,10 +1304,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           </button>
         </div>
       )}
-      {activeFilter !== "TRASH" && sortMode === "BY_DUE_DATE" && dueDateRange === "OVERDUE" && filteredOrders.length > 0 && (
+      {/* 지연 검토 — overdue 가 있을 때 항상 노출. 상단 [지연] 카드 클릭으로도 같은 액션. */}
+      {activeFilter !== "TRASH" && overdueCount > 0 && (
         <div className="bulk-action-row bulk-action-row--complete">
           <span className="bulk-action-text bulk-action-text--complete">
-            지연 요청 {filteredOrders.length}건 · 한 건씩 보면서 완료/납기수정 결정
+            지연 요청 {overdueCount}건 · 한 건씩 PDF 보며 완료/납기수정 결정
           </span>
           <button
             type="button"
@@ -1207,439 +1339,131 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         </p>
       )}
 
-      {viewMode === "table" ? (
-      <table className="order-admin-table">
-        <thead>
-          <tr>
-            {selectMode && (() => {
-              const allFilteredSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
-              const someFilteredSelected = !allFilteredSelected && filteredOrders.some((o) => selectedIds.has(o.id));
-              return (
-                <th className="order-select-cell" aria-label="선택">
-                  <input
-                    type="checkbox"
-                    className="order-select-checkbox"
-                    checked={allFilteredSelected}
-                    ref={(el) => {
-                      if (el) el.indeterminate = someFilteredSelected;
-                    }}
-                    onChange={(e) => (e.target.checked ? selectAllVisible() : clearSelection())}
-                    aria-label="현재 화면 전체 선택"
-                  />
-                </th>
-              );
-            })()}
-            <th>요청번호</th>
-            <th>거래처</th>
-            <th>제목</th>
-            {isOrderPage && <th>납기</th>}
-            <th>{activeFilter === "TRASH" ? "남은 일수" : "상태"}</th>
-            <th>{activeFilter === "TRASH" ? "삭제일" : "등록일"}</th>
-            <th>상태변경</th>
-            {isOrderPage && <th>프로그램실행</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {(() => {
-            const baseCols = isOrderPage ? 8 : 6;
-            const colSpan = selectMode ? baseCols + 1 : baseCols;
-            return loading ? (
-            <tr>
-              <td colSpan={colSpan} className="order-empty">요청 목록을 불러오는 중입니다.</td>
-            </tr>
-          ) : filteredOrders.length === 0 ? (
-            <tr>
-              <td colSpan={colSpan} className="order-empty">
-                {activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "표시할 요청이 없습니다."}
-              </td>
-            </tr>
-          ) : (
-            filteredOrders.map((order) => {
-              const isTrash = activeFilter === "TRASH";
-              const statusMeta = STATUS_META[order.status] || STATUS_META.RECEIVED;
-              const nextStatus = getNextStatus(order.status);
-              const updating = statusUpdatingId === order.id;
-              const trashing = trashingOrderId === order.id;
-              const restoring = restoringOrderId === order.id;
-              const deleting = deletingOrderId === order.id;
-              const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
-              const viewedAt = order.adminViewedAt ? new Date(order.adminViewedAt).getTime() : 0;
-              const evidenceAt = order.evidenceLastUploadedAt
-                ? new Date(order.evidenceLastUploadedAt).getTime()
-                : 0;
-              const worksheetAt = order.worksheetUpdatedAt
-                ? new Date(order.worksheetUpdatedAt).getTime()
-                : 0;
-              const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
-              // 변경 배지: worksheetUpdatedAt 가 마지막 관리자 열람보다 늦을 때만 노출.
-              // worksheetChangeNote 는 워처 다이얼로그에서 다음 회차에 prefill 하기 위해 영속되므로
-              // "노트 존재"만으로 배지를 트리거하면 한 번 변경 노트가 생긴 주문은 영구히 배지가 남는다.
-              // 관리자가 한 번 보면 깨끗이 사라지고, 새 변경으로 타임스탬프가 갱신될 때만 다시 뜸.
-              const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
-
-              const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
-              const isSelected = selectMode && selectedIds.has(order.id);
-              const handleRowActivate = () => {
-                if (selectMode) toggleSelectId(order.id);
-                else setSelectedOrderId(order.id);
-              };
-              return (
-                <tr
-                  key={order.id}
-                  className={`order-row ${isTrash ? "trash-row" : ""} order-row--${typeKey} ${isSelected ? "order-row--selected" : ""}`}
-                  onClick={handleRowActivate}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleRowActivate();
-                    }
-                  }}
-                >
-                  {selectMode && (
-                    <td className="order-select-cell" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        className="order-select-checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelectId(order.id)}
-                        aria-label={`${order.orderNumber} 선택`}
-                      />
-                    </td>
-                  )}
-                  <td className="order-num">
-                    <span className="order-num-text">{order.orderNumber}</span>
-                    {(hasNewEvidence || hasNewWorksheet) && (
-                      <span className="row-badges">
-                        {hasNewEvidence && (
-                          <span className="row-badge badge-evidence" title="새 작업 사진이 올라왔습니다">
-                            사진
-                          </span>
-                        )}
-                        {hasNewWorksheet && (
-                          <span className="row-badge badge-worksheet" title="지시서/납기가 변경되었습니다">
-                            변경
-                          </span>
-                        )}
-                      </span>
-                    )}
-                  </td>
-                  <td>{order.clientCompanyName || "-"}</td>
-                  <td className="order-title">{order.title || requestLabel(order.requestType)}</td>
-                  {isOrderPage && (() => {
-                    const dueBadge = getDueBadge(order.dueDate);
-                    return (
-                      <td className="order-due-cell">
-                        <span className="order-due-inline">
-                          {dueBadge && (
-                            <span className={`due-badge due-badge--${dueBadge.kind}`}>{dueBadge.text}</span>
-                          )}
-                          <span className="order-due-text">
-                            {formatDueDate(order.dueDate, order.deliveryMethod)}
-                          </span>
-                        </span>
-                      </td>
-                    );
-                  })()}
-                  <td>
-                    {isTrash ? (
-                      <span className="status-badge status-trash">
-                        {daysLeft === null ? "-" : `${daysLeft}일 남음`}
-                      </span>
-                    ) : (
-                      <span className={`status-badge ${statusMeta.className}`}>{statusMeta.label}</span>
-                    )}
-                  </td>
-                  <td>{formatDateWithDay(isTrash ? order.deletedAt : order.createdAt)}</td>
-                  <td>
-                    {isTrash ? (
-                      <div className="trash-actions">
-                        <button
-                          type="button"
-                          className="next-status-btn action-restore"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            restoreFromTrash(order);
-                          }}
-                          disabled={restoring || deleting}
-                        >
-                          {restoring ? "복원 중..." : "복원"}
-                        </button>
-                        <button
-                          type="button"
-                          className="next-status-btn action-delete"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deletePermanently(order);
-                          }}
-                          disabled={deleting || restoring}
-                        >
-                          {deleting ? "삭제 중..." : "영구삭제"}
-                        </button>
-                      </div>
-                    ) : !nextStatus ? (
-                      <button
-                        type="button"
-                        className="next-status-btn action-trash"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          moveCompletedToTrash(order);
-                        }}
-                        disabled={trashing}
-                      >
-                        {trashing ? "이동 중..." : "휴지통으로"}
-                      </button>
-                    ) : order.status === "RECEIVED" && order.requestType === "ORDER" ? (
-                      // ORDER 의 RECEIVED 는 [지시서 자동작성하기] 로만 진행 — 수동 상태변경은 제공 안 함.
-                      null
-                    ) : (
-                      <button
-                        type="button"
-                        className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          updateOrderStatus(order.id, nextStatus);
-                        }}
-                        disabled={updating || selectMode}
-                        title={selectMode ? "선택 모드 종료 후 사용 가능 (선택 모드는 하단 [작업완료] 로 일괄 처리)" : undefined}
-                      >
-                        {updating
-                          ? "변경 중..."
-                          : order.status === "IN_PROGRESS"
-                            ? "작업완료처리"
-                            : "다음 단계"}
-                      </button>
-                    )}
-                  </td>
-                  {isOrderPage && (
-                    <td>
-                      {/* 파일이 0 개인 빈 주문(워처 [새 주문 만들기] 로 발번된 케이스)은 자동지시서작성 대상 아님 —
-                          이미 일러스트에서 사용자가 직접 그리고 QR 클립보드 붙여 인쇄하는 흐름. */}
-                      {!isTrash && nextStatus && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 ? (
-                        <button
-                          type="button"
-                          className="next-status-btn action-worksheet"
-                          onClick={(e) => downloadWorksheet(e, order)}
-                          disabled={downloadingId === order.id}
-                        >
-                          {downloadingId === order.id ? "준비 중..." : "지시서 자동작성하기"}
-                        </button>
-                      ) : null}
-                    </td>
-                  )}
-                </tr>
-              );
-            })
-          );
-          })()}
-        </tbody>
-      </table>
-      ) : (
+      {activeFilter === "TRASH" ? (
         <div className="order-card-view">
           {loading ? (
             <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
-          ) : filteredOrders.length === 0 ? (
-            <div className="order-empty">
-              {activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "표시할 요청이 없습니다."}
-            </div>
+          ) : trashOrders.length === 0 ? (
+            <div className="order-empty">휴지통이 비어 있습니다.</div>
           ) : (
-            cardGroups.map((group) => (
-              <section className="order-card-group" key={group.key}>
-                {group.dateLabel && (
-                  <h2 className="order-card-group-head">
-                    {group.badge && (
-                      <span className={`due-badge due-badge--lg due-badge--${group.badge.kind}`}>
-                        {group.badge.text}
-                      </span>
-                    )}
-                    <span className="order-card-group-date">{group.dateLabel}</span>
-                    <span className="order-card-group-count">{group.list.length}건</span>
-                  </h2>
-                )}
-                <div className="order-card-grid">
-                  {group.list.map((order) => {
-                    const isTrash = activeFilter === "TRASH";
-                    const statusMeta = STATUS_META[order.status] || STATUS_META.RECEIVED;
-                    const nextStatus = getNextStatus(order.status);
-                    const updating = statusUpdatingId === order.id;
-                    const trashing = trashingOrderId === order.id;
-                    const restoring = restoringOrderId === order.id;
-                    const deleting = deletingOrderId === order.id;
-                    const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
-                    const viewedAt = order.adminViewedAt ? new Date(order.adminViewedAt).getTime() : 0;
-                    const evidenceAt = order.evidenceLastUploadedAt
-                      ? new Date(order.evidenceLastUploadedAt).getTime()
-                      : 0;
-                    const worksheetAt = order.worksheetUpdatedAt
-                      ? new Date(order.worksheetUpdatedAt).getTime()
-                      : 0;
-                    const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
-                    const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
-                    const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
-                    const isOrderType = order.requestType === "ORDER";
-
-                    const isSelectedCard = selectMode && selectedIds.has(order.id);
-                    const handleCardActivate = () => {
-                      if (selectMode) toggleSelectId(order.id);
-                      else setSelectedOrderId(order.id);
-                    };
-                    return (
-                      <div
-                        key={order.id}
-                        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${isSelectedCard ? "order-card--selected" : ""}`}
-                        onClick={handleCardActivate}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            handleCardActivate();
-                          }
-                        }}
-                      >
-                        {selectMode && (
-                          <div
-                            className="order-card-select-mark"
-                            aria-hidden="true"
-                          >
-                            <span className={`order-card-select-box ${isSelectedCard ? "checked" : ""}`}>
-                              {isSelectedCard ? "✓" : ""}
-                            </span>
-                          </div>
-                        )}
-                        <div className="order-card-thumb-wrap">
-                          <WorksheetThumbnail
-                            pdfUrl={order.worksheetPdfUrl || null}
-                            thumbnailUrl={order.worksheetThumbnailUrl || null}
-                            fallback={
-                              <div className="order-card-thumb-empty">
-                                <span className="order-card-thumb-empty-title">
-                                  {order.title || (isOrderPage ? "지시서 없음" : "견적 문의")}
-                                </span>
-                              </div>
-                            }
-                          />
-                          <div className="order-card-thumb-top">
-                            <span aria-hidden="true" />
-                            {isTrash ? (
-                              <span className="status-badge status-trash">
-                                {daysLeft === null ? "휴지통" : `${daysLeft}일 남음`}
-                              </span>
-                            ) : (
-                              <span className={`status-badge ${statusMeta.className}`}>
-                                {statusMeta.label}
-                              </span>
-                            )}
-                          </div>
-                          {(hasNewEvidence || hasNewWorksheet) && (
-                            <div className="order-card-thumb-badges">
-                              {hasNewEvidence && (
-                                <span className="row-badge badge-evidence" title="새 작업 사진이 올라왔습니다">사진</span>
-                              )}
-                              {hasNewWorksheet && (
-                                <span className="row-badge badge-worksheet" title="지시서/납기가 변경되었습니다">변경</span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="order-card-body">
-                          <div className="order-card-meta-row">
-                            <span className="order-card-company">{order.clientCompanyName || "-"}</span>
-                            {(() => {
-                              const dueBadge = getDueBadge(order.dueDate);
-                              return (
-                                <span className="order-card-due">
-                                  {dueBadge && (
-                                    <span className={`due-badge due-badge--${dueBadge.kind}`}>{dueBadge.text}</span>
-                                  )}
-                                  <span className="order-due-text">
-                                    {formatDueDate(order.dueDate, order.deliveryMethod)}
-                                  </span>
-                                </span>
-                              );
-                            })()}
-                          </div>
-                          <h3 className="order-card-title">
-                            {order.title || requestLabel(order.requestType)}
-                          </h3>
-                          <div className="order-card-foot">
-                            <span className="order-card-num">{order.orderNumber}</span>
-                            <span className="order-card-date">
-                              {formatDateWithDay(isTrash ? order.deletedAt : order.createdAt)}
-                            </span>
-                          </div>
-
-                          <div className="order-card-actions" onClick={(e) => e.stopPropagation()}>
-                            {isTrash ? (
-                              <>
-                                <button
-                                  type="button"
-                                  className="next-status-btn action-restore"
-                                  onClick={() => restoreFromTrash(order)}
-                                  disabled={restoring || deleting}
-                                >
-                                  {restoring ? "복원 중..." : "복원"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="next-status-btn action-delete"
-                                  onClick={() => deletePermanently(order)}
-                                  disabled={deleting || restoring}
-                                >
-                                  {deleting ? "삭제 중..." : "영구삭제"}
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                {/* 파일 없는 주문(QR-only) 은 자동지시서작성 대상 아님 — 버튼 숨김. */}
-                                {isOrderType && order.status === "RECEIVED" && (order.files?.length ?? 0) > 0 && (
-                                  <button
-                                    type="button"
-                                    className="next-status-btn action-worksheet"
-                                    onClick={(e) => downloadWorksheet(e, order)}
-                                    disabled={downloadingId === order.id}
-                                  >
-                                    {downloadingId === order.id ? "준비 중..." : "지시서 자동작성"}
-                                  </button>
-                                )}
-                                {nextStatus && !(isOrderType && order.status === "RECEIVED") && (
-                                  <button
-                                    type="button"
-                                    className={`next-status-btn ${order.status === "RECEIVED" ? "action-start" : "action-complete"}`}
-                                    onClick={() => updateOrderStatus(order.id, nextStatus)}
-                                    disabled={updating || selectMode}
-                                    title={selectMode ? "선택 모드 종료 후 사용 가능 (하단 [작업완료] 로 일괄 처리)" : undefined}
-                                  >
-                                    {updating
-                                      ? "변경 중..."
-                                      : order.status === "IN_PROGRESS"
-                                        ? "작업완료"
-                                        : "다음 단계"}
-                                  </button>
-                                )}
-                                {!nextStatus && (
-                                  <button
-                                    type="button"
-                                    className="next-status-btn action-trash"
-                                    onClick={() => moveCompletedToTrash(order)}
-                                    disabled={trashing}
-                                  >
-                                    {trashing ? "이동 중..." : "휴지통으로"}
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            ))
+            <div className="order-card-grid">
+              {trashOrders.map(renderOrderCard)}
+            </div>
           )}
+        </div>
+      ) : (
+        <div className="order-calendar-view">
+          <div className="calendar-toolbar">
+            <button
+              type="button"
+              className="calendar-nav-btn"
+              onClick={calendarPrevMonth}
+              title="이전 달"
+              aria-label="이전 달"
+            >‹</button>
+            <h2 className="calendar-title">
+              {calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월
+            </h2>
+            <button
+              type="button"
+              className="calendar-nav-btn"
+              onClick={calendarNextMonth}
+              title="다음 달"
+              aria-label="다음 달"
+            >›</button>
+            <button
+              type="button"
+              className="calendar-today-btn"
+              onClick={calendarGoToToday}
+              title="오늘로 이동"
+            >오늘</button>
+            {(calendarClientChips.length > 0 || clientSearch.trim()) && (
+              <span className="calendar-filter-pill">
+                {calendarClientChips.length > 0
+                  ? `필터: ${calendarClientChips.join(", ")}${clientSearch.trim() ? ` + ${clientSearch.trim()}` : ""}`
+                  : `필터: ${clientSearch.trim()}`}
+              </span>
+            )}
+          </div>
+
+          <div className="calendar-grid">
+            {WEEKDAY_KO.map((wd, i) => (
+              <div
+                key={wd}
+                className={`calendar-weekday ${i === 0 ? "calendar-weekday--sun" : ""} ${i === 6 ? "calendar-weekday--sat" : ""}`}
+              >
+                {wd}
+              </div>
+            ))}
+            {calendarCells.map((cell) => {
+              const key = formatYmd(cell.date);
+              const count = calendarCountByDate.get(key) || 0;
+              const isToday = key === todayYmd;
+              const isSelected = key === selectedCalendarDate;
+              const dow = cell.date.getDay();
+              const badge = count > 0 && cell.currentMonth ? getDueBadge(key) : null;
+              return (
+                <button
+                  key={key + (cell.currentMonth ? "" : "-o")}
+                  type="button"
+                  className={[
+                    "calendar-cell",
+                    cell.currentMonth ? "" : "calendar-cell--other",
+                    isToday ? "calendar-cell--today" : "",
+                    isSelected ? "calendar-cell--selected" : "",
+                    count > 0 ? "calendar-cell--has" : "",
+                    dow === 0 ? "calendar-cell--sun" : "",
+                    dow === 6 ? "calendar-cell--sat" : "",
+                  ].filter(Boolean).join(" ")}
+                  onClick={() => setSelectedCalendarDate(key)}
+                  aria-label={`${cell.date.getMonth() + 1}월 ${cell.date.getDate()}일${count > 0 ? `, 납기 ${count}건` : ""}`}
+                >
+                  <span className="calendar-day-num">{cell.date.getDate()}</span>
+                  {count > 0 && cell.currentMonth && (
+                    <span className={`calendar-day-count ${badge ? `calendar-day-count--${badge.kind}` : ""}`}>
+                      {count}건
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <section className="calendar-selected-section">
+            {selectedCalendarDate ? (
+              <>
+                <h3 className="calendar-selected-head">
+                  {(() => {
+                    const badge = getDueBadge(selectedCalendarDate);
+                    return (
+                      <>
+                        {badge && (
+                          <span className={`due-badge due-badge--lg due-badge--${badge.kind}`}>{badge.text}</span>
+                        )}
+                        <span className="order-card-group-date">{formatGroupDateLabel(selectedCalendarDate)}</span>
+                        <span className="order-card-group-count">{calendarSelectedOrders.length}건</span>
+                      </>
+                    );
+                  })()}
+                </h3>
+                {loading ? (
+                  <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
+                ) : calendarSelectedOrders.length === 0 ? (
+                  <div className="order-empty">
+                    {calendarClientChips.length > 0 || clientSearch.trim()
+                      ? "이 날짜에 해당 거래처 납기가 없습니다."
+                      : "이 날짜에 납기가 없습니다."}
+                  </div>
+                ) : (
+                  <div className="order-card-grid">
+                    {calendarSelectedOrders.map(renderOrderCard)}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="order-empty">달력에서 날짜를 선택하면 그 날의 납기 카드가 표시됩니다.</div>
+            )}
+          </section>
         </div>
       )}
 
@@ -1651,20 +1475,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       />
 
       {selectMode && (() => {
-        const allFilteredSelected = filteredOrders.length > 0 && filteredOrders.every((o) => selectedIds.has(o.id));
+        const allVisibleSelected = visibleOrders.length > 0 && visibleOrders.every((o) => selectedIds.has(o.id));
         return (
         <div className="select-bar" role="region" aria-label="선택 모드">
           <span className="select-bar-count">
-            <strong>{selectedIds.size}</strong>건 선택 / {filteredOrders.length}건
+            <strong>{selectedIds.size}</strong>건 선택 / {visibleOrders.length}건
           </span>
           <div className="select-bar-actions">
             <button
               type="button"
               className="select-bar-btn select-bar-btn--ghost"
-              onClick={allFilteredSelected ? clearSelection : selectAllVisible}
-              disabled={filteredOrders.length === 0}
+              onClick={allVisibleSelected ? clearSelection : selectAllVisible}
+              disabled={visibleOrders.length === 0}
             >
-              {allFilteredSelected ? "선택 해제" : "현재 화면 전체 선택"}
+              {allVisibleSelected ? "선택 해제" : "현재 화면 전체 선택"}
             </button>
             <button
               type="button"
@@ -1822,9 +1646,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     <span className="modal-order-nav-arrow">‹</span>
                     <span>이전 주문</span>
                   </button>
-                  {currentOrderIndex >= 0 && filteredOrders.length > 1 && (
+                  {currentOrderIndex >= 0 && visibleOrders.length > 1 && (
                     <span className="modal-order-nav-position">
-                      {currentOrderIndex + 1} / {filteredOrders.length}
+                      {currentOrderIndex + 1} / {visibleOrders.length}
                     </span>
                   )}
                   <button
