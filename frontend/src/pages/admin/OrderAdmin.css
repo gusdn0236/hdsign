@@ -2161,6 +2161,34 @@
   background: #f4f4f5;
   border-color: #d4d4d8;
 }
+.calendar-today-btn.active {
+  background: #18181b;
+  border-color: #18181b;
+  color: #fff;
+}
+.calendar-today-btn.active:hover {
+  background: #27272a;
+  border-color: #27272a;
+}
+
+/* 전체보기 모드의 그룹 헤더 — 단일 날짜 head 보다 작게(h4) 들여 시각적 위계 구분. */
+.calendar-selected-section .order-card-group {
+  margin-bottom: 22px;
+}
+.calendar-selected-section .order-card-group:last-child {
+  margin-bottom: 0;
+}
+.calendar-selected-section .order-card-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #27272a;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
 
 .calendar-filter-pill {
   margin-left: auto;

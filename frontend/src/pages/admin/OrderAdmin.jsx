@@ -424,6 +424,31 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   const todayYmd = useMemo(() => formatYmd(new Date()), []);
 
+  // 전체보기 모드 — selectedCalendarDate === null. 거래처 필터 적용된 전체 주문을
+  // 날짜 그룹으로 정렬해 한 화면에 노출. 가까운 납기 먼저, 납기 미정은 맨 끝.
+  const isAllView = selectedCalendarDate === null;
+  const calendarAllGroups = useMemo(() => {
+    if (!isAllView) return [];
+    const map = new Map();
+    calendarOrdersBase.forEach((o) => {
+      const key = o.dueDate ? String(o.dueDate).split("T")[0] : "none";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(o);
+    });
+    return Array.from(map.entries())
+      .sort(([a], [b]) => {
+        if (a === "none") return 1;
+        if (b === "none") return -1;
+        return a.localeCompare(b);
+      })
+      .map(([key, list]) => ({
+        key,
+        dateLabel: formatGroupDateLabel(key),
+        badge: key === "none" ? null : getDueBadge(key),
+        list,
+      }));
+  }, [isAllView, calendarOrdersBase]);
+
   const calendarPrevMonth = () =>
     setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
   const calendarNextMonth = () =>
@@ -433,13 +458,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setCalendarMonth(new Date(d.getFullYear(), d.getMonth(), 1));
     setSelectedCalendarDate(formatYmd(d));
   };
+  const calendarShowAll = () => setSelectedCalendarDate(null);
 
   // 모달 prev/next, 선택모드의 "현재 화면" 대상 — 휴지통이면 trashOrders 전체,
-  // 그 외엔 달력에서 선택된 일자의 카드들.
+  // 전체보기면 거래처 필터 적용된 모든 주문, 그 외엔 선택 일자 카드.
   const visibleOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
+    if (isAllView) return calendarOrdersBase;
     return calendarSelectedOrders;
-  }, [activeFilter, trashOrders, calendarSelectedOrders]);
+  }, [activeFilter, trashOrders, isAllView, calendarOrdersBase, calendarSelectedOrders]);
 
   const currentOrderIndex = useMemo(() => {
     if (!selectedOrderId) return -1;
@@ -1361,6 +1388,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               onClick={calendarGoToToday}
               title="오늘로 이동"
             >오늘</button>
+            <button
+              type="button"
+              className={`calendar-today-btn calendar-all-btn ${isAllView ? "active" : ""}`}
+              onClick={calendarShowAll}
+              title="필터 결과 전체를 한 화면에 (날짜별 그룹)"
+            >전체 보기</button>
             {(calendarClientChips.length > 0 || clientSearch.trim()) && (
               <span className="calendar-filter-pill">
                 {calendarClientChips.length > 0
@@ -1414,7 +1447,38 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           </div>
 
           <section className="calendar-selected-section">
-            {selectedCalendarDate ? (
+            {isAllView ? (
+              loading ? (
+                <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
+              ) : calendarOrdersBase.length === 0 ? (
+                <div className="order-empty">
+                  {calendarClientChips.length > 0 || clientSearch.trim()
+                    ? "필터에 맞는 주문이 없습니다."
+                    : "표시할 주문이 없습니다."}
+                </div>
+              ) : (
+                <>
+                  <h3 className="calendar-selected-head">
+                    <span className="order-card-group-date">전체 보기</span>
+                    <span className="order-card-group-count">{calendarOrdersBase.length}건</span>
+                  </h3>
+                  {calendarAllGroups.map((group) => (
+                    <section className="order-card-group" key={group.key}>
+                      <h4 className="order-card-group-head">
+                        {group.badge && (
+                          <span className={`due-badge due-badge--lg due-badge--${group.badge.kind}`}>{group.badge.text}</span>
+                        )}
+                        <span className="order-card-group-date">{group.dateLabel}</span>
+                        <span className="order-card-group-count">{group.list.length}건</span>
+                      </h4>
+                      <div className="order-card-grid">
+                        {group.list.map(renderOrderCard)}
+                      </div>
+                    </section>
+                  ))}
+                </>
+              )
+            ) : (
               <>
                 <h3 className="calendar-selected-head">
                   {(() => {
@@ -1444,8 +1508,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </div>
                 )}
               </>
-            ) : (
-              <div className="order-empty">달력에서 날짜를 선택하면 그 날의 납기 카드가 표시됩니다.</div>
             )}
           </section>
         </div>
