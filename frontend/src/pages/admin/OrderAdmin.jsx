@@ -1212,28 +1212,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         </div>
       )}
 
-      {/* 일괄 완료 검토 — overdue 가 있을 때 노출.
-          접수 탭: 안 보임 (작업중에서 처리할 일).
-          작업중 탭: 전체보기 모드일 때만 (단일 일자 작업 시엔 시야 방해 없게).
-          지연 탭: 항상 (이 탭의 본 목적). */}
-      {(
-        (activeFilter === "OVERDUE" && overdueCount > 0) ||
-        (activeFilter === "IN_PROGRESS" && isAllView && overdueCount > 0)
-      ) && (
-        <div className="bulk-action-row bulk-action-row--complete">
-          <span className="bulk-action-text bulk-action-text--complete">
-            완료 검토 대상 {overdueCount}건 · 한 건씩 PDF 보며 완료(휴지통) / 납기수정 결정
-          </span>
-          <button
-            type="button"
-            className="bulk-complete-btn"
-            onClick={() => startBulkCompleteReview()}
-            disabled={!!reviewSession}
-          >
-            {reviewSession ? "검토 중..." : "일괄 완료 검토"}
-          </button>
-        </div>
-      )}
       {activeFilter === "TRASH" && trashOrders.length > 0 && (
         <div className="bulk-action-row">
           <span className="bulk-action-text">휴지통 {trashOrders.length}건</span>
@@ -1348,6 +1326,27 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               );
             })}
           </div>
+
+          {/* 일괄 완료 검토 — 달력 그리드 아래에 두어 토글 시 달력 위치가 흔들리지 않게.
+              접수: 안 보임. 작업중: 전체보기 + overdue. 지연: overdue 있으면 항상. */}
+          {(
+            (activeFilter === "OVERDUE" && overdueCount > 0) ||
+            (activeFilter === "IN_PROGRESS" && isAllView && overdueCount > 0)
+          ) && (
+            <div className="bulk-action-row bulk-action-row--complete">
+              <span className="bulk-action-text bulk-action-text--complete">
+                완료 검토 대상 {overdueCount}건 · 한 건씩 PDF 보며 완료(휴지통) / 납기수정 결정
+              </span>
+              <button
+                type="button"
+                className="bulk-complete-btn"
+                onClick={() => startBulkCompleteReview()}
+                disabled={!!reviewSession}
+              >
+                {reviewSession ? "검토 중..." : "일괄 완료 검토"}
+              </button>
+            </div>
+          )}
 
           <section className="calendar-selected-section">
             {isAllView ? (
