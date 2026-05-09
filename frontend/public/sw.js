@@ -21,9 +21,10 @@
 
 // VERSION 은 SW 자체의 캐시 키. 갱신/버그픽스 후 무조건 한 단계 올려야 옛 캐시
 // (옛 index.html, 옛 assets) 가 강제로 폐기되고 클라이언트가 새 버전을 잡는다.
-const VERSION = 'v2';
+const VERSION = 'v4';
 const HTML_CACHE = 'hdsign-html-' + VERSION;
 const ASSET_CACHE = 'hdsign-asset-' + VERSION;
+const WORKSHEET_CACHE = 'hdsign-worksheet-' + VERSION;
 
 self.addEventListener('install', () => {
     // 새 버전 SW 가 설치되면 대기 없이 즉시 활성화 단계로.
@@ -36,7 +37,7 @@ self.addEventListener('activate', (event) => {
         const keys = await caches.keys();
         await Promise.all(
             keys
-                .filter((k) => k !== HTML_CACHE && k !== ASSET_CACHE)
+                .filter((k) => k !== HTML_CACHE && k !== ASSET_CACHE && k !== WORKSHEET_CACHE)
                 .map((k) => caches.delete(k))
         );
         // 이미 열려있는 탭들도 즉시 이 SW 가 컨트롤.
@@ -49,6 +50,33 @@ self.addEventListener('fetch', (event) => {
     if (req.method !== 'GET') return;
 
     const url = new URL(req.url);
+
+    if (isWorksheetPdf(url)) {
+        // PDF.js range requests are already byte-efficient and are best handled
+        // by the browser HTTP cache/CDN. Cache API cannot safely store 206
+        // partial responses, and matching them by URL risks returning the wrong
+        // byte slice, so only non-range full responses use the SW cache.
+        if (req.headers.has('range')) {
+            event.respondWith(fetch(req));
+            return;
+        }
+        event.respondWith(
+            url.searchParams.has('v')
+                ? cacheFirst(req, WORKSHEET_CACHE)
+                : networkFirst(req, WORKSHEET_CACHE)
+        );
+        return;
+    }
+
+    if (isWorksheetThumbnail(url)) {
+        event.respondWith(
+            url.searchParams.has('v')
+                ? cacheFirst(req, WORKSHEET_CACHE)
+                : staleWhileRevalidate(req, WORKSHEET_CACHE)
+        );
+        return;
+    }
+
     if (url.origin !== self.location.origin) return;
 
     // SPA 내비게이션 / HTML 요청 — { cache: 'reload' } 로 브라우저 HTTP 캐시와
@@ -101,4 +129,24 @@ async function cacheFirst(request, cacheName) {
         cache.put(request, response.clone()).catch(() => {});
     }
     return response;
+}
+
+async function staleWhileRevalidate(request, cacheName) {
+    const cache = await caches.open(cacheName);
+    const cached = await cache.match(request);
+    const refresh = fetch(request).then((response) => {
+        if (response && (response.ok || response.type === 'opaque')) {
+            cache.put(request, response.clone()).catch(() => {});
+        }
+        return response;
+    });
+    return cached || refresh;
+}
+
+function isWorksheetPdf(url) {
+    return /^\/api\/public\/worksheets\/[^/]+\/pdf$/.test(url.pathname);
+}
+
+function isWorksheetThumbnail(url) {
+    return /^\/api\/public\/worksheets\/[^/]+\/thumbnail$/.test(url.pathname);
 }

@@ -1,11 +1,47 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
-import { rememberAllListItems, prefetchTopItemPdfs } from './pdfPrefetch.js';
+import { rememberAllListItems } from './pdfPrefetch.js';
 import './WorksheetList.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+let worksheetListSnapshot = {
+    items: null,
+    syncedAt: null,
+    scrollY: 0,
+    dateFilter: 'all',
+    companyFilter: 'ALL',
+    companySearch: '',
+    sortMode: 'due',
+};
+
+function rememberWorksheetListView(patch = {}) {
+    worksheetListSnapshot = {
+        ...worksheetListSnapshot,
+        scrollY: window.scrollY || 0,
+        ...patch,
+    };
+}
+
+let worksheetViewerPreloadPromise = null;
+function preloadWorksheetViewerChunk(immediate = false) {
+    if (worksheetViewerPreloadPromise) return worksheetViewerPreloadPromise;
+    const load = () => {
+        worksheetViewerPreloadPromise = import('./WorksheetViewer.jsx').catch((err) => {
+            worksheetViewerPreloadPromise = null;
+            throw err;
+        });
+        return worksheetViewerPreloadPromise;
+    };
+    if (immediate) return load();
+    if (typeof window !== 'undefined' && window.requestIdleCallback) {
+        window.requestIdleCallback(load, { timeout: 1800 });
+    } else {
+        window.setTimeout(load, 600);
+    }
+    return null;
+}
 
 // 모바일 뷰어 직원 식별 — WorksheetViewer / EvidenceCapture 와 같은 키 공유.
 // 휴대폰 단말 단위로 "이 폰은 누구의 폰" 으로 한 번 설정해두면 자동 적용.
@@ -97,15 +133,15 @@ function getGroupKey(dateStr) {
 }
 
 export default function WorksheetList() {
-    const [items, setItems] = useState([]);
-    const [loading, setLoading] = useState(true);
+    const [items, setItems] = useState(() => worksheetListSnapshot.items || []);
+    const [loading, setLoading] = useState(() => !worksheetListSnapshot.items);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
-    const [dateFilter, setDateFilter] = useState('all'); // 'today' | '3days' | 'all'
-    const [companyFilter, setCompanyFilter] = useState('ALL');
-    const [companySearch, setCompanySearch] = useState('');
+    const [dateFilter, setDateFilter] = useState(() => worksheetListSnapshot.dateFilter); // 'today' | '3days' | 'all'
+    const [companyFilter, setCompanyFilter] = useState(() => worksheetListSnapshot.companyFilter);
+    const [companySearch, setCompanySearch] = useState(() => worksheetListSnapshot.companySearch);
     // 'due' = 납기 임박순(날짜 그룹), 'uploaded' = 최근 업로드순(평탄 리스트, 방금 올린 게 최상단).
-    const [sortMode, setSortMode] = useState('due');
+    const [sortMode, setSortMode] = useState(() => worksheetListSnapshot.sortMode);
     // 체크 시 본인 슬롯에 매핑된 지시서만 노출 + 본인이 [작업완료] 누른 건 자동 제외(per-worker).
     // 담당자가 있으면 default = ON. 사용자가 직접 풀면 그 직원 이름이 MINE_OFF_KEY 에 저장되어
     // 다음 진입에도 OFF 유지. 직원이 바뀌면 자동으로 default ON 복귀(이전 OFF 키와 다른 이름이라).
@@ -117,7 +153,7 @@ export default function WorksheetList() {
     });
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
-    const [lastSyncedAt, setLastSyncedAt] = useState(null);
+    const [lastSyncedAt, setLastSyncedAt] = useState(() => worksheetListSnapshot.syncedAt);
     // 다중 선택 모드 — 카드 탭으로 토글, 하단 sticky 바의 [작업완료] 로 N건 한꺼번에 처리.
     // 각각 들어가서 처리하는 흐름은 그대로 유지(선택 모드 OFF 일 때 Link 가 동작).
     const [selectMode, setSelectMode] = useState(false);
@@ -127,6 +163,29 @@ export default function WorksheetList() {
     const aliveRef = useRef(true);
 
     const myWorker = worker.trim();
+
+    useEffect(() => {
+        worksheetListSnapshot = {
+            ...worksheetListSnapshot,
+            dateFilter,
+            companyFilter,
+            companySearch,
+            sortMode,
+        };
+    }, [dateFilter, companyFilter, companySearch, sortMode]);
+
+    useLayoutEffect(() => {
+        if (!worksheetListSnapshot.items) return undefined;
+        let cancelled = false;
+        const restore = () => {
+            if (!cancelled) window.scrollTo({ top: worksheetListSnapshot.scrollY || 0 });
+        };
+        requestAnimationFrame(() => requestAnimationFrame(restore));
+        return () => {
+            cancelled = true;
+            rememberWorksheetListView();
+        };
+    }, []);
 
     // mineOnly 체크했는데 직원 미설정이면 자동으로 설정 모달을 띄워 준다.
     // 모달을 닫고 안 정하면 myWorker 가 빈 문자열이라 결과는 off 와 동일하게 노출 — 동작 안전.
@@ -203,9 +262,15 @@ export default function WorksheetList() {
             }
             const data = await res.json();
             if (!aliveRef.current) return;
-            setItems(Array.isArray(data) ? data : []);
+            const nextItems = Array.isArray(data) ? data : [];
+            worksheetListSnapshot = {
+                ...worksheetListSnapshot,
+                items: nextItems,
+                syncedAt: new Date(),
+            };
+            setItems(nextItems);
             setError('');
-            setLastSyncedAt(new Date());
+            setLastSyncedAt(worksheetListSnapshot.syncedAt);
         } catch (err) {
             if (!aliveRef.current) return;
             setError(err.message || '오류가 발생했습니다.');
@@ -244,21 +309,14 @@ export default function WorksheetList() {
     // 목록이 갱신될 때마다:
     //  1) 모든 항목의 detail 을 메모리 캐시에 저장 — 사용자가 어떤 카드를 탭해도 뷰어 진입
     //     시점에 회사명/제목/납기/PDF URL 이 이미 채워져 있어 첫 화면 빈공간이 없음.
-    //  2) 상위 3개의 PDF 바이트를 백그라운드로 미리 받아둔다 — 탭 즉시 즉시 표시.
-    //     이미 캐시에 있는 항목은 helper 가 no-op 처리하므로 폴링마다 다운로드 폭증 없음.
-    //     첫 화면 렌더 잠식을 피하려 setTimeout 으로 약간 지연.
+    //  2) idle 시간에 뷰어 코드 청크를 미리 import — 탭 시 JS 번들 로드 대기시간 제거.
+    // PDF 자체는 미리 받지 않는다 — sw.js 가 Range 를 우회하므로 byte-range 워밍은
+    // 캐시에 못 들어가고 PDF.js 의 실제 fetch 와 경합만 한다. PDF 는 PDF.js + 브라우저
+    // HTTP 캐시(?v= long max-age) + SW 의 자연 경로에 맡긴다.
     useEffect(() => {
-        if (!items || items.length === 0) return undefined;
+        if (!items || items.length === 0) return;
         rememberAllListItems(items);
-        let cancelled = false;
-        const t = setTimeout(() => {
-            if (cancelled) return;
-            prefetchTopItemPdfs(BASE_URL, items, 3);
-        }, 300);
-        return () => {
-            cancelled = true;
-            clearTimeout(t);
-        };
+        preloadWorksheetViewerChunk(false);
     }, [items]);
 
     const counts = useMemo(() => {
@@ -674,6 +732,11 @@ export default function WorksheetList() {
                                         to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
                                         state={{ siblings: siblingOrderNumbers }}
                                         className={cardClass}
+                                        onPointerDown={() => {
+                                            rememberWorksheetListView();
+                                            preloadWorksheetViewerChunk(true);
+                                        }}
+                                        onClick={() => rememberWorksheetListView()}
                                     >
                                         {cardContent}
                                     </Link>

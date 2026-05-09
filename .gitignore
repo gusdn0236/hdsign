@@ -1,5 +1,6 @@
 backend/.gradle-home/
 backend/.gradle-home-fix/
+.jdk/
 tmp_mail_test/
 
 # 워처 빌드 산출물 — GitHub 100MB 한도 초과해서 git 으론 못 올림.

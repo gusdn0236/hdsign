@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -103,6 +104,9 @@ public class PublicWorksheetController {
     @GetMapping("/{orderNumber}/pdf")
     public ResponseEntity<?> proxyPdf(
             @PathVariable String orderNumber,
+            @RequestParam(value = "v", required = false) String version,
+            @RequestHeader(value = "Range", required = false) String rangeHeader,
+            @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch,
             @RequestHeader(value = "User-Agent", required = false) String userAgent
     ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
@@ -122,20 +126,50 @@ public class PublicWorksheetController {
         }
 
         try {
+            String requestedRange = normalizeRangeHeader(rangeHeader);
+            String etag = quoteEtag(Integer.toHexString(key.hashCode()));
+            if (requestedRange == null && etag.equals(ifNoneMatch)) {
+                HttpHeaders headers = new HttpHeaders();
+                headers.setCacheControl(hasText(version)
+                        ? "public, max-age=31536000, immutable"
+                        : "public, max-age=300");
+                headers.setETag(etag);
+                headers.add(HttpHeaders.ACCEPT_RANGES, "bytes");
+                headers.add(HttpHeaders.VARY, HttpHeaders.USER_AGENT + ", " + HttpHeaders.RANGE);
+                return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
+            }
             ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
-                    GetObjectRequest.builder().bucket(bucket).key(key).build()
+                    GetObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(key)
+                            .range(requestedRange)
+                            .build()
             );
             long contentLength = stream.response().contentLength();
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_PDF);
             headers.setContentLength(contentLength);
+            headers.add(HttpHeaders.ACCEPT_RANGES, "bytes");
+            if (stream.response().contentRange() != null && !stream.response().contentRange().isBlank()) {
+                headers.add(HttpHeaders.CONTENT_RANGE, stream.response().contentRange());
+            }
             // 워처가 같은 주문에 대해 PDF 를 재업로드하면 worksheetPdfUrl(R2 키) 자체가 바뀌므로
             // 같은 프록시 URL 응답이 짧게 stale 해도 다음 fetch 시 새 PDF 가 자동으로 보인다.
             // 5분 캐시 — 같은 사용자가 반복 조회할 때 트래픽 절감 (워처 재인쇄 → 5분 내 반영).
-            headers.setCacheControl("public, max-age=300");
+            headers.setCacheControl(hasText(version)
+                    ? "public, max-age=31536000, immutable"
+                    : "public, max-age=300");
+            headers.setETag(etag);
+            headers.add(HttpHeaders.VARY, HttpHeaders.USER_AGENT + ", " + HttpHeaders.RANGE);
+            headers.add(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS,
+                    "Accept-Ranges, Content-Length, Content-Range, ETag");
             // 인라인 표시(첨부 다운로드 X).
             headers.setContentDispositionFormData("inline", "worksheet.pdf");
-            return new ResponseEntity<>(new InputStreamResource(stream), headers, HttpStatus.OK);
+            return new ResponseEntity<>(
+                    new InputStreamResource(stream),
+                    headers,
+                    requestedRange != null ? HttpStatus.PARTIAL_CONTENT : HttpStatus.OK
+            );
         } catch (Exception e) {
             log.warn("PDF 프록시 실패 [{}/{}]: {}", orderNumber, key, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
@@ -148,7 +182,11 @@ public class PublicWorksheetController {
      * 1차 빠른 로드를 항상 성공시키는 게 목적 — 실패하면 PDF 폴백으로 5~10배 느려졌었음.
      */
     @GetMapping("/{orderNumber}/thumbnail")
-    public ResponseEntity<?> proxyThumbnail(@PathVariable String orderNumber) {
+    public ResponseEntity<?> proxyThumbnail(
+            @PathVariable String orderNumber,
+            @RequestParam(value = "v", required = false) String version,
+            @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch
+    ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null || order.getDeletedAt() != null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
@@ -163,6 +201,15 @@ public class PublicWorksheetController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         try {
+            String etag = quoteEtag(Integer.toHexString((key + ":" + firstNonBlank(version, thumbUrl)).hashCode()));
+            if (etag.equals(ifNoneMatch)) {
+                HttpHeaders headers = new HttpHeaders();
+                headers.setCacheControl(hasText(version)
+                        ? "public, max-age=31536000, immutable"
+                        : "public, max-age=600");
+                headers.setETag(etag);
+                return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
+            }
             ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
                     GetObjectRequest.builder().bucket(bucket).key(key).build()
             );
@@ -171,7 +218,10 @@ public class PublicWorksheetController {
             headers.setContentType(MediaType.IMAGE_JPEG);
             headers.setContentLength(contentLength);
             // 썸네일은 worksheetUpdatedAt 갱신 시 R2 키 자체가 바뀌므로 길게 캐시해도 안전.
-            headers.setCacheControl("public, max-age=600");
+            headers.setCacheControl(hasText(version)
+                    ? "public, max-age=31536000, immutable"
+                    : "public, max-age=600");
+            headers.setETag(etag);
             headers.setContentDispositionFormData("inline", "worksheet-thumb.jpg");
             return new ResponseEntity<>(new InputStreamResource(stream), headers, HttpStatus.OK);
         } catch (Exception e) {
@@ -186,6 +236,22 @@ public class PublicWorksheetController {
         String base = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
         if (!url.startsWith(base)) return null;
         return url.substring(base.length());
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static String quoteEtag(String value) {
+        return "\"" + value + "\"";
+    }
+
+    private static String normalizeRangeHeader(String rangeHeader) {
+        if (rangeHeader == null || rangeHeader.isBlank()) return null;
+        String value = rangeHeader.trim();
+        if (!value.matches("bytes=\\d*-\\d*")) return null;
+        if ("bytes=-".equals(value)) return null;
+        return value;
     }
 
     private Map<String, Object> toSummary(Order o, LocalDate today) {

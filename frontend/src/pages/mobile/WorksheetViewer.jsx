@@ -7,11 +7,8 @@ import 'react-pdf/dist/Page/TextLayer.css';
 import './WorksheetViewer.css';
 import { ALL_WORKERS } from '../../data/workers.js';
 import {
-    peekPdfBytes,
-    fetchAndCachePdfBytes,
     peekDetail,
     rememberDetail,
-    buildThumbnailUrl,
     prefetchSiblingByOrderNumber,
 } from './pdfPrefetch.js';
 
@@ -24,23 +21,43 @@ const WORKER_KEY = 'hdsign_uploader_worker';
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
-// PDF 렌더 DPR — 처음 한 번에 핀치 최대줌까지 견디는 고해상도로 그린다.
-// 옛날엔 빠른 저화질 → idle 후 고화질 재렌더 였는데, 화면이 하얗게 깜빡이는 게
-// 오히려 거슬려서 단계 향상 제거. 핀치 한도를 5배로 잡아 ideal DPR(deviceDpr×PINCH×OVERSAMPLE)
-// 이 ~30% 줄어든다 — 갤럭시 등 안드로이드에서 캔버스 ~5760×8100 → ~4100×5800 으로 떨어져
-// 첫 렌더 대기시간이 크게 짧아짐. 1~3배 줌에선 화질 차이 사실상 안 보임.
-// 구형 iPhone(8 이하) 에선 메모리 한계로 검은 화면 위험 있음 — 그때만 다시 낮출 것.
-const PDF_BASE_DPR = 4;
+// PDF 렌더 DPR — 두 단계로 그린다. 첫 paint 는 FAST(낮은 DPR)로 빠르게 띄우고,
+// onRenderSuccess 직후 requestIdleCallback 으로 DETAIL(높은 DPR)로 재렌더해 선명도를 올린다.
+// 사용자가 핀치로 줌하면 onZoomStop 에서 도달한 줌 단계에 맞춰 추가 승급(qualityScale).
+//
+// 가독성 우선 튜닝(작은 글씨도 또렷, 핀치 중에도 벡터처럼):
+//   - DETAIL_DPR 12 — idle 승급 후 캔버스가 deviceDpr 3 기준 4x 오버샘플 보유.
+//     핀치 1~4x 구간은 캔버스 픽셀이 화면 device-pixel 보다 많아서 CSS 트랜스폼 보간이
+//     생기지 않음 → 핀치 중에도 글자가 흐려지지 않고 종이처럼 또렷. 4x 초과는 onZoomStop
+//     에서 qualityScale 재렌더로 보강.
+//   - OVERSAMPLE 1.25 — deviceDpr×줌 위로 25% 더 샘플링해서 핀치 5~7x 구간 재렌더가 sharp.
+//   - MAX_DPR 20 / MAX_CANVAS_PIXELS 80M / JS_MAX_IMAGE_BYTES 384MB — 핀치 5~7x 캔버스
+//     상한. 5x 까지 완전 1:1 + 25% 오버샘플, 7x 에선 ~95% 해상도(살짝만 흐림) — 사용자가
+//     허용한 "최대 확대 시 약간 흐린 정도".
+//   - FAST_DPR 2.4 — 첫 paint(=loading 체감 시간) 는 그대로 유지. idle 승급은 첫 paint
+//     이후라 로딩 속도에는 영향 없음.
+//
+// 비용: idle 승급 캔버스가 ~26M 픽셀(105MB) — 모던폰 충분. 캔버스 할당 실패 시
+// PDF_RENDER_FALLBACK_FACTORS 가 단계적으로 DPR 을 낮춰 재시도해서 구형 iPhone(8 이하) 도
+// 자연스럽게 fallback 으로 안착.
+const PDF_FAST_DPR = 2.4;
+const PDF_DETAIL_DPR = 12;
 const PDF_MAX_DPR = 20;
-const PDF_OVERSAMPLE = 1.3;
-const PDF_MAX_CANVAS_PIXELS = 64_000_000;
-const PDF_JS_MAX_IMAGE_BYTES = 256 * 1024 * 1024;
-const PINCH_MAX_SCALE = 5;
+const PDF_OVERSAMPLE = 1.25;
+const PDF_MAX_CANVAS_PIXELS = 80_000_000;
+const PDF_JS_MAX_IMAGE_BYTES = 384 * 1024 * 1024;
+const PINCH_MAX_SCALE = 7;
+const PDF_ZOOM_RENDER_STEPS = [1, 2, 3, 5, 7];
 // 최고 DPR 에서 캔버스 할당 실패/pdf.js 내부 에러가 나면 DPR 을 단계적으로 낮추며
 // 재시도. 빈 화면으로 멈추는 대신 약간 낮은 화질로라도 보이게 하는 안전망.
 // 35% 까지 내려가도 deviceDpr 3 환경에선 여전히 6 DPR 안팎이라 옛 설정(MAX=14)과
 // 비슷한 화질이 유지된다. 마지막 단계까지 가도 안 되면 거기서 멈춤(무한루프 방지).
 const PDF_RENDER_FALLBACK_FACTORS = [1, 0.7, 0.5, 0.35];
+
+function getPdfQualityScale(scale) {
+    const value = Number.isFinite(scale) ? Math.max(1, Math.min(PINCH_MAX_SCALE, scale)) : 1;
+    return PDF_ZOOM_RENDER_STEPS.find((step) => value <= step) || PINCH_MAX_SCALE;
+}
 
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
@@ -165,14 +182,20 @@ export default function WorksheetViewer() {
     const [completing, setCompleting] = useState(false);
     const [completeError, setCompleteError] = useState('');
     const [pdfViewKey, setPdfViewKey] = useState(0);
-    // 캐시에서 받아온(또는 fetch 후 캐시에 저장된) PDF 바이트. react-pdf 에 url 대신
-    // data 로 넘겨야 같은 바이트를 메모리에서 즉시 재사용 가능 — 네트워크/HTTP캐시 미경유.
-    const [pdfData, setPdfData] = useState(null);
-    const [pdfFetchError, setPdfFetchError] = useState(false);
+    const [highQualityRender, setHighQualityRender] = useState(false);
+    const [qualityScale, setQualityScale] = useState(1);
     const transformRef = useRef(null);
+
+    const requestPdfQualityForScale = useCallback((scale) => {
+        const nextScale = getPdfQualityScale(scale);
+        setHighQualityRender(true);
+        setQualityScale((prev) => (prev === nextScale ? prev : nextScale));
+    }, []);
 
     const resetPdfView = useCallback((e) => {
         e?.stopPropagation?.();
+        setQualityScale(1);
+        setHighQualityRender(false);
         if (transformRef.current?.resetTransform) {
             transformRef.current.resetTransform(0);
             return;
@@ -252,6 +275,9 @@ export default function WorksheetViewer() {
         const target = dx < 0 ? nextSibling : prevSibling;
         if (!target) return;
         swipeNavigatedRef.current = true;
+        // 스와이프 직후 detail JSON 만 미리 받아둔다 — 새 viewer mount 시점에 detail.worksheetPdfUrl
+        // 이 즉시 채워져서 PDF.js 의 첫 range 요청이 네트워크 왕복 1회 빨라진다.
+        prefetchSiblingByOrderNumber(BASE_URL, target);
         navigateSibling(target);
     }, [getCurrentScale, nextSibling, prevSibling, navigateSibling]);
 
@@ -307,7 +333,9 @@ export default function WorksheetViewer() {
         const aliveCheck = () => alive;
         // initial 의미 — 첫 화면이 비어있을 때만 loading/error 를 UI 에 표시(true).
         // 캐시로 이미 채워져 있으면 false → 조용히 백그라운드 갱신.
-        const hadCachedDetail = !!peekDetail(orderNumber);
+        const cachedDetail = peekDetail(orderNumber);
+        const hadCachedDetail = !!cachedDetail;
+        const canOpenFromCache = !!cachedDetail?.worksheetPdfUrl;
 
         const fetchDetail = async ({ initial = false } = {}) => {
             if (initial && !hadCachedDetail) setLoadingDetail(true);
@@ -334,7 +362,10 @@ export default function WorksheetViewer() {
             }
         };
 
-        fetchDetail({ initial: true });
+        const refreshTimer = canOpenFromCache
+            ? setTimeout(() => fetchDetail(), 1500)
+            : null;
+        if (!canOpenFromCache) fetchDetail({ initial: true });
 
         const onVisible = () => {
             if (document.visibilityState === 'visible') fetchDetail();
@@ -345,6 +376,7 @@ export default function WorksheetViewer() {
 
         return () => {
             alive = false;
+            if (refreshTimer) clearTimeout(refreshTimer);
             document.removeEventListener('visibilitychange', onVisible);
             window.removeEventListener('focus', onFocus);
         };
@@ -369,8 +401,9 @@ export default function WorksheetViewer() {
         queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
     }, [queued]);
 
-    // 현재 PDF 가 화면에 그려진 직후, prev/next 지시서를 백그라운드로 미리 받아 캐시에 저장.
-    // 첫 렌더 대역폭과 경합하지 않도록 pdfReady 시점까지 기다린다. 실패는 조용히 무시.
+    // 현재 PDF 가 화면에 그려진 직후, prev/next 지시서의 detail JSON 만 백그라운드로 미리 받아
+    // 메모리 캐시에 넣는다. PDF 바이트는 받지 않음 — PDF.js + 브라우저 HTTP 캐시 + SW 의 자연
+    // 경로에 맡긴다. 첫 렌더 대역폭과 경합하지 않도록 pdfReady 시점까지 기다린다. 실패는 조용히 무시.
     useEffect(() => {
         if (!pdfReady || siblings.length === 0) return undefined;
         const targets = [];
@@ -383,7 +416,7 @@ export default function WorksheetViewer() {
             targets.forEach((order) => {
                 prefetchSiblingByOrderNumber(BASE_URL, order);
             });
-        }, 200);
+        }, 80);
         return () => {
             cancelled = true;
             clearTimeout(t);
@@ -398,81 +431,23 @@ export default function WorksheetViewer() {
         };
     }, [detail?.worksheetPdfUrl, detail?.worksheetUpdatedAt, orderNumber]);
 
-    // 썸네일 — PDF.js 가 첫 페이지를 파싱·렌더하는 동안(50~150ms) "탭 → 곧장 화면 차오름"
-    // 인상을 주기 위한 placeholder. 백엔드가 PDF 업로드 시 첫 페이지 JPEG 으로 자동 생성해
-    // R2 에 저장(Cache-Control 10분). 목록에서도 같은 URL 을 쓰므로 브라우저 HTTP 캐시
-    // 히트율이 높아 거의 즉시 표시된다. PDF 가 그려지면 위로 페이드.
-    const thumbnailUrl = useMemo(() => {
-        if (!detail?.worksheetThumbnailUrl || !orderNumber) return null;
-        return buildThumbnailUrl(BASE_URL, orderNumber);
-    }, [detail?.worksheetThumbnailUrl, orderNumber]);
-    // 썸네일이 가로(landscape) 면 PDF 와 동일하게 +90° 회전해 portrait 로 채운다.
-    // PDF.js 가 PDF 자체 /Rotate 를 적용한 dim 을 돌려주므로 동일 규칙.
-    const [thumbRotated, setThumbRotated] = useState(false);
     useEffect(() => {
-        // 새 지시서로 바뀌면 회전 상태 초기화 — 기본 portrait 가정.
-        setThumbRotated(false);
-    }, [thumbnailUrl]);
-    const handleThumbLoad = useCallback((e) => {
-        const img = e.currentTarget;
-        if (!img) return;
-        if (img.naturalWidth > 0 && img.naturalHeight > 0
-            && img.naturalWidth > img.naturalHeight) {
-            setThumbRotated(true);
-        }
-    }, []);
-
-    // versioned URL 이 바뀌면 캐시 동기 조회 → 히트면 즉시 setPdfData(별도 await 없음)
-    // → 미스면 abortable fetch. 히트 케이스에서 첫 렌더부터 pdfData 가 채워져
-    // 로딩 메시지가 한 프레임도 깜빡이지 않는다.
-    useEffect(() => {
-        const url = pdfFile?.url;
-        if (!url) {
-            setPdfData(null);
-            setPdfFetchError(false);
-            return undefined;
-        }
-        const cached = peekPdfBytes(url);
-        if (cached) {
-            setPdfData(cached);
-            setPdfFetchError(false);
-            return undefined;
-        }
-        // 미스 — 이전 PDF 의 바이트가 남아있으면 잠깐이라도 옛 PDF 가 보이므로 비운다.
-        setPdfData(null);
-        setPdfFetchError(false);
-        const ac = new AbortController();
-        let alive = true;
-        (async () => {
-            try {
-                const bytes = await fetchAndCachePdfBytes(url, ac.signal);
-                if (!alive) return;
-                setPdfData(bytes);
-            } catch (err) {
-                if (!alive || err?.name === 'AbortError') return;
-                // 네트워크 일시 실패 — react-pdf 에 url 로 폴백시켜 라이브러리가 알아서 재시도.
-                setPdfFetchError(true);
-            }
-        })();
-        return () => {
-            alive = false;
-            ac.abort();
-        };
+        setHighQualityRender(false);
+        setQualityScale(1);
     }, [pdfFile?.url]);
 
     // Document 에 넘길 file 객체 — 바이트가 있으면 data 모드, 없거나 실패면 url 폴백.
     // pdf.js 는 data 의 ArrayBuffer 를 worker 로 transfer 하면서 detach 하므로,
     // 매번 .slice() 로 새 사본을 만들어 넘긴다(원본 캐시 항상 무사).
-    const pdfFileForDoc = useMemo(() => {
-        if (pdfData) return { data: pdfData.slice() };
-        if (pdfFetchError && pdfFile?.url) return { url: pdfFile.url };
-        return null;
-    }, [pdfData, pdfFetchError, pdfFile?.url]);
+    const pdfFileForDoc = pdfFile;
 
     const pdfOptions = useMemo(() => ({
         canvasMaxAreaInBytes: PDF_JS_MAX_IMAGE_BYTES,
         disableFontFace: false,
+        disableAutoFetch: true,
+        disableStream: false,
         isOffscreenCanvasSupported: true,
+        rangeChunkSize: 512 * 1024,
         useSystemFonts: true,
     }), []);
 
@@ -520,18 +495,21 @@ export default function WorksheetViewer() {
         const areaLimitedDpr = cssPixels > 0
             ? Math.sqrt(PDF_MAX_CANVAS_PIXELS / cssPixels)
             : PDF_MAX_DPR;
-        const cap = Math.max(PDF_BASE_DPR, Math.min(PDF_MAX_DPR, areaLimitedDpr));
+        const minDpr = highQualityRender ? PDF_DETAIL_DPR : PDF_FAST_DPR;
+        const cap = Math.max(minDpr, Math.min(PDF_MAX_DPR, areaLimitedDpr));
 
-        // 핀치 최대줌(PINCH_MAX_SCALE) 에서도 글자 획이 뭉개지지 않도록 약간 과샘플링한다.
-        const ideal = Math.min(cap, Math.max(PDF_BASE_DPR, deviceDpr * PINCH_MAX_SCALE * PDF_OVERSAMPLE));
+        // Render only for the zoom tier the user actually reached. This keeps
+        // the first high-quality pass light, then sharpens further after zoom.
+        const targetScale = highQualityRender ? qualityScale : 1;
+        const ideal = Math.min(cap, Math.max(minDpr, deviceDpr * targetScale * PDF_OVERSAMPLE));
 
         // 렌더 실패 회차마다 fallback factor 를 곱해 단계적으로 낮춘다.
         const factor = PDF_RENDER_FALLBACK_FACTORS[
             Math.min(renderAttempt, PDF_RENDER_FALLBACK_FACTORS.length - 1)
         ];
-        // 최소 PDF_BASE_DPR 은 보장 — 이 아래로는 핀치 시 뭉개짐이 너무 커져 의미 없음.
-        return Math.max(PDF_BASE_DPR, ideal * factor);
-    }, [pageRatio, pageWidth, renderAttempt]);
+        // Pinch zoom needs a real minimum DPR; below this, text gets visibly soft.
+        return Math.max(minDpr, ideal * factor);
+    }, [highQualityRender, pageRatio, pageWidth, qualityScale, renderAttempt]);
 
     const onDocLoad = useCallback(({ numPages: n }) => {
         setNumPages(n);
@@ -768,26 +746,7 @@ export default function WorksheetViewer() {
                 {!loadingDetail && !detailError && !pdfFile && (
                     <div className="wsv-msg">PDF 가 아직 등록되지 않았습니다.</div>
                 )}
-                {/* 썸네일 placeholder — PDF.js 파싱 끝나기 전까지 화면을 채워 "탭 → 즉시" 인상을
-                    준다. pdfReady 시점에 페이드아웃되며 PDF 캔버스가 자연스럽게 드러남. */}
-                {pdfFile && thumbnailUrl && (
-                    <img
-                        src={thumbnailUrl}
-                        alt=""
-                        aria-hidden="true"
-                        className={
-                            'wsv-thumb-placeholder'
-                            + (thumbRotated ? ' wsv-thumb-rotated' : '')
-                            + (pdfReady ? ' wsv-thumb-hidden' : '')
-                        }
-                        onLoad={handleThumbLoad}
-                        draggable={false}
-                    />
-                )}
-                {/* 메시지 가시화 — 썸네일이 없을 때만 텍스트 메시지 노출.
-                    썸네일이 있으면 그게 placeholder 역할 → 텍스트 안 띄움. */}
-                {pdfFile && pageWidth > 0 && !pdfError && !pdfReady
-                    && (pdfFetchError || !pdfData) && !thumbnailUrl && (
+                {pdfFile && pageWidth > 0 && !pdfError && !pdfReady && (
                     <div className="wsv-msg wsv-pdf-loading">PDF 불러오는 중…</div>
                 )}
                 {pdfFile && pageWidth > 0 && (
@@ -808,7 +767,9 @@ export default function WorksheetViewer() {
                             currentScaleRef.current = ref?.state?.scale ?? currentScaleRef.current;
                         }}
                         onZoomStop={(ref) => {
-                            currentScaleRef.current = ref?.state?.scale ?? currentScaleRef.current;
+                            const nextScale = ref?.state?.scale ?? currentScaleRef.current;
+                            currentScaleRef.current = nextScale;
+                            requestPdfQualityForScale(nextScale);
                         }}
                         wheel={{
                             step: 0.18,
@@ -847,7 +808,7 @@ export default function WorksheetViewer() {
                                     <Page
                                         pageNumber={currentPage}
                                         width={pageWidth}
-                                        // 핀치 최대줌까지 견디는 고해상도로 한 번만 렌더 — 단계 향상으로 인한 깜빡임 없음.
+                                        // Fast first render, then sharpen only to the zoom tier the user needs.
                                         devicePixelRatio={pdfDevicePixelRatio}
                                         // 가로형 PDF 는 onPageLoad 에서 +90° 추가 회전 적용 → portrait 로 화면 채움.
                                         rotate={pageRotation}
@@ -857,6 +818,15 @@ export default function WorksheetViewer() {
                                         onRenderError={onPageRenderError}
                                         onRenderSuccess={() => {
                                             setPdfReady(true);
+                                            const upgrade = () => requestPdfQualityForScale(currentScaleRef.current);
+                                            if (!highQualityRender) {
+                                                if (typeof window !== 'undefined' && window.requestIdleCallback) {
+                                                    window.requestIdleCallback(upgrade, { timeout: 1200 });
+                                                } else {
+                                                    window.setTimeout(upgrade, 700);
+                                                }
+                                            }
+                                            if (highQualityRender) return;
                                             // Page 가 실제로 그려진 직후 가운데 정렬 — centerOnInit 이 빈 콘텐츠
                                             // 기준으로 계산돼 어긋나는 케이스 방지. RAF 두 번(레이아웃 사이클 한 바퀴
                                             // 보장) 후 호출 — 첫 RAF 시점엔 onPageLoad 의 pageRatio 변경이 아직
