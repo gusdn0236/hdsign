@@ -21,7 +21,7 @@
 
 // VERSION 은 SW 자체의 캐시 키. 갱신/버그픽스 후 무조건 한 단계 올려야 옛 캐시
 // (옛 index.html, 옛 assets) 가 강제로 폐기되고 클라이언트가 새 버전을 잡는다.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const HTML_CACHE = 'hdsign-html-' + VERSION;
 const ASSET_CACHE = 'hdsign-asset-' + VERSION;
 const WORKSHEET_CACHE = 'hdsign-worksheet-' + VERSION;
@@ -52,6 +52,14 @@ self.addEventListener('fetch', (event) => {
     const url = new URL(req.url);
 
     if (isWorksheetPdf(url)) {
+        // PDF.js range requests are already byte-efficient and are best handled
+        // by the browser HTTP cache/CDN. Cache API cannot safely store 206
+        // partial responses, and matching them by URL risks returning the wrong
+        // byte slice, so only non-range full responses use the SW cache.
+        if (req.headers.has('range')) {
+            event.respondWith(fetch(req));
+            return;
+        }
         event.respondWith(
             url.searchParams.has('v')
                 ? cacheFirst(req, WORKSHEET_CACHE)
