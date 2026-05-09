@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import PdfViewer from "../../components/common/PdfViewer.jsx";
@@ -59,6 +59,19 @@ function formatDateWithDay(value) {
   const dt = new Date(y, m - 1, d);
   if (Number.isNaN(dt.getTime())) return dateStr;
   return `${dateStr} (${WEEKDAY_KO[dt.getDay()]})`;
+}
+
+// 완료검토 — 사용자가 "YYYY-MM-DD" 또는 한 자리 월/일("2026-5-9") 로 타이핑한 값을
+// 백엔드에 보낼 ISO 8601 형식("2026-05-09") 으로 패딩·검증. 잘못된 입력은 null 반환.
+function normalizeReviewDate(input) {
+  const m = (input || "").match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (mo < 1 || mo > 12) return null;
+  if (d < 1 || d > 31) return null;
+  return `${m[1]}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 function formatDueDate(dueDate, deliveryMethod) {
@@ -159,6 +172,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [reviewChoice, setReviewChoice] = useState("complete"); // 'back' | 'complete' | 'reschedule'
   const [reviewStage, setReviewStage] = useState("choose"); // 'choose' | 'pickDate'
   const [reviewDateInput, setReviewDateInput] = useState("");
+  const reviewDateInputRef = useRef(null);
   const [bulkApplying, setBulkApplying] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -218,6 +232,26 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const timer = setTimeout(() => setFeedback(null), 2200);
     return () => clearTimeout(timer);
   }, [feedback]);
+
+  // 완료검토 — 날짜 수정 단계 진입 시 input 의 "DD" 부분(YYYY-MM-DD 의 마지막 두 글자) 을
+  // 자동 선택. <input type="date"> 는 브라우저가 segment 포커스를 내부 처리해 JS 로 일자
+  // segment 만 선택할 방법이 없어서 type="text" + setSelectionRange(8, 10) 패턴 사용.
+  // 사용자는 보통 일자만 두 자리 타이핑 → Enter 로 저장. 월/년도 변경이 필요하면 그 부분
+  // 클릭해서 직접 편집(평소엔 거의 발생 안 함).
+  useEffect(() => {
+    if (reviewStage !== "pickDate") return;
+    const el = reviewDateInputRef.current;
+    if (!el) return;
+    const rafId = requestAnimationFrame(() => {
+      el.focus();
+      try {
+        el.setSelectionRange(8, 10);
+      } catch {
+        // 일부 브라우저 — 무시.
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [reviewStage]);
 
   const selectedOrder = useMemo(
     () =>
@@ -1799,17 +1833,23 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   <div className="review-bar-mid review-bar-mid--date">
                     <span className="review-date-label">새 납기:</span>
                     <input
-                      type="date"
+                      ref={reviewDateInputRef}
+                      type="text"
                       className="review-date-input"
                       value={reviewDateInput}
+                      placeholder="YYYY-MM-DD"
+                      maxLength={10}
+                      inputMode="numeric"
+                      pattern="\d{4}-\d{1,2}-\d{1,2}"
                       onChange={(e) => setReviewDateInput(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
-                          if (!reviewDateInput) return;
+                          const normalized = normalizeReviewDate(reviewDateInput);
+                          if (!normalized) return;
                           commitDecisionAndAdvance({
                             action: "reschedule",
-                            newDate: reviewDateInput,
+                            newDate: normalized,
                           });
                         } else if (e.key === "Escape") {
                           e.preventDefault();
@@ -1817,16 +1857,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           setReviewChoice("reschedule");
                         }
                       }}
-                      autoFocus
                     />
                     <button
                       type="button"
                       className="review-confirm-btn"
-                      disabled={!reviewDateInput}
+                      disabled={!normalizeReviewDate(reviewDateInput)}
                       onClick={() => {
+                        const normalized = normalizeReviewDate(reviewDateInput);
+                        if (!normalized) return;
                         commitDecisionAndAdvance({
                           action: "reschedule",
-                          newDate: reviewDateInput,
+                          newDate: normalized,
                         });
                       }}
                     >
