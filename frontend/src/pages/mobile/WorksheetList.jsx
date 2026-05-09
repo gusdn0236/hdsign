@@ -293,15 +293,18 @@ export default function WorksheetList() {
     useEffect(() => {
         aliveRef.current = true;
         fetchList();
-        // 60초 폴링 + 백→포 복귀 시 즉시 재조회.
-        const timer = setInterval(fetchList, 60000);
+        // 자동 폴링 없음 — 모바일 데이터 절약 목적. 두 자연 트리거 + 수동 새로고침만 사용:
+        //  1) 앱 첫 마운트 시 1회 (위 fetchList())
+        //  2) 백→포 복귀 시 1회 (visibilitychange) — 직원이 다른 앱 갔다 돌아오면 자동 반영
+        //  3) 헤더 [새로고침] 버튼 — 워처가 방금 인쇄해서 즉시 보고 싶을 때
+        // 워처 인쇄 빈도가 분 단위라 60초 폴링은 과했고, 직원 사용 패턴(앱→작업→앱 왕복)
+        // 에서는 visibilitychange 가 자주 발생해 폴링 없이도 최신 상태 유지가 잘 됨.
         const onVisible = () => {
             if (document.visibilityState === 'visible') fetchList();
         };
         document.addEventListener('visibilitychange', onVisible);
         return () => {
             aliveRef.current = false;
-            clearInterval(timer);
             document.removeEventListener('visibilitychange', onVisible);
         };
     }, [fetchList]);
