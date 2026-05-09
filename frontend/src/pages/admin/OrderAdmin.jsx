@@ -156,7 +156,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // decisions[id] = { action: 'complete' } 또는 { action: 'reschedule', newDate: 'yyyy-MM-dd' }.
   // 모든 주문을 다 보면 selectedOrderId 가 null 로 풀리고 상단 sticky 패널에서 일괄 적용.
   const [reviewSession, setReviewSession] = useState(null);
-  const [reviewChoice, setReviewChoice] = useState("complete"); // 'complete' | 'reschedule'
+  const [reviewChoice, setReviewChoice] = useState("complete"); // 'back' | 'complete' | 'reschedule'
   const [reviewStage, setReviewStage] = useState("choose"); // 'choose' | 'pickDate'
   const [reviewDateInput, setReviewDateInput] = useState("");
   const [bulkApplying, setBulkApplying] = useState(false);
@@ -501,8 +501,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       }
       if (lightboxIndex !== null) return;
 
-      // 검토 세션 중 — ←: 이전 지시서로 되돌아가기(잘못 누른 Enter 회복용),
-      // →: 납기수정 선택, Enter: 현재 선택 확정. 일반 모드의 prev/next 는 끔.
+      // 검토 세션 중 — ←/→ 로 [이전 / 완료 처리 / 납기 수정] 사이를 이동, Enter 로 확정.
+      // cursor === 0 이면 '이전' 으로 갈 수 없으므로 좌측 끝은 '완료 처리' 에서 멈춘다.
       if (reviewSession) {
         if (reviewStage === "pickDate") {
           // 날짜 입력 단계는 input 의 onKeyDown 이 처리. ESC 만 위에서 잡고 나머지는 통과.
@@ -510,24 +510,33 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         }
         if (e.key === "ArrowLeft") {
           e.preventDefault();
-          // 이전 지시서로 되돌리기 — 이미 결정한 항목도 다시 보고 변경 가능.
-          if (reviewSession.cursor > 0) {
-            const newCursor = reviewSession.cursor - 1;
-            setReviewSession({ ...reviewSession, cursor: newCursor });
-            setSelectedOrderId(reviewSession.queue[newCursor]);
-            setReviewChoice("complete");
-            setReviewStage("choose");
-            setReviewDateInput("");
-          }
+          setReviewChoice((cur) => {
+            if (cur === "reschedule") return "complete";
+            if (cur === "complete") return reviewSession.cursor > 0 ? "back" : "complete";
+            return "back";
+          });
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
-          setReviewChoice("reschedule");
+          setReviewChoice((cur) => {
+            if (cur === "back") return "complete";
+            return "reschedule";
+          });
         } else if (e.key === "Enter") {
           if (inField) return;
           e.preventDefault();
-          if (reviewChoice === "complete") {
+          if (reviewChoice === "back") {
+            // 이전 지시서로 되돌리기 — 이미 결정한 항목도 다시 보고 변경 가능.
+            if (reviewSession.cursor > 0) {
+              const newCursor = reviewSession.cursor - 1;
+              setReviewSession({ ...reviewSession, cursor: newCursor });
+              setSelectedOrderId(reviewSession.queue[newCursor]);
+              setReviewChoice("complete");
+              setReviewStage("choose");
+              setReviewDateInput("");
+            }
+          } else if (reviewChoice === "complete") {
             commitDecisionAndAdvance({ action: "complete" });
-          } else {
+          } else if (reviewChoice === "reschedule") {
             // 적용 납기를 기본값으로 깔고 날짜 입력 단계로 진입.
             const cur = orders.find((o) => o.id === selectedOrderId);
             const dueStr = cur?.dueDate ? String(cur.dueDate).split("T")[0] : "";
@@ -1736,7 +1745,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   <div className="review-bar-mid">
                     <button
                       type="button"
-                      className="review-back"
+                      className={`review-back ${reviewChoice === "back" ? "active" : ""}`}
                       onClick={() => {
                         if (reviewSession.cursor <= 0) return;
                         const newCursor = reviewSession.cursor - 1;
@@ -1747,9 +1756,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                         setReviewDateInput("");
                       }}
                       disabled={reviewSession.cursor <= 0}
-                      title="이전 지시서로 돌아가기 (Enter 잘못 눌렀을 때 회복)"
+                      title="이전 지시서로 돌아가기 (← 로 이동 후 Enter)"
                     >
-                      <span className="review-choice-key">←</span>
+                      <span className="review-choice-key">
+                        {reviewChoice === "back" ? "Enter" : "←"}
+                      </span>
                       <span className="review-choice-label">이전</span>
                     </button>
                     <button
@@ -1759,12 +1770,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                         setReviewChoice("complete");
                         commitDecisionAndAdvance({ action: "complete" });
                       }}
-                      title="실제로 납기가 지났음 — 완료로 처리"
+                      title="실제로 납기가 지났음 — 완료로 처리 (← / → 로 이동 후 Enter)"
                     >
-                      <span className="review-choice-key">Enter</span>
+                      <span className="review-choice-key">
+                        {reviewChoice === "complete" ? "Enter" : "·"}
+                      </span>
                       <span className="review-choice-label">완료 처리</span>
                     </button>
-                    <span className="review-arrow">→</span>
                     <button
                       type="button"
                       className={`review-choice ${reviewChoice === "reschedule" ? "active" : ""}`}
@@ -1775,9 +1787,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                         setReviewDateInput(dueStr);
                         setReviewStage("pickDate");
                       }}
-                      title="아직 안 지난 작업 — 납기를 새 날짜로 수정"
+                      title="아직 안 지난 작업 — 납기를 새 날짜로 수정 (→ 로 이동 후 Enter)"
                     >
-                      <span className="review-choice-key">→ Enter</span>
+                      <span className="review-choice-key">
+                        {reviewChoice === "reschedule" ? "Enter" : "→"}
+                      </span>
                       <span className="review-choice-label">납기 수정</span>
                     </button>
                   </div>

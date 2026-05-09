@@ -1823,6 +1823,13 @@
   color: #fff;
   background: rgba(148, 163, 184, 0.12);
 }
+.review-back.active {
+  background: #fde68a;
+  border-color: #f59e0b;
+  color: #78350f;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(251, 191, 36, 0.35);
+}
 .review-back:disabled {
   opacity: 0.35;
   cursor: default;
