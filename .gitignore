@@ -34,3 +34,10 @@ scripts/__pycache__/
 hdsign-watcher/build_log.txt
 hdsign-watcher/__pycache__/
 __pycache__/
+
+# 현장 에이전트 — 사무실 워처와 동일하게 .exe 빌드 산출물은 git 제외.
+# 배포는 PC 별로 별도 경로로 복사. config.json 은 PC 별 환경값이라 동일하게 제외.
+field-agent/dist/
+field-agent/build/
+field-agent/*.spec
+field-agent/config.json

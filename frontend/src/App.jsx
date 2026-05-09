@@ -121,6 +121,7 @@ const ClientStatus     = lazyWithRetry(() => import('./pages/client/ClientStatus
 const EvidenceCapture  = lazyWithRetry(() => import('./pages/evidence/EvidenceCapture.jsx'))
 const WorksheetList    = lazyWithRetry(() => import('./pages/mobile/WorksheetList.jsx'))
 const WorksheetViewer  = lazyWithRetry(() => import('./pages/mobile/WorksheetViewer.jsx'))
+const FieldViewer      = lazyWithRetry(() => import('./pages/field/FieldViewer.jsx'))
 
 const RouteFallback = () => (
     <div style={{
@@ -137,7 +138,8 @@ function App() {
     const isClient = location.pathname.startsWith('/client')
     const isEvidence = location.pathname.startsWith('/p/')
     const isMobileApp = location.pathname.startsWith('/m/')
-    const hideHeaderFooter = isAdmin || isClient || isEvidence || isMobileApp
+    const isField = location.pathname.startsWith('/field')
+    const hideHeaderFooter = isAdmin || isClient || isEvidence || isMobileApp || isField
 
     return (
         <AuthProvider>
@@ -190,6 +192,8 @@ function App() {
 
                         <Route path="/m/worksheets" element={<WorksheetList />} />
                         <Route path="/m/worksheets/:orderNumber" element={<WorksheetViewer />} />
+
+                        <Route path="/field" element={<FieldViewer />} />
 
                         <Route path="/client/login" element={<ClientLogin />} />
                         <Route path="/client/signup" element={<ClientSignup />} />

@@ -291,6 +291,11 @@ public class PublicWorksheetController {
             wcs.add(entry);
         }
         item.put("workerCompletions", wcs);
+        // 현장 뷰어 [FS에서 열기] 용 — 로컬 에이전트가 거래처 네트워크 폴더에서
+        // 동일 stem 의 .fs 파일을 찾아 FlexiSIGN 으로 열기 위한 두 필드.
+        // 모바일 뷰어는 무시. 둘 중 하나라도 비어 있으면 프론트는 [FS에서 열기] 버튼 비활성.
+        item.put("originalPdfFilename", o.getOriginalPdfFilename());
+        item.put("networkFolderName", o.getClient() != null ? o.getClient().getNetworkFolderName() : null);
         return item;
     }
 

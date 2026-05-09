@@ -1,0 +1,467 @@
+/* 현장 PC 사이드바 뷰어 — Chrome --app 으로 띄워 폭 ~400px 도킹 사용 가정.
+   화면이 아주 좁아도 카드 정보가 명확히 읽히도록 한 컬럼 + 큰 썸네일 우선. */
+
+.fv-page {
+    min-height: 100vh;
+    background: #f4f5f7;
+    color: #18181b;
+    display: flex;
+    flex-direction: column;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Pretendard, Roboto, sans-serif;
+}
+
+/* === Header === */
+
+.fv-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #ffffff;
+    padding: 14px 14px 10px;
+    border-bottom: 1px solid #e4e4e7;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+
+.fv-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.fv-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #18181b;
+}
+
+.fv-refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid #d4d4d8;
+    border-radius: 8px;
+    background: #fafafa;
+    color: #3f3f46;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.fv-refresh:hover { background: #f4f4f5; border-color: #a1a1aa; }
+.fv-refresh:disabled { opacity: 0.6; cursor: default; }
+.fv-refresh svg { width: 12px; height: 12px; }
+.fv-refresh.spinning svg { animation: fv-spin 0.9s linear infinite; }
+@keyframes fv-spin { to { transform: rotate(360deg); } }
+
+/* Tabs */
+.fv-tabs {
+    display: flex;
+    background: #f4f4f5;
+    border-radius: 10px;
+    padding: 3px;
+    margin-bottom: 10px;
+}
+.fv-tab {
+    flex: 1;
+    border: 0;
+    padding: 7px 10px;
+    background: transparent;
+    color: #71717a;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 7px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 0.15s, color 0.15s;
+}
+.fv-tab.on {
+    background: #ffffff;
+    color: #18181b;
+    box-shadow: 0 1px 2px rgba(24, 24, 27, 0.08);
+}
+.fv-tab-count {
+    display: inline-block;
+    padding: 0 6px;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    border-radius: 9px;
+    background: #e4e4e7;
+    color: #52525b;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+.fv-tab.on .fv-tab-count {
+    background: #18181b;
+    color: #fafafa;
+}
+
+/* Filters */
+.fv-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.fv-select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #d4d4d8;
+    border-radius: 8px;
+    background: #ffffff;
+    font-size: 12.5px;
+    color: #27272a;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='%2371717a'><path d='M0 0l5 6 5-6z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 8px 5px;
+    padding-right: 26px;
+}
+.fv-select:focus { outline: none; border-color: #71717a; }
+
+/* Search */
+.fv-search {
+    position: relative;
+    margin-bottom: 8px;
+}
+.fv-search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #a1a1aa;
+    pointer-events: none;
+}
+.fv-search-icon svg { width: 14px; height: 14px; }
+.fv-search-input {
+    width: 100%;
+    padding: 9px 32px 9px 32px;
+    border: 1px solid #d4d4d8;
+    border-radius: 8px;
+    background: #ffffff;
+    font-size: 13px;
+    color: #18181b;
+}
+.fv-search-input::placeholder { color: #a1a1aa; }
+.fv-search-input:focus { outline: none; border-color: #71717a; }
+.fv-search-clear {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 0;
+    background: #e4e4e7;
+    color: #52525b;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.fv-search-clear:hover { background: #d4d4d8; }
+
+/* Worker chip */
+.fv-worker-row {
+    display: flex;
+    justify-content: flex-end;
+}
+.fv-worker-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid #d4d4d8;
+    border-radius: 999px;
+    background: #fafafa;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+.fv-worker-chip:hover { background: #f4f4f5; }
+.fv-worker-prefix {
+    font-size: 10px;
+    color: #71717a;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+.fv-worker-text {
+    color: #18181b;
+    font-weight: 600;
+}
+
+/* === Main === */
+
+.fv-main {
+    flex: 1;
+    padding: 12px 14px 24px;
+}
+
+.fv-empty {
+    text-align: center;
+    color: #71717a;
+    font-size: 13px;
+    padding: 40px 20px;
+}
+.fv-empty.error { color: #b91c1c; }
+
+.fv-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Card */
+.fv-card {
+    background: #ffffff;
+    border: 1px solid #e4e4e7;
+    border-radius: 12px;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 0;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.fv-card:hover {
+    border-color: #d4d4d8;
+    box-shadow: 0 2px 8px rgba(24, 24, 27, 0.04);
+}
+
+.fv-card-thumb {
+    background: #f4f4f5;
+    border-right: 1px solid #e4e4e7;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 110px;
+}
+.fv-card-thumb .ws-thumb-frame {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: 1 / 1;
+}
+
+.fv-card-body {
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.fv-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 1px;
+}
+.fv-card-company {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: #18181b;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.fv-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-size: 10.5px;
+    font-weight: 700;
+    line-height: 1.4;
+    flex-shrink: 0;
+}
+.fv-badge.overdue { background: #fef2f2; color: #b91c1c; }
+.fv-badge.today { background: #fef3c7; color: #92400e; }
+.fv-badge.tomorrow { background: #ecfeff; color: #0e7490; }
+
+.fv-card-title {
+    font-size: 13px;
+    color: #27272a;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.fv-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 2px;
+    font-size: 11px;
+    color: #71717a;
+}
+.fv-card-due { font-weight: 600; color: #52525b; }
+.fv-card-no { color: #a1a1aa; font-variant-numeric: tabular-nums; }
+
+.fv-card-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.fv-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 7px 8px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    text-align: center;
+    line-height: 1.2;
+}
+.fv-btn:disabled { cursor: default; opacity: 0.55; }
+
+.fv-btn-fs {
+    background: #18181b;
+    color: #fafafa;
+    border-color: #18181b;
+}
+.fv-btn-fs:hover:not(:disabled) { background: #27272a; }
+
+.fv-btn-done {
+    background: #ffffff;
+    color: #18181b;
+    border-color: #d4d4d8;
+}
+.fv-btn-done:hover:not(:disabled) { background: #f4f4f5; border-color: #a1a1aa; }
+
+.fv-btn-completed {
+    background: #ecfdf5;
+    color: #047857;
+    border-color: #a7f3d0;
+    cursor: default;
+}
+
+/* Toast */
+.fv-toast {
+    position: fixed;
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.45;
+    box-shadow: 0 8px 24px rgba(24, 24, 27, 0.12);
+    z-index: 50;
+    animation: fv-toast-in 0.18s ease-out;
+}
+@keyframes fv-toast-in {
+    from { transform: translateY(8px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+.fv-toast-success { background: #052e16; color: #d1fae5; }
+.fv-toast-warn { background: #78350f; color: #fef3c7; }
+.fv-toast-error { background: #7f1d1d; color: #fee2e2; }
+
+/* Modal — 담당자 설정 */
+.fv-modal-bg {
+    position: fixed;
+    inset: 0;
+    background: rgba(24, 24, 27, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 100;
+    animation: fv-fade 0.15s ease-out;
+}
+@keyframes fv-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.fv-modal {
+    width: 100%;
+    max-width: 360px;
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 20px 18px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+.fv-modal h2 {
+    margin: 0 0 6px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #18181b;
+}
+.fv-modal-desc {
+    margin: 0 0 14px;
+    font-size: 12.5px;
+    color: #52525b;
+    line-height: 1.5;
+}
+.fv-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+.fv-chip {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid #d4d4d8;
+    background: #ffffff;
+    color: #3f3f46;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+.fv-chip:hover { background: #f4f4f5; }
+.fv-chip.on {
+    background: #18181b;
+    color: #fafafa;
+    border-color: #18181b;
+}
+.fv-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.fv-modal-cancel,
+.fv-modal-confirm {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 0;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.fv-modal-cancel {
+    background: #f4f4f5;
+    color: #52525b;
+}
+.fv-modal-cancel:hover { background: #e4e4e7; }
+.fv-modal-confirm {
+    background: #18181b;
+    color: #fafafa;
+}
+.fv-modal-confirm:hover:not(:disabled) { background: #27272a; }
+.fv-modal-confirm:disabled { opacity: 0.4; cursor: default; }

@@ -398,6 +398,17 @@ public class PublicEvidenceController {
         // 썸네일 렌더 실패 시(thumbnailUrl == null) 기존 값을 덮어써 stale 썸네일이 남지 않도록 함.
         // 다음 업로드 때 다시 시도되며, 그 사이엔 프론트가 PDF 폴백으로 그린다.
         order.setWorksheetThumbnailUrl(thumbnailUrl);
+        // 현장 뷰어 [FS에서 열기] 가 거래처 네트워크 폴더에서 .fs 파일을 stem 매칭으로
+        // 찾을 수 있게 원본 PDF 파일명을 보존. 워처는 multipart Content-Disposition 의
+        // filename 에 .ai stem 을 그대로 실어 보내므로 별도 form 필드 없이도 식별 가능.
+        // 일부 클라이언트가 경로를 포함해 보낼 수 있으니 basename 만 취한다.
+        String uploadedName = file.getOriginalFilename();
+        if (uploadedName != null && !uploadedName.isBlank()) {
+            int slash = Math.max(uploadedName.lastIndexOf('/'), uploadedName.lastIndexOf('\\'));
+            String basename = slash >= 0 ? uploadedName.substring(slash + 1) : uploadedName;
+            if (basename.length() > 255) basename = basename.substring(basename.length() - 255);
+            order.setOriginalPdfFilename(basename);
+        }
         if (firstAttachment || userMarkedChanged) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
         }
