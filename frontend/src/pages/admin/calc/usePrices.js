@@ -12,9 +12,13 @@ export function usePrices() {
 
     useEffect(() => {
         fetch(`${BASE_URL}/api/public/calc-prices`)
-            .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
+            .then(async r => {
+                if (r.ok) return r.json()
+                const body = await r.text().catch(() => '')
+                throw new Error(`HTTP ${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`)
+            })
             .then(setPrices)
-            .catch(e => setError(String(e)))
+            .catch(e => setError(String(e.message || e)))
     }, [])
 
     return { prices, error }

@@ -16,7 +16,14 @@ export default function CalcLayout() {
     const { prices, error } = usePrices()
 
     if (error) {
-        return <div className="calc-shell"><p className="calc-error">단가 데이터 로드 실패: {error}</p></div>
+        return (
+            <div className="calc-shell">
+                <p className="calc-error">단가 데이터 로드 실패: {error}</p>
+                <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 8 }}>
+                    백엔드(8080)와 <code>/api/public/calc-prices</code> 응답 확인. 브라우저 새로고침(Ctrl+Shift+R)으로 캐시·서비스워커 무효화 후 다시 시도해보세요.
+                </p>
+            </div>
+        )
     }
     if (!prices) {
         return <div className="calc-shell"><p>로드 중...</p></div>

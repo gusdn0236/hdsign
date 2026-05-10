@@ -37,6 +37,7 @@ export default function PricesAdmin() {
     const { token } = useAuth()
     const [baseline, setBaseline] = useState(null)
     const [current, setCurrent] = useState(null)
+    const [loadError, setLoadError] = useState(null)
     const [excel, setExcel] = useState(null)
     const [diff, setDiff] = useState(null)
     const [decisions, setDecisions] = useState({})
@@ -46,19 +47,24 @@ export default function PricesAdmin() {
     const [feedback, setFeedback] = useState(null)
     const fileInputRef = useRef(null)
 
-    // baseline + 현재 prices 로드
+    // baseline + 현재 prices 로드. token 이 아직 안 들어온 시점에 호출하면 무조건 401 이라 token 도착 후에만 시도.
     useEffect(() => {
+        if (!token) return
+        setLoadError(null)
+        const auth = { Authorization: `Bearer ${token}` }
+        const fetchJson = (path) => fetch(`${BASE_URL}${path}`, { headers: auth })
+            .then(async r => {
+                if (r.ok) return r.json()
+                const body = await r.text().catch(() => '')
+                throw new Error(`${path} → HTTP ${r.status}${body ? ` (${body.slice(0, 120)})` : ''}`)
+            })
         Promise.all([
-            fetch(`${BASE_URL}/api/admin/calc-prices/baseline`, {
-                headers: { Authorization: `Bearer ${token}` },
-            }).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
-            fetch(`${BASE_URL}/api/admin/calc-prices/current`, {
-                headers: { Authorization: `Bearer ${token}` },
-            }).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+            fetchJson('/api/admin/calc-prices/baseline'),
+            fetchJson('/api/admin/calc-prices/current'),
         ]).then(([bl, cur]) => {
             setBaseline(bl)
             setCurrent(cur)
-        }).catch(err => setFeedback({ type: 'error', msg: `로드 실패: ${err}` }))
+        }).catch(err => setLoadError(String(err.message || err)))
     }, [token])
 
     async function handleFile(file) {
@@ -140,6 +146,21 @@ export default function PricesAdmin() {
         }
     }
 
+    if (loadError) {
+        return (
+            <div className="prices-admin">
+                <header className="prices-header"><h2>단가 데이터 관리</h2></header>
+                <div className="feedback feedback-error" style={{ marginTop: 12 }}>
+                    데이터 로드 실패: {loadError}
+                    <br />
+                    <small style={{ opacity: 0.8 }}>
+                        백엔드(8080) 가 떠있는지, 관리자로 로그인되어 있는지, 데이터 디렉터리(<code>calc.data-dir</code>)에
+                        prices_baseline.json 이 있는지 확인하세요.
+                    </small>
+                </div>
+            </div>
+        )
+    }
     if (!baseline || !current) {
         return <div className="prices-admin"><p>로드 중...</p></div>
     }
