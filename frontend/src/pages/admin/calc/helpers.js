@@ -10,6 +10,20 @@ export function formatPrice(n) {
     return Number(n).toLocaleString('ko-KR') + '원'
 }
 
+/**
+ * 결과박스 복사 버튼용 한 줄 포맷.
+ * 예) buildCopyText(1800, 20, '개', 36000) → "1,800원 x 20개 = 36,000원"
+ * 인자 중 하나라도 누락/비정상이면 null 반환 → 버튼 비활성화.
+ */
+export function buildCopyText(unitPrice, qty, unit, total) {
+    if (unitPrice === null || unitPrice === undefined || Number.isNaN(unitPrice)) return null
+    if (total === null || total === undefined || Number.isNaN(total)) return null
+    if (!Number.isFinite(qty) || qty <= 0) return null
+    const u = Number(unitPrice).toLocaleString('ko-KR')
+    const t = Number(total).toLocaleString('ko-KR')
+    return `${u}원 x ${qty}${unit || '개'} = ${t}원`
+}
+
 /** number input 에 포커스되면 기존 값 전체선택 — 클릭 후 바로 새 숫자 타이핑하면 덮어씌워짐. */
 export const selectAllOnFocus = (e) => e.target.select()
 

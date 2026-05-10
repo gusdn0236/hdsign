@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
-import { formatPrice, goldSilverBandForHeight, selectAllOnFocus } from './helpers'
+import { formatPrice, goldSilverBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
+import CopyButton from './CopyButton'
 
 function isMissingCombo(missingTextTypes, mat, thickness, tt) {
     return (missingTextTypes || []).some(
@@ -97,6 +98,7 @@ export default function GoldSilverCalc({ prices }) {
             </div>
 
             <div className="calc-result">
+                <CopyButton text={buildCopyText(unitPrice, qtyN, '개', total)} />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { formatPrice, gomuBandForHeight, selectAllOnFocus } from './helpers'
+import { formatPrice, gomuBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
+import CopyButton from './CopyButton'
 
 export default function GomuCalc({ prices }) {
     const calc = prices.calculators.gomu
@@ -46,6 +47,7 @@ export default function GomuCalc({ prices }) {
             </div>
 
             <div className="calc-result">
+                <CopyButton text={buildCopyText(unitPrice, qtyN, '개', total)} />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null

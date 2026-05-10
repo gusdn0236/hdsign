@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { formatPrice, selectAllOnFocus } from './helpers'
+import { formatPrice, selectAllOnFocus, buildCopyText } from './helpers'
+import CopyButton from './CopyButton'
 
 export default function FrameCalc({ prices }) {
     const frame = prices.calculators.frame
@@ -40,6 +41,7 @@ function AlminumBar({ perMeter }) {
                 </label>
             </div>
             <div className="calc-result">
+                <CopyButton text={buildCopyText(perMeter, valid ? lengthN : null, 'm', total)} />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {valid
@@ -78,6 +80,7 @@ function GalbaBar({ byHeight }) {
                 </label>
             </div>
             <div className="calc-result">
+                <CopyButton text={buildCopyText(perMeter, valid ? lengthN : null, 'm', total)} />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {valid
@@ -96,6 +99,7 @@ function NormalFrame({ perSquareMeter }) {
     const hN = parseInt(h, 10)
     const valid = Number.isFinite(wN) && wN > 0 && Number.isFinite(hN) && hN > 0
     const total = valid ? Math.round((wN * hN / 1_000_000) * perSquareMeter) : null
+    const areaSqm = valid ? Number((wN * hN / 1_000_000).toFixed(3)) : null
     return (
         <>
             <div className="calc-form">
@@ -117,6 +121,7 @@ function NormalFrame({ perSquareMeter }) {
                 </label>
             </div>
             <div className="calc-result">
+                <CopyButton text={buildCopyText(perSquareMeter, areaSqm, '㎡', total)} />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {valid

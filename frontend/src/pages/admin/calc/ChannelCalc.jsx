@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
-import { formatPrice, channelSizes, selectAllOnFocus } from './helpers'
+import { formatPrice, channelSizes, selectAllOnFocus, buildCopyText } from './helpers'
+import CopyButton from './CopyButton'
 
 export default function ChannelCalc({ prices }) {
     const calc = prices.calculators.channel
@@ -67,6 +68,7 @@ export default function ChannelCalc({ prices }) {
 
             <ResultBox
                 primary={total}
+                copyText={buildCopyText(unitPrice, qtyN, '개', total)}
                 breakdown={
                     unitPrice !== null && total !== null
                         ? `${type.label} ${size}mm (${formatPrice(unitPrice)}) × ${qtyN}개`
@@ -79,9 +81,10 @@ export default function ChannelCalc({ prices }) {
     )
 }
 
-function ResultBox({ primary, breakdown }) {
+function ResultBox({ primary, breakdown, copyText }) {
     return (
         <div className="calc-result">
+            <CopyButton text={copyText} />
             <div className="calc-result-num">{formatPrice(primary)}</div>
             <div className="calc-result-sub">{breakdown}</div>
         </div>

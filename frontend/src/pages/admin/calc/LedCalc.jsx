@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { formatPrice, channelSizes, selectAllOnFocus } from './helpers'
+import { formatPrice, channelSizes, selectAllOnFocus, buildCopyText } from './helpers'
+import CopyButton from './CopyButton'
 
 const FONT_OPTIONS = [
     { key: 'headLine', label: '헤드라인체' },
@@ -69,6 +70,7 @@ export default function LedCalc({ prices }) {
             </div>
 
             <div className="calc-result">
+                <CopyButton text={buildCopyText(unitPrice, totalLeds, `개(${componentLabel})`, total)} />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {ledPerLetter && totalLeds
