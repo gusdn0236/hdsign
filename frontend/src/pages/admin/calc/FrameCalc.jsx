@@ -23,8 +23,10 @@ export default function FrameCalc({ prices }) {
 }
 
 function AlminumBar({ perMeter }) {
-    const [length, setLength] = useState(1)
-    const total = length * perMeter
+    const [length, setLength] = useState('1')
+    const lengthN = parseFloat(length)
+    const valid = Number.isFinite(lengthN) && lengthN > 0
+    const total = valid ? lengthN * perMeter : null
     return (
         <>
             <div className="calc-form">
@@ -32,13 +34,17 @@ function AlminumBar({ perMeter }) {
                     <span>길이 (m)</span>
                     <input
                         type="number" min="0" step="0.1" value={length}
-                        onChange={e => setLength(Math.max(0, Number(e.target.value) || 0))}
+                        onChange={e => setLength(e.target.value)}
                     />
                 </label>
             </div>
             <div className="calc-result">
                 <div className="calc-result-num">{formatPrice(total)}</div>
-                <div className="calc-result-sub">알미늄 바 후렘 — {length}m × {formatPrice(perMeter)}/M</div>
+                <div className="calc-result-sub">
+                    {valid
+                        ? `알미늄 바 후렘 — ${lengthN}m × ${formatPrice(perMeter)}/M`
+                        : '길이를 입력하세요'}
+                </div>
             </div>
         </>
     )
@@ -47,9 +53,11 @@ function AlminumBar({ perMeter }) {
 function GalbaBar({ byHeight }) {
     const heights = Object.keys(byHeight).map(Number).sort((a, b) => a - b)
     const [h, setH] = useState(heights[0])
-    const [length, setLength] = useState(1)
+    const [length, setLength] = useState('1')
+    const lengthN = parseFloat(length)
+    const valid = Number.isFinite(lengthN) && lengthN > 0
     const perMeter = byHeight[String(h)]
-    const total = length * perMeter
+    const total = valid ? lengthN * perMeter : null
     return (
         <>
             <div className="calc-form">
@@ -63,22 +71,29 @@ function GalbaBar({ byHeight }) {
                     <span>길이 (m)</span>
                     <input
                         type="number" min="0" step="0.1" value={length}
-                        onChange={e => setLength(Math.max(0, Number(e.target.value) || 0))}
+                        onChange={e => setLength(e.target.value)}
                     />
                 </label>
             </div>
             <div className="calc-result">
                 <div className="calc-result-num">{formatPrice(total)}</div>
-                <div className="calc-result-sub">갈바 바 후렘 — {h}mm × {length}m × {formatPrice(perMeter)}/M</div>
+                <div className="calc-result-sub">
+                    {valid
+                        ? `갈바 바 후렘 — ${h}mm × ${lengthN}m × ${formatPrice(perMeter)}/M`
+                        : '길이를 입력하세요'}
+                </div>
             </div>
         </>
     )
 }
 
 function NormalFrame({ perSquareMeter }) {
-    const [w, setW] = useState(1000)
-    const [h, setH] = useState(1000)
-    const total = (w * h / 1_000_000) * perSquareMeter
+    const [w, setW] = useState('1000')
+    const [h, setH] = useState('1000')
+    const wN = parseInt(w, 10)
+    const hN = parseInt(h, 10)
+    const valid = Number.isFinite(wN) && wN > 0 && Number.isFinite(hN) && hN > 0
+    const total = valid ? Math.round((wN * hN / 1_000_000) * perSquareMeter) : null
     return (
         <>
             <div className="calc-form">
@@ -86,20 +101,24 @@ function NormalFrame({ perSquareMeter }) {
                     <span>가로 (mm)</span>
                     <input
                         type="number" min="0" value={w}
-                        onChange={e => setW(Math.max(0, Number(e.target.value) || 0))}
+                        onChange={e => setW(e.target.value)}
                     />
                 </label>
                 <label className="calc-field">
                     <span>세로 (mm)</span>
                     <input
                         type="number" min="0" value={h}
-                        onChange={e => setH(Math.max(0, Number(e.target.value) || 0))}
+                        onChange={e => setH(e.target.value)}
                     />
                 </label>
             </div>
             <div className="calc-result">
-                <div className="calc-result-num">{formatPrice(Math.round(total))}</div>
-                <div className="calc-result-sub">일반 후렘 (갈바) — {w}mm × {h}mm × {formatPrice(perSquareMeter)}/㎡</div>
+                <div className="calc-result-num">{formatPrice(total)}</div>
+                <div className="calc-result-sub">
+                    {valid
+                        ? `일반 후렘 (갈바) — ${wN}mm × ${hN}mm × ${formatPrice(perSquareMeter)}/㎡`
+                        : '가로/세로를 입력하세요'}
+                </div>
             </div>
         </>
     )

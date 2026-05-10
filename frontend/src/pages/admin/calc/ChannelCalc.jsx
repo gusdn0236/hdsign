@@ -7,13 +7,14 @@ export default function ChannelCalc({ prices }) {
     const [typeKey, setTypeKey] = useState(calc.types[0]?.key || '')
     const [size, setSize] = useState(sizes[0] || 200)
     const [lang, setLang] = useState('eng')
-    const [qty, setQty] = useState(1)
+    const [qty, setQty] = useState('1')
 
+    const qtyN = parseInt(qty, 10)
     const type = calc.types.find(t => t.key === typeKey)
     const unitPrice = type?.needsLang
         ? type?.pricesByLang?.[lang]?.[String(size)] ?? null
         : type?.prices?.[String(size)] ?? null
-    const total = unitPrice !== null ? unitPrice * qty : null
+    const total = unitPrice !== null && Number.isFinite(qtyN) && qtyN > 0 ? unitPrice * qtyN : null
 
     return (
         <div className="calc-card">
@@ -58,7 +59,7 @@ export default function ChannelCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
-                        onChange={e => setQty(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={e => setQty(e.target.value)}
                     />
                 </label>
             </div>
@@ -66,9 +67,11 @@ export default function ChannelCalc({ prices }) {
             <ResultBox
                 primary={total}
                 breakdown={
-                    unitPrice !== null
-                        ? `${type.label} ${size}mm (${formatPrice(unitPrice)}) × ${qty}개`
-                        : '해당 사이즈에 가격이 등록되어 있지 않습니다'
+                    unitPrice !== null && total !== null
+                        ? `${type.label} ${size}mm (${formatPrice(unitPrice)}) × ${qtyN}개`
+                        : (unitPrice !== null
+                            ? '수량을 입력하세요'
+                            : '해당 사이즈에 가격이 등록되어 있지 않습니다')
                 }
             />
         </div>

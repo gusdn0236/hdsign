@@ -14,12 +14,14 @@ export default function LedCalc({ prices }) {
     const ledSizes = Object.keys(led.ledCount).map(Number).sort((a, b) => a - b)
     const [size, setSize] = useState(ledSizes[0] || 200)
     const [font, setFont] = useState('headLine')
-    const [letters, setLetters] = useState(1)
+    const [letters, setLetters] = useState('1')
 
+    const lettersN = parseInt(letters, 10)
     const counts = led.ledCount[String(size)]
     const ledPerLetter = counts ? counts[font] : null
     const totalLeds = ledPerLetter !== null && ledPerLetter !== undefined
-        ? ledPerLetter * letters : null
+        && Number.isFinite(lettersN) && lettersN > 0
+        ? ledPerLetter * lettersN : null
 
     // 200/250mm + 헤드라인·고딕은 미들2구(740), 그 외 KPL(750)
     const useMid2 = led.rules.useMid2When.sizes.includes(size)
@@ -60,7 +62,7 @@ export default function LedCalc({ prices }) {
                     <span>글자 수</span>
                     <input
                         type="number" min="1" value={letters}
-                        onChange={e => setLetters(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={e => setLetters(e.target.value)}
                     />
                 </label>
             </div>
@@ -68,9 +70,9 @@ export default function LedCalc({ prices }) {
             <div className="calc-result">
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
-                    {ledPerLetter
-                        ? `글자당 ${ledPerLetter}개 × ${letters}글자 = ${componentLabel} ${totalLeds}개 조립 (개당 ${unitPrice}원)`
-                        : '해당 사이즈는 LED 데이터가 없습니다'}
+                    {ledPerLetter && totalLeds
+                        ? `글자당 ${ledPerLetter}개 × ${lettersN}글자 = ${componentLabel} ${totalLeds}개 조립 (개당 ${unitPrice}원)`
+                        : (ledPerLetter ? '글자 수를 입력하세요' : '해당 사이즈는 LED 데이터가 없습니다')}
                 </div>
             </div>
         </div>

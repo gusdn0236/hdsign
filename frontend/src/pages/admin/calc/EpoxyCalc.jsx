@@ -8,11 +8,12 @@ export default function EpoxyCalc({ prices }) {
     const [ttKey, setTtKey] = useState(textType[0].key)
     const [size, setSize] = useState(sizes[0])
     const [strokeVal, setStrokeVal] = useState(strokes[0].value)
-    const [qty, setQty] = useState(1)
+    const [qty, setQty] = useState('1')
 
+    const qtyN = parseInt(qty, 10)
     const sizeMap = calc.prices?.[matKey]?.[ttKey]?.[String(size)]
     const unitPrice = sizeMap?.[String(strokeVal)] ?? null
-    const total = unitPrice !== null ? unitPrice * qty : null
+    const total = unitPrice !== null && Number.isFinite(qtyN) && qtyN > 0 ? unitPrice * qtyN : null
 
     const matLabel = material.find(m => m.key === matKey)?.label
     const ttLabel  = textType.find(t => t.key === ttKey)?.label
@@ -55,7 +56,7 @@ export default function EpoxyCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
-                        onChange={e => setQty(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={e => setQty(e.target.value)}
                     />
                 </label>
             </div>
@@ -63,9 +64,11 @@ export default function EpoxyCalc({ prices }) {
             <div className="calc-result">
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
-                    {unitPrice !== null
-                        ? `${matLabel} 에폭시 ${size}mm ${ttLabel} ${strokeLabel} (${formatPrice(unitPrice)}) × ${qty}개`
-                        : '해당 조합에 등록된 단가가 없습니다'}
+                    {unitPrice !== null && total !== null
+                        ? `${matLabel} 에폭시 ${size}mm ${ttLabel} ${strokeLabel} (${formatPrice(unitPrice)}) × ${qtyN}개`
+                        : (unitPrice !== null
+                            ? '수량을 입력하세요'
+                            : '해당 조합에 등록된 단가가 없습니다')}
                 </div>
             </div>
         </div>

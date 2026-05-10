@@ -6,12 +6,14 @@ export default function AcrylCalc({ prices }) {
     const { thickness, textType } = calc.axes
     const [tk, setTk] = useState(thickness[0])
     const [tt, setTt] = useState(textType[0])
-    const [height, setHeight] = useState(100)
-    const [qty, setQty] = useState(1)
+    const [height, setHeight] = useState('100')
+    const [qty, setQty] = useState('1')
 
-    const band = height > 0 ? acrylBandForHeight(height) : null
+    const heightMm = parseInt(height, 10)
+    const qtyN = parseInt(qty, 10)
+    const band = Number.isFinite(heightMm) && heightMm > 0 ? acrylBandForHeight(heightMm) : null
     const unitPrice = band ? calc.prices?.[tk]?.[tt]?.[band] ?? null : null
-    const total = unitPrice !== null ? unitPrice * qty : null
+    const total = unitPrice !== null && Number.isFinite(qtyN) && qtyN > 0 ? unitPrice * qtyN : null
 
     return (
         <div className="calc-card">
@@ -36,7 +38,7 @@ export default function AcrylCalc({ prices }) {
                     <span>높이 (mm)</span>
                     <input
                         type="number" min="1" max="900" value={height}
-                        onChange={e => setHeight(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={e => setHeight(e.target.value)}
                     />
                 </label>
 
@@ -44,7 +46,7 @@ export default function AcrylCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
-                        onChange={e => setQty(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={e => setQty(e.target.value)}
                     />
                 </label>
             </div>
@@ -52,11 +54,13 @@ export default function AcrylCalc({ prices }) {
             <div className="calc-result">
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
-                    {unitPrice !== null
-                        ? `아크릴 ${tt} ${tk} ${height}mm 밴드(${band}) — ${formatPrice(unitPrice)} × ${qty}개`
-                        : (height > 900
+                    {unitPrice !== null && total !== null
+                        ? `아크릴 ${tt} ${tk} ${heightMm}mm 밴드(${band}) — ${formatPrice(unitPrice)} × ${qtyN}개`
+                        : (heightMm > 900
                             ? '900mm 까지만 등록되어 있습니다'
-                            : '해당 조합에 등록된 단가가 없습니다')}
+                            : (Number.isFinite(heightMm) && heightMm > 0
+                                ? '해당 조합에 등록된 단가가 없습니다'
+                                : '높이/수량을 입력하세요'))}
                 </div>
             </div>
         </div>

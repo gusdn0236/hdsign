@@ -13,8 +13,8 @@ export default function GoldSilverCalc({ prices }) {
     const [matKey, setMatKey] = useState(material[0].key)
     const [tk, setTk] = useState(thicknessByMaterial[material[0].key][0])
     const [tt, setTt] = useState(textType[0])
-    const [height, setHeight] = useState(50)
-    const [qty, setQty] = useState(1)
+    const [height, setHeight] = useState('50')
+    const [qty, setQty] = useState('1')
 
     const thicknesses = thicknessByMaterial[matKey]
 
@@ -37,11 +37,13 @@ export default function GoldSilverCalc({ prices }) {
         [matKey, tk, tt, missingTextTypes],
     )
 
-    const band = height > 0 ? goldSilverBandForHeight(height) : null
+    const heightMm = parseInt(height, 10)
+    const qtyN = parseInt(qty, 10)
+    const band = Number.isFinite(heightMm) && heightMm > 0 ? goldSilverBandForHeight(heightMm) : null
     const unitPrice = !isMissing && band
         ? calc.prices?.[matKey]?.[tk]?.[tt]?.[band] ?? null
         : null
-    const total = unitPrice !== null ? unitPrice * qty : null
+    const total = unitPrice !== null && Number.isFinite(qtyN) && qtyN > 0 ? unitPrice * qtyN : null
     const matLabel = material.find(m => m.key === matKey)?.label
 
     return (
@@ -79,7 +81,7 @@ export default function GoldSilverCalc({ prices }) {
                     <span>높이 (mm)</span>
                     <input
                         type="number" min="1" value={height}
-                        onChange={e => setHeight(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={e => setHeight(e.target.value)}
                     />
                 </label>
 
@@ -87,7 +89,7 @@ export default function GoldSilverCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
-                        onChange={e => setQty(Math.max(1, Number(e.target.value) || 1))}
+                        onChange={e => setQty(e.target.value)}
                     />
                 </label>
             </div>
@@ -95,9 +97,11 @@ export default function GoldSilverCalc({ prices }) {
             <div className="calc-result">
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
-                    {unitPrice !== null
-                        ? `${matLabel} ${validTk} ${tt} ${height}mm 밴드(${band}) — ${formatPrice(unitPrice)} × ${qty}개`
-                        : '해당 조합에 등록된 단가가 없습니다'}
+                    {unitPrice !== null && total !== null
+                        ? `${matLabel} ${tk} ${tt} ${heightMm}mm 밴드(${band}) — ${formatPrice(unitPrice)} × ${qtyN}개`
+                        : (Number.isFinite(heightMm) && heightMm > 0
+                            ? '해당 조합에 등록된 단가가 없습니다'
+                            : '높이/수량을 입력하세요')}
                 </div>
             </div>
         </div>
