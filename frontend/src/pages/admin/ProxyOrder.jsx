@@ -50,7 +50,7 @@ export default function ProxyOrder() {
                 if (!res.ok) throw new Error('거래처 목록을 불러오지 못했습니다.');
                 const data = await res.json();
                 if (!alive) return;
-                const selectable = (Array.isArray(data) ? data : []).filter((c) => c.status === 'ACTIVE' || c.status === 'PENDING_SIGNUP');
+                const selectable = (Array.isArray(data) ? data : []).filter((c) => c.status === 'ACTIVE');
                 setClients(selectable);
             } catch (err) {
                 if (alive) setFeedback({ type: 'error', msg: err.message });
