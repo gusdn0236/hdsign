@@ -1,5 +1,13 @@
 /* PricesAdmin — 단가표 업로드/검토/저장 */
 
+/* 계산기 영역과 관리 영역 사이 구분선 */
+.page-divider {
+    max-width: 1080px;
+    margin: 12px auto;
+    border: 0;
+    border-top: 1px dashed #cbd5e1;
+}
+
 .prices-admin {
     max-width: 1400px;
     margin: 0 auto;
