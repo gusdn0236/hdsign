@@ -1,25 +1,17 @@
-import { useEffect, useState } from 'react'
-
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
-
 /**
- * 단가 데이터 로드 훅. 공개 엔드포인트(/api/public/calc-prices)를 사용 — 인증 없이 호출.
- * prices.json 이 아직 없으면 백엔드가 baseline 으로 폴백하므로 첫 배포 직후에도 동작.
+ * 단가 데이터 — 빌드 번들에 포함된 prices.json 을 그대로 사용.
+ *
+ * 이전(v1)에는 백엔드 fetch 였는데 — 원본 ChannelCalc 처럼 정적 데이터로 동작하도록 회귀.
+ * 백엔드가 떠있지 않아도 계산기 페이지는 항상 동작함.
+ *
+ * 가격 갱신 흐름:
+ *   1) admin 이 /admin/prices 에서 엑셀 업로드 + 셀별 review
+ *   2) 백엔드가 prices.json 을 디스크에 저장 (자동 .bak 백업)
+ *   3) admin 이 새 prices.json 을 git 에 커밋 + 재배포
+ *   4) 새 번들에서 이 import 가 갱신된 데이터를 잡음
  */
+import prices from '../../../data/calc/prices.json'
+
 export function usePrices() {
-    const [prices, setPrices] = useState(null)
-    const [error, setError] = useState(null)
-
-    useEffect(() => {
-        fetch(`${BASE_URL}/api/public/calc-prices`)
-            .then(async r => {
-                if (r.ok) return r.json()
-                const body = await r.text().catch(() => '')
-                throw new Error(`HTTP ${r.status}${body ? ` — ${body.slice(0, 200)}` : ''}`)
-            })
-            .then(setPrices)
-            .catch(e => setError(String(e.message || e)))
-    }, [])
-
-    return { prices, error }
+    return { prices, error: null }
 }

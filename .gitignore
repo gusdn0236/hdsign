@@ -43,8 +43,8 @@ field-agent/*.spec
 field-agent/config.json
 
 # 단가 계산기 — 엑셀 파싱·diff 산출물은 사용자가 받은 xlsx 마다 달라지는 일회성 결과물.
-# baseline.json (코드 정답지) 만 git 에 둠. prices.json (라이브) 도 운영 환경별 데이터라 제외.
+# prices_baseline.json (코드 정답지) + prices.json (라이브, 빌드 번들에 포함) 둘 다 git 추적.
+# 엑셀 → diff 결과는 추적 안 함.
 frontend/src/data/calc/prices_excel.json
 frontend/src/data/calc/diff_report.json
-frontend/src/data/calc/prices.json
 frontend/src/data/calc/*.json.bak
