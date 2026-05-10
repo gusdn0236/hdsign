@@ -112,6 +112,8 @@ const OrderAdmin       = lazyWithRetry(() => import('./pages/admin/OrderAdmin.js
 const WorkStatus       = lazyWithRetry(() => import('./pages/admin/WorkStatus.jsx'))
 const ProxyOrder       = lazyWithRetry(() => import('./pages/admin/ProxyOrder.jsx'))
 const ClientAdmin      = lazyWithRetry(() => import('./pages/admin/ClientAdmin.jsx'))
+const PricesAdmin      = lazyWithRetry(() => import('./pages/admin/PricesAdmin.jsx'))
+const CalcLayout       = lazyWithRetry(() => import('./pages/admin/calc/CalcLayout.jsx'))
 const ClientLogin      = lazyWithRetry(() => import('./pages/client/ClientLogin.jsx'))
 const ClientSignup     = lazyWithRetry(() => import('./pages/client/ClientSignup.jsx'))
 const ClientLayout     = lazyWithRetry(() => import('./pages/client/ClientLayout.jsx'))
@@ -185,6 +187,8 @@ function App() {
                             <Route path="quotes" element={<OrderAdmin requestType="QUOTE" />} />
                             <Route path="proxy-order" element={<ProxyOrder />} />
                             <Route path="clients" element={<ClientAdmin />} />
+                            <Route path="prices" element={<PricesAdmin />} />
+                            <Route path="calc/*" element={<CalcLayout />} />
                             <Route path="notices" element={<NoticeAdmin />} />
                         </Route>
 

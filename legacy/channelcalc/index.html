@@ -1,0 +1,257 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      property="og:image"
+      content="http://hdsign.net/wp-content/uploads/2019/12/1-1.png"
+    />
+    <meta charset="UTF-8" />
+    <title>잔넬 단가 계산기</title>
+    <link rel="stylesheet" href="HDCalc.css" />
+  </head>
+  <body>
+    <div id="mainCalc">
+      <h1>잔넬 단가 계산기</h1>
+
+      <label for="type">종류</label>
+      <select id="type" onchange="toggleLangTabs()">
+        <option value="1">갈바후광영문</option>
+        <option value="2">갈바후광한글</option>
+        <option value="3">갈바오사이</option>
+        <option value="4">갈바캡잔넬</option>
+        <option value="5">일체형잔넬</option>
+        <option value="6">타카잔넬</option>
+        <option value="7">스텐알미늄캡</option>
+        <option value="8">스텐오사이</option>
+        <option value="9">스텐후광</option>
+        <option value="10">골드스텐</option>
+      </select>
+
+      <label for="size">규격</label>
+      <select id="size">
+        <option value="200">200</option>
+        <option value="250">250</option>
+        <option value="300">300</option>
+        <option value="350">350</option>
+        <option value="400">400</option>
+        <option value="450">450</option>
+        <option value="500">500</option>
+        <option value="550">550</option>
+        <option value="600">600</option>
+        <option value="650">650</option>
+        <option value="700">700</option>
+        <option value="750">750</option>
+        <option value="800">800</option>
+        <option value="850">850</option>
+        <option value="900">900</option>
+        <option value="950">950</option>
+        <option value="1000">1000</option>
+        <option value="1100">1100</option>
+        <option value="1200">1200</option>
+        <option value="1300">1300</option>
+        <option value="1400">1400</option>
+        <option value="1500">1500</option>
+        <option value="1600">1600</option>
+        <option value="1700">1700</option>
+        <option value="1800">1800</option>
+        <option value="1900">1900</option>
+        <option value="2000">2000</option>
+      </select>
+
+      <!-- 한 영 구분버튼 -->
+      <div
+        id="langOptionDiv"
+        class="tab-container"
+        style="display: none; margin-bottom: 15px"
+      >
+        <button
+          type="button"
+          id="btnEng"
+          class="tab-btn active"
+          onclick="setLang('eng')"
+        >
+          영문/숫자
+        </button>
+        <button
+          type="button"
+          id="btnKor"
+          class="tab-btn"
+          onclick="setLang('kor')"
+        >
+          한글
+        </button>
+        <input type="hidden" id="selectedLang" value="eng" />
+      </div>
+
+      <!-- 수량 버튼 -->
+      <label for="quantity">수량</label>
+      <input type="number" id="quantity" value="1" min="1" />
+
+      <button class="calcButton" onclick="calculate()">계산하기</button>
+      <div id="result" style="font-weight: bold; margin-top: 30px"></div>
+
+      <div id="result"></div>
+    </div>
+    <!-- 여기서부터 LED계산기 내용 -->
+    <div id="subCalc">
+      <div id="ledCalculate">
+        <h2>LED 추가</h2>
+        <button id="headLineButton" class="ledButton">헤드라인체</button>
+        <button id="godikButton" class="ledButton">고딕체</button>
+        <button id="squareButton" class="ledButton">정사각형</button>
+        <button id="circleButton" class="ledButton">원형</button>
+        <div id="ledResult" style="font-weight: bold; margin-top: 30px"></div>
+      </div>
+
+      <!-- 여기서부터는 후렘 계산기 -->
+      <div id="frameCalculate">
+        <h2>후렘 추가</h2>
+        <button id="barFrame" class="frameButton">바 후렘 추가</button>
+        <div id="barContainer" class="canHide">
+          <button id="alminumBar" class="barButton">알미늄 후렘</button>
+          <div id="alminumBarCalc">
+            <!-- 알미늄 후렘 계산기 내용 -->
+            <div id="alminumBar-calc" class="calc-box">
+              <h3 class="calcName">알미늄 바 후렘 계산기(M/45,000원)</h3>
+              <label for="alminumBar-length">길이 (m):</label>
+              <input type="number" id="alminumBar-length" />
+              <button id="alminumBar-calc-btn" class="calcButton">
+                계산하기
+              </button>
+              <br />
+              <div id="alminumBar-result" class="result"></div>
+            </div>
+          </div>
+          <button id="galbaBar" class="barButton">갈바 후렘</button>
+          <div id="galbaBarCalc">
+            <!-- 갈바 후렘 계산기 내용 -->
+            <div id="galbaBar-calc" class="calc-box">
+              <h3 class="calcName">갈바 바 후렘 계산기</h3>
+              <h4>M/(45,000원/50,000원/60,000원)</h4>
+              <label for="galbaBar-height">높이:</label>
+              <select id="galbaBar-height">
+                <option value="200">200mm</option>
+                <option value="300">300mm</option>
+                <option value="400">400mm</option>
+              </select>
+              <label for="galbaBar-length">길이 (m):</label>
+              <input type="number" id="galbaBar-length" />
+              <button id="galbaBar-calc-btn" class="calcButton">
+                계산하기
+              </button>
+              <br />
+              <div id="galbaBar-result" class="result"></div>
+            </div>
+          </div>
+        </div>
+
+        <button id="normalFrame" class="frameButton">
+          일반 후렘 추가(갈바)
+        </button>
+        <div id="normalContainer" class="canHide">
+          <div id="normalCalc">
+            <!-- 일반 후렘 계산기 내용 -->
+            <div id="normal-calc" class="calc-box">
+              <h3 class="calcName">일반 후렘 계산기(1M/120,000원)</h3>
+              <label for="normal-width">가로 (mm):</label>
+              <input type="number" id="normal-width" />
+              <label for="normal-height">세로 (mm):</label>
+              <input type="number" id="normal-height" />
+              <button id="normal-calc-btn" class="calcButton">계산하기</button>
+              <div id="normal-result" class="result"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 여기서부터 에폭시 잔넬 계산기 -->
+    <div id="epoxyCalc">
+      <div id="epoxyCalculate">
+        <h1>에폭시 잔넬 계산기</h1>
+        <div id="epoxySelectDiv">
+          <label for="epoxyMaterial">재질</label>
+          <select id="epoxyMaterial"></select>
+
+          <label for="epoxySize">높이</label>
+          <select id="epoxySize"></select>
+
+          <label for="epoxyTextType">종류</label>
+          <select id="epoxyTextType"></select>
+
+          <label for="epoxyStroke">획 두께(줄)</label>
+          <select id="epoxyStroke"></select>
+
+          <label for="epoxyQuantity">수량</label>
+          <input type="number" id="epoxyQuantity" value="1" min="1" />
+          <button class="calcButton" onclick="epoxyCalc()">계산하기</button>
+        </div>
+        <div id="epoxyResult" class="result"></div>
+      </div>
+    </div>
+    <!-- 여기서부터 아크릴계산기 -->
+    <div id="acrylCalc">
+      <div id="acrylCalculate">
+        <h1>아크릴/포맥스 계산기</h1>
+        <div id="acrylSelectDiv">
+          <label for="acrylKoEng">종류</label>
+          <select id="acrylKoEng">
+            <option value="영문">영문</option>
+            <option value="한글">한글</option>
+          </select>
+          <label for="acrylT">두께(T)</label>
+          <select id="acrylT">
+            <option value="2T">2T</option>
+            <option value="3T">3T</option>
+            <option value="5T">5T</option>
+            <option value="8T">8T</option>
+            <option value="10T">10T</option>
+            <option value="15T">15T</option>
+            <option value="20T">20T</option>
+          </select>
+
+          <label for="acrylH">높이(H)</label>
+          <input id="acrylH" type="number" />
+
+          <label for="acrylQ">수량</label>
+          <input id="acrylQ" type="number" value="1" />
+
+          <button class="calcButton" onclick="acrylCalc()">계산하기</button>
+        </div>
+        <div id="acrylResult" class="result"></div>
+      </div>
+    </div>
+
+    <!-- 여기서부터 고무스카시계산기 -->
+    <div id="gomuCalc">
+      <div id="gomuCalculate">
+        <h1>고무스카시 계산기</h1>
+        <div id="gomuSelectDiv">
+          <label for="gomuT">두께(T),종류</label>
+          <select id="gomuT">
+            <option value="10T">10T</option>
+            <option value="10T-금은색">10T-금은색</option>
+            <option value="20,30T">20,30T</option>
+            <option value="20,30T-금은색">20,30T-금은색</option>
+            <option value="50T">50T</option>
+            <option value="50T-금은색">50T-금은색</option>
+          </select>
+
+          <label for="gomuH">높이(H)</label>
+          <input id="gomuH" type="number" />
+
+          <label for="gomuQ">수량</label>
+          <input id="gomuQ" type="number" value="1" />
+
+          <button class="calcButton" onclick="gomuCalc()">계산하기</button>
+        </div>
+        <div id="gomuResult" class="result"></div>
+      </div>
+    </div>
+
+    <div id="bottomBlank"></div>
+
+    <!-- js 연결 -->
+    <script src="HDCalc.js"></script>
+  </body>
+</html>

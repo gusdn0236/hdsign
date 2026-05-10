@@ -1,0 +1,192 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: '배달의민족 주아', sans-serif;
+  font-size: 16px;
+  background-color: #e0e7e9;
+  overflow: auto;
+  height: 100vh;
+}
+
+label {
+  display: block;
+  margin-top: 1rem;
+}
+
+select,
+input {
+  padding: 0.5rem;
+  font-size: 1rem;
+  border-radius: 5px;
+  border: 1px solid #354649;
+  margin: 0.5rem 0 1rem 0;
+}
+
+.calcName {
+  display: inline-block;
+  margin-top: 15px;
+}
+
+.barButton {
+  padding: 0.2rem 0.2rem;
+  font-size: 1rem;
+  background-color: #a3c6c4;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 0.2rem;
+  flex-direction: none;
+}
+
+#frameCalculate,
+#ledCalculate,
+#epoxyCalculate,
+#acrylCalculate,
+#gomuCalculate {
+  border: 0.5px solid #a3c6c4;
+  padding: 25px;
+  margin-bottom: 50px;
+  border-radius: 15px;
+}
+
+#epoxySelectDiv {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 20px;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+#acrylSelectDiv {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 20px;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+#gomuSelectDiv {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 20px;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+}
+
+.calcButton {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  background-color: #354649;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 0.5rem;
+}
+
+.ledButton,
+.frameButton {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  background-color: #6c7a89;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 0.5rem;
+}
+
+.result,
+#result {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+/* 잔넬계산기 컨테이너 */
+#mainCalc {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin-top: 80px;
+}
+
+/* 서브(LED,후렘)계산기 컨테이너 */
+#subCalc {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+}
+/* 에폭시,아크릴계산기 컨테이너 */
+#epoxyCalc,
+#acrylCalc,
+#gomuCalc {
+  display: flex;
+  justify-content: center;
+}
+
+/* 에폭시 결과출력*/
+.epoxyResult {
+  display: flex;
+  justify-content: center;
+}
+
+/* 아래 여유공간 */
+#bottomBlank {
+  margin-bottom: 200px;
+}
+
+@media only screen and (min-width: 768px) {
+  input,
+  select,
+  button {
+    max-width: 300px;
+  }
+}
+
+/* 버튼 컨테이너 */
+.tab-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  max-width: 260px;
+  margin: 0 auto 15px auto;
+  gap: 6px;
+}
+
+/* 기본 버튼 스타일 (네이비 톤) */
+.tab-btn {
+  flex: 1;
+  padding: 6px 10px;
+  font-family: '배달의민족 주아', sans-serif;
+  font-size: 0.95rem;
+  border: 1px solid #2c3e50; /* 진한 네이비 테두리 */
+  background-color: white;
+  color: #2c3e50; /* 진한 네이비 글자 */
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+/* 마우스 올렸을 때 */
+.tab-btn:hover {
+  background-color: #ebf2f6; /* 아주 연한 블루빛 배경 */
+}
+
+/* 버튼이 선택되었을 때 (스카이 블루) */
+.tab-btn.active {
+  background-color: #3498db; /* 선택 시 선명한 블루 */
+  color: white; /* 글자는 흰색으로 */
+  border-color: #2980b9; /* 테두리는 조금 더 진한 블루 */
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* 선택된 상태에서 마우스 올렸을 때 */
+.tab-btn.active:hover {
+  background-color: #2980b9; /* 조금 더 진한 블루로 변경 */
+}
