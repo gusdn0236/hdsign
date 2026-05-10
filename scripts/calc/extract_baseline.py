@@ -21,7 +21,12 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "legacy" / "channelcalc" / "HDCalc.js"
+# 두 곳에 같이 씀:
+#   - frontend/src/data/calc/prices_baseline.json: Vite 가 빌드 시 import 해서 번들에 포함
+#   - backend/src/main/resources/calc/prices_baseline.json: Spring Boot JAR 의 classpath
+#     (Railway 등 컨테이너 환경에서도 항상 접근 가능)
 OUT = ROOT / "frontend" / "src" / "data" / "calc" / "prices_baseline.json"
+OUT_BACKEND = ROOT / "backend" / "src" / "main" / "resources" / "calc" / "prices_baseline.json"
 
 text = SRC.read_text(encoding="utf-8")
 
@@ -465,11 +470,10 @@ def main():
         },
     }
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(
-        json.dumps(baseline, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    payload = json.dumps(baseline, ensure_ascii=False, indent=2)
+    for out_path in (OUT, OUT_BACKEND):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(payload, encoding="utf-8")
 
     # Print summary
     c = baseline["calculators"]
