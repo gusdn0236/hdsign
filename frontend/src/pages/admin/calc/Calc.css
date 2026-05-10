@@ -1,11 +1,14 @@
 /* 계산기 공통 — admin 영역에서 사용. */
 
 .calc-shell {
-    max-width: 880px;
+    max-width: 980px;
     margin: 0 auto;
     padding: 20px 24px 80px;
     color: #1f2937;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
 }
 
 .calc-error {
@@ -13,20 +16,14 @@
     border: 1px solid #fca5a5; border-radius: 6px;
 }
 
-/* 7개 계산기 탭 */
-.calc-tabs {
-    display: flex; gap: 4px; flex-wrap: wrap;
-    border-bottom: 1px solid #e5e7eb; margin-bottom: 22px;
+/* LED + 후렘 가로 2열 — 좁은 화면에선 자동으로 1열 */
+.calc-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
 }
-.calc-tab {
-    padding: 9px 16px; font-size: 13px; font-weight: 600;
-    color: #6b7280; text-decoration: none; border-bottom: 2px solid transparent;
-    transition: all 0.15s;
-}
-.calc-tab:hover { color: #2c3e50; background: #f8fafc; }
-.calc-tab.active {
-    color: #2c3e50; border-bottom-color: #3498db;
-    background: #f0f7fb;
+@media (max-width: 720px) {
+    .calc-row { grid-template-columns: 1fr; }
 }
 
 /* 카드 */
