@@ -96,7 +96,9 @@ function classifyChange(b, x) {
     if (ratio < 0.2) return { suspicion: 'digit_missing', message: `엑셀이 baseline의 ${(ratio * 100).toFixed(0)}%. 자릿수 누락 의심.` }
     if (ratio > 5)   return { suspicion: 'extra_digit',   message: `엑셀이 baseline의 ${ratio.toFixed(1)}배. 과도한 증가.` }
     const deltaPct = b ? ((x - b) / b * 100) : 0
-    return { suspicion: 'clean_change', message: `${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(1)}% 변동` }
+    // 가격 하락은 일반적으로 드물기에 별도 플래그 — 사장님이 의도한 인하인지 확인 필요.
+    if (x < b) return { suspicion: 'price_decreased', message: `${deltaPct.toFixed(1)}% 하락 (${b.toLocaleString()} → ${x.toLocaleString()})` }
+    return { suspicion: 'clean_change', message: `+${deltaPct.toFixed(1)}% 인상` }
 }
 
 /* ---------- monotonicity / spike detection ---------- */
@@ -162,6 +164,7 @@ const SUSPICION_SEVERITY = {
     digit_missing: 'high',
     extra_digit: 'high',
     monotonicity_break: 'medium',
+    price_decreased: 'medium',
     clean_change: 'low',
 }
 
@@ -176,7 +179,7 @@ function diffCalculator(calcKey, baselineCalc, excelCalc) {
     const paths = [...allPaths].sort()
 
     const counts = { unchanged: 0, changed: 0, missing_in_excel: 0, missing_in_baseline: 0 }
-    const suspicionCounts = { digit_missing: 0, extra_digit: 0, monotonicity_break: 0, clean_change: 0 }
+    const suspicionCounts = { digit_missing: 0, extra_digit: 0, monotonicity_break: 0, price_decreased: 0, clean_change: 0 }
     const diffs = []
 
     for (const path of paths) {

@@ -287,6 +287,258 @@
     word-break: break-word;
 }
 
+.qu-busy {
+    text-align: center;
+    padding: 36px 12px;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* === 통계 카드(자동 적용 / 검토 필요) === */
+.qu-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.qu-stat {
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-align: center;
+}
+.qu-stat.warn {
+    background: #fffbeb;
+    border-color: #fde68a;
+}
+.qu-stat-num {
+    font-size: 20px;
+    font-weight: 800;
+    color: #0f172a;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+.qu-stat.warn .qu-stat-num {
+    color: #b45309;
+}
+.qu-stat-label {
+    font-size: 10px;
+    color: #64748b;
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+.qu-clean {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: #15803d;
+    font-size: 12px;
+    text-align: center;
+    font-weight: 500;
+    margin-bottom: 12px;
+}
+
+/* === 검토 리스트 (스크롤 가능) === */
+.qu-review-list {
+    max-height: 480px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+}
+.qu-review-list::-webkit-scrollbar { width: 6px; }
+.qu-review-list::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+.qu-row {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 10px;
+    transition: border-color 0.15s;
+}
+.qu-row.tone-high {
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+.qu-row.tone-medium {
+    background: #fffbeb;
+    border-color: #fde68a;
+}
+
+.qu-row-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.qu-tag {
+    flex-shrink: 0;
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.qu-tag.tone-high {
+    background: #fecaca;
+    color: #991b1b;
+}
+.qu-tag.tone-medium {
+    background: #fde68a;
+    color: #92400e;
+}
+.qu-row-path {
+    font-size: 11px;
+    color: #475569;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.qu-row-vals {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 11px;
+}
+.qu-val {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    background: rgba(255,255,255,0.6);
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-width: 0;
+}
+.qu-val small {
+    color: #94a3b8;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+.qu-val strong {
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.qu-arrow {
+    color: #94a3b8;
+    flex-shrink: 0;
+    font-size: 12px;
+}
+
+.qu-row-msg {
+    font-size: 10px;
+    color: #64748b;
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.qu-row-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+}
+.qu-row-actions.single {
+    grid-template-columns: 1fr;
+}
+.qu-mini {
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 10px;
+    color: #475569;
+    font-weight: 600;
+    transition: all 0.12s;
+}
+.qu-mini:hover { background: #f8fafc; }
+.qu-mini.on {
+    background: #0f172a;
+    color: #fff;
+    border-color: #0f172a;
+}
+.qu-mini.full { width: 100%; }
+
+
+/* === 액션 버튼 (취소 / 적용) === */
+.qu-actions {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px;
+    margin-top: 4px;
+}
+.qu-btn-cancel {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    padding: 9px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 600;
+}
+.qu-btn-cancel:hover { background: #f8fafc; color: #0f172a; }
+.qu-btn-apply {
+    background: #0f172a;
+    color: #fff;
+    border: 0;
+    padding: 9px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    transition: background 0.12s;
+}
+.qu-btn-apply:hover:not(:disabled) { background: #1e293b; }
+.qu-btn-apply:disabled {
+    background: #cbd5e1;
+    cursor: not-allowed;
+}
+
+
+/* === done 상태 === */
+.qu-done {
+    text-align: center;
+    padding: 18px 12px 12px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+}
+.qu-done .qu-check {
+    font-size: 28px;
+    color: #16a34a;
+    line-height: 1;
+}
+.qu-done-title {
+    margin-top: 6px;
+    color: #166534;
+    font-weight: 700;
+    font-size: 14px;
+}
+.qu-done-meta {
+    margin-top: 4px;
+    color: #15803d;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+
 .qu-summary {
     margin-top: 16px;
     background: #f8fafc;
