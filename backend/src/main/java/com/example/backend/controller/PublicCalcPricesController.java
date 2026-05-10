@@ -18,6 +18,9 @@ import java.nio.file.Paths;
  * SecurityConfig 의 {@code /api/public/**} permitAll 패턴에 매치됨.
  *
  * 라이브 prices.json 이 아직 없으면 baseline 으로 폴백 — 첫 배포 직후에도 계산기가 동작.
+ *
+ * NOTE: 프론트는 정적 import 로 바뀌어 이 엔드포인트를 호출하지 않음. 다만 백엔드에는 그대로
+ * 두어 운영 중 직접 fetch 디버깅 / 외부 통합 / Phase 8+ 의 동적 사용 가능성에 대비.
  */
 @RestController
 @RequestMapping("/api/public/calc-prices")
