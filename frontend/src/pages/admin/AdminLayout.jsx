@@ -15,7 +15,7 @@ const AdminLayout = () => {
         { name: '견적 관리', path: '/admin/quotes' },
         { name: '대리 발주', path: '/admin/proxy-order' },
         { name: '거래처 관리', path: '/admin/clients' },
-        { name: '단가', path: '/admin/prices' },
+        { name: '단가계산기', path: '/admin/prices' },
         { name: '이미지 관리', path: '/admin/gallery-upload' },
         { name: '공지사항 관리', path: '/admin/notices' },
     ];

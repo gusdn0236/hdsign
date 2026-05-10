@@ -6,14 +6,15 @@ import EpoxyCalc      from './EpoxyCalc.jsx'
 import AcrylCalc      from './AcrylCalc.jsx'
 import GomuCalc       from './GomuCalc.jsx'
 import GoldSilverCalc from './GoldSilverCalc.jsx'
+import QuickUpload    from './QuickUpload.jsx'
 import './Calc.css'
 
 /**
- * 계산기 7개를 한 페이지에 전부 쌓아 보여줌. 원본 ChannelCalc 사이트와 동일한 흐름.
+ * 단가 페이지 — 좌측에 계산기 7개, 우측에 단가표 업로드 사이드바.
  *
- *   1) 잔넬 단가 (큰 카드, 가장 자주 씀)
- *   2) LED 추가 + 후렘 추가 (가로 2열 — 잔넬 결과를 옆에서 보면서 쓸 수 있게)
- *   3) 에폭시 / 아크릴·포맥스 / 고무스카시 / 금은경 (순서대로 스택)
+ * 사용 빈도 순으로 위→아래 정렬: 아크릴(가장 많이 씀) → 잔넬 → LED+후렘 → 에폭시 → 고무 → 금은경.
+ * 우측 사이드바는 sticky 라 스크롤해도 따라옴.
+ * 좁은 화면(< 1080px)에선 사이드바가 위로 올라가 세로 스택.
  */
 export default function CalcLayout() {
     const { prices } = usePrices()
@@ -21,17 +22,21 @@ export default function CalcLayout() {
 
     return (
         <div className="calc-shell">
-            <ChannelCalc prices={prices} />
+            <main className="calc-main">
+                <AcrylCalc prices={prices} />
+                <ChannelCalc prices={prices} />
 
-            <div className="calc-row">
-                <LedCalc prices={prices} />
-                <FrameCalc prices={prices} />
-            </div>
+                <div className="calc-row">
+                    <LedCalc prices={prices} />
+                    <FrameCalc prices={prices} />
+                </div>
 
-            <EpoxyCalc      prices={prices} />
-            <AcrylCalc      prices={prices} />
-            <GomuCalc       prices={prices} />
-            <GoldSilverCalc prices={prices} />
+                <EpoxyCalc      prices={prices} />
+                <GomuCalc       prices={prices} />
+                <GoldSilverCalc prices={prices} />
+            </main>
+
+            <QuickUpload />
         </div>
     )
 }
