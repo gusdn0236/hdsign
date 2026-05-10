@@ -339,13 +339,28 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // input/textarea/select 에 포커스가 있으면 그쪽 키 입력을 방해하지 않는다.
   // 캐러셀(PDF·작업사진) 키 이동은 화면의 ‹ › 버튼으로 갈음.
 
+  // 지금 IN_PROGRESS(작업중) 주문이 1건 이상 등록된 거래처 회사명 Set.
+  // 거래처의 가입 상태(ACTIVE/PENDING_SIGNUP 등) 와 무관 — 발주관리에 작업중 주문이
+  // 실제로 들어와 있느냐로 판정. 가입대기 거래처라도 작업중 주문이 있으면 노출된다.
+  const activeClientNames = useMemo(() => {
+    const set = new Set();
+    orders.forEach((o) => {
+      if (o.status === "IN_PROGRESS" && o.clientCompanyName) set.add(o.clientCompanyName);
+    });
+    return set;
+  }, [orders]);
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => !o.clientCompanyName || activeClientNames.has(o.clientCompanyName));
+  }, [orders, activeClientNames]);
+
   const statusCounts = useMemo(() => {
     const counts = { RECEIVED: 0, IN_PROGRESS: 0, COMPLETED: 0 };
-    orders.forEach((order) => {
+    filteredOrders.forEach((order) => {
       if (counts[order.status] !== undefined) counts[order.status] += 1;
     });
     return counts;
-  }, [orders]);
+  }, [filteredOrders]);
 
   // 지연 건 — 휴지통 안 간 모든 주문(IN_PROGRESS·COMPLETED·접수) 중 dueDate 가 오늘 이전.
   // COMPLETED 도 포함하는 이유: 이전 워크플로우에서 완료 처리만 되고 휴지통으로 안 간 옛 데이터가
@@ -353,12 +368,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const overdueCount = useMemo(() => {
     if (!isOrderPage) return 0;
     const today = formatYmd(new Date());
-    return orders.reduce((acc, o) => {
+    return filteredOrders.reduce((acc, o) => {
       if (!o.dueDate) return acc;
       const due = String(o.dueDate).split("T")[0];
       return due < today ? acc + 1 : acc;
     }, 0);
-  }, [orders, isOrderPage]);
+  }, [filteredOrders, isOrderPage]);
 
   const statusFilteredOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
@@ -366,15 +381,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     // 무관 — overdueCount 와 같은 기준이라 수치와 보이는 카드 수가 일치.
     if (activeFilter === "OVERDUE") {
       const today = formatYmd(new Date());
-      return orders.filter((o) => o.dueDate && String(o.dueDate).split("T")[0] < today);
+      return filteredOrders.filter((o) => o.dueDate && String(o.dueDate).split("T")[0] < today);
     }
     // 작업중 탭은 IN_PROGRESS + 휴지통에 가지 않은 COMPLETED 도 포함 — 새 워크플로우에서 COMPLETED 는
     // 완료검토를 거쳐 바로 휴지통으로 가지만, 이전 데이터(휴지통 안 보낸 COMPLETED) 가 사라지지 않도록.
     if (activeFilter === "IN_PROGRESS") {
-      return orders.filter((o) => o.status === "IN_PROGRESS" || o.status === "COMPLETED");
+      return filteredOrders.filter((o) => o.status === "IN_PROGRESS" || o.status === "COMPLETED");
     }
-    return orders.filter((order) => order.status === activeFilter);
-  }, [activeFilter, orders, trashOrders]);
+    return filteredOrders.filter((order) => order.status === activeFilter);
+  }, [activeFilter, filteredOrders, trashOrders]);
 
   const availableClients = useMemo(() => {
     const set = new Set();
