@@ -4,7 +4,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-// build-id: 2026-05-10b — Railway 재배포 트리거 + 단가 컨트롤러 적용 확인용
+// build-id: 2026-05-10c — 단가 컨트롤러(Calc/PublicCalc Prices) 적용 강제 트리거
 @SpringBootApplication
 @EnableAsync
 @EnableScheduling
