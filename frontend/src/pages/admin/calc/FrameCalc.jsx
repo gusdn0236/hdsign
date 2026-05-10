@@ -35,7 +35,7 @@ function AlminumBar({ perMeter }) {
                     <input
                         type="number" min="0" step="0.1" value={length}
                         onChange={e => setLength(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setLength('')}
                     />
                 </label>
             </div>
@@ -73,7 +73,7 @@ function GalbaBar({ byHeight }) {
                     <input
                         type="number" min="0" step="0.1" value={length}
                         onChange={e => setLength(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setLength('')}
                     />
                 </label>
             </div>
@@ -104,7 +104,7 @@ function NormalFrame({ perSquareMeter }) {
                     <input
                         type="number" min="0" value={w}
                         onChange={e => setW(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setW('')}
                     />
                 </label>
                 <label className="calc-field">
@@ -112,7 +112,7 @@ function NormalFrame({ perSquareMeter }) {
                     <input
                         type="number" min="0" value={h}
                         onChange={e => setH(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setH('')}
                     />
                 </label>
             </div>

@@ -60,7 +60,7 @@ export default function ChannelCalc({ prices }) {
                     <input
                         type="number" min="1" value={qty}
                         onChange={e => setQty(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setQty('')}
                     />
                 </label>
             </div>

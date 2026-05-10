@@ -82,7 +82,7 @@ export default function GoldSilverCalc({ prices }) {
                     <input
                         type="number" min="1" value={height}
                         onChange={e => setHeight(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setHeight('')}
                     />
                 </label>
 
@@ -91,7 +91,7 @@ export default function GoldSilverCalc({ prices }) {
                     <input
                         type="number" min="1" value={qty}
                         onChange={e => setQty(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setQty('')}
                     />
                 </label>
             </div>

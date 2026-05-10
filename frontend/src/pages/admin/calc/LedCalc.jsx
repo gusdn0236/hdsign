@@ -63,7 +63,7 @@ export default function LedCalc({ prices }) {
                     <input
                         type="number" min="1" value={letters}
                         onChange={e => setLetters(e.target.value)}
-                        onFocus={selectAllOnFocus}
+                        onFocus={() => setLetters('')}
                     />
                 </label>
             </div>
