@@ -35,7 +35,8 @@ export default function CalcLayout() {
                 {CALC_META.map(c => (
                     <NavLink
                         key={c.key}
-                        to={c.path}
+                        to={`/admin/calc/${c.path}`}
+                        end
                         className={({ isActive }) => `calc-tab ${isActive ? 'active' : ''}`}
                     >
                         {c.label}
