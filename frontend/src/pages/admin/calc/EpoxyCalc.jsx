@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatPrice } from './helpers'
+import { formatPrice, selectAllOnFocus } from './helpers'
 
 export default function EpoxyCalc({ prices }) {
     const calc = prices.calculators.epoxy
@@ -57,6 +57,7 @@ export default function EpoxyCalc({ prices }) {
                     <input
                         type="number" min="1" value={qty}
                         onChange={e => setQty(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>

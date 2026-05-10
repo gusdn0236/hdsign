@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { formatPrice, goldSilverBandForHeight } from './helpers'
+import { formatPrice, goldSilverBandForHeight, selectAllOnFocus } from './helpers'
 
 function isMissingCombo(missingTextTypes, mat, thickness, tt) {
     return (missingTextTypes || []).some(
@@ -82,6 +82,7 @@ export default function GoldSilverCalc({ prices }) {
                     <input
                         type="number" min="1" value={height}
                         onChange={e => setHeight(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
 
@@ -90,6 +91,7 @@ export default function GoldSilverCalc({ prices }) {
                     <input
                         type="number" min="1" value={qty}
                         onChange={e => setQty(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>

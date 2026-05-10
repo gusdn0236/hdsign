@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatPrice, channelSizes } from './helpers'
+import { formatPrice, channelSizes, selectAllOnFocus } from './helpers'
 
 const FONT_OPTIONS = [
     { key: 'headLine', label: '헤드라인체' },
@@ -63,6 +63,7 @@ export default function LedCalc({ prices }) {
                     <input
                         type="number" min="1" value={letters}
                         onChange={e => setLetters(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>

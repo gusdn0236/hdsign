@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatPrice } from './helpers'
+import { formatPrice, selectAllOnFocus } from './helpers'
 
 export default function FrameCalc({ prices }) {
     const frame = prices.calculators.frame
@@ -35,6 +35,7 @@ function AlminumBar({ perMeter }) {
                     <input
                         type="number" min="0" step="0.1" value={length}
                         onChange={e => setLength(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>
@@ -72,6 +73,7 @@ function GalbaBar({ byHeight }) {
                     <input
                         type="number" min="0" step="0.1" value={length}
                         onChange={e => setLength(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>
@@ -102,6 +104,7 @@ function NormalFrame({ perSquareMeter }) {
                     <input
                         type="number" min="0" value={w}
                         onChange={e => setW(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
                 <label className="calc-field">
@@ -109,6 +112,7 @@ function NormalFrame({ perSquareMeter }) {
                     <input
                         type="number" min="0" value={h}
                         onChange={e => setH(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>

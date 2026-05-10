@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { formatPrice, channelSizes } from './helpers'
+import { formatPrice, channelSizes, selectAllOnFocus } from './helpers'
 
 export default function ChannelCalc({ prices }) {
     const calc = prices.calculators.channel
@@ -60,6 +60,7 @@ export default function ChannelCalc({ prices }) {
                     <input
                         type="number" min="1" value={qty}
                         onChange={e => setQty(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>

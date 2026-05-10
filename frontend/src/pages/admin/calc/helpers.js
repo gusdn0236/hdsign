@@ -10,6 +10,9 @@ export function formatPrice(n) {
     return Number(n).toLocaleString('ko-KR') + '원'
 }
 
+/** number input 에 포커스되면 기존 값 전체선택 — 클릭 후 바로 새 숫자 타이핑하면 덮어씌워짐. */
+export const selectAllOnFocus = (e) => e.target.select()
+
 /** 잔넬 사이즈 목록(mm) — baseline.sizeAxis 에서 풀어쓰기. */
 export function channelSizes(sizeAxis) {
     if (!sizeAxis) return []

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatPrice, gomuBandForHeight } from './helpers'
+import { formatPrice, gomuBandForHeight, selectAllOnFocus } from './helpers'
 
 export default function GomuCalc({ prices }) {
     const calc = prices.calculators.gomu
@@ -31,6 +31,7 @@ export default function GomuCalc({ prices }) {
                     <input
                         type="number" min="1" max="2000" value={height}
                         onChange={e => setHeight(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
 
@@ -39,6 +40,7 @@ export default function GomuCalc({ prices }) {
                     <input
                         type="number" min="1" value={qty}
                         onChange={e => setQty(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>

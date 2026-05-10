@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatPrice, acrylBandForHeight } from './helpers'
+import { formatPrice, acrylBandForHeight, selectAllOnFocus } from './helpers'
 
 export default function AcrylCalc({ prices }) {
     const calc = prices.calculators.acryl
@@ -39,6 +39,7 @@ export default function AcrylCalc({ prices }) {
                     <input
                         type="number" min="1" max="900" value={height}
                         onChange={e => setHeight(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
 
@@ -47,6 +48,7 @@ export default function AcrylCalc({ prices }) {
                     <input
                         type="number" min="1" value={qty}
                         onChange={e => setQty(e.target.value)}
+                        onFocus={selectAllOnFocus}
                     />
                 </label>
             </div>
