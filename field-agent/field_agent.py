@@ -118,12 +118,29 @@ def find_customer_folder(network_base: Path, network_folder_name: str,
         return None
 
 
+# 인쇄 작업명에 앱이 붙이는 접두사 — PDF24 가 $fileName 으로 받으면 그대로 PDF 명이 됨.
+# 예: FlexiSIGN 은 "FlexiSIGN - 간판_베리하운드최종" 으로 보냄 → .fs 는 "간판_베리하운드최종.fs".
+# 매칭 전에 이런 접두사를 벗긴 후보도 함께 시도한다(원본 stem 도 그대로 시도하므로 손해 없음).
+_PRINT_JOB_PREFIX_RE = re.compile(r"^\s*(?:flexisign|flexsign|adobe illustrator|illustrator)\s*[-–—:]\s*",
+                                  re.IGNORECASE)
+
+
+def _stem_candidates(pdf_stem: str) -> list[str]:
+    """매칭에 쓸 stem 후보들 — 원본 + 알려진 인쇄앱 접두사 제거본. 중복/빈값 제거."""
+    out = [pdf_stem]
+    stripped = _PRINT_JOB_PREFIX_RE.sub("", pdf_stem).strip()
+    if stripped and stripped != pdf_stem:
+        out.append(stripped)
+    return out
+
+
 def find_fs_file(customer_folder: Path, pdf_filename: str,
                  fuzzy_threshold: float) -> tuple[Path | None, str]:
     """거래처 폴더 트리에서 .fs 파일 찾기.
 
     매칭 단계:
-      1. 정확 매칭 — `<pdf_stem>.fs` 가 그대로 있는 경우 (대다수)
+      1. 정확 매칭 — `<pdf_stem>.fs` 가 그대로 있는 경우 (대다수). pdf_stem 은 원본 + 인쇄앱
+         접두사("FlexiSIGN - " 등) 제거본 둘 다 시도.
       2. 유사 매칭 — 같은 폴더(또는 어디든) 의 .fs 파일들 중 stem 유사도(공백/특수
          문자 정규화 후 SequenceMatcher) 가 임계값 이상 + 후보 단일이면 자동 채택
       3. 둘 다 실패 → (None, 사유)
@@ -136,7 +153,8 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
     if not pdf_stem:
         return None, "PDF 파일명에서 stem 을 추출하지 못했습니다."
 
-    target_key = _normalize_key(pdf_stem)
+    target_keys = [_normalize_key(s) for s in _stem_candidates(pdf_stem)]
+    target_keys = [k for k in target_keys if k]
     exact_matches: list[Path] = []
     fuzzy_pool: list[tuple[float, Path]] = []
     try:
@@ -144,10 +162,10 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
             if not fs.is_file():
                 continue
             fs_key = _normalize_key(fs.stem)
-            if fs_key == target_key:
+            if fs_key in target_keys:
                 exact_matches.append(fs)
                 continue
-            ratio = difflib.SequenceMatcher(None, fs_key, target_key).ratio()
+            ratio = max(difflib.SequenceMatcher(None, fs_key, tk).ratio() for tk in target_keys)
             if ratio >= fuzzy_threshold:
                 fuzzy_pool.append((ratio, fs))
     except Exception as e:
