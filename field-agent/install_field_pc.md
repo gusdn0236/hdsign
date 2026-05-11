@@ -31,11 +31,11 @@ build.bat
 
 ```json
 {
-  "api_base": "https://hdsign.com",
+  "api_base": "https://hdsign-production.up.railway.app",
   "network_customer_base": "\\\\Main\\공유\\거래처",
   "flexisign_exe": "C:\\Program Files\\SAi\\Production Suite\\Cloud\\FlexiSign Pro\\FlexiSign.exe",
   "port": 17345,
-  "allowed_origins": ["https://hdsign.com", "https://www.hdsign.com"],
+  "allowed_origins": ["https://hdsigncraft.com", "https://www.hdsigncraft.com"],
   "fuzzy_threshold": 0.85
 }
 ```
@@ -53,7 +53,7 @@ build.bat
 바탕화면에 새 바로가기:
 
 ```
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --app=https://hdsign.com/field --window-size=420,1080 --window-position=1500,0
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --app=https://hdsigncraft.com/field --window-size=420,1080 --window-position=1500,0
 ```
 
 - `--window-size`/`--window-position` 은 본인 모니터 해상도에 맞춰 조정

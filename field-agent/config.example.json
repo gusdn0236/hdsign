@@ -1,11 +1,11 @@
 {
-  "api_base": "https://hdsign.com",
+  "api_base": "https://hdsign-production.up.railway.app",
   "network_customer_base": "\\\\Main\\공유\\거래처",
   "flexisign_exe": "C:\\Program Files\\SAi\\Production Suite\\Cloud\\FlexiSign Pro\\FlexiSign.exe",
   "port": 17345,
   "allowed_origins": [
-    "https://hdsign.com",
-    "https://www.hdsign.com",
+    "https://hdsigncraft.com",
+    "https://www.hdsigncraft.com",
     "http://localhost:5173"
   ],
   "fuzzy_threshold": 0.85

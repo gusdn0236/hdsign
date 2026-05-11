@@ -28,7 +28,7 @@ from pathlib import Path
 
 DEFAULT_CONFIG = {
     # 백엔드 API 베이스. 운영/개발 모두 같은 키.
-    "api_base": "https://hdsign.com",
+    "api_base": "https://hdsign-production.up.railway.app",
     # 사무실 워처와 동일한 키 — 같은 config 를 공유해도 안전하도록 같은 이름 사용.
     "network_customer_base": r"\\Main\공유\거래처",
     # FlexiSIGN 실행파일. 환경마다 경로가 다를 수 있어 첫 실행 시 검증.
@@ -38,8 +38,8 @@ DEFAULT_CONFIG = {
     # CORS 허용 origin. 운영 도메인 + 로컬 개발(http://localhost:5173) 권장.
     # 정확 일치만 허용 — 와일드카드(*) 는 보안상 비추천(아무 사이트에서 호출 가능).
     "allowed_origins": [
-        "https://hdsign.com",
-        "https://www.hdsign.com",
+        "https://hdsigncraft.com",
+        "https://www.hdsigncraft.com",
         "http://localhost:5173",
     ],
     # .fs stem 유사도 폴백 임계값(0~1). 0.85 = 글자 85% 유사할 때만 자동 채택.

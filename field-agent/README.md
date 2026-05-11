@@ -21,7 +21,7 @@ run.bat
 
 처음 실행하면 옆에 `config.json` 이 생성된다. 다음 키들을 환경에 맞게 수정:
 
-- `api_base` — 백엔드 베이스 URL (예: `https://hdsign.com`)
+- `api_base` — 백엔드 베이스 URL (운영: `https://hdsign-production.up.railway.app`)
 - `network_customer_base` — 사무실 네트워크 거래처 폴더 베이스 (워처와 동일 경로)
 - `flexisign_exe` — FlexiSIGN 실행파일 절대경로 (`Where is my FlexiSign.exe?` 시작메뉴 우클릭 → 파일 위치 열기로 확인)
 - `port` — 충돌 시만 변경. 변경 시 프론트 환경변수 `VITE_HDSIGN_AGENT_URL` 도 같이.
