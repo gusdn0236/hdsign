@@ -170,7 +170,9 @@ export default function FieldViewer() {
     }, [filtered]);
 
     const handleOpenFs = useCallback(async (it) => {
-        if (!it.originalPdfFilename || !it.networkFolderName) {
+        // 에이전트가 거래처 폴더를 찾는 키는 networkFolderName(우선) → companyName(폴백) 순.
+        // 둘 다 없을 일은 거의 없고, 진짜 필요한 건 .fs stem 매칭용 originalPdfFilename.
+        if (!it.originalPdfFilename || !(it.networkFolderName || it.companyName)) {
             showToast(
                 'warn',
                 '아직 식별자가 없는 지시서입니다 — 워처가 새로 인쇄해야 [FS에서 열기]가 활성됩니다.',
@@ -428,7 +430,9 @@ export default function FieldViewer() {
                 <div className="fv-cards">
                     {sorted.map((it) => {
                         const dueBadge = getDueBadge(it.dueDate);
-                        const fsReady = !!(it.originalPdfFilename && it.networkFolderName);
+                        // 거래처 폴더는 networkFolderName 우선·companyName 폴백으로 에이전트가 찾으니
+                        // 버튼 활성 조건은 originalPdfFilename + (둘 중 하나) 면 충분.
+                        const fsReady = !!(it.originalPdfFilename && (it.networkFolderName || it.companyName));
                         const isCompleted = !!worker
                             && Array.isArray(it.workerCompletions)
                             && it.workerCompletions.some((c) => c.worker === worker);

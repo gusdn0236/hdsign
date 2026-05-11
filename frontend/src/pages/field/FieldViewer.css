@@ -360,23 +360,25 @@
 }
 .fv-btn-completed:hover:not(:disabled) { background: #d1fae5; border-color: #6ee7b7; }
 
-/* Toast */
+/* Toast — 상단 고정. 하단은 Chrome --app 창이 작업표시줄에 잘릴 수 있어 안전한 상단으로. */
 .fv-toast {
     position: fixed;
     left: 14px;
     right: 14px;
-    bottom: 14px;
-    padding: 10px 14px;
+    top: 14px;
+    padding: 12px 14px;
     border-radius: 10px;
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 500;
     line-height: 1.45;
-    box-shadow: 0 8px 24px rgba(24, 24, 27, 0.12);
-    z-index: 50;
+    box-shadow: 0 8px 24px rgba(24, 24, 27, 0.18);
+    z-index: 100;
     animation: fv-toast-in 0.18s ease-out;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
 }
 @keyframes fv-toast-in {
-    from { transform: translateY(8px); opacity: 0; }
+    from { transform: translateY(-8px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
 }
 .fv-toast-success { background: #052e16; color: #d1fae5; }
