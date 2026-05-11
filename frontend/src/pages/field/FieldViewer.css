@@ -231,7 +231,7 @@
     border-radius: 12px;
     overflow: hidden;
     display: grid;
-    grid-template-columns: 110px 1fr;
+    grid-template-columns: 150px 1fr;
     gap: 0;
     transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -246,7 +246,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 110px;
+    min-height: 150px;
 }
 .fv-card-thumb .ws-thumb-frame {
     width: 100%;
@@ -270,7 +270,7 @@
     margin-bottom: 1px;
 }
 .fv-card-company {
-    font-size: 12.5px;
+    font-size: 16px;
     font-weight: 700;
     color: #18181b;
     overflow: hidden;
@@ -282,9 +282,9 @@
 
 .fv-badge {
     display: inline-block;
-    padding: 2px 7px;
+    padding: 3px 8px;
     border-radius: 6px;
-    font-size: 10.5px;
+    font-size: 12.5px;
     font-weight: 700;
     line-height: 1.4;
     flex-shrink: 0;
@@ -294,8 +294,8 @@
 .fv-badge.tomorrow { background: #ecfeff; color: #0e7490; }
 
 .fv-card-title {
-    font-size: 13px;
-    color: #27272a;
+    font-size: 11.5px;
+    color: #52525b;
     line-height: 1.35;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -307,14 +307,14 @@
 .fv-card-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
+    gap: 10px;
+    align-items: baseline;
     margin-top: 2px;
-    font-size: 11px;
-    color: #71717a;
+    font-size: 10.5px;
+    color: #a1a1aa;
 }
-.fv-card-due { font-weight: 600; color: #52525b; }
-.fv-card-no { color: #a1a1aa; font-variant-numeric: tabular-nums; }
+.fv-card-due { font-weight: 700; color: #18181b; font-size: 14px; }
+.fv-card-no { color: #a1a1aa; font-variant-numeric: tabular-nums; font-size: 10.5px; }
 
 .fv-card-actions {
     display: grid;
@@ -357,8 +357,8 @@
     background: #ecfdf5;
     color: #047857;
     border-color: #a7f3d0;
-    cursor: default;
 }
+.fv-btn-completed:hover:not(:disabled) { background: #d1fae5; border-color: #6ee7b7; }
 
 /* Toast */
 .fv-toast {

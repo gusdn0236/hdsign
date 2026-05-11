@@ -344,6 +344,39 @@ public class PublicWorksheetController {
         ));
     }
 
+    /**
+     * 작업완료 신고 취소 — 잘못 누른 [완료] 되돌리기. 본인이 신고한 row 만 삭제.
+     * 다른 직원의 row 는 건드리지 않음. 멱등(이미 없으면 no-op).
+     */
+    @PostMapping("/{orderNumber}/worker-uncomplete")
+    public ResponseEntity<?> workerUncomplete(
+            @PathVariable String orderNumber,
+            @RequestBody Map<String, Object> body
+    ) {
+        String worker = body == null ? null : (body.get("worker") instanceof String s ? s.trim() : null);
+        if (worker == null || worker.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "worker 이름이 필요합니다."));
+        }
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null || order.getDeletedAt() != null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
+        }
+        if (order.getStatus() == Order.OrderStatus.COMPLETED) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "이미 사무실에서 마감된 작업입니다."));
+        }
+        var existing = workerCompletionRepository.findByOrder_IdAndWorker(order.getId(), worker);
+        existing.ifPresent(wc -> {
+            workerCompletionRepository.delete(wc);
+            log.info("작업완료 취소 [{}] by {}", orderNumber, worker);
+        });
+        return ResponseEntity.ok(Map.of(
+                "orderNumber", orderNumber,
+                "worker", worker
+        ));
+    }
+
     private static boolean shouldServeOriginalPdf(String userAgent) {
         if (userAgent == null || userAgent.isBlank()) return false;
         String ua = userAgent.toLowerCase();

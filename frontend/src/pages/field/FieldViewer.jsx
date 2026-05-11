@@ -59,6 +59,7 @@ export default function FieldViewer() {
     const [openingFs, setOpeningFs] = useState(null);     // orderNumber 진행중
     const [completing, setCompleting] = useState(null);   // orderNumber 진행중
     const [toast, setToast] = useState(null);             // {kind, text}
+    const [confirmAction, setConfirmAction] = useState(null); // {message, confirmText, onConfirm}
     const aliveRef = useRef(true);
 
     const fetchList = useCallback(async ({ manual = false } = {}) => {
@@ -211,43 +212,85 @@ export default function FieldViewer() {
         }
     }, [showToast]);
 
-    const handleComplete = useCallback(async (it) => {
+    const handleComplete = useCallback((it) => {
         if (!worker) {
             setWorkerDraft('');
             setShowWorkerModal(true);
             return;
         }
-        setCompleting(it.orderNumber);
-        try {
-            const res = await fetch(
-                `${BASE_URL}/api/public/worksheets/${encodeURIComponent(it.orderNumber)}/worker-complete`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ worker }),
-                },
-            );
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                throw new Error(body.message || '완료 신고 실패');
-            }
-            // 낙관적 갱신 — 다음 fetch 까지 기다리지 않고 즉시 탭 이동을 유도.
-            const stamp = new Date().toISOString();
-            setItems((prev) => prev.map((p) => p.orderNumber === it.orderNumber
-                ? {
-                    ...p,
-                    workerCompletions: [
-                        ...(p.workerCompletions || []),
-                        { worker, completedAt: stamp },
-                    ],
+        setConfirmAction({
+            message: `[${it.title || it.orderNumber}] 완료하시겠습니까?`,
+            confirmText: '완료',
+            onConfirm: async () => {
+                setCompleting(it.orderNumber);
+                try {
+                    const res = await fetch(
+                        `${BASE_URL}/api/public/worksheets/${encodeURIComponent(it.orderNumber)}/worker-complete`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ worker }),
+                        },
+                    );
+                    if (!res.ok) {
+                        const body = await res.json().catch(() => ({}));
+                        throw new Error(body.message || '완료 신고 실패');
+                    }
+                    // 낙관적 갱신 — 다음 fetch 까지 기다리지 않고 즉시 탭 이동을 유도.
+                    const stamp = new Date().toISOString();
+                    setItems((prev) => prev.map((p) => p.orderNumber === it.orderNumber
+                        ? {
+                            ...p,
+                            workerCompletions: [
+                                ...(p.workerCompletions || []),
+                                { worker, completedAt: stamp },
+                            ],
+                        }
+                        : p));
+                    showToast('success', '완료 신고 — 사무실에 알림이 갔습니다.');
+                } catch (err) {
+                    showToast('error', err.message || '완료 신고 실패');
+                } finally {
+                    setCompleting(null);
                 }
-                : p));
-            showToast('success', '완료 신고 — 사무실에 알림이 갔습니다.');
-        } catch (err) {
-            showToast('error', err.message || '완료 신고 실패');
-        } finally {
-            setCompleting(null);
-        }
+            },
+        });
+    }, [worker, showToast]);
+
+    const handleUncomplete = useCallback((it) => {
+        if (!worker) return;
+        setConfirmAction({
+            message: `[${it.title || it.orderNumber}] 완료를 취소하시겠습니까?`,
+            confirmText: '취소',
+            onConfirm: async () => {
+                setCompleting(it.orderNumber);
+                try {
+                    const res = await fetch(
+                        `${BASE_URL}/api/public/worksheets/${encodeURIComponent(it.orderNumber)}/worker-uncomplete`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ worker }),
+                        },
+                    );
+                    if (!res.ok) {
+                        const body = await res.json().catch(() => ({}));
+                        throw new Error(body.message || '완료 취소 실패');
+                    }
+                    setItems((prev) => prev.map((p) => p.orderNumber === it.orderNumber
+                        ? {
+                            ...p,
+                            workerCompletions: (p.workerCompletions || []).filter((c) => c.worker !== worker),
+                        }
+                        : p));
+                    showToast('success', '완료를 취소했습니다.');
+                } catch (err) {
+                    showToast('error', err.message || '완료 취소 실패');
+                } finally {
+                    setCompleting(null);
+                }
+            },
+        });
     }, [worker, showToast]);
 
     const submitWorker = () => {
@@ -406,9 +449,11 @@ export default function FieldViewer() {
                                             <span className={`fv-badge ${dueBadge.kind}`}>{dueBadge.text}</span>
                                         )}
                                     </div>
-                                    <div className="fv-card-title" title={it.title || it.orderNumber}>
-                                        {it.title || it.orderNumber}
-                                    </div>
+                                    {it.title && (
+                                        <div className="fv-card-title" title={it.title}>
+                                            {it.title}
+                                        </div>
+                                    )}
                                     <div className="fv-card-meta">
                                         {it.dueDate && (
                                             <span className="fv-card-due">납기 {formatShortDate(it.dueDate)}{it.dueTime ? ` ${it.dueTime}` : ''}</span>
@@ -428,9 +473,15 @@ export default function FieldViewer() {
                                             {opening ? '여는 중…' : 'FS에서 열기'}
                                         </button>
                                         {isCompleted ? (
-                                            <span className="fv-btn fv-btn-completed" aria-disabled="true">
-                                                완료됨
-                                            </span>
+                                            <button
+                                                type="button"
+                                                className="fv-btn fv-btn-completed"
+                                                onClick={() => handleUncomplete(it)}
+                                                disabled={closing}
+                                                title="누르면 완료를 취소할 수 있습니다"
+                                            >
+                                                {closing ? '처리 중…' : '완료됨'}
+                                            </button>
                                         ) : (
                                             <button
                                                 type="button"
@@ -452,6 +503,32 @@ export default function FieldViewer() {
             {toast && (
                 <div className={`fv-toast fv-toast-${toast.kind}`} role="status">
                     {toast.text}
+                </div>
+            )}
+
+            {confirmAction && (
+                <div className="fv-modal-bg" onClick={() => setConfirmAction(null)}>
+                    <div className="fv-modal" onClick={(e) => e.stopPropagation()}>
+                        <p className="fv-modal-desc" style={{ fontSize: 16, color: '#1f2937' }}>
+                            {confirmAction.message}
+                        </p>
+                        <div className="fv-modal-actions">
+                            <button
+                                type="button"
+                                className="fv-modal-cancel"
+                                onClick={() => setConfirmAction(null)}
+                            >아니오</button>
+                            <button
+                                type="button"
+                                className="fv-modal-confirm"
+                                onClick={() => {
+                                    const action = confirmAction.onConfirm;
+                                    setConfirmAction(null);
+                                    if (action) action();
+                                }}
+                            >{confirmAction.confirmText || '예'}</button>
+                        </div>
+                    </div>
                 </div>
             )}
 
