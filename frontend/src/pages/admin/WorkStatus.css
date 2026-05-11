@@ -292,39 +292,17 @@
   white-space: nowrap;
 }
 
-/* 완료/대기 두 그룹 — 카드 본문 하단에 큼직한 칩으로 한눈에 보이게.
-   완료=초록 채움+체크, 대기=빨강 점선 outline. 직원이 여러 명이어도 한 카드 안에 다 묶여 표시. */
-.ws-people-row {
+/* 배부된 인원 한 줄 — 슬롯 순서대로 왼쪽부터 일렬. 각자에 ✓(완료)/○(대기) 마킹.
+   오른쪽 끝에는 "완료 N/M" 진행 라벨. 좁은 카드에서는 자연스럽게 wrap. */
+.ws-roster-row {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   margin-top: 10px;
-}
-.ws-people-row--done + .ws-people-row--pending {
-  margin-top: 6px;
+  flex-wrap: wrap;
 }
 
-.ws-people-label {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 7px;
-  font-size: 11.5px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  color: #fff;
-  font-feature-settings: "tnum" 1;
-}
-.ws-people-label--done {
-  background: #16a34a;
-}
-.ws-people-label--pending {
-  background: #dc2626;
-}
-
-.ws-people-chips {
+.ws-roster-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -332,7 +310,7 @@
   min-width: 0;
 }
 
-.ws-people-chip {
+.ws-roster-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -345,20 +323,53 @@
   border: 1.5px solid;
   white-space: nowrap;
 }
-.ws-people-chip--done {
+.ws-roster-chip--done {
   background: #16a34a;
   border-color: #16a34a;
   color: #fff;
 }
-.ws-people-chip--done svg {
+.ws-roster-chip--done svg {
   width: 13px;
   height: 13px;
 }
-.ws-people-chip--pending {
+.ws-roster-chip--pending {
   background: #fff;
-  border-color: #fca5a5;
-  color: #b91c1c;
-  border-style: dashed;
+  border-color: #e4e4e7;
+  color: #a1a1aa;
+}
+.ws-roster-pin {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ws-roster-progress {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 7px;
+  background: #f4f4f5;
+  color: #52525b;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  font-feature-settings: "tnum" 1;
+  white-space: nowrap;
+}
+.ws-roster-progress strong {
+  color: #16a34a;
+  font-size: 13.5px;
+  font-weight: 800;
+}
+.ws-roster-progress-sep {
+  color: #a1a1aa;
+  font-weight: 700;
 }
 
 /* 발주관리에서 정의한 due-badge 시스템(.due-badge--today/tomorrow/overdue) 을 그대로 재사용.

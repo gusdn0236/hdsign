@@ -127,11 +127,13 @@ export default function WorkStatus() {
           .sort((a, b) => new Date(a.completedAt).getTime() - new Date(b.completedAt).getTime());
         if (completed.length === 0) continue;
         const slotWorkers = getWorkersForSlots(o.departmentSlots);
-        const doneSet = new Set(completed.map((c) => c.worker));
-        const pending = slotWorkers.filter((w) => !doneSet.has(w));
+        const slotSet = new Set(slotWorkers);
+        // 슬롯 순서 우선 + 슬롯 외 완료자(드문 경우: 슬롯이 바뀌었는데 과거에 완료한 사람)는 끝에.
+        const extras = completed.filter((c) => !slotSet.has(c.worker)).map((c) => c.worker);
+        const roster = [...slotWorkers, ...extras];
         // 카드 정렬 기준 — 가장 최근 완료 시각(마지막 도장 찍힌 시점). 기간 필터도 동일.
         const lastCompletedAt = completed[completed.length - 1].completedAt;
-        built.push({ order: o, completed, pending, lastCompletedAt });
+        built.push({ order: o, completed, roster, lastCompletedAt });
       }
       setCards(built);
     } catch (err) {
@@ -290,44 +292,44 @@ export default function WorkStatus() {
                     </span>
                   </div>
 
-                  {/* 완료자 — 초록 배경 chip + 체크 아이콘. 가장 빠른 완료자부터 시간순. */}
-                  {card.completed.length > 0 && (
-                    <div className="ws-people-row ws-people-row--done">
-                      <span className="ws-people-label ws-people-label--done">
-                        완료 {card.completed.length}
-                      </span>
-                      <div className="ws-people-chips">
-                        {card.completed.map((wc) => (
-                          <span
-                            key={wc.worker}
-                            className="ws-people-chip ws-people-chip--done"
-                            title={`${wc.worker} · ${formatCompletedAt(wc.completedAt)}`}
-                          >
-                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="M3.5 8.5l3 3 6-7" />
-                            </svg>
-                            {wc.worker}
-                          </span>
-                        ))}
+                  {/* 배부된 인원 — 슬롯 순서대로 왼쪽부터 일렬, 각자에 ✓/○ 마킹.
+                      오른쪽 끝에 "완료 N/M" 진행 라벨. */}
+                  {card.roster.length > 0 && (() => {
+                    const completedMap = new Map(
+                      card.completed.map((wc) => [wc.worker, wc.completedAt]),
+                    );
+                    return (
+                      <div className="ws-roster-row">
+                        <div className="ws-roster-list">
+                          {card.roster.map((name) => {
+                            const at = completedMap.get(name);
+                            const done = !!at;
+                            return (
+                              <span
+                                key={name}
+                                className={`ws-roster-chip ws-roster-chip--${done ? "done" : "pending"}`}
+                                title={done ? `${name} · ${formatCompletedAt(at)}` : `${name} · 대기`}
+                              >
+                                {done ? (
+                                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M3.5 8.5l3 3 6-7" />
+                                  </svg>
+                                ) : (
+                                  <span className="ws-roster-pin" aria-hidden="true" />
+                                )}
+                                {name}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <span className="ws-roster-progress">
+                          완료 <strong>{card.completed.length}</strong>
+                          <span className="ws-roster-progress-sep">/</span>
+                          {card.roster.length}
+                        </span>
                       </div>
-                    </div>
-                  )}
-
-                  {/* 대기자 — 빨간 점선 outline + 회색 글씨. 같은 슬롯 매핑인데 아직 안 누른 직원. */}
-                  {card.pending.length > 0 && (
-                    <div className="ws-people-row ws-people-row--pending">
-                      <span className="ws-people-label ws-people-label--pending">
-                        대기 {card.pending.length}
-                      </span>
-                      <div className="ws-people-chips">
-                        {card.pending.map((name) => (
-                          <span key={name} className="ws-people-chip ws-people-chip--pending">
-                            {name}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
             );
