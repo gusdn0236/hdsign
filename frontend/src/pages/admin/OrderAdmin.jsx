@@ -74,6 +74,30 @@ function normalizeReviewDate(input) {
   return `${m[1]}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+// 자유 입력 "YYYY-MM-DD" 의 연도 오타로 비정상 납기가 들어가던 사고 방지(주문-260506-15:
+// 2026-05-07 입력 의도로 2027-05-07 저장 → 모바일에서 "5월 7일자" 로만 보여 지난 작업으로
+// 착각). 평소 납기 범위(-60~+180일) 안이면 통과, 벗어나면 명시적 확인 다이얼로그.
+// 거래처 폼은 14일 버튼만, 워처는 월·일만 받고 연도는 base 에서 가져오므로 거기엔 추가 검증
+// 불필요 — 자유 입력이 가능한 검토 모달만 보호.
+function confirmIfFarDueDate(isoDate) {
+  if (!isoDate) return true;
+  const d = new Date(isoDate + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return true;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((d.getTime() - today.getTime()) / 86400000);
+  if (diffDays > -60 && diffDays < 180) return true;
+  const range = diffDays >= 0
+    ? `오늘로부터 ${diffDays}일 뒤`
+    : `오늘로부터 ${-diffDays}일 전`;
+  return window.confirm(
+    `납기 ${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ` +
+    `(${WEEKDAY_KO[d.getDay()]}) — ${range}.\n` +
+    `평소 납기 범위(약 2개월 전 ~ 6개월 뒤)를 벗어납니다. 연도가 맞는지 확인하셨습니까?\n\n` +
+    `이 날짜로 저장하려면 [확인] 을 누르세요.`
+  );
+}
+
 function formatDueDate(dueDate, deliveryMethod) {
   if (!dueDate) return "-";
   // 표 컬럼이 좁아 연도는 생략 — 접수일/삭제일과 달리 납기는 보통 2~3주 이내라 월-일로 충분.
@@ -1862,6 +1886,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           e.preventDefault();
                           const normalized = normalizeReviewDate(reviewDateInput);
                           if (!normalized) return;
+                          if (!confirmIfFarDueDate(normalized)) return;
                           commitDecisionAndAdvance({
                             action: "reschedule",
                             newDate: normalized,
@@ -1880,6 +1905,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                       onClick={() => {
                         const normalized = normalizeReviewDate(reviewDateInput);
                         if (!normalized) return;
+                        if (!confirmIfFarDueDate(normalized)) return;
                         commitDecisionAndAdvance({
                           action: "reschedule",
                           newDate: normalized,
