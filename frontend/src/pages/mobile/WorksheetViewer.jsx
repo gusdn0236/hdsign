@@ -181,6 +181,9 @@ export default function WorksheetViewer() {
     // 본인뿐 아니라 같은 슬롯 동료에게서도 사라진다(claim 모델). 멱등 — 이미 완료된 건이면 200.
     const [completing, setCompleting] = useState(false);
     const [completeError, setCompleteError] = useState('');
+    // PDF 전환 깜빡임 완화 — 캐시 히트로 빠르게 로드되는 경우(<300ms) "PDF 불러오는 중…"
+    // 텍스트가 한 프레임 깜빡 떴다 사라지는 시각적 잡음을 없앤다. 진짜 느린 경우만 텍스트 노출.
+    const [showSlowLoading, setShowSlowLoading] = useState(false);
     const [pdfViewKey, setPdfViewKey] = useState(0);
     const [highQualityRender, setHighQualityRender] = useState(false);
     const [qualityScale, setQualityScale] = useState(1);
@@ -462,6 +465,17 @@ export default function WorksheetViewer() {
         setPageRotation(0);
     }, [detail?.worksheetPdfUrl]);
 
+    // 빠른 캐시 히트 전환에선 로딩 텍스트를 표시하지 않음(깜빡임 제거). 300ms 넘게 걸리면 그제야 노출.
+    useEffect(() => {
+        if (pdfReady) {
+            setShowSlowLoading(false);
+            return undefined;
+        }
+        setShowSlowLoading(false);
+        const t = setTimeout(() => setShowSlowLoading(true), 300);
+        return () => clearTimeout(t);
+    }, [pdfReady, detail?.worksheetPdfUrl]);
+
     const pageWidth = useMemo(() => {
         if (!stageSize.width || !stageSize.height) return 0;
         const padding = 16;
@@ -640,7 +654,8 @@ export default function WorksheetViewer() {
         }
     };
 
-    // [작업완료] — 본인 작업이 끝났음을 신고. 성공 시 모바일 리스트로 이동(자동으로 본인/동료에게서 사라짐).
+    // [작업완료] — 본인 작업이 끝났음을 신고. 성공 시 다음 지시서로 자동 이동(검토 흐름 유지).
+    // 다음이 없으면 이전, 둘 다 없으면 목록으로. 완료한 건은 siblings 에서 제거해 다시 잡지 않음.
     const handleWorkerComplete = async () => {
         if (completing) return;
         if (!worker) {
@@ -663,7 +678,16 @@ export default function WorksheetViewer() {
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.message || '작업완료 신고에 실패했습니다.');
             }
-            navigate('/m/worksheets');
+            const filteredSiblings = siblings.filter((s) => s !== orderNumber);
+            const nextOrder = nextSibling || prevSibling;
+            if (nextOrder) {
+                navigate(`/m/worksheets/${encodeURIComponent(nextOrder)}`, {
+                    state: { siblings: filteredSiblings },
+                    replace: true,
+                });
+            } else {
+                navigate('/m/worksheets');
+            }
         } catch (err) {
             setCompleteError(err.message || '작업완료 처리 중 오류');
         } finally {
@@ -746,7 +770,7 @@ export default function WorksheetViewer() {
                 {!loadingDetail && !detailError && !pdfFile && (
                     <div className="wsv-msg">PDF 가 아직 등록되지 않았습니다.</div>
                 )}
-                {pdfFile && pageWidth > 0 && !pdfError && !pdfReady && (
+                {pdfFile && pageWidth > 0 && !pdfError && !pdfReady && showSlowLoading && (
                     <div className="wsv-msg wsv-pdf-loading">PDF 불러오는 중…</div>
                 )}
                 {pdfFile && pageWidth > 0 && (
@@ -960,7 +984,7 @@ export default function WorksheetViewer() {
                                 <path d="M3 9l4 4 8-9" />
                             </svg>
                         </span>
-                        <span className="wsv-action-text">{completing ? '처리 중' : '작업완료'}</span>
+                        <span className="wsv-action-text">작업완료</span>
                     </button>
                 )}
             </div>
