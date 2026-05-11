@@ -81,22 +81,28 @@ function setStoredMineOffWorker(value) {
     } catch { /* ignore */ }
 }
 
-// 그룹 헤더용: '5월 6일 (수)' 만 — 오늘/내일/지남 같은 상태는 배지로 별도 표시.
+// 그룹 헤더용: '5월 6일 (수)'. 올해가 아니면 앞에 연도(예: '2027년 5월 7일 (금)') —
+// 거래처 발주 폼에서 연도 오타로 들어온 미래 납기가 "올해의 5월 7일" 처럼 보여
+// 이미 지난 작업으로 착각되던 문제 방지(주문-260506-15 사례).
 function formatDueDateLabel(dateStr) {
     if (!dateStr) return '';
     const d = new Date(dateStr + 'T00:00:00');
     if (Number.isNaN(d.getTime())) return dateStr;
+    const yearPrefix = d.getFullYear() !== new Date().getFullYear()
+        ? `${d.getFullYear()}년 ` : '';
     const md = `${d.getMonth() + 1}월 ${d.getDate()}일`;
     const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
-    return `${md} (${dow})`;
+    return `${yearPrefix}${md} (${dow})`;
 }
 
-// 카드 보조 라인용 짧은 형식: '5/7'.
+// 카드 보조 라인용 짧은 형식: '5/7'. 올해가 아니면 '2027/5/7' 로 연도 노출.
 function formatShortDate(dateStr) {
     if (!dateStr) return '';
     const d = new Date(dateStr + 'T00:00:00');
     if (Number.isNaN(d.getTime())) return dateStr;
-    return `${d.getMonth() + 1}/${d.getDate()}`;
+    const md = `${d.getMonth() + 1}/${d.getDate()}`;
+    return d.getFullYear() !== new Date().getFullYear()
+        ? `${d.getFullYear()}/${md}` : md;
 }
 
 // 납기 상태 배지 — 오늘/내일/지남 만. 일반 미래 일자는 null 반환(헤더 날짜만 보임).

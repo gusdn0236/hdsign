@@ -26,6 +26,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -270,8 +271,11 @@ public class PublicWorksheetController {
         item.put("worksheetUpdatedAt", o.getWorksheetUpdatedAt() != null ? o.getWorksheetUpdatedAt().toString() : null);
         item.put("evidenceLastUploadedAt", o.getEvidenceLastUploadedAt() != null ? o.getEvidenceLastUploadedAt().toString() : null);
         // 카드에서 D-day 표시용. 음수면 지난 납기.
+        // ChronoUnit.DAYS.between — Period.getDays() 는 "년·월 뺀 나머지 일수" 라
+        // 1년 차이가 26일로 표시되던 버그(주문-260506-15: dueDate=2027-05-07 인데
+        // daysUntilDue=26 으로 내려가 모바일에서 한 달 뒤로 보이던 문제) 수정.
         if (o.getDueDate() != null) {
-            item.put("daysUntilDue", today.until(o.getDueDate()).getDays());
+            item.put("daysUntilDue", ChronoUnit.DAYS.between(today, o.getDueDate()));
         }
         // 모바일 뷰어 부서 필터용 태그. 워처 인쇄 다이얼로그에서 분배함 칸 클릭으로 지정.
         item.put("departmentTags", splitTags(o.getDepartmentTags()));
