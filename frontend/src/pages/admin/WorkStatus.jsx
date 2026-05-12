@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import {
@@ -100,6 +101,9 @@ const PERIOD_TABS = [
 
 export default function WorkStatus() {
   const { token } = useAuth();
+  const navigate = useNavigate();
+  // 카드 클릭 → 발주관리의 그 주문 상세 모달을 그대로 연다(완조립 사진/지시서 확인용).
+  const openOrderDetail = (orderId) => navigate(`/admin/orders?order=${orderId}`);
   // 한 worksheet = 카드 1개. 카드 안에 완료자/대기자 두 그룹을 큼직한 칩으로 묶어 표시.
   // 한 명이라도 완료한 worksheet 만 작업현황에 노출(아직 아무도 안 누른 건 발주관리에 있음).
   const [cards, setCards] = useState([]);
@@ -257,8 +261,24 @@ export default function WorkStatus() {
           {visible.map((card) => {
             const o = card.order;
             const dueBadge = getDueBadge(o.dueDate);
+            const hasPhotos = !!o.evidenceLastUploadedAt;
+            const worksheetChangeNote = (o.worksheetChangeNote || "").trim();
+            const hasWorksheetChange = !!worksheetChangeNote;
             return (
-              <div className="ws-status-card" key={o.id}>
+              <div
+                className="ws-status-card"
+                key={o.id}
+                onClick={() => openOrderDetail(o.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openOrderDetail(o.id);
+                  }
+                }}
+                title="클릭 — 상세(완조립 사진/지시서) 보기"
+              >
                 <div className="ws-status-thumb">
                   <WorksheetThumbnail
                     pdfUrl={o.worksheetPdfUrl || null}
@@ -269,6 +289,16 @@ export default function WorkStatus() {
                       </div>
                     }
                   />
+                  {(hasPhotos || hasWorksheetChange) && (
+                    <div className="ws-status-thumb-badges">
+                      {hasPhotos && (
+                        <span className="row-badge badge-evidence" title="작업 사진이 등록되어 있습니다">사진</span>
+                      )}
+                      {hasWorksheetChange && (
+                        <span className="row-badge badge-worksheet" title={`지시서 변경 메모: ${worksheetChangeNote}`}>변경</span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="ws-status-body">
                   <div className="ws-status-meta-row">

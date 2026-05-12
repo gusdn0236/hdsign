@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import PdfViewer from "../../components/common/PdfViewer.jsx";
@@ -183,6 +184,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
   const [activeFilter, setActiveFilter] = useState("IN_PROGRESS");
   const [selectedOrderId, setSelectedOrderId] = useState(null);
+  // 작업현황 등 다른 화면에서 `?order=<id>` 로 넘어오면 그 주문 상세 모달을 바로 연다.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const raw = searchParams.get("order");
+    if (!raw) return;
+    const id = Number(raw);
+    if (Number.isFinite(id) && id > 0) setSelectedOrderId(id);
+    // 파라미터는 한 번만 소비 — 닫았다가 새로고침/뒤로가기 해도 다시 안 열리게 URL 에서 제거.
+    const next = new URLSearchParams(searchParams);
+    next.delete("order");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [trashingOrderId, setTrashingOrderId] = useState(null);
   const [restoringOrderId, setRestoringOrderId] = useState(null);
@@ -1082,15 +1096,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const restoring = restoringOrderId === order.id;
     const deleting = deletingOrderId === order.id;
     const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
-    const viewedAt = order.adminViewedAt ? new Date(order.adminViewedAt).getTime() : 0;
-    const evidenceAt = order.evidenceLastUploadedAt
-      ? new Date(order.evidenceLastUploadedAt).getTime()
-      : 0;
-    const worksheetAt = order.worksheetUpdatedAt
-      ? new Date(order.worksheetUpdatedAt).getTime()
-      : 0;
-    const hasNewEvidence = !isTrash && evidenceAt > viewedAt;
-    const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
+    // 사진/변경 태그 — '본 시각(adminViewedAt)' 과 무관하게, 데이터가 존재하면 항상 표시.
+    // (열람해도 사라지지 않게 해달라는 요청 — 한 번 보고 나서도 어느 카드에 사진/변경이 있는지 계속 보여야 함)
+    const hasPhotos = !!order.evidenceLastUploadedAt;
+    const worksheetChangeNote = (order.worksheetChangeNote || "").trim();
+    const hasWorksheetChange = !!worksheetChangeNote;
     const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
     const isOrderType = order.requestType === "ORDER";
     const selecting = !isTrash && bulkSelectMode;
@@ -1143,13 +1153,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </span>
             )}
           </div>
-          {(hasNewEvidence || hasNewWorksheet) && (
+          {(hasPhotos || hasWorksheetChange) && (
             <div className="order-card-thumb-badges">
-              {hasNewEvidence && (
-                <span className="row-badge badge-evidence" title="새 작업 사진이 올라왔습니다">사진</span>
+              {hasPhotos && (
+                <span className="row-badge badge-evidence" title="작업 사진이 등록되어 있습니다">사진</span>
               )}
-              {hasNewWorksheet && (
-                <span className="row-badge badge-worksheet" title="지시서/납기가 변경되었습니다">변경</span>
+              {hasWorksheetChange && (
+                <span className="row-badge badge-worksheet" title={`지시서 변경 메모: ${worksheetChangeNote}`}>변경</span>
               )}
             </div>
           )}

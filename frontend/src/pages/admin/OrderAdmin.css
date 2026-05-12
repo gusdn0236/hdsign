@@ -578,24 +578,20 @@
   padding: 2px 6px;
   border-radius: 4px;
   letter-spacing: 0.02em;
-  animation: row-badge-pulse 2.4s ease-in-out infinite;
 }
 
+/* 사진 태그 — 파란 글씨. 작업 사진이 등록돼 있으면 항상 표시(열람해도 사라지지 않음). */
 .row-badge.badge-evidence {
-  color: #047857;
-  background: #d1fae5;
-  border: 1px solid #a7f3d0;
+  color: #1d4ed8;
+  background: #dbeafe;
+  border: 1px solid #bfdbfe;
 }
 
+/* 변경 태그 — 빨간 글씨. 지시서 변경 메모가 남아 있으면 항상 표시(열람해도 사라지지 않음). */
 .row-badge.badge-worksheet {
   color: #b91c1c;
   background: #fee2e2;
   border: 1px solid #fecaca;
-}
-
-@keyframes row-badge-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
 }
 
 .status-badge {
