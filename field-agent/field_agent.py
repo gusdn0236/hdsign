@@ -509,9 +509,9 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             origin = self._origin_allowed()
             self._send_json(200, {"ok": True, "version": 1}, origin)
             return
-        # /open 은 비-단순(custom header) POST 만 허용 → CSRF 노출 최소화.
+        # /open, /open-folder 는 비-단순(custom header) POST 만 허용 → CSRF 노출 최소화.
         # 그래도 GET 으로 들어오는 단순 fetch 케이스를 친절히 안내.
-        if parsed.path == "/open":
+        if parsed.path in ("/open", "/open-folder"):
             origin = self._origin_allowed()
             self._send_json(405, {"message": "POST 로 호출하세요."}, origin)
             return
@@ -526,7 +526,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             self.send_response(403)
             self.end_headers()
             return
-        if parsed.path != "/open":
+        if parsed.path not in ("/open", "/open-folder"):
             self.send_response(404)
             self._send_cors(origin)
             self.end_headers()
@@ -555,9 +555,11 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"message": "orderNumber 가 필요합니다."}, origin)
             return
 
-        result = self.process_open(order_number)
-        status = 200 if result.get("opened") else 200  # 200 + opened=false 로 통일(웹은 메시지로 분기)
-        self._send_json(status, result, origin)
+        if parsed.path == "/open-folder":
+            result = self.process_open_folder(order_number)
+        else:
+            result = self.process_open(order_number)
+        self._send_json(200, result, origin)  # 200 + opened/opened=false 로 통일(웹은 메시지로 분기)
 
     def process_open(self, order_number: str) -> dict:
         config = self.config
@@ -626,6 +628,56 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             "matchedFile": fs_file.name,
             "matchKind": reason,
             "customerFolder": str(customer_folder),
+        }
+
+    def process_open_folder(self, order_number: str) -> dict:
+        """[폴더열기] — 그 지시서의 .fs(찾으면 그 파일이 든 폴더), 못 찾으면 거래처 폴더를
+        탐색기로 연다. FlexiSIGN 은 건드리지 않는다."""
+        config = self.config
+        api_base = (config.get("api_base") or "").strip()
+        network_base_str = (config.get("network_customer_base") or "").strip()
+        fuzzy_threshold = float(config.get("fuzzy_threshold") or 0.85)
+
+        if not api_base:
+            return {"opened": False, "message": "config.json 의 api_base 가 설정되지 않았습니다."}
+        if not network_base_str:
+            return {"opened": False, "message": "config.json 의 network_customer_base 가 설정되지 않았습니다."}
+
+        meta = fetch_worksheet(api_base, order_number)
+        if not meta:
+            return {"opened": False, "message": f"백엔드에서 [{order_number}] 정보를 가져오지 못했습니다."}
+
+        company = (meta.get("companyName") or "").strip()
+        network_folder_name = (meta.get("networkFolderName") or "").strip()
+        pdf_filename = (meta.get("originalPdfFilename") or "").strip()
+        if not network_folder_name and not company:
+            return {"opened": False, "message": "거래처 정보가 비어있어 폴더를 찾을 수 없습니다."}
+
+        network_base = Path(network_base_str)
+        customer_folder = find_customer_folder(network_base, network_folder_name, company)
+        if customer_folder is None:
+            return {
+                "opened": False,
+                "message": f"거래처 폴더를 찾지 못했습니다: {network_folder_name or company}",
+            }
+
+        target = customer_folder
+        matched_file = None
+        if pdf_filename:
+            fs_file, _reason = find_fs_file(customer_folder, pdf_filename, fuzzy_threshold)
+            if fs_file is not None:
+                target = fs_file.parent
+                matched_file = fs_file.name
+        open_folder_in_explorer(target)
+        logging.info("폴더 열기 [%s] → %s%s", order_number, target,
+                     f" (.fs: {matched_file})" if matched_file else "")
+        return {
+            "opened": True,
+            "folder": str(target),
+            "matchedFile": matched_file,
+            "customerFolder": str(customer_folder),
+            "message": (f"{matched_file} 가 든 폴더를 열었습니다." if matched_file
+                        else "거래처 폴더를 열었습니다."),
         }
 
 

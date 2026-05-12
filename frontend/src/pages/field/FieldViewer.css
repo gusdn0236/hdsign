@@ -364,11 +364,16 @@
 .fv-card-no { color: #a1a1aa; font-variant-numeric: tabular-nums; font-size: 10.5px; }
 
 .fv-card-actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     margin-top: 8px;
 }
+/* [FS에서 열기] · [폴더열기] 는 한 줄에 반반. '완료'/'완료취소'(내 지시서만 보기에서만 등장)는
+   아래 줄 전체폭. */
+.fv-card-actions .fv-btn { flex: 1 1 calc(50% - 3px); min-width: 0; }
+.fv-card-actions .fv-btn-done,
+.fv-card-actions .fv-btn-completed { flex-basis: 100%; }
 
 .fv-btn {
     display: inline-flex;
@@ -392,6 +397,13 @@
     border-color: #18181b;
 }
 .fv-btn-fs:hover:not(:disabled) { background: #27272a; }
+
+.fv-btn-folder {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border-color: #bfdbfe;
+}
+.fv-btn-folder:hover:not(:disabled) { background: #dbeafe; border-color: #93c5fd; }
 
 .fv-btn-done {
     background: #ffffff;

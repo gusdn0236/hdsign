@@ -82,6 +82,7 @@ export default function FieldViewer() {
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
     const [openingFs, setOpeningFs] = useState(null);     // orderNumber 진행중
+    const [openingFolder, setOpeningFolder] = useState(null); // orderNumber 진행중
     const [completing, setCompleting] = useState(null);   // orderNumber 진행중
     const [toast, setToast] = useState(null);             // {kind, text}
     const [confirmAction, setConfirmAction] = useState(null); // {message, confirmText, onConfirm}
@@ -293,6 +294,44 @@ export default function FieldViewer() {
             );
         } finally {
             setOpeningFs(null);
+        }
+    }, [showToast]);
+
+    // [폴더열기] — 에이전트가 그 지시서의 .fs(찾으면) 가 든 폴더, 못 찾으면 거래처 폴더를 탐색기로 연다.
+    const handleOpenFolder = useCallback(async (it) => {
+        if (!(it.networkFolderName || it.companyName)) {
+            showToast('warn', '거래처 정보가 비어 있어 폴더를 찾을 수 없는 지시서입니다.', 5000);
+            return;
+        }
+        setOpeningFolder(it.orderNumber);
+        try {
+            const res = await fetch(`${AGENT_URL}/open-folder`, {
+                method: 'POST',
+                mode: 'cors',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-HDSign-Field': '1',
+                },
+                body: JSON.stringify({ orderNumber: it.orderNumber }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.message || `에이전트 응답 ${res.status}`);
+            }
+            const body = await res.json();
+            if (body.opened) {
+                showToast('success', body.message || '폴더를 열었습니다.');
+            } else {
+                showToast('warn', body.message || '폴더를 열지 못했습니다.', 5000);
+            }
+        } catch {
+            showToast(
+                'error',
+                '에이전트 연결 실패 — 트레이의 HD사인 작업뷰어 프로그램이 켜져있는지 확인하세요.',
+                6000,
+            );
+        } finally {
+            setOpeningFolder(null);
         }
     }, [showToast]);
 
@@ -614,6 +653,7 @@ export default function FieldViewer() {
                             && Array.isArray(it.workerCompletions)
                             && it.workerCompletions.some((c) => c.worker === worker);
                         const opening = openingFs === it.orderNumber;
+                        const openingDir = openingFolder === it.orderNumber;
                         const closing = completing === it.orderNumber;
                         return (
                             <article
@@ -660,7 +700,20 @@ export default function FieldViewer() {
                                         >
                                             {opening ? '여는 중…' : 'FS에서 열기'}
                                         </button>
-                                        {isCompleted ? (
+                                        <button
+                                            type="button"
+                                            className="fv-btn fv-btn-folder"
+                                            onClick={() => handleOpenFolder(it)}
+                                            disabled={!fsReady || openingDir}
+                                            title={!fsReady
+                                                ? '거래처 정보가 비어 있어 폴더를 찾을 수 없습니다'
+                                                : '이 지시서의 .fs(찾으면) 가 든 폴더를 탐색기로 엽니다'}
+                                        >
+                                            {openingDir ? '여는 중…' : '폴더열기'}
+                                        </button>
+                                        {/* '완료'/'완료취소' 는 '내 지시서만 보기' 모드에서만 — 전체 보기에선 누가
+                                            완료했는지 개념이 무의미하므로 [FS에서 열기]·[폴더열기] 만 노출. */}
+                                        {effectiveMyOnly && (isCompleted ? (
                                             <button
                                                 type="button"
                                                 className="fv-btn fv-btn-completed"
@@ -679,7 +732,7 @@ export default function FieldViewer() {
                                             >
                                                 {closing ? '처리 중…' : '완료'}
                                             </button>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
                             </article>
