@@ -13,15 +13,22 @@
 
 Option Explicit
 
-Dim shell, fso, scriptDir, agentExe, sidebarUrl, profileDir
+Dim shell, fso, scriptDir, agentExeNet, agentExe, binDir, sidebarUrl, profileDir
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-agentExe = scriptDir & "\hdsign_field_agent.exe"
+' 네트워크 마스터 .exe — 배포 스크립트가 여기에 새 빌드를 떨군다.
+agentExeNet = scriptDir & "\hdsign_field_agent.exe"
 sidebarUrl = "https://hdsigncraft.com/field"
 ' 전용 프로필 — 브라우저 메인 프로필의 "마지막 창 상태" 를 안 건드리려고 분리.
 profileDir = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\HDSignFieldViewer"
+' 실제로 실행하는 .exe 는 항상 이 로컬 복사본 — 네트워크 마스터를 직접 실행하면 그 파일이
+' 잠겨서, 다음 배포 때 "프로그램 먼저 꺼 달라" 고 일일이 부탁해야 했다(워처와 동일한 구조로
+' 통일: 네트워크는 마스터만, 실행은 로컬 복사본). 이 .vbs 가 띄울 때마다 네트워크 → 로컬로
+' (에이전트가 안 떠 있을 때만) 덮어써서 다음 실행에 새 버전이 자동 반영된다.
+binDir = profileDir & "\bin"
+agentExe = binDir & "\hdsign_field_agent.exe"
 
 ' --- 0a. Self-heal the desktop shortcut icon ----------------------------
 ' The shipped .lnk files point IconLocation at the UNC .ico
@@ -90,9 +97,28 @@ Err.Clear
 On Error Goto 0
 
 If Not isAlive Then
+    ' 에이전트가 안 떠 있는 지금만 네트워크 마스터 → 로컬 복사본으로 갱신(떠 있으면 로컬
+    ' .exe 가 잠겨서 복사 실패하므로 시도 안 함 — 그 경우 어차피 이미 실행 중이라 이 블록을
+    ' 안 탄다). 네트워크 접근 불가/복사 실패면 직전 로컬 복사본 그대로 실행(워처와 동일).
+    On Error Resume Next
+    If Not fso.FolderExists(profileDir) Then fso.CreateFolder(profileDir)
+    If Not fso.FolderExists(binDir) Then fso.CreateFolder(binDir)
+    If fso.FileExists(agentExeNet) Then fso.CopyFile agentExeNet, agentExe, True
+    ' 디버그 .exe 도 같이 로컬로 — 디버그 바로가기가 로컬 복사본을 가리키는 경우 대비(있으면).
+    If fso.FileExists(scriptDir & "\hdsign_field_agent_debug.exe") Then _
+        fso.CopyFile scriptDir & "\hdsign_field_agent_debug.exe", binDir & "\hdsign_field_agent_debug.exe", True
+    Err.Clear
+    On Error Goto 0
+
     If Not fso.FileExists(agentExe) Then
-        MsgBox "hdsign_field_agent.exe not found at:" & vbCrLf & agentExe, 16, "HD Sign"
-        WScript.Quit 1
+        If fso.FileExists(agentExeNet) Then
+            ' 로컬 복사가 실패했지만 네트워크엔 있다 — 마지막 수단으로 네트워크에서 직접 실행
+            ' (이 경우만 네트워크 .exe 가 잠긴다. 다음 배포 전에 사이드바를 닫아야 함.)
+            agentExe = agentExeNet
+        Else
+            MsgBox "hdsign_field_agent.exe not found:" & vbCrLf & agentExeNet, 16, "HD Sign"
+            WScript.Quit 1
+        End If
     End If
     shell.Run """" & agentExe & """", 0, False   ' hidden, no wait — agent is --noconsole
     WScript.Sleep 1500                            ' let the bootloader bind the port

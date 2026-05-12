@@ -150,13 +150,36 @@ def find_customer_folder(network_base: Path, network_folder_name: str,
 _PRINT_JOB_PREFIX_RE = re.compile(r"^\s*(?:flexisign|flexsign|adobe illustrator|illustrator)\s*[-–—:]\s*",
                                   re.IGNORECASE)
 
+# FlexiSIGN(또는 Illustrator) 이 .ai/.eps 같은 비-네이티브 파일을 열고 인쇄하면 문서명에 원본
+# 확장자가 그대로 남아 인쇄 PDF 가 "원본.ai.pdf" 가 되기도 한다 → stem 이 "원본.ai" 가 되어
+# 거래처 폴더의 "원본.fs" 와 정확/유사 매칭 모두 빗나간다. 이런 그래픽 파일 확장자가 stem
+# 끝에 붙어 있으면 한 겹 더 벗긴 후보도 함께 시도한다.
+_GRAPHICS_EXT_SUFFIX_RE = re.compile(r"\.(?:ai|eps|pdf|psd|svg|cdr|fs|tif|tiff|png|jpg|jpeg)$",
+                                     re.IGNORECASE)
+
 
 def _stem_candidates(pdf_stem: str) -> list[str]:
-    """매칭에 쓸 stem 후보들 — 원본 + 알려진 인쇄앱 접두사 제거본. 중복/빈값 제거."""
-    out = [pdf_stem]
-    stripped = _PRINT_JOB_PREFIX_RE.sub("", pdf_stem).strip()
-    if stripped and stripped != pdf_stem:
-        out.append(stripped)
+    """매칭에 쓸 stem 후보들 — 원본 + 인쇄앱 접두사 제거본 + 그래픽 확장자 꼬리 제거본.
+    중복/빈값 제거, 순서 보존."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(value: str) -> None:
+        value = (value or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+
+    _add(pdf_stem)
+    _add(_PRINT_JOB_PREFIX_RE.sub("", pdf_stem).strip())
+    # 위에서 모은 각 후보에서 끝에 붙은 그래픽 확장자(.ai, .eps …)를 한 겹씩 더 벗긴 후보.
+    for cand in list(out):
+        peeled = cand
+        m = _GRAPHICS_EXT_SUFFIX_RE.search(peeled)
+        while m:
+            peeled = peeled[: m.start()].strip()
+            _add(peeled)
+            m = _GRAPHICS_EXT_SUFFIX_RE.search(peeled)
     return out
 
 
