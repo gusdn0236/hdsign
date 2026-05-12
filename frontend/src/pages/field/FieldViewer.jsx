@@ -54,6 +54,34 @@ function formatShortDate(dateStr) {
     return `${d.getMonth() + 1}/${d.getDate()} (${dow})`;
 }
 
+// "옛 지시서 찾기" — 발주연도 드롭다운 옵션(현재연도 ~ 2023).
+const ARCHIVE_YEARS = (() => {
+    const now = new Date().getFullYear();
+    const out = [];
+    for (let y = now; y >= 2023; y--) out.push(y);
+    return out;
+})();
+// 그 달의 마지막 날 (yyyy-mm-dd).
+function lastDayOfMonth(year, month) {
+    return new Date(year, month, 0).getDate();   // month: 1~12 → new Date(y, m, 0) = 전월 말일 트릭
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+// ISO datetime("2025-09-03T..." 또는 "2025-09-03") → "9월" / "9/3" 등 표시용.
+function ymOf(iso) {
+    if (!iso) return '';
+    const m = String(iso).match(/^(\d{4})-(\d{2})/);
+    return m ? `${m[1]}-${m[2]}` : '';
+}
+function monthHeaderLabel(ym) {
+    const m = ym.match(/^(\d{4})-(\d{2})$/);
+    if (!m) return ym || '기타';
+    return `${m[1]}년 ${Number(m[2])}월`;
+}
+function dayOf(iso) {
+    const m = String(iso || '').match(/^\d{4}-\d{2}-(\d{2})/);
+    return m ? Number(m[1]) : null;
+}
+
 function getDueBadge(dateStr) {
     if (!dateStr) return null;
     const d = new Date(dateStr + 'T00:00:00');
@@ -81,6 +109,16 @@ export default function FieldViewer() {
     const [hidden, setHidden] = useState(() => readHidden());
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
+    // 옛 지시서 찾기 모달
+    const [archiveOpen, setArchiveOpen] = useState(false);
+    const [arCompany, setArCompany] = useState('');
+    const [arYear, setArYear] = useState('');     // '' = 연도 무관
+    const [arMonth, setArMonth] = useState('');   // '' = 월 무관 (연도 지정 시에만 의미)
+    const [arDay, setArDay] = useState('');       // '' = 일 무관 (연·월 지정 시에만 의미)
+    const [arFilename, setArFilename] = useState('');
+    const [arResults, setArResults] = useState(null);   // null = 아직 검색 안 함
+    const [arLoading, setArLoading] = useState(false);
+    const [arError, setArError] = useState('');
     const [openingFs, setOpeningFs] = useState(null);     // orderNumber 진행중
     const [openingFolder, setOpeningFolder] = useState(null); // orderNumber 진행중
     const [completing, setCompleting] = useState(null);   // orderNumber 진행중
@@ -335,6 +373,74 @@ export default function FieldViewer() {
         }
     }, [showToast]);
 
+    // 옛 지시서 찾기 — 입력한 조건(거래처/연·월·일/파일명)을 AND 로 백엔드에 검색. 조건 더 줄수록 더 좁아짐.
+    const runArchiveSearch = useCallback(async () => {
+        const company = arCompany.trim();
+        const filename = arFilename.trim();
+        let from = '';
+        let to = '';
+        if (arYear) {
+            const y = Number(arYear);
+            if (arMonth) {
+                const mo = Number(arMonth);
+                if (arDay) {
+                    const d = Number(arDay);
+                    if (!Number.isInteger(d) || d < 1 || d > 31) { setArError('일은 1~31 사이로 입력하세요.'); return; }
+                    from = `${y}-${pad2(mo)}-${pad2(d)}`;
+                    to = from;
+                } else {
+                    from = `${y}-${pad2(mo)}-01`;
+                    to = `${y}-${pad2(mo)}-${pad2(lastDayOfMonth(y, mo))}`;
+                }
+            } else {
+                from = `${y}-01-01`;
+                to = `${y}-12-31`;
+            }
+        }
+        if (!company && !filename && !from) {
+            setArError('거래처 · 발주시기 · 파일명 중 하나는 입력하세요.');
+            return;
+        }
+        setArError('');
+        setArLoading(true);
+        setArResults(null);
+        try {
+            const params = new URLSearchParams();
+            if (company) params.set('company', company);
+            if (filename) params.set('filename', filename);
+            if (from) params.set('from', from);
+            if (to) params.set('to', to);
+            const res = await fetch(
+                `${BASE_URL}/api/public/worksheets/search?${params.toString()}`,
+                { cache: 'no-store' },
+            );
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.message || `검색 실패 (${res.status})`);
+            }
+            const data = await res.json();
+            setArResults(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setArError(err.message || '검색 중 오류가 발생했습니다.');
+            setArResults(null);
+        } finally {
+            setArLoading(false);
+        }
+    }, [arCompany, arFilename, arYear, arMonth, arDay]);
+
+    // 검색결과를 발주 연-월별로 묶고 최근 월 먼저. (거래처만 검색하면 그 거래처 작업이 월별로 쌓이고,
+    // 특정 달만 검색하면 그 달 작업이 거래처 라벨과 함께 한 그룹에 보인다.)
+    const arGroups = useMemo(() => {
+        if (!arResults) return [];
+        const map = new Map();
+        for (const it of arResults) {
+            const key = ymOf(it.orderedAt) || '기타';
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(it);
+        }
+        return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+    }, [arResults]);
+
     // 키보드로 선택한 카드 열기 — 1차 Enter: 확인 모달, 2차 Enter: 실제 열기(모달 [열기] 버튼이 autoFocus).
     const askOpenFs = useCallback((it) => {
         if (!it) return;
@@ -500,19 +606,33 @@ export default function FieldViewer() {
             <header className="fv-header">
                 <div className="fv-header-row">
                     <h1 className="fv-title">현장 지시서</h1>
-                    <button
-                        type="button"
-                        className={`fv-refresh${refreshing ? ' spinning' : ''}`}
-                        onClick={() => fetchList({ manual: true })}
-                        disabled={refreshing}
-                        aria-label="새로고침"
-                    >
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M13.5 8a5.5 5.5 0 1 1-1.611-3.889" />
-                            <path d="M13.5 2.5v3h-3" />
-                        </svg>
-                        <span>{refreshing ? '갱신 중…' : '새로고침'}</span>
-                    </button>
+                    <div className="fv-header-actions">
+                        <button
+                            type="button"
+                            className="fv-archive-open"
+                            onClick={() => setArchiveOpen(true)}
+                            title="거래처·발주시기·파일명으로 지난 작업지시서를 찾습니다 (휴지통에서 정리된 옛 건 포함)"
+                        >
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <circle cx="7" cy="7" r="4.5" />
+                                <path d="M10.5 10.5L13.5 13.5" />
+                            </svg>
+                            <span>옛 지시서 찾기</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`fv-refresh${refreshing ? ' spinning' : ''}`}
+                            onClick={() => fetchList({ manual: true })}
+                            disabled={refreshing}
+                            aria-label="새로고침"
+                        >
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M13.5 8a5.5 5.5 0 1 1-1.611-3.889" />
+                                <path d="M13.5 2.5v3h-3" />
+                            </svg>
+                            <span>{refreshing ? '갱신 중…' : '새로고침'}</span>
+                        </button>
+                    </div>
                 </div>
 
                 <div className="fv-tabs" role="tablist">
@@ -807,6 +927,136 @@ export default function FieldViewer() {
                                 onClick={submitWorker}
                                 disabled={!workerDraft.trim()}
                             >저장</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {archiveOpen && (
+                <div className="fv-modal-bg" onClick={() => setArchiveOpen(false)}>
+                    <div
+                        className="fv-modal fv-archive-modal"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setArchiveOpen(false); }}
+                    >
+                        <div className="fv-archive-head">
+                            <h2>옛 지시서 찾기</h2>
+                            <button type="button" className="fv-archive-x" onClick={() => setArchiveOpen(false)} aria-label="닫기">×</button>
+                        </div>
+                        <p className="fv-modal-desc">
+                            거래처 · 발주시기 · 파일명 중 <b>아는 것만</b> 입력하세요. 조건을 더 줄수록 더 좁게 걸러집니다.
+                            휴지통에서 정리된 옛 지시서도 검색됩니다 — <b>[FS에서 열기]</b> 로 거래처 폴더의 .fs 를 바로 엽니다.
+                        </p>
+                        <div className="fv-archive-form">
+                            <label className="fv-archive-field fv-archive-grow">
+                                <span>거래처</span>
+                                <input
+                                    type="text" value={arCompany}
+                                    onChange={(e) => setArCompany(e.target.value)}
+                                    placeholder="거래처명 일부"
+                                    onKeyDown={(e) => { if (e.key === 'Enter') runArchiveSearch(); }}
+                                />
+                            </label>
+                            <label className="fv-archive-field">
+                                <span>발주 연도</span>
+                                <select
+                                    value={arYear}
+                                    onChange={(e) => { setArYear(e.target.value); if (!e.target.value) { setArMonth(''); setArDay(''); } }}
+                                >
+                                    <option value="">연도 무관</option>
+                                    {ARCHIVE_YEARS.map((y) => <option key={y} value={y}>{y}년</option>)}
+                                </select>
+                            </label>
+                            <label className="fv-archive-field">
+                                <span>월</span>
+                                <select
+                                    value={arMonth} disabled={!arYear}
+                                    onChange={(e) => { setArMonth(e.target.value); if (!e.target.value) setArDay(''); }}
+                                >
+                                    <option value="">전체</option>
+                                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}월</option>)}
+                                </select>
+                            </label>
+                            <label className="fv-archive-field fv-archive-day">
+                                <span>일</span>
+                                <input
+                                    type="number" min="1" max="31" value={arDay} disabled={!arMonth}
+                                    onChange={(e) => setArDay(e.target.value)} placeholder="전체"
+                                    onKeyDown={(e) => { if (e.key === 'Enter') runArchiveSearch(); }}
+                                />
+                            </label>
+                            <label className="fv-archive-field fv-archive-grow">
+                                <span>파일명</span>
+                                <input
+                                    type="text" value={arFilename}
+                                    onChange={(e) => setArFilename(e.target.value)}
+                                    placeholder="원본 PDF 파일명 일부"
+                                    onKeyDown={(e) => { if (e.key === 'Enter') runArchiveSearch(); }}
+                                />
+                            </label>
+                            <button type="button" className="fv-archive-search" onClick={runArchiveSearch} disabled={arLoading}>
+                                {arLoading ? '검색 중…' : '검색'}
+                            </button>
+                        </div>
+                        {arError && <div className="fv-archive-error">{arError}</div>}
+                        <div className="fv-archive-results">
+                            {arLoading && <div className="fv-empty">검색 중…</div>}
+                            {!arLoading && arResults && arResults.length === 0 && (
+                                <div className="fv-empty">조건에 맞는 지시서가 없습니다.</div>
+                            )}
+                            {!arLoading && arResults && arResults.length > 0 && (
+                                <>
+                                    <div className="fv-archive-count">
+                                        {arResults.length}건{arResults.length >= 300 ? ' · 최대 300건만 표시 — 조건을 더 좁혀보세요' : ''}
+                                    </div>
+                                    {arGroups.map(([ym, list]) => (
+                                        <div key={ym} className="fv-archive-group">
+                                            <div className="fv-archive-month">{monthHeaderLabel(ym)} <span>({list.length})</span></div>
+                                            {list.map((it) => {
+                                                const fsReady = !!(it.networkFolderName || it.companyName);
+                                                const opening = openingFs === it.orderNumber;
+                                                const openingDir = openingFolder === it.orderNumber;
+                                                const dd = dayOf(it.orderedAt);
+                                                const mm = ym.match(/^\d{4}-(\d{2})$/);
+                                                const spec = (it.additionalItems || it.note || '').trim();
+                                                return (
+                                                    <div key={it.orderNumber} className="fv-archive-item">
+                                                        <div className="fv-archive-item-main">
+                                                            <div className="fv-archive-item-top">
+                                                                <span className="fv-archive-item-company">{it.companyName || '거래처 미상'}</span>
+                                                                {dd && mm && <span className="fv-archive-item-day">{Number(mm[1])}/{dd}</span>}
+                                                                {it.archived && <span className="fv-archive-tag">아카이브</span>}
+                                                            </div>
+                                                            {it.title && <div className="fv-archive-item-title">{it.title}</div>}
+                                                            {it.originalPdfFilename && <div className="fv-archive-item-file">📄 {it.originalPdfFilename}</div>}
+                                                            {spec && <div className="fv-archive-item-spec">{spec.length > 160 ? spec.slice(0, 160) + '…' : spec}</div>}
+                                                            <div className="fv-archive-item-meta">
+                                                                {it.dueDate && <span>납기 {formatShortDate(it.dueDate)}{it.dueTime ? ` ${it.dueTime}` : ''}</span>}
+                                                                <span>{it.orderNumber}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="fv-archive-item-actions">
+                                                            <button
+                                                                type="button" className="fv-btn fv-btn-fs"
+                                                                disabled={!fsReady || opening}
+                                                                title={!fsReady
+                                                                    ? '거래처 정보가 비어 있어 폴더를 찾을 수 없습니다'
+                                                                    : (it.originalPdfFilename ? 'FlexiSIGN 으로 열기' : '원본 PDF명이 없는 옛 건 — 누르면 거래처 폴더가 열립니다')}
+                                                                onClick={() => handleOpenFs(it)}
+                                                            >{opening ? '여는 중…' : 'FS에서 열기'}</button>
+                                                            <button
+                                                                type="button" className="fv-btn fv-btn-folder"
+                                                                disabled={!fsReady || openingDir}
+                                                                onClick={() => handleOpenFolder(it)}
+                                                            >{openingDir ? '여는 중…' : '폴더열기'}</button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ))}
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

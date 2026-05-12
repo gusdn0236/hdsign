@@ -179,6 +179,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const pageTitle = isOrderPage ? "발주 관리" : "견적 관리";
   const [orders, setOrders] = useState([]);
   const [trashOrders, setTrashOrders] = useState([]);
+  // 아카이브 — 영구삭제되어 R2 파일은 모두 사라지고, 현장 프로그램 검색용 최소 레코드만 남은 건.
+  const [archiveOrders, setArchiveOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState(null);
   // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
@@ -241,22 +243,28 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const loadOrders = async () => {
     setLoading(true);
     try {
-      const [activeRes, trashRes] = await Promise.all([
+      const [activeRes, trashRes, archiveRes] = await Promise.all([
         fetch(`${BASE_URL}/api/admin/orders`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(`${BASE_URL}/api/admin/orders/trash`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
+        fetch(`${BASE_URL}/api/admin/orders/archive`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       ]);
       if (!activeRes.ok) throw new Error("주문 목록을 불러오지 못했습니다.");
       if (!trashRes.ok) throw new Error("휴지통을 불러오지 못했습니다.");
+      if (!archiveRes.ok) throw new Error("아카이브를 불러오지 못했습니다.");
       const activeData = await activeRes.json();
       const trashData = await trashRes.json();
+      const archiveData = await archiveRes.json();
       const filterByType = (arr) =>
         Array.isArray(arr) ? arr.filter((o) => o.requestType === requestType) : [];
       setOrders(filterByType(activeData));
       setTrashOrders(filterByType(trashData));
+      setArchiveOrders(filterByType(archiveData));
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "주문 목록 조회 중 오류가 발생했습니다." });
     } finally {
@@ -300,8 +308,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     () =>
       orders.find((order) => order.id === selectedOrderId) ||
       trashOrders.find((order) => order.id === selectedOrderId) ||
+      archiveOrders.find((order) => order.id === selectedOrderId) ||
       null,
-    [orders, trashOrders, selectedOrderId]
+    [orders, trashOrders, archiveOrders, selectedOrderId]
   );
 
   const selectedFiles = useMemo(() => {
@@ -423,6 +432,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   const statusFilteredOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
+    if (activeFilter === "ARCHIVE") return archiveOrders;
     // 지연 — 휴지통 가지 않은 모든 활성 주문 중 dueDate 가 오늘 이전. 상태(IN_PROGRESS/COMPLETED/RECEIVED)
     // 무관 — overdueCount 와 같은 기준이라 수치와 보이는 카드 수가 일치.
     if (activeFilter === "OVERDUE") {
@@ -435,7 +445,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       return filteredOrders.filter((o) => o.status === "IN_PROGRESS" || o.status === "COMPLETED");
     }
     return filteredOrders.filter((order) => order.status === activeFilter);
-  }, [activeFilter, filteredOrders, trashOrders]);
+  }, [activeFilter, filteredOrders, trashOrders, archiveOrders]);
 
   const availableClients = useMemo(() => {
     const set = new Set();
@@ -578,9 +588,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // 달력 전체보기면 필터된 모든 주문, 그 외엔 선택 일자 카드.
   const visibleOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
+    if (activeFilter === "ARCHIVE") return archiveOrders;
     if (isAllView) return calendarOrdersBase;
     return calendarSelectedOrders;
-  }, [activeFilter, trashOrders, isAllView, calendarOrdersBase, calendarSelectedOrders]);
+  }, [activeFilter, trashOrders, archiveOrders, isAllView, calendarOrdersBase, calendarSelectedOrders]);
 
   const currentOrderIndex = useMemo(() => {
     if (!selectedOrderId) return -1;
@@ -674,9 +685,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return () => window.removeEventListener("keydown", handler);
   }, [selectedOrderId, lightboxIndex, currentOrderIndex, visibleOrders, reviewSession, reviewStage, reviewChoice, orders]);
 
-  // 메인 필터(접수/작업중/지연) 는 상단 큰 요약카드 클릭. 휴지통만 별도의 작은 탭으로 유지.
+  // 메인 필터(접수/작업중/지연) 는 상단 큰 요약카드 클릭. 휴지통·아카이브만 별도의 작은 탭으로 유지.
   const filterTabs = [
     { key: "TRASH", label: "휴지통", count: trashOrders.length },
+    { key: "ARCHIVE", label: "아카이브", count: archiveOrders.length },
   ];
 
   const updateOrderStatus = async (orderId, nextStatus) => {
@@ -944,8 +956,21 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
+  // 영구삭제 = R2 의 첨부·도안·미리보기·지시서 PDF 를 전부 지우되, 현장 프로그램이 옛 지시서를
+  // 다시 찾을 수 있도록 거래처·제목·발주일·납기·사양메모·파일명 등 최소 레코드는 "아카이브"에 남긴다.
+  const toArchivedShape = (order) => ({
+    ...order,
+    files: [],
+    worksheetPdfUrl: null,
+    worksheetOriginalPdfUrl: null,
+    worksheetThumbnailUrl: null,
+    worksheetChangeNote: null,
+    deletedAt: order.deletedAt || new Date().toISOString(),
+    purgedAt: new Date().toISOString(),
+  });
+
   const deletePermanently = async (order) => {
-    if (!window.confirm(`"${order.orderNumber}" 요청을 영구 삭제하시겠습니까?\n첨부 파일까지 즉시 삭제되며 되돌릴 수 없습니다.`)) {
+    if (!window.confirm(`"${order.orderNumber}" 요청을 영구 삭제하시겠습니까?\n\n첨부 파일·도안·미리보기·지시서 PDF 는 즉시 삭제됩니다.\n다만 현장 프로그램에서 옛 지시서를 다시 찾을 수 있도록 거래처·제목·발주일·납기·사양메모·파일명 등 최소 정보는 '아카이브'에 남습니다. (아카이브 탭에서 [완전삭제] 하면 그것까지 사라집니다.)`)) {
       return;
     }
     setDeletingOrderId(order.id);
@@ -959,10 +984,36 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         throw new Error(errorBody.message || "영구 삭제에 실패했습니다.");
       }
       setTrashOrders((prev) => prev.filter((o) => o.id !== order.id));
+      setArchiveOrders((prev) => [toArchivedShape(order), ...prev]);
       if (selectedOrderId === order.id) setSelectedOrderId(null);
-      setFeedback({ type: "success", msg: "영구 삭제했습니다." });
+      setFeedback({ type: "success", msg: "영구 삭제했습니다. (현장 검색용 최소 레코드는 아카이브에 보존)" });
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "영구 삭제 중 오류가 발생했습니다." });
+    } finally {
+      setDeletingOrderId(null);
+    }
+  };
+
+  // 아카이브에서 완전삭제 — 최소 레코드(orders 행)까지 진짜로 제거. 되돌릴 수 없음.
+  const forgetArchived = async (order) => {
+    if (!window.confirm(`"${order.orderNumber}" — 현장 검색용 최소 레코드까지 완전히 삭제하시겠습니까?\n이후 현장 프로그램에서도 이 지시서를 찾을 수 없게 되며, 되돌릴 수 없습니다.`)) {
+      return;
+    }
+    setDeletingOrderId(order.id);
+    try {
+      const res = await fetch(`${BASE_URL}/api/admin/orders/${order.id}/archive`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        throw new Error(errorBody.message || "완전 삭제에 실패했습니다.");
+      }
+      setArchiveOrders((prev) => prev.filter((o) => o.id !== order.id));
+      if (selectedOrderId === order.id) setSelectedOrderId(null);
+      setFeedback({ type: "success", msg: "완전 삭제했습니다." });
+    } catch (err) {
+      setFeedback({ type: "error", msg: err.message || "완전 삭제 중 오류가 발생했습니다." });
     } finally {
       setDeletingOrderId(null);
     }
@@ -992,11 +1043,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       const deletedIds = new Set(
         results.filter((r) => r.status === "fulfilled").map((r) => r.value)
       );
+      const purgedOrders = trashOrders.filter((o) => deletedIds.has(o.id)).map(toArchivedShape);
       setTrashOrders((prev) => prev.filter((o) => !deletedIds.has(o.id)));
+      setArchiveOrders((prev) => [...purgedOrders, ...prev]);
       if (selectedOrderId && deletedIds.has(selectedOrderId)) setSelectedOrderId(null);
       const failed = results.length - deletedIds.size;
       if (failed === 0) {
-        setFeedback({ type: "success", msg: `${deletedIds.size}건을 영구 삭제했습니다.` });
+        setFeedback({ type: "success", msg: `${deletedIds.size}건을 영구 삭제했습니다. (현장 검색용 최소 레코드는 아카이브에 보존)` });
       } else {
         setFeedback({ type: "error", msg: `${deletedIds.size}건 삭제, ${failed}건 실패` });
       }
@@ -1089,6 +1142,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // 클로저로 활성 필터/선택모드/로딩 플래그/핸들러를 모두 캡처하므로 인자는 order 하나면 충분.
   const renderOrderCard = (order) => {
     const isTrash = activeFilter === "TRASH";
+    const isArchive = activeFilter === "ARCHIVE";
     const statusMeta = STATUS_META[order.status] || STATUS_META.RECEIVED;
     const nextStatus = getNextStatus(order.status);
     const updating = statusUpdatingId === order.id;
@@ -1103,20 +1157,23 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const hasWorksheetChange = !!worksheetChangeNote;
     const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
     const isOrderType = order.requestType === "ORDER";
-    const selecting = !isTrash && bulkSelectMode;
+    const selecting = !isTrash && !isArchive && bulkSelectMode;
     const checked = selecting && bulkSelectedIds.has(order.id);
+    // 아카이브 카드는 R2 파일이 이미 없어 열어볼 게 없으므로 모달을 띄우지 않는다.
     const openCard = () => {
+      if (isArchive) return;
       if (selecting) toggleBulkSelected(order.id);
       else setSelectedOrderId(order.id);
     };
     return (
       <div
         key={order.id}
-        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
+        className={`order-card order-card--${typeKey} ${isTrash || isArchive ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
         onClick={openCard}
-        role="button"
-        tabIndex={0}
+        role={isArchive ? undefined : "button"}
+        tabIndex={isArchive ? undefined : 0}
         onKeyDown={(e) => {
+          if (isArchive) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             openCard();
@@ -1147,6 +1204,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               <span className="status-badge status-trash">
                 {daysLeft === null ? "휴지통" : `${daysLeft}일 남음`}
               </span>
+            ) : isArchive ? (
+              <span className="status-badge status-trash">아카이브</span>
             ) : (
               <span className={`status-badge ${statusMeta.className}`}>
                 {statusMeta.label}
@@ -1213,6 +1272,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   {deleting ? "삭제 중..." : "영구삭제"}
                 </button>
               </>
+            ) : isArchive ? (
+              <button
+                type="button"
+                className="next-status-btn action-delete"
+                onClick={() => forgetArchived(order)}
+                disabled={deleting}
+                title="현장 검색용 최소 레코드까지 완전히 삭제 — 되돌릴 수 없습니다"
+              >
+                {deleting ? "삭제 중..." : "완전삭제"}
+              </button>
             ) : (
               <>
                 {/* 새 워크플로우: 작업완료 / 다음 단계 버튼 제거. IN_PROGRESS 카드는 납기가 지나면
@@ -1307,7 +1376,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           <button
             key={tab.key}
             type="button"
-            className={`filter-tab ${activeFilter === tab.key ? "active" : ""} ${tab.key === "TRASH" ? "trash-tab" : ""}`}
+            className={`filter-tab ${activeFilter === tab.key ? "active" : ""} ${tab.key === "TRASH" || tab.key === "ARCHIVE" ? "trash-tab" : ""}`}
             onClick={() => setActiveFilter(tab.key)}
           >
             {tab.label}
@@ -1316,7 +1385,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         ))}
       </div>
 
-      {activeFilter !== "TRASH" && (
+      {activeFilter !== "TRASH" && activeFilter !== "ARCHIVE" && (
         <div className="order-sort-row">
           {/* 거래처 필터 — 입력 후 Enter 로 칩 추가, 여러 거래처 OR 매칭. 입력만 하고 Enter
               안 눌러도 라이브 미리보기. 백스페이스로 마지막 칩 제거. */}
@@ -1416,20 +1485,27 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       {activeFilter === "TRASH" && (
         <p className="trash-hint">
           휴지통의 항목은 삭제일로부터 {TRASH_RETENTION_DAYS}일 후 자동으로 영구 삭제됩니다.
+          영구 삭제 시 첨부·도안·미리보기·지시서 PDF 는 사라지지만, 현장 프로그램에서 옛 지시서를 다시 찾을 수 있도록
+          거래처·제목·발주일·납기·사양메모·파일명 등 최소 정보는 '아카이브'에 남습니다.
+        </p>
+      )}
+      {activeFilter === "ARCHIVE" && (
+        <p className="trash-hint">
+          영구 삭제되어 첨부 파일은 모두 사라지고, 현장 프로그램 "옛 지시서 찾기"용 최소 레코드(거래처·제목·발주일·납기·사양메모·파일명)만 남은 항목입니다.
+          [완전삭제] 하면 이 레코드까지 사라져 현장에서도 더 이상 찾을 수 없게 됩니다. (자동 삭제 없음 — 직접 정리)
         </p>
       )}
 
-      {activeFilter === "TRASH" ? (
+      {(activeFilter === "TRASH" || activeFilter === "ARCHIVE") ? (
         <div className="order-card-view">
-          {loading ? (
-            <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
-          ) : trashOrders.length === 0 ? (
-            <div className="order-empty">휴지통이 비어 있습니다.</div>
-          ) : (
-            <div className="order-card-grid">
-              {trashOrders.map(renderOrderCard)}
-            </div>
-          )}
+          {(() => {
+            const list = activeFilter === "TRASH" ? trashOrders : archiveOrders;
+            if (loading) return <div className="order-empty">요청 목록을 불러오는 중입니다.</div>;
+            if (list.length === 0) {
+              return <div className="order-empty">{activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "아카이브가 비어 있습니다."}</div>;
+            }
+            return <div className="order-card-grid">{list.map(renderOrderCard)}</div>;
+          })()}
         </div>
       ) : (
         <div className="order-calendar-view">

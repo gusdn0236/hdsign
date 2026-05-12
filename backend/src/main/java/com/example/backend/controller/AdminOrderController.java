@@ -6,6 +6,7 @@ import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
+import com.example.backend.service.OrderArchiveService;
 import com.example.backend.service.WorksheetFlattenService;
 import com.example.backend.service.WorksheetThumbnailService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,6 +52,7 @@ public class AdminOrderController {
     private final S3Client s3Client;
     private final WorksheetThumbnailService thumbnailService;
     private final WorksheetFlattenService flattenService;
+    private final OrderArchiveService orderArchiveService;
     private final JdbcTemplate jdbcTemplate;
 
     @Value("${r2.bucket}")
@@ -143,10 +145,21 @@ public class AdminOrderController {
         return ResponseEntity.ok(orders);
     }
 
-    // 휴지통 목록 (삭제된 지 최근순)
+    // 휴지통 목록 (삭제된 지 최근순) — 아카이브로 넘어간 건(파일 영구삭제됨)은 제외.
     @GetMapping("/trash")
     public ResponseEntity<List<OrderDto.Response>> getTrash() {
-        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()
+        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNotNullAndPurgedAtIsNullOrderByDeletedAtDesc()
+                .stream()
+                .map(OrderDto::toResponse)
+                .toList();
+        return ResponseEntity.ok(orders);
+    }
+
+    // 아카이브 목록 (영구삭제되어 최소 레코드만 남은 건, 최근 정리순).
+    // 여기서 [완전삭제] 해야 비로소 행이 사라진다.
+    @GetMapping("/archive")
+    public ResponseEntity<List<OrderDto.Response>> getArchive() {
+        List<OrderDto.Response> orders = orderRepository.findByPurgedAtIsNotNullOrderByPurgedAtDesc()
                 .stream()
                 .map(OrderDto::toResponse)
                 .toList();
@@ -239,7 +252,9 @@ public class AdminOrderController {
         return ResponseEntity.ok(OrderDto.toResponse(saved));
     }
 
-    // 휴지통에서 영구 삭제 (R2 파일/미리보기 포함)
+    // 휴지통에서 영구 삭제 — R2 의 도안·미리보기·지시서 PDF·order_files 행을 전부 지우되,
+    // 현장 프로그램이 옛 지시서를 다시 찾을 수 있도록 최소 레코드(거래처·제목·발주일·납기·
+    // 사양메모·파일명)는 남겨 "아카이브" 상태로 만든다. 이 최소 레코드의 진짜 삭제는 아래 /archive.
     @DeleteMapping("/{id}/permanent")
     public ResponseEntity<?> deletePermanently(@PathVariable Long id) {
         Order order = orderRepository.findById(id)
@@ -250,7 +265,21 @@ public class AdminOrderController {
                     .body(Map.of("message", "휴지통에 있는 작업만 영구 삭제할 수 있습니다."));
         }
 
-        purgeR2Files(order);
+        orderArchiveService.purgeFilesKeepRecord(order);
+        return ResponseEntity.noContent().build();
+    }
+
+    // 아카이브에서 완전 삭제 — 최소 레코드(orders 행)까지 진짜로 제거한다. 되돌릴 수 없음.
+    @DeleteMapping("/{id}/archive")
+    public ResponseEntity<?> forgetArchived(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+
+        if (order.getPurgedAt() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("message", "아카이브된 작업만 완전 삭제할 수 있습니다."));
+        }
+
         orderRepository.delete(order);
         return ResponseEntity.noContent().build();
     }

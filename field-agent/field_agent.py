@@ -451,7 +451,10 @@ def open_folder_in_explorer(folder: Path) -> None:
 # ─── 백엔드 API ─────────────────────────────────────────────────────────
 
 def fetch_worksheet(api_base: str, order_number: str) -> dict | None:
-    url = f"{api_base.rstrip('/')}/api/public/worksheets/{urllib.parse.quote(order_number, safe='')}"
+    # /locator — 거래처 폴더명(networkFolderName)·원본 PDF 파일명(originalPdfFilename) 만 돌려주는
+    # 가벼운 엔드포인트. /{orderNumber} (detail) 와 달리 휴지통/아카이브 상태를 따지지 않으므로
+    # "옛 지시서 찾기"로 찾아낸, 이미 파일이 정리된 옛 건의 .fs 도 거래처 폴더에서 열 수 있다.
+    url = f"{api_base.rstrip('/')}/api/public/worksheets/{urllib.parse.quote(order_number, safe='')}/locator"
     req = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:

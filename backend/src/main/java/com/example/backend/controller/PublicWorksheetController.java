@@ -20,12 +20,14 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.data.domain.PageRequest;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -95,6 +97,63 @@ public class PublicWorksheetController {
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다.")));
+    }
+
+    /**
+     * 현장 프로그램 "옛 지시서 찾기" — 거래처명 / 발주기간(from~to, yyyy-MM-dd, to 는 그 날 포함) /
+     * 원본 PDF 파일명으로 검색. 입력한 조건끼리 AND — 조건을 더 줄수록 더 정교하게 걸러진다.
+     * (예: 거래처만 → 그 거래처가 한 작업 전부 / 특정 달의 from~to 만 → 그 달 작업 전부 / 둘 다 → 교집합)
+     * 살아있는 건·휴지통·아카이브(파일은 영구삭제됐지만 최소 레코드만 남은 옛 건)를 모두 포함한다.
+     * 무인증 — 회사 와이파이/현장 PC 에서 바로 쓰는 기존 worksheets 엔드포인트들과 동일한 보안 수준.
+     * 적어도 하나는 입력해야 함. 최근 발주순 최대 300건.
+     */
+    @GetMapping("/search")
+    public ResponseEntity<?> search(
+            @RequestParam(value = "company", required = false) String company,
+            @RequestParam(value = "from", required = false) String from,
+            @RequestParam(value = "to", required = false) String to,
+            @RequestParam(value = "filename", required = false) String filename
+    ) {
+        String companyQ = blankToNull(company);
+        String filenameQ = blankToNull(filename);
+        LocalDateTime fromTs = null;
+        LocalDateTime toTs = null;
+        try {
+            String fromQ = blankToNull(from);
+            String toQ = blankToNull(to);
+            if (fromQ != null) fromTs = LocalDate.parse(fromQ).atStartOfDay();
+            if (toQ != null) toTs = LocalDate.parse(toQ).plusDays(1).atStartOfDay();   // 그 날 끝까지 포함
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "발주기간 형식은 yyyy-MM-dd 입니다."));
+        }
+        if (companyQ == null && filenameQ == null && fromTs == null && toTs == null) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", "거래처·발주기간·파일명 중 하나는 입력해야 합니다."));
+        }
+        List<Map<String, Object>> body = new ArrayList<>();
+        for (Order o : orderRepository.searchForFieldArchive(companyQ, filenameQ, fromTs, toTs, PageRequest.of(0, 300))) {
+            body.add(toArchiveSummary(o));
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 현장 에이전트(.fs 열기)용 — 주문번호로 거래처 폴더명·원본 PDF 파일명만 돌려준다.
+     * detail 과 달리 deletedAt/purgedAt 상태를 따지지 않음: 옛(아카이브된) 지시서의 .fs 도 열 수 있어야 하므로.
+     */
+    @GetMapping("/{orderNumber}/locator")
+    public ResponseEntity<?> locator(@PathVariable String orderNumber) {
+        return orderRepository.findByOrderNumber(orderNumber)
+                .<ResponseEntity<?>>map(o -> {
+                    Map<String, Object> b = new HashMap<>();
+                    b.put("orderNumber", o.getOrderNumber());
+                    b.put("companyName", o.getClient() != null ? o.getClient().getCompanyName() : null);
+                    b.put("networkFolderName", o.getClient() != null ? o.getClient().getNetworkFolderName() : null);
+                    b.put("originalPdfFilename", o.getOriginalPdfFilename());
+                    return ResponseEntity.ok(b);
+                })
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("message", "해당 작업을 찾을 수 없습니다.")));
     }
 
     /**
@@ -301,6 +360,33 @@ public class PublicWorksheetController {
         item.put("originalPdfFilename", o.getOriginalPdfFilename());
         item.put("networkFolderName", o.getClient() != null ? o.getClient().getNetworkFolderName() : null);
         return item;
+    }
+
+    // "옛 지시서 찾기" 결과 카드용 — 현장 프로그램이 .fs 를 찾고(거래처폴더명+파일명) 사양을 훑는 데
+    // 필요한 최소 필드만. 아카이브된 옛 건은 worksheetPdfUrl 이 null → 프론트가 [지시서 보기] 숨김.
+    private Map<String, Object> toArchiveSummary(Order o) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("orderNumber", o.getOrderNumber());
+        m.put("title", o.getTitle());
+        m.put("companyName", o.getClient() != null ? o.getClient().getCompanyName() : null);
+        m.put("networkFolderName", o.getClient() != null ? o.getClient().getNetworkFolderName() : null);
+        m.put("originalPdfFilename", o.getOriginalPdfFilename());
+        m.put("orderedAt", o.getCreatedAt() != null ? o.getCreatedAt().toString() : null);
+        m.put("dueDate", o.getDueDate() != null ? o.getDueDate().toString() : null);
+        m.put("dueTime", o.getDueTime());
+        m.put("additionalItems", o.getAdditionalItems());
+        m.put("note", o.getNote());
+        m.put("hasSMPS", o.getHasSMPS());
+        m.put("status", o.getStatus().name());
+        m.put("worksheetPdfUrl", o.getWorksheetPdfUrl());
+        m.put("worksheetThumbnailUrl", o.getWorksheetThumbnailUrl());
+        m.put("archived", o.getPurgedAt() != null);
+        m.put("inTrash", o.getDeletedAt() != null && o.getPurgedAt() == null);
+        return m;
+    }
+
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s.trim();
     }
 
     /**
