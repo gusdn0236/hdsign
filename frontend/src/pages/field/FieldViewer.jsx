@@ -177,9 +177,11 @@ export default function FieldViewer() {
 
     // 탭 분리 — 본인이 [완료] 누른 건은 '완료' 탭으로, 나머지는 '작업중'.
     // (사무실에서 정식 완료처리되면 status 가 COMPLETED 로 가서 LIST 응답에서 빠진다 = 자동으로 양 탭 모두에서 사라짐)
+    // '내 지시서만 보기' 가 꺼진 전체 보기 모드에선 '내가 완료한 것' 개념이 무의미 → 완료 탭은 비우고 전부 작업중에.
     const tabFiltered = useMemo(() => {
+        if (!effectiveMyOnly) return tab === 'active' ? visibleItems : [];
         return visibleItems.filter((it) => (tab === 'active' ? !isDoneByMe(it) : isDoneByMe(it)));
-    }, [visibleItems, tab, isDoneByMe]);
+    }, [visibleItems, tab, isDoneByMe, effectiveMyOnly]);
 
     const dateFiltered = useMemo(() => {
         if (dateFilter === 'all') return tabFiltered;
@@ -415,6 +417,7 @@ export default function FieldViewer() {
     };
 
     const counts = useMemo(() => {
+        if (!effectiveMyOnly) return { active: visibleItems.length, done: 0 };
         let active = 0;
         let done = 0;
         visibleItems.forEach((it) => {
@@ -422,7 +425,7 @@ export default function FieldViewer() {
             else active += 1;
         });
         return { active, done };
-    }, [visibleItems, isDoneByMe]);
+    }, [visibleItems, isDoneByMe, effectiveMyOnly]);
 
     // '완료' 탭 — 현재 보이는 완료 카드 전부를 현장 목록에서 숨김(삭제). 발주관리 DB 와는 무관.
     const handleDeleteAllDone = useCallback(() => {
@@ -444,6 +447,8 @@ export default function FieldViewer() {
         const next = !myOnly;
         setMyOnly(next);
         writeMyOnly(next);
+        // 전체 보기로 바뀌면 완료 탭은 비므로(내 완료 개념 없음) 작업중 탭으로 이동.
+        if (!next) setTab('active');
         // 켜려는데 담당자가 없으면 — 먼저 담당자부터 고르게 안내(설정 안 하면 필터가 무의미).
         if (next && !worker) {
             setWorkerDraft('');
