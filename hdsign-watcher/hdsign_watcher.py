@@ -319,9 +319,11 @@ def qr_matrix_js(url: str) -> str:
     """
     URL을 인코딩한 QR 매트릭스를 JS 2차원 배열 리터럴 문자열로 반환.
     Illustrator ExtendScript에서 각 검은 모듈을 사각형 path로 그리는 데 사용.
+    ERROR_CORRECT_Q(25%) — 자동작성 지시서의 QR 도 FlexSign→PDF24 인쇄 후 다시 디코드되므로
+    qr_to_clipboard 와 동일하게 오류정정을 올려 셀 경계가 뭉개져도 복원 여지를 키운다.
     """
     qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        error_correction=qrcode.constants.ERROR_CORRECT_Q,
         box_size=1, border=2,
     )
     qr.add_data(url)
@@ -4523,7 +4525,7 @@ def process_ai_to_v8(ai_app, src_path: Path, dst_path: Path, pdf_path: Path,
         # 워크시트가 도면 상단 폭을 꽉 채우도록 도면 폭 기준 10%.
         # 도면 크기와 무관하게 비례시켜야 작은 간판이든 큰 간판이든 폼이 일관되게 상단을 차지.
         "  var qrSize = refWidth * 0.10;"
-        "  if (qrSize < 60) qrSize = 60;"
+        "  if (qrSize < 130) qrSize = 130;"  # 인쇄→PDF24→재디코드용 — 작은 도면에서도 최소 ~46mm 확보 (60pt→130pt)
         "  if (qrSize > 1500) qrSize = 1500;"
         "  var sc = qrSize / 90.0;"
         "  var margin = 18 * sc;"
@@ -4803,7 +4805,7 @@ def process_header_only_to_v8(ai_app, dst_path: Path,
         "  var abLeft = ab[0], abTop = ab[1], abRight = ab[2], abBottom = ab[3];"
         "  var abWidth = abRight - abLeft;"
         "  var qrSize = abWidth * 0.10;"
-        "  if (qrSize < 60) qrSize = 60;"
+        "  if (qrSize < 130) qrSize = 130;"  # 인쇄→PDF24→재디코드용 — 작은 도면에서도 최소 ~46mm 확보 (60pt→130pt)
         "  if (qrSize > 1500) qrSize = 1500;"
         "  var sc = qrSize / 90.0;"
         "  var margin = 18 * sc;"
