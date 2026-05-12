@@ -164,14 +164,44 @@ If browserExe = "" Then
     WScript.Quit 0
 End If
 
-' --- 3b. Open the sidebar and WAIT for it to close ----------------------
+' --- 3b. 모니터 작업영역(작업표시줄 제외, DPI 배율 반영)에 맞춰 우측 도킹 ----
+' 예전엔 --window-size=420,1080 --window-position=1500,0 으로 1920x1080·100% 배율을
+' 가정했더니, DPI 배율(125/150%) 이나 작은 화면에선 우측이 잘려서 열리고 아래도 넘쳤다.
+' PowerShell 로 PrimaryScreen.WorkingArea 를 받아 와서 폭은 사이드바 고정, 높이/위치는
+' 그 화면에 딱 맞춘다. (DPI-unaware 프로세스라 논리픽셀 → Chrome 의 --window-* 단위와 일치.)
+Dim sidebarW, winW, winH, winX, winY, geomTmp, geomCmd, geomTf, geomLine, geomParts
+sidebarW = 420
+winW = sidebarW : winH = 720 : winX = 1500 : winY = 0   ' 폴백(측정 실패 시)
+On Error Resume Next
+geomTmp = shell.ExpandEnvironmentStrings("%TEMP%") & "\hdsign_field_geom.txt"
+If fso.FileExists(geomTmp) Then fso.DeleteFile geomTmp
+geomCmd = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command " _
+    & """Add-Type -AssemblyName System.Windows.Forms; $w=[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea; " _
+    & "Set-Content -LiteralPath '" & geomTmp & "' -Value ('{0} {1} {2} {3}' -f $w.Width,$w.Height,$w.X,$w.Y)"""
+shell.Run geomCmd, 0, True
+If fso.FileExists(geomTmp) Then
+    Set geomTf = fso.OpenTextFile(geomTmp, 1)
+    geomLine = geomTf.ReadLine
+    geomTf.Close
+    geomParts = Split(Trim(geomLine), " ")
+    If UBound(geomParts) >= 3 Then
+        winW = sidebarW
+        winH = CLng(geomParts(1))
+        winX = CLng(geomParts(0)) + CLng(geomParts(2)) - sidebarW
+        winY = CLng(geomParts(3))
+    End If
+    fso.DeleteFile geomTmp
+End If
+Err.Clear
+On Error Goto 0
+
+' --- 3c. Open the sidebar and WAIT for it to close ----------------------
 ' --user-data-dir 가 새 프로필이라 여기서 띄운 브라우저 프로세스가 메인 → 창 닫을
 ' 때까지 살아 있음 → shell.Run(..., True) 가 그때까지 블록.
-' Adjust --window-size / --window-position per monitor if needed.
 Dim browserArgs
 browserArgs = "--app=" & sidebarUrl _
     & " --user-data-dir=""" & profileDir & """" _
-    & " --window-size=420,1080 --window-position=1500,0"
+    & " --window-size=" & winW & "," & winH & " --window-position=" & winX & "," & winY
 shell.Run """" & browserExe & """ " & browserArgs, 1, True
 
 ' --- 4. Sidebar closed → stop the agent ---------------------------------
