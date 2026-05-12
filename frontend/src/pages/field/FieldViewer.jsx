@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
-import { ALL_WORKERS } from '../../data/workers.js';
+import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
 import './FieldViewer.css';
 
 // 현장 PC 사이드바 뷰어 — Chrome --app=https://.../field 로 띄워 화면 한쪽에 박아두는 용도.
@@ -12,6 +12,11 @@ const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const AGENT_URL = import.meta.env.VITE_HDSIGN_AGENT_URL || 'http://127.0.0.1:17345';
 // 모바일/현장 공통 — 같은 PC 에서 둘 다 띄울 일이 거의 없지만 키 통일이 일관성에 좋다.
 const WORKER_KEY = 'hdsign_uploader_worker';
+// "내 지시서만 보기" 체크 상태 — 켜면 본인 부서 슬롯에 잡힌 지시서만 보임(미설정 시 기본 켜짐).
+const MYONLY_KEY = 'hdsign_field_myonly';
+// 현장 프로그램에서만 "삭제"(=숨김) 처리한 주문번호 목록 — 발주관리 DB 와는 무관, 이 PC localStorage 한정.
+// '내 지시서만 보기' 가 켜진 동안만 숨겨지고, 끄면(전체 보기) 다시 노출된다.
+const HIDDEN_KEY = 'hdsign_field_hidden';
 
 function readWorker() {
     try { return (localStorage.getItem(WORKER_KEY) || '').trim(); } catch { return ''; }
@@ -21,6 +26,24 @@ function writeWorker(value) {
         if (value) localStorage.setItem(WORKER_KEY, value);
         else localStorage.removeItem(WORKER_KEY);
     } catch { /* ignore */ }
+}
+function readMyOnly() {
+    try {
+        const v = localStorage.getItem(MYONLY_KEY);
+        return v === null ? true : v === '1';   // 기본값: 켜짐
+    } catch { return true; }
+}
+function writeMyOnly(value) {
+    try { localStorage.setItem(MYONLY_KEY, value ? '1' : '0'); } catch { /* ignore */ }
+}
+function readHidden() {
+    try {
+        const a = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]');
+        return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : [];
+    } catch { return []; }
+}
+function writeHidden(arr) {
+    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(arr)); } catch { /* ignore */ }
 }
 
 function formatShortDate(dateStr) {
@@ -54,6 +77,8 @@ export default function FieldViewer() {
     const [companyFilter, setCompanyFilter] = useState('ALL');
     const [searchTerm, setSearchTerm] = useState('');
     const [worker, setWorker] = useState(() => readWorker());
+    const [myOnly, setMyOnly] = useState(() => readMyOnly());
+    const [hidden, setHidden] = useState(() => readHidden());
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
     const [openingFs, setOpeningFs] = useState(null);     // orderNumber 진행중
@@ -137,16 +162,24 @@ export default function FieldViewer() {
         window.setTimeout(() => setToast(null), ms);
     }, []);
 
+    const isDoneByMe = useCallback((it) => !!worker
+        && Array.isArray(it.workerCompletions)
+        && it.workerCompletions.some((c) => c.worker === worker), [worker]);
+
+    const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
+    // '내 지시서만 보기' 가 켜져 있고 담당자가 설정돼 있을 때만: 본인 슬롯에 잡힌 것 + 숨김 처리 안 한 것.
+    // 끄면(또는 담당자 미설정) 전 부서 전체가 다 보인다(숨김도 무시 — 거기서 다시 찾을 수 있게).
+    const effectiveMyOnly = myOnly && !!worker;
+    const visibleItems = useMemo(() => {
+        if (!effectiveMyOnly) return items;
+        return items.filter((it) => matchesWorker(it.departmentSlots, worker) && !hiddenSet.has(it.orderNumber));
+    }, [items, effectiveMyOnly, worker, hiddenSet]);
+
     // 탭 분리 — 본인이 [완료] 누른 건은 '완료' 탭으로, 나머지는 '작업중'.
     // (사무실에서 정식 완료처리되면 status 가 COMPLETED 로 가서 LIST 응답에서 빠진다 = 자동으로 양 탭 모두에서 사라짐)
     const tabFiltered = useMemo(() => {
-        return items.filter((it) => {
-            const done = !!worker
-                && Array.isArray(it.workerCompletions)
-                && it.workerCompletions.some((c) => c.worker === worker);
-            return tab === 'active' ? !done : done;
-        });
-    }, [items, tab, worker]);
+        return visibleItems.filter((it) => (tab === 'active' ? !isDoneByMe(it) : isDoneByMe(it)));
+    }, [visibleItems, tab, isDoneByMe]);
 
     const dateFiltered = useMemo(() => {
         if (dateFilter === 'all') return tabFiltered;
@@ -384,15 +417,39 @@ export default function FieldViewer() {
     const counts = useMemo(() => {
         let active = 0;
         let done = 0;
-        items.forEach((it) => {
-            const isDone = !!worker
-                && Array.isArray(it.workerCompletions)
-                && it.workerCompletions.some((c) => c.worker === worker);
-            if (isDone) done += 1;
+        visibleItems.forEach((it) => {
+            if (isDoneByMe(it)) done += 1;
             else active += 1;
         });
         return { active, done };
-    }, [items, worker]);
+    }, [visibleItems, isDoneByMe]);
+
+    // '완료' 탭 — 현재 보이는 완료 카드 전부를 현장 목록에서 숨김(삭제). 발주관리 DB 와는 무관.
+    const handleDeleteAllDone = useCallback(() => {
+        const nums = visibleItems.filter(isDoneByMe).map((it) => it.orderNumber);
+        if (nums.length === 0) return;
+        setConfirmAction({
+            message: `완료한 작업 ${nums.length}건을 현장 목록에서 삭제하시겠습니까? (홈페이지 발주관리에는 영향 없음 — '내 지시서만 보기'를 끄면 다시 볼 수 있습니다.)`,
+            confirmText: '삭제',
+            onConfirm: () => {
+                const merged = Array.from(new Set([...hidden, ...nums]));
+                setHidden(merged);
+                writeHidden(merged);
+                showToast('success', `${nums.length}건을 현장 목록에서 삭제했습니다.`);
+            },
+        });
+    }, [visibleItems, isDoneByMe, hidden, showToast]);
+
+    const toggleMyOnly = useCallback(() => {
+        const next = !myOnly;
+        setMyOnly(next);
+        writeMyOnly(next);
+        // 켜려는데 담당자가 없으면 — 먼저 담당자부터 고르게 안내(설정 안 하면 필터가 무의미).
+        if (next && !worker) {
+            setWorkerDraft('');
+            setShowWorkerModal(true);
+        }
+    }, [myOnly, worker]);
 
     return (
         <div className="fv-page">
@@ -495,6 +552,14 @@ export default function FieldViewer() {
                 </div>
 
                 <div className="fv-worker-row">
+                    <label className={`fv-myonly${myOnly ? ' on' : ''}`} title="끄면 타 부서 지시서까지 전체가 보입니다">
+                        <input
+                            type="checkbox"
+                            checked={myOnly}
+                            onChange={toggleMyOnly}
+                        />
+                        <span>내 지시서만 보기</span>
+                    </label>
                     <button
                         type="button"
                         className="fv-worker-chip"
@@ -512,6 +577,17 @@ export default function FieldViewer() {
                 {!loading && !error && sorted.length === 0 && (
                     <div className="fv-empty">
                         {tab === 'done' ? '완료 처리한 지시서가 없습니다.' : '표시할 지시서가 없습니다.'}
+                    </div>
+                )}
+
+                {!loading && !error && tab === 'done' && sorted.length > 0 && (
+                    <div className="fv-done-toolbar">
+                        <span className="fv-done-hint">완료한 작업을 목록에서 정리합니다</span>
+                        <button
+                            type="button"
+                            className="fv-clear-all"
+                            onClick={handleDeleteAllDone}
+                        >전체 삭제</button>
                     </div>
                 )}
 
@@ -587,7 +663,7 @@ export default function FieldViewer() {
                                                 disabled={closing}
                                                 title="누르면 완료를 취소할 수 있습니다"
                                             >
-                                                {closing ? '처리 중…' : '완료됨'}
+                                                {closing ? '처리 중…' : '완료취소하기'}
                                             </button>
                                         ) : (
                                             <button
