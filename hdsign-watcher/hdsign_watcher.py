@@ -1470,6 +1470,15 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
             clients, key=lambda c: (c.get("companyName") or "").lower()
         )
 
+        # _process_printed_pdf 에서 띄워둔 "처리 중" 창이 있으면 — 이제 거래처 목록도 다 받았으니 닫는다.
+        if ctx is not None:
+            _bc = ctx.get("busy_close")
+            if callable(_bc):
+                try:
+                    _bc()
+                except Exception:
+                    pass
+
         BG = "#ffffff"
         BG_SOFT = "#fafafa"
         BORDER = "#e4e4e7"
@@ -1509,10 +1518,15 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
         # ── 최근에 발급했는데 아직 지시서가 안 올라온 빈 발주 경고 ──────────────
         # 같은 작업을 (QR 인식 실패 등으로) 또 발급하면 고아 카드가 누적된다 → 새로 고르기 전에
         # "방금 만든 빈 발주가 있어요" 를 보여주고, 같은 작업이면 그 QR 을 다시 복사하게 한다.
-        try:
-            _recent_open = recent_incomplete_qr_only_orders()
-        except Exception:
+        # 단, _process_printed_pdf 가 이미 "이 빈 발주 맞습니까?" 를 물어보고 사용자가 [아니오]
+        # 한 직후라면(skip_recent_qr_warning) 같은 경고를 또 띄우지 않는다 — 창이 두 번 뜨는 셈.
+        if ctx is not None and ctx.get("skip_recent_qr_warning"):
             _recent_open = []
+        else:
+            try:
+                _recent_open = recent_incomplete_qr_only_orders()
+            except Exception:
+                _recent_open = []
         if _recent_open:
             warn = tk.Frame(body, bg="#fffbeb",
                             highlightbackground="#f59e0b", highlightthickness=1)
@@ -4258,17 +4272,91 @@ def _process_printed_pdf(pdf_path: Path):
         if key in _seen_printed:
             return
         _seen_printed.add(key)
-    # 파일이 완전히 쓰여질 때까지 잠깐 대기 (PDF24 가 청크 단위로 쓸 수 있음)
-    time.sleep(0.8)
+
+    # ── "처리 중" 창 ── 인쇄물 감지 후 QR 디코드 + 진행중 지시서 목록 fetch 가 끝나 실제
+    # 매칭/거래처 다이얼로그가 뜨기 전까지 1~3초쯤 빈 화면이라 사용자가 헷갈린다 → 그동안
+    # 작은 진행 표시 창을 띄워 둔다. 실제 다이얼로그가 뜨기 직전(또는 이 함수가 끝날 때) 닫는다.
+    _busy: dict = {"win": None, "pb": None}
+
+    def _show_busy():
+        try:
+            w = tk.Toplevel()
+            w.title("인쇄물 처리 중")
+            w.configure(bg="#ffffff")
+            w.resizable(False, False)
+            try:
+                w.attributes("-topmost", True)
+            except Exception:
+                pass
+            fr = tk.Frame(w, bg="#ffffff")
+            fr.pack(padx=28, pady=22)
+            tk.Label(fr, text="인쇄물을 확인하고 있습니다…", bg="#ffffff", fg="#18181b",
+                     font=("맑은 고딕", 12, "bold"), anchor="w").pack(fill="x")
+            tk.Label(fr, text="QR 코드 인식 · 발주 목록 불러오는 중 — 잠시만 기다려 주세요.",
+                     bg="#ffffff", fg="#71717a", font=("맑은 고딕", 9), anchor="w").pack(fill="x", pady=(6, 12))
+            pb = ttk.Progressbar(fr, mode="indeterminate", length=300)
+            pb.pack(fill="x")
+            try:
+                pb.start(12)
+            except Exception:
+                pass
+            _busy["win"], _busy["pb"] = w, pb
+            w.protocol("WM_DELETE_WINDOW", _close_busy)  # 보통 자동으로 닫히지만, 원하면 직접 닫아도 무방
+            w.update_idletasks()
+            ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+            sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
+            w.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+{max(40, (sh - wh) // 3)}")
+        except Exception as e:
+            ui_log(f"처리중 창 표시 오류: {e}")
+
+    def _close_busy():
+        w = _busy.get("win")
+        if w is None:
+            return
+        _busy["win"] = None
+        try:
+            pb = _busy.get("pb")
+            if pb is not None:
+                pb.stop()
+        except Exception:
+            pass
+        try:
+            w.destroy()
+        except Exception:
+            pass
+
+    _ui_queue.put(("run", _show_busy))
+
+    # 파일이 완전히 쓰여질 때까지 잠깐 대기 (PDF24 가 청크 단위로 쓸 수 있음).
+    # 짧게 — 더 길게 잡으면 그만큼 매칭 창이 늦게 뜬다. 혹시 부분 파일이면 QR 디코드만
+    # 한 번 빗나가고(QR 미인식 → 폴백) 이후 종이/업로드는 더 늦게 일어나니 문제 없음.
+    time.sleep(0.3)
 
     # 시스템 기본 프린터는 워처 실행 동안 PDF24 로 유지 — 종이 인쇄는
     # print_pdf_to_paper 가 시스템 기본과 무관하게 삼성으로 직접 보낸다.
     # 워처 종료 시 on_close 에서 원래 프린터로 일괄 복구.
 
+    # 진행중 지시서 목록(/api/admin/orders) — QR 매칭 다이얼로그·[기존 변경] 탭·빈발주 폴백
+    # 어디서든 필요한데 네트워크 왕복이라 수백 ms~수 초 걸린다. QR 디코드(수백 ms)와 *동시에*
+    # 백그라운드로 받아 두 비용을 겹친다 — 직렬로 하면 매칭 창이 그만큼 늦게 뜸.
+    _ew_holder: dict = {"v": []}
+
+    def _fetch_existing_worksheets_bg():
+        try:
+            _ew_holder["v"] = fetch_existing_worksheets()
+        except Exception as e:
+            ui_log(f"기존 지시서 목록 조회 실패: {e}")
+
+    _ew_thread = threading.Thread(target=_fetch_existing_worksheets_bg, daemon=True)
+    _ew_thread.start()
+
     # PDF 안의 QR 인식 — 분기점. 있으면 매칭/업로드(기존), 없으면 QR 클립보드 복사 다이얼로그(신규).
+    ui_log(f"인쇄물 감지: {pdf_path.name} — QR 확인 중…")
     qr_order_number = decode_pdf_qr(pdf_path)
     if qr_order_number:
         ui_log(f"QR 인식: {qr_order_number}")
+    else:
+        ui_log("QR 미인식 — 발주 매칭 창을 준비 중…")
 
     orders = list_recent_orders()
     if not orders and not qr_order_number:
@@ -4277,38 +4365,141 @@ def _process_printed_pdf(pdf_path: Path):
         # 종이만 인쇄하기로 결정할 수 있게.
         ui_log(f"인쇄 PDF 감지 — 큐/QR 자동 매칭 실패, 수동 매칭 다이얼로그 띄움: {pdf_path.name}")
 
-    # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
-    existing_worksheets = fetch_existing_worksheets()
+    # 위에서 동시 시작한 진행중 지시서 목록 fetch 합류 — 보통 QR 디코드 끝났을 즈음 이미 완료.
+    _ew_thread.join(timeout=15)
+    existing_worksheets = _ew_holder.get("v") or []
 
     # QR 디코드 실패 — 하지만 방금 [QR 코드 만들기] 로 빈 발주를 발급한 직후라면, 작업자가
     # 또 거래처를 골라 발급해 고아 카드를 만들기 전에 "이 인쇄물이 그 발주인가요?" 를 먼저 묻는다.
+    _asked_recent_qr_only = False  # 이미 "이 빈 발주 맞습니까?" 를 물어봤으면 [QR 코드 만들기] 모달은 같은 경고 생략
     if qr_order_number is None:
         _cand = recent_incomplete_qr_only_orders(existing_worksheets)
         if _cand:
+            _asked_recent_qr_only = True
             _m = _cand[0]
             _h0: dict = {"value": None, "done": threading.Event()}
 
+            _age_str = _humanize_age_sec(_m.get("ageSec", 0))
+            _company = str(_m.get("companyName") or "-")
+            _ordno = str(_m.get("orderNumber") or "-")
+
             def _ask_recent_match():
+                # 거래처명·발주번호·"몇 분 전"을 큼직하게 보여주는 커스텀 모달
+                # (messagebox 는 글자 크기를 못 키운다). 빌드 실패해도 messagebox 로 폴백.
+                _close_busy()  # "처리 중" 창 닫고 이 다이얼로그로 교체
                 try:
-                    _h0["value"] = messagebox.askyesno(
-                        "발주 매칭 확인",
-                        f"이 인쇄물의 QR 을 읽지 못했습니다.\n\n"
-                        f"{_humanize_age_sec(_m.get('ageSec', 0))} 발급한 빈 발주가 있습니다:\n"
-                        f"    {_m.get('orderNumber')}  ·  {_m.get('companyName') or '-'}\n\n"
-                        f"이 인쇄물이 그 발주의 지시서가 맞습니까?\n\n"
-                        f"[예] → 이 지시서를 {_m.get('orderNumber')} 에 첨부 (납기/배송 입력으로 진행)\n"
-                        f"[아니오] → 거래처를 골라 새 발주 발급")
+                    win = tk.Toplevel()
+                    win.title("발주 매칭 확인")
+                    win.configure(bg="#ffffff")
+                    win.resizable(False, False)
+                    try:
+                        win.attributes("-topmost", True)
+                    except Exception:
+                        pass
+                    frm = tk.Frame(win, bg="#ffffff")
+                    frm.pack(padx=24, pady=22, fill="both")
+                    tk.Label(frm, text="이 인쇄물에서 QR 을 읽지 못했습니다 (지워졌거나 흐릴 수 있음).",
+                             bg="#ffffff", fg="#18181b", font=("맑은 고딕", 12, "bold"),
+                             anchor="w").pack(fill="x")
+                    tk.Label(frm, text="최근에 발급한 빈 발주가 있습니다 — 이 지시서가 그 발주의 것인가요?",
+                             bg="#ffffff", fg="#71717a", font=("맑은 고딕", 10),
+                             anchor="w").pack(fill="x", pady=(8, 12))
+                    card = tk.Frame(frm, bg="#f4f4f5", highlightbackground="#d4d4d8",
+                                    highlightthickness=1)
+                    card.pack(fill="x", pady=(0, 14))
+                    tk.Label(card, text=_company, bg="#f4f4f5", fg="#18181b",
+                             font=("맑은 고딕", 18, "bold"), anchor="w").pack(fill="x", padx=16, pady=(12, 0))
+                    tk.Label(card, text=f"발주번호  {_ordno}", bg="#f4f4f5", fg="#3f3f46",
+                             font=("맑은 고딕", 13, "bold"), anchor="w").pack(fill="x", padx=16, pady=(3, 0))
+                    tk.Label(card, text=f"{_age_str} 발급", bg="#f4f4f5", fg="#71717a",
+                             font=("맑은 고딕", 12), anchor="w").pack(fill="x", padx=16, pady=(3, 12))
+                    tk.Label(frm,
+                             text=f"[예] → {_ordno} 의 QR 을 클립보드에 다시 복사 → FlexSign 에 Ctrl+V 로 붙이고\n"
+                                  f"        지시서를 다시 인쇄하세요 (이번 인쇄물은 QR 이 없어 배부하지 않습니다)\n"
+                                  f"[아니오] → 거래처를 골라 새 발주 발급",
+                             bg="#ffffff", fg="#71717a", font=("맑은 고딕", 9),
+                             justify="left", anchor="w").pack(fill="x", pady=(0, 16))
+                    btns = tk.Frame(frm, bg="#ffffff")
+                    btns.pack(fill="x")
+
+                    def _close(val: bool):
+                        _h0["value"] = val
+                        try:
+                            win.destroy()
+                        except Exception:
+                            pass
+
+                    tk.Button(btns, text="아니오 — 새 발주 발급", command=lambda: _close(False),
+                              font=("맑은 고딕", 10), bg="#e4e4e7", fg="#18181b",
+                              activebackground="#d4d4d8", relief="flat", bd=0, padx=16, pady=9,
+                              cursor="hand2").pack(side="right")
+                    tk.Button(btns, text="예 — QR 다시 복사", command=lambda: _close(True),
+                              font=("맑은 고딕", 10, "bold"), bg="#10b981", fg="white",
+                              activebackground="#0ea371", relief="flat", bd=0, padx=16, pady=9,
+                              cursor="hand2").pack(side="right", padx=(0, 8))
+                    win.protocol("WM_DELETE_WINDOW", lambda: _close(False))
+                    win.bind("<Escape>", lambda _e: _close(False))
+                    win.bind("<Return>", lambda _e: _close(True))
+                    win.update_idletasks()
+                    w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+                    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+                    win.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
+                    try:
+                        win.grab_set()
+                        win.focus_force()
+                    except Exception:
+                        pass
+                    win.wait_window()
                 except Exception as e:
-                    ui_log(f"발주 매칭 확인 다이얼로그 오류: {e}")
+                    ui_log(f"발주 매칭 확인 다이얼로그 오류 — 기본 창으로 폴백: {e}")
+                    try:
+                        _h0["value"] = messagebox.askyesno(
+                            "발주 매칭 확인",
+                            f"이 인쇄물의 QR 을 읽지 못했습니다.\n\n"
+                            f"{_age_str} 발급한 빈 발주: {_ordno}  ·  {_company}\n\n"
+                            f"이 인쇄물이 그 발주의 지시서가 맞습니까?")
+                    except Exception as e2:
+                        ui_log(f"발주 매칭 확인 폴백 다이얼로그도 실패: {e2}")
                 finally:
                     _h0["done"].set()
 
             _ui_queue.put(("run", _ask_recent_match))
             _h0["done"].wait()
             if _h0["value"]:
-                qr_order_number = (_m.get("orderNumber") or "").strip() or None
-                if qr_order_number:
-                    ui_log(f"QR 디코드 실패 → 최근 발급 빈 발주 {qr_order_number} 로 매칭 확정 ({pdf_path.name})")
+                # [예] = "이 인쇄물이 그 빈 발주의 지시서다 — QR 만 빠졌다." → 그 발주의 QR 을
+                # 클립보드에 다시 복사해 사용자가 FlexSign 에 붙이고 재인쇄하게 한다.
+                # 이번 인쇄물(QR 없는 PDF)은 배부/업로드하지 않는다 — 두 번째(QR 박힌) 인쇄에서
+                # 평소 흐름(QR 인식 → 납기/배송/분배함 → 업로드)으로 들어간다.
+                ui_log(f"QR 미인식 → 빈 발주 {_ordno} 의 QR 재복사 (사용자가 FlexSign 에 붙여 재인쇄)")
+                _reqr_ok = False
+                try:
+                    qr_to_clipboard(_ordno)
+                    _reqr_ok = True
+                except Exception as e:
+                    ui_log(f"QR 클립보드 복사 실패 ({_ordno}): {e}")
+                if _reqr_ok:
+                    ui_log(f"{_ordno} QR 클립보드 복사 완료 — FlexSign 에 붙여넣고 다시 인쇄")
+                    _reqr_msg = (
+                        f"발주번호 {_ordno} 의 QR 이 클립보드에 복사되었습니다.\n\n"
+                        f"1) FlexSign 캔버스로 돌아가 (지워졌거나 흐린) QR 자리에 Ctrl+V 로 붙여넣기\n"
+                        f"2) 지시서 저장 후 다시 인쇄\n\n"
+                        f"이번 인쇄물은 QR 이 없어 배부/업로드하지 않았습니다.\n"
+                        f"두 번째 인쇄에서 납기 / 배송 / 분배함 입력 단계로 진행됩니다."
+                    )
+                    _ui_queue.put((
+                        "run",
+                        lambda m=_reqr_msg: messagebox.showinfo("QR 코드 복사 완료 — 다시 인쇄하세요", m),
+                    ))
+                else:
+                    _ui_queue.put((
+                        "alert",
+                        "QR 클립보드 복사 실패",
+                        f"발주번호 {_ordno} 의 QR 클립보드 복사에 실패했습니다.\n"
+                        f"어드민 페이지에서 QR 을 다시 발급해 사용해주세요.",
+                    ))
+                _close_busy()
+                _schedule_printed_pdf_cleanup(pdf_path)
+                return
 
     # [신규 작성] 탭에서 더 이상 거래처를 직접 고르지 않으므로 fetch 생략 — 거래처 발주 발급은
     # 메인 GUI [QR 코드 만들기] 모달에서만 일어나고, 거기서 자기 데이터를 따로 받는다.
@@ -4324,11 +4515,16 @@ def _process_printed_pdf(pdf_path: Path):
             "orders": orders,
             "existing_worksheets": existing_worksheets,
             "clients_for_new": clients_for_new,
+            # 위에서 "이 빈 발주 맞습니까?" 를 이미 물어보고 [아니오] 했으면 모달 안에서 같은 경고 생략.
+            "skip_recent_qr_warning": _asked_recent_qr_only,
+            # 모달이 거래처 목록 다 받고 화면에 뜨기 직전 "처리 중" 창을 닫게 한다.
+            "busy_close": _close_busy,
             "result": {"action": "cancel"},
             "done": threading.Event(),
         }
         open_qr_create_dialog_async(print_routing_context=routing_ctx)
         routing_ctx["done"].wait()
+        _ui_queue.put(("run", _close_busy))  # 안전망 — 모달 초기화가 실패해 못 닫혔어도 확실히 닫음
         action = (routing_ctx.get("result") or {}).get("action") or "cancel"
         if action == "cancel":
             ui_log(f"인쇄 — [QR 코드 만들기] 취소: 종이/업로드 모두 생략 ({pdf_path.name})")
@@ -4344,6 +4540,7 @@ def _process_printed_pdf(pdf_path: Path):
         holder: dict = {"value": None, "done": threading.Event()}
 
         def _ask_on_ui():
+            _close_busy()  # "처리 중" 창 닫고 매칭 다이얼로그로 교체
             try:
                 holder["value"] = _ask_print_match_blocking(
                     orders, pdf_path, existing_worksheets,
@@ -4359,6 +4556,7 @@ def _process_printed_pdf(pdf_path: Path):
 
         _ui_queue.put(("run", _ask_on_ui))
         holder["done"].wait()
+        _ui_queue.put(("run", _close_busy))  # 안전망
         sel = holder["value"]
 
     if sel is None:
