@@ -14,7 +14,7 @@ if errorlevel 1 (
 
 py -3 -m PyInstaller --noconfirm --onefile --console ^
   --name hdsign_field_agent_debug ^
-  --icon NONE ^
+  --icon hdsign_field.ico ^
   field_agent.py
 
 if errorlevel 1 (
