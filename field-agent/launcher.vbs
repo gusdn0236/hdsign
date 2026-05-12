@@ -23,6 +23,42 @@ sidebarUrl = "https://hdsigncraft.com/field"
 ' 전용 프로필 — 브라우저 메인 프로필의 "마지막 창 상태" 를 안 건드리려고 분리.
 profileDir = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\HDSignFieldViewer"
 
+' --- 0a. Self-heal the desktop shortcut icon ----------------------------
+' The shipped .lnk files point IconLocation at the UNC .ico
+' (\\Main\현대공유\field-agent\hdsign_field.ico). Explorer is flaky about
+' fetching icons over UNC — especially with a non-ASCII share name — so the
+' shortcuts often render as a blank page. Fix: copy the .ico to a local path
+' once, then re-point any desktop shortcut that launches this program at the
+' local copy. Best-effort — never let this block startup.
+On Error Resume Next
+Dim icoSrc, icoLocal, wantIcon, deskDir, deskFolder, f, lnk, isOurs
+icoSrc = scriptDir & "\..\hdsign_field.ico"
+icoLocal = profileDir & "\hdsign_field.ico"
+If fso.FileExists(icoSrc) Then
+    If Not fso.FolderExists(profileDir) Then fso.CreateFolder(profileDir)
+    fso.CopyFile icoSrc, icoLocal, True       ' overwrite so logo updates propagate
+End If
+If fso.FileExists(icoLocal) Then
+    wantIcon = icoLocal & ",0"
+    deskDir = shell.SpecialFolders("Desktop")
+    If fso.FolderExists(deskDir) Then
+        Set deskFolder = fso.GetFolder(deskDir)
+        For Each f In deskFolder.Files
+            If LCase(fso.GetExtensionName(f.Name)) = "lnk" Then
+                Set lnk = shell.CreateShortcut(f.Path)
+                isOurs = ((InStr(LCase(lnk.Arguments), "field-agent") > 0) And (InStr(LCase(lnk.Arguments), "launcher.vbs") > 0)) _
+                      Or (InStr(LCase(lnk.TargetPath), "hdsign_field_agent") > 0)
+                If isOurs And (lnk.IconLocation <> wantIcon) Then
+                    lnk.IconLocation = wantIcon
+                    lnk.Save
+                End If
+            End If
+        Next
+    End If
+End If
+Err.Clear
+On Error Goto 0
+
 ' --- 0. Already-open guard ----------------------------------------------
 ' 사이드바(우리 --user-data-dir 의 브라우저) 가 이미 떠 있으면 새로 안 띄우고
 ' 에이전트도 안 건드리고 그냥 종료. (두 번 실행해도 안전.)
