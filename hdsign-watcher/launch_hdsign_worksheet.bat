@@ -42,11 +42,11 @@ if not exist "%EXE%" (
 )
 
 REM --- Self-heal the desktop shortcut so it ALWAYS shows the HD Sign logo ---
-REM The .ico ships inside the program folder (PyInstaller data file), so after the
-REM sync above "%DST%\hdsign_worksheet.ico" is guaranteed to exist locally.
+REM The .ico ships inside the program folder (PyInstaller bundles data files under
+REM _internal\), so after the sync above this path is guaranteed to exist locally.
 REM We (re)point every desktop shortcut that targets this .bat at that .ico, and
-REM create one named "HD사인 지시서.lnk" if none exists yet.
-set "ICO=%DST%\hdsign_worksheet.ico"
+REM create one if none exists yet.
+set "ICO=%DST%\_internal\hdsign_worksheet.ico"
 set "THISBAT=%~f0"
 if exist "%ICO%" (
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
