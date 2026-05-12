@@ -202,12 +202,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [clientSearch, setClientSearch] = useState("");
   // 달력 — 보고 있는 월의 1일, 카드 영역에 보여줄 선택 일자(YYYY-MM-DD).
-  // 진입 시 오늘이 자동 선택되어 즉시 그날 납기 카드가 보이도록 한다.
+  // 진입 시엔 일자 선택 없이 "전체 보기"(selectedCalendarDate === null)로 시작 —
+  // 필터 결과 전체를 날짜별 그룹으로 한 화면에 본다. 달력에서 날짜를 누르면 그날만.
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
-  const [selectedCalendarDate, setSelectedCalendarDate] = useState(() => formatYmd(new Date()));
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
   // 거래처 칩 — 엔터/드롭다운 선택으로 추가, 여러 거래처 동시 OR 매칭.
   const [calendarClientChips, setCalendarClientChips] = useState([]);
   const addCalendarChip = (raw) => {
