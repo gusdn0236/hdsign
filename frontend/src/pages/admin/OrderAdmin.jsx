@@ -363,13 +363,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // input/textarea/select 에 포커스가 있으면 그쪽 키 입력을 방해하지 않는다.
   // 캐러셀(PDF·작업사진) 키 이동은 화면의 ‹ › 버튼으로 갈음.
 
-  // 지금 IN_PROGRESS(작업중) 주문이 1건 이상 등록된 거래처 회사명 Set.
-  // 거래처의 가입 상태(ACTIVE/PENDING_SIGNUP 등) 와 무관 — 발주관리에 작업중 주문이
-  // 실제로 들어와 있느냐로 판정. 가입대기 거래처라도 작업중 주문이 있으면 노출된다.
+  // 지금 진행 중(접수 RECEIVED · 작업중 IN_PROGRESS)인 주문이 1건 이상 등록된 거래처 회사명 Set.
+  // 거래처의 가입 상태(ACTIVE/PENDING_SIGNUP 등) 와 무관 — 발주관리에 살아있는 주문이
+  // 실제로 들어와 있느냐로 판정. 가입대기 거래처라도 진행 중 주문이 있으면 노출된다.
+  // RECEIVED 도 포함해야 대리발주로 갓 등록한 건이 [접수] 탭에서 사라지지 않는다.
   const activeClientNames = useMemo(() => {
     const set = new Set();
     orders.forEach((o) => {
-      if (o.status === "IN_PROGRESS" && o.clientCompanyName) set.add(o.clientCompanyName);
+      if ((o.status === "RECEIVED" || o.status === "IN_PROGRESS") && o.clientCompanyName) {
+        set.add(o.clientCompanyName);
+      }
     });
     return set;
   }, [orders]);

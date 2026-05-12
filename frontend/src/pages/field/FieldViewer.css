@@ -223,6 +223,9 @@
     flex-direction: column;
     gap: 10px;
 }
+.fv-cards:focus {
+    outline: none;
+}
 
 /* Card */
 .fv-card {
@@ -238,6 +241,11 @@
 .fv-card:hover {
     border-color: #d4d4d8;
     box-shadow: 0 2px 8px rgba(24, 24, 27, 0.04);
+}
+/* 키보드로 선택된 카드 — 검색창에서 ↓ 로 이동해 강조, Enter 로 FS 열기 확인 */
+.fv-card.selected {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
 }
 
 .fv-card-thumb {

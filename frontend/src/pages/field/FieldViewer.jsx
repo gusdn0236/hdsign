@@ -60,7 +60,10 @@ export default function FieldViewer() {
     const [completing, setCompleting] = useState(null);   // orderNumber 진행중
     const [toast, setToast] = useState(null);             // {kind, text}
     const [confirmAction, setConfirmAction] = useState(null); // {message, confirmText, onConfirm}
+    const [selectedIndex, setSelectedIndex] = useState(-1);   // 키보드 선택 카드(검색→↓ 로 진입)
     const aliveRef = useRef(true);
+    const cardsRef = useRef(null);
+    const searchInputRef = useRef(null);
 
     const fetchList = useCallback(async ({ manual = false } = {}) => {
         if (manual) setRefreshing(true);
@@ -85,6 +88,34 @@ export default function FieldViewer() {
             setLoading(false);
             if (manual) setRefreshing(false);
         }
+    }, []);
+
+    // 현장 뷰어 전용 — launcher.vbs 가 띄우는 브라우저 --app 창은 페이지 파비콘을
+    // 작업표시줄/제목줄 아이콘으로 쓴다. 사이트 기본 파비콘(검정 HD 로고) 대신
+    // 연파랑 로고로 바꿔, 사무실 지시서 프로그램과 헷갈리지 않게 한다.
+    useEffect(() => {
+        const prevTitle = document.title;
+        document.title = 'HD사인 현장';
+        const links = Array.from(document.querySelectorAll("link[rel~='icon']"));
+        const restore = links.map((l) => ({ l, href: l.getAttribute('href'), type: l.getAttribute('type') }));
+        let ours = links;
+        if (ours.length === 0) {
+            const l = document.createElement('link');
+            l.setAttribute('rel', 'icon');
+            document.head.appendChild(l);
+            ours = [l];
+        }
+        ours.forEach((l) => {
+            l.setAttribute('type', 'image/png');
+            l.setAttribute('href', '/favicon-field-192.png');
+        });
+        return () => {
+            document.title = prevTitle;
+            restore.forEach(({ l, href, type }) => {
+                if (href) l.setAttribute('href', href); else l.removeAttribute('href');
+                if (type) l.setAttribute('type', type); else l.removeAttribute('type');
+            });
+        };
     }, []);
 
     useEffect(() => {
@@ -169,6 +200,21 @@ export default function FieldViewer() {
         });
     }, [filtered]);
 
+    // sorted 가 바뀌면(필터/검색/탭/새로고침) 선택 인덱스를 범위 안으로 정리.
+    useEffect(() => {
+        setSelectedIndex((i) => (i >= sorted.length ? -1 : i));
+    }, [sorted.length]);
+
+    // 검색어가 바뀌면 선택 해제 — 엉뚱한 카드가 강조된 채 남지 않도록.
+    useEffect(() => { setSelectedIndex(-1); }, [searchTerm]);
+
+    // 선택된 카드가 보이도록 스크롤.
+    useEffect(() => {
+        if (selectedIndex < 0) return;
+        const el = cardsRef.current?.querySelector(`[data-card-index="${selectedIndex}"]`);
+        el?.scrollIntoView({ block: 'nearest' });
+    }, [selectedIndex]);
+
     const handleOpenFs = useCallback(async (it) => {
         // 에이전트가 거래처 폴더를 찾는 키는 networkFolderName(우선) → companyName(폴백) 순.
         // 둘 다 없을 일은 거의 없고, 진짜 필요한 건 .fs stem 매칭용 originalPdfFilename.
@@ -213,6 +259,37 @@ export default function FieldViewer() {
             setOpeningFs(null);
         }
     }, [showToast]);
+
+    // 키보드로 선택한 카드 열기 — 1차 Enter: 확인 모달, 2차 Enter: 실제 열기(모달 [열기] 버튼이 autoFocus).
+    const askOpenFs = useCallback((it) => {
+        if (!it) return;
+        const fsReady = !!(it.originalPdfFilename && (it.networkFolderName || it.companyName));
+        if (!fsReady) { handleOpenFs(it); return; }  // 아직 식별자 없음 → handleOpenFs 가 안내 토스트
+        setConfirmAction({
+            message: `[${it.title || it.orderNumber}] 작업지시서를 FlexiSIGN 에서 여시겠습니까?`,
+            confirmText: '열기',
+            onConfirm: () => handleOpenFs(it),
+        });
+    }, [handleOpenFs]);
+
+    // fv-cards 영역(검색창에서 ↓ 로 진입)에서의 키 처리.
+    const handleCardsKeyDown = useCallback((e) => {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setSelectedIndex((i) => Math.min((i < 0 ? -1 : i) + 1, sorted.length - 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSelectedIndex((i) => {
+                if (i <= 0) { searchInputRef.current?.focus(); return -1; }
+                return i - 1;
+            });
+        } else if (e.key === 'Enter') {
+            if (selectedIndex >= 0 && selectedIndex < sorted.length) {
+                e.preventDefault();
+                askOpenFs(sorted[selectedIndex]);
+            }
+        }
+    }, [sorted, selectedIndex, askOpenFs]);
 
     const handleComplete = useCallback((it) => {
         if (!worker) {
@@ -390,11 +467,21 @@ export default function FieldViewer() {
                         </svg>
                     </span>
                     <input
+                        ref={searchInputRef}
                         type="search"
                         className="fv-search-input"
-                        placeholder="거래처/주문번호/제목 검색"
+                        placeholder="거래처/주문번호/제목 검색 (↓ 로 목록 이동)"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                if (sorted.length > 0) {
+                                    setSelectedIndex(0);
+                                    cardsRef.current?.focus();
+                                }
+                            }
+                        }}
                     />
                     {searchTerm && (
                         <button
@@ -427,8 +514,13 @@ export default function FieldViewer() {
                     </div>
                 )}
 
-                <div className="fv-cards">
-                    {sorted.map((it) => {
+                <div
+                    className="fv-cards"
+                    ref={cardsRef}
+                    tabIndex={-1}
+                    onKeyDown={handleCardsKeyDown}
+                >
+                    {sorted.map((it, idx) => {
                         const dueBadge = getDueBadge(it.dueDate);
                         // 거래처 폴더는 networkFolderName 우선·companyName 폴백으로 에이전트가 찾으니
                         // 버튼 활성 조건은 originalPdfFilename + (둘 중 하나) 면 충분.
@@ -439,7 +531,12 @@ export default function FieldViewer() {
                         const opening = openingFs === it.orderNumber;
                         const closing = completing === it.orderNumber;
                         return (
-                            <article key={it.orderNumber} className="fv-card">
+                            <article
+                                key={it.orderNumber}
+                                data-card-index={idx}
+                                className={`fv-card${selectedIndex === idx ? ' selected' : ''}`}
+                                onClick={() => setSelectedIndex(idx)}
+                            >
                                 <div className="fv-card-thumb">
                                     <WorksheetThumbnail
                                         pdfUrl={it.worksheetPdfUrl}
@@ -512,7 +609,11 @@ export default function FieldViewer() {
 
             {confirmAction && (
                 <div className="fv-modal-bg" onClick={() => setConfirmAction(null)}>
-                    <div className="fv-modal" onClick={(e) => e.stopPropagation()}>
+                    <div
+                        className="fv-modal"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setConfirmAction(null); }}
+                    >
                         <p className="fv-modal-desc" style={{ fontSize: 16, color: '#1f2937' }}>
                             {confirmAction.message}
                         </p>
@@ -525,6 +626,7 @@ export default function FieldViewer() {
                             <button
                                 type="button"
                                 className="fv-modal-confirm"
+                                autoFocus
                                 onClick={() => {
                                     const action = confirmAction.onConfirm;
                                     setConfirmAction(null);
