@@ -189,6 +189,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
   const [bulkPurging, setBulkPurging] = useState(false);
+  // 접수·작업중 탭의 다중 선택 → 일괄 휴지통 이동. 선택모드일 땐 카드 클릭이 모달 대신 체크 토글.
+  const [bulkSelectMode, setBulkSelectMode] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState(() => new Set());
+  const [bulkTrashing, setBulkTrashing] = useState(false);
   // 일괄 완료 검토 — queue 의 주문 한 건씩 PDF 와 적용 납기를 보면서 결정한다.
   // decisions[id] = { action: 'complete' } 또는 { action: 'reschedule', newDate: 'yyyy-MM-dd' }.
   // 모든 주문을 다 보면 selectedOrderId 가 null 로 풀리고 상단 sticky 패널에서 일괄 적용.
@@ -537,6 +541,25 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   }, [activeFilter]);
 
+  // 탭을 옮기면 다중 선택 모드/선택 항목 초기화.
+  useEffect(() => {
+    setBulkSelectMode(false);
+    setBulkSelectedIds(new Set());
+  }, [activeFilter]);
+
+  const bulkSelectAvailable = activeFilter === "RECEIVED" || activeFilter === "IN_PROGRESS";
+  const toggleBulkSelected = (id) => {
+    setBulkSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const exitBulkSelect = () => {
+    setBulkSelectMode(false);
+    setBulkSelectedIds(new Set());
+  };
+
   // 모달 prev/next 의 "현재 화면" 대상 — 휴지통은 평면 그리드 전체,
   // 달력 전체보기면 필터된 모든 주문, 그 외엔 선택 일자 카드.
   const visibleOrders = useMemo(() => {
@@ -699,6 +722,52 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setFeedback({ type: "error", msg: err.message || "휴지통 이동 중 오류가 발생했습니다." });
     } finally {
       setTrashingOrderId(null);
+    }
+  };
+
+  // 접수·작업중 탭에서 다중 선택한 주문들을 한꺼번에 휴지통으로. DELETE /orders/{id} 가
+  // 상태와 무관하게 soft-delete 하므로 그대로 병렬 호출. 부분 실패는 합쳐서 피드백.
+  const bulkMoveToTrash = async () => {
+    const ids = Array.from(bulkSelectedIds);
+    if (ids.length === 0) {
+      setFeedback({ type: "error", msg: "선택된 항목이 없습니다." });
+      return;
+    }
+    if (!window.confirm(`선택한 ${ids.length}건을 휴지통으로 이동하시겠습니까?\n${TRASH_RETENTION_DAYS}일 후 자동 삭제되며, 그 전에 복원할 수 있습니다.`)) {
+      return;
+    }
+    setBulkTrashing(true);
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) =>
+          fetch(`${BASE_URL}/api/admin/orders/${id}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((res) => {
+            if (!res.ok) throw new Error(String(id));
+            return id;
+          })
+        )
+      );
+      const movedIds = new Set(
+        results.filter((r) => r.status === "fulfilled").map((r) => r.value)
+      );
+      const nowIso = new Date().toISOString();
+      const movedOrders = orders
+        .filter((o) => movedIds.has(o.id))
+        .map((o) => ({ ...o, deletedAt: nowIso }));
+      setOrders((prev) => prev.filter((o) => !movedIds.has(o.id)));
+      setTrashOrders((prev) => [...movedOrders, ...prev]);
+      if (selectedOrderId && movedIds.has(selectedOrderId)) setSelectedOrderId(null);
+      exitBulkSelect();
+      const failed = results.length - movedIds.size;
+      if (failed === 0) {
+        setFeedback({ type: "success", msg: `${movedIds.size}건을 휴지통으로 이동했습니다.` });
+      } else {
+        setFeedback({ type: "error", msg: `${movedIds.size}건 이동, ${failed}건 실패` });
+      }
+    } finally {
+      setBulkTrashing(false);
     }
   };
 
@@ -1024,17 +1093,23 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const hasNewWorksheet = !isTrash && worksheetAt > viewedAt;
     const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
     const isOrderType = order.requestType === "ORDER";
+    const selecting = !isTrash && bulkSelectMode;
+    const checked = selecting && bulkSelectedIds.has(order.id);
+    const openCard = () => {
+      if (selecting) toggleBulkSelected(order.id);
+      else setSelectedOrderId(order.id);
+    };
     return (
       <div
         key={order.id}
-        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""}`}
-        onClick={() => setSelectedOrderId(order.id)}
+        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
+        onClick={openCard}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setSelectedOrderId(order.id);
+            openCard();
           }
         }}
       >
@@ -1051,7 +1126,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             }
           />
           <div className="order-card-thumb-top">
-            <span aria-hidden="true" />
+            {selecting ? (
+              <span className={`order-card-check ${checked ? "is-checked" : ""}`} aria-hidden="true">
+                {checked ? "✓" : ""}
+              </span>
+            ) : (
+              <span aria-hidden="true" />
+            )}
             {isTrash ? (
               <span className="status-badge status-trash">
                 {daysLeft === null ? "휴지통" : `${daysLeft}일 남음`}
@@ -1101,6 +1182,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             </span>
           </div>
 
+          {!selecting && (
           <div className="order-card-actions" onClick={(e) => e.stopPropagation()}>
             {isTrash ? (
               <>
@@ -1162,6 +1244,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </>
             )}
           </div>
+          )}
         </div>
       </div>
     );
@@ -1440,6 +1523,51 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               );
             })}
           </div>
+
+          {/* 다중 선택 → 일괄 휴지통 (접수·작업중 탭). 달력 아래, 작업카드 위. */}
+          {bulkSelectAvailable && (() => {
+            const allChecked = visibleOrders.length > 0 && visibleOrders.every((o) => bulkSelectedIds.has(o.id));
+            return (
+              <div className={`bulk-select-row ${bulkSelectMode ? "is-active" : ""}`}>
+                {!bulkSelectMode ? (
+                  <button
+                    type="button"
+                    className="bulk-select-toggle"
+                    onClick={() => setBulkSelectMode(true)}
+                    disabled={!!reviewSession || visibleOrders.length === 0}
+                    title="여러 건을 골라 한꺼번에 휴지통으로 이동"
+                  >
+                    ☑ 여러 건 선택
+                  </button>
+                ) : (
+                  <>
+                    <span className="bulk-select-count">{bulkSelectedIds.size}건 선택됨</span>
+                    <button
+                      type="button"
+                      className="sort-btn"
+                      onClick={() =>
+                        setBulkSelectedIds(allChecked ? new Set() : new Set(visibleOrders.map((o) => o.id)))
+                      }
+                      disabled={visibleOrders.length === 0}
+                    >
+                      {allChecked ? "전체 해제" : `전체 선택 (${visibleOrders.length})`}
+                    </button>
+                    <button
+                      type="button"
+                      className="bulk-delete-btn"
+                      onClick={bulkMoveToTrash}
+                      disabled={bulkTrashing || bulkSelectedIds.size === 0}
+                    >
+                      {bulkTrashing ? "이동 중..." : `휴지통으로 이동${bulkSelectedIds.size ? ` (${bulkSelectedIds.size})` : ""}`}
+                    </button>
+                    <button type="button" className="sort-btn" onClick={exitBulkSelect}>
+                      취소
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
 
           <section className="calendar-selected-section">
             {isAllView ? (
