@@ -39,9 +39,18 @@ export const WORKER_TO_SLOTS = (() => {
   return m;
 })();
 
+// 사무실 직원 — 어떤 부서 슬롯에도 매핑돼 있지 않지만 담당자 드롭다운엔 노출되고,
+// '내 지시서만 보기'를 켜도 모든 지시서가 보인다(matchesWorker 가 이들에겐 항상 true).
+export const OFFICE_WORKERS = ['박혜영', '김종임', '임서현'];
+
+export function isOfficeWorker(worker) {
+  return OFFICE_WORKERS.includes(worker);
+}
+
 // 모바일 [내 정보 설정] 드롭다운에 노출되는 직원 이름들 — 가나다순.
-// 비활성 슬롯에만 매핑된 직원은 어차피 위 reduce 결과에 안 잡혀 자연 제외.
-export const ALL_WORKERS = Object.keys(WORKER_TO_SLOTS).sort((a, b) => a.localeCompare(b, 'ko'));
+// 비활성 슬롯에만 매핑된 직원은 어차피 위 reduce 결과에 안 잡혀 자연 제외. 사무실 직원은 따로 합친다.
+export const ALL_WORKERS = Array.from(new Set([...Object.keys(WORKER_TO_SLOTS), ...OFFICE_WORKERS]))
+  .sort((a, b) => a.localeCompare(b, 'ko'));
 
 // 한 worksheet 의 departmentSlots(라벨 배열) 가 어느 직원들을 포함하는지 — 작업현황 탭에서
 // "이 지시서가 누구에게 배정됐었나" 표시할 때 사용.
@@ -58,6 +67,7 @@ export function getWorkersForSlots(slots) {
 // 모바일 "내 지시서만 보기" 매칭 — 본인 슬롯과 worksheet 슬롯이 한 개라도 겹치면 true.
 export function matchesWorker(worksheetSlots, worker) {
   if (!worker) return false;
+  if (isOfficeWorker(worker)) return true;   // 사무실 직원은 전 부서 지시서를 다 본다
   const mySlots = WORKER_TO_SLOTS[worker] || [];
   if (mySlots.length === 0) return false;
   if (!Array.isArray(worksheetSlots) || worksheetSlots.length === 0) return false;

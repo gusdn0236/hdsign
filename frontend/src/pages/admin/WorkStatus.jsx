@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
+import PdfViewer from "../../components/common/PdfViewer.jsx";
+import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import {
   ALL_WORKERS,
   getWorkersForSlots,
   getWorkerHue,
 } from "../../data/workers.js";
+import "./OrderAdmin.css";
 import "./WorkStatus.css";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -57,6 +59,22 @@ function formatCompletedAt(iso) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
+function formatDateTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const DELIVERY_LABELS = {
+  CARGO: "화물 발송",
+  QUICK: "퀵 발송",
+  DIRECT: "직접 배송",
+  PICKUP: "직접 수령",
+  LOCAL_CARGO: "지방화물차 배송",
+};
+
 // 직원 컬러 dot — workers.js 의 hue 해시로 안정적인 색.
 function WorkerDot({ name }) {
   const hue = getWorkerHue(name);
@@ -99,11 +117,284 @@ const PERIOD_TABS = [
   { key: "all", label: "전체" },
 ];
 
+// 작업현황 전용 상세 모달 — 발주관리로 이동하지 않고 이 탭에서 바로 띄운다(완조립 사진/지시서 확인용).
+// 읽기 전용: 지시서 PDF + 완료 사진 캐러셀 + 주문 정보 + 배부 인원. 상태 변경은 발주관리에서.
+function WorkStatusDetailModal({ card, hasPrev, hasNext, onPrev, onNext, onClose }) {
+  const order = card?.order || null;
+  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+
+  const evidenceFiles = useMemo(() => {
+    const list = Array.isArray(order?.files) ? order.files : [];
+    return list
+      .filter((f) => f.isEvidence)
+      .sort((a, b) => {
+        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+  }, [order]);
+
+  const workFiles = useMemo(() => {
+    const list = Array.isArray(order?.files) ? order.files : [];
+    return list.filter((f) => !f.isEvidence);
+  }, [order]);
+
+  const carouselSlides = useMemo(() => {
+    const slides = [];
+    if (order?.worksheetPdfUrl) slides.push({ type: "pdf", url: order.worksheetPdfUrl });
+    evidenceFiles.forEach((file, idx) => slides.push({ type: "photo", file, photoIndex: idx }));
+    return slides;
+  }, [order, evidenceFiles]);
+
+  const evidencePhotos = useMemo(
+    () =>
+      evidenceFiles.map((file) => ({
+        src: file.fileUrl,
+        alt: file.originalName,
+        dept: file.uploadedDepartment || "부서 미상",
+        time: formatDateTime(file.createdAt),
+      })),
+    [evidenceFiles],
+  );
+
+  // 카드가 바뀌면 캐러셀/라이트박스 초기화.
+  useEffect(() => {
+    setCarouselIndex(0);
+    setLightboxIndex(null);
+  }, [order?.id]);
+
+  // 모달 열린 동안 body 스크롤 잠금 + ESC/←/→ 키 처리.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e) => {
+      if (lightboxIndex != null) return; // 라이트박스가 키를 우선 처리.
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowLeft" && hasPrev) onPrev();
+      else if (e.key === "ArrowRight" && hasNext) onNext();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [lightboxIndex, hasPrev, hasNext, onPrev, onNext, onClose]);
+
+  if (!order) return null;
+
+  const slide = carouselSlides[carouselIndex] || carouselSlides[0];
+  const completedMap = new Map((card.completed || []).map((wc) => [wc.worker, wc.completedAt]));
+
+  return (
+    <>
+      <div
+        className="order-preview-modal"
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div className="order-preview-content">
+          <button type="button" className="order-modal-close" onClick={onClose}>
+            ×
+          </button>
+
+          <div className="order-preview-left">
+            <div className="order-file-stage">
+              {carouselSlides.length === 0 ? (
+                <div className="order-preview-file-fallback">
+                  <p className="fallback-title">표시할 자료 없음</p>
+                  <p className="fallback-desc">지시서 PDF나 작업 사진이 아직 없습니다.</p>
+                </div>
+              ) : slide.type === "pdf" ? (
+                <div key={slide.url} className="order-preview-pdf">
+                  <PdfViewer url={slide.url} />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="order-carousel-photo"
+                  onClick={() => setLightboxIndex(slide.photoIndex)}
+                  title="크게 보기"
+                >
+                  <img src={slide.file.fileUrl} alt={slide.file.originalName} />
+                  <div className="order-carousel-photo-meta">
+                    <span>{slide.file.uploadedDepartment || "부서 미상"}</span>
+                    <span>{formatDateTime(slide.file.createdAt)}</span>
+                  </div>
+                </button>
+              )}
+
+              {carouselSlides.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    className="order-carousel-nav prev"
+                    onClick={() =>
+                      setCarouselIndex((i) => (i - 1 + carouselSlides.length) % carouselSlides.length)
+                    }
+                    aria-label="이전"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    className="order-carousel-nav next"
+                    onClick={() => setCarouselIndex((i) => (i + 1) % carouselSlides.length)}
+                    aria-label="다음"
+                  >
+                    ›
+                  </button>
+                  <div className="order-carousel-dots">
+                    {carouselSlides.map((s, idx) => (
+                      <button
+                        type="button"
+                        key={`${s.type}-${idx}`}
+                        className={`order-carousel-dot ${idx === carouselIndex ? "active" : ""}`}
+                        onClick={() => setCarouselIndex(idx)}
+                        aria-label={s.type === "pdf" ? "지시서" : `사진 ${idx}`}
+                      />
+                    ))}
+                  </div>
+                  <div className="order-carousel-counter">
+                    {carouselIndex + 1} / {carouselSlides.length}
+                    {carouselSlides[carouselIndex]?.type === "pdf" ? " · 지시서" : " · 작업 사진"}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {workFiles.length > 0 && (
+              <div className="order-file-strip">
+                {workFiles.map((file, index) => (
+                  <a
+                    key={file.id || `${file.originalName}-${index}`}
+                    className="order-file-chip"
+                    href={file.fileUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {file.originalName}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <aside className="order-preview-info">
+            <p className="modal-order-no">{order.orderNumber}</p>
+            <h3 className="modal-order-title">{order.title || order.orderNumber}</h3>
+
+            {(hasPrev || hasNext) && (
+              <div className="modal-order-nav-row">
+                <button
+                  type="button"
+                  className="modal-order-nav-btn"
+                  onClick={onPrev}
+                  disabled={!hasPrev}
+                  title="이전 작업 (←)"
+                >
+                  <span className="modal-order-nav-arrow">‹</span>
+                  <span>이전 작업</span>
+                </button>
+                <button
+                  type="button"
+                  className="modal-order-nav-btn"
+                  onClick={onNext}
+                  disabled={!hasNext}
+                  title="다음 작업 (→)"
+                >
+                  <span>다음 작업</span>
+                  <span className="modal-order-nav-arrow">›</span>
+                </button>
+              </div>
+            )}
+
+            <div className="modal-detail-grid">
+              <div className="detail-section">
+                <span className="detail-label">거래처</span>
+                <span className="detail-value">{order.clientCompanyName || "-"}</span>
+              </div>
+              <div className="detail-section">
+                <span className="detail-label">추가 물품</span>
+                <span className="detail-value">{order.additionalItems || "-"}</span>
+              </div>
+              <div className="detail-section">
+                <span className="detail-label">납기</span>
+                <span className="detail-value">
+                  {formatDueShort(order.dueDate)}
+                  {order.dueTime ? ` (${order.dueTime})` : ""}
+                </span>
+              </div>
+              <div className="detail-section">
+                <span className="detail-label">배송 방법</span>
+                <span className="detail-value">{DELIVERY_LABELS[order.deliveryMethod] || "-"}</span>
+              </div>
+              <div className="detail-section full">
+                <span className="detail-label">배송 주소</span>
+                <span className="detail-value">{order.deliveryAddress || "-"}</span>
+              </div>
+              <div className="detail-section full">
+                <span className="detail-label">요청사항</span>
+                <span className="detail-value">{order.note || "-"}</span>
+              </div>
+              {(order.worksheetChangeNote || "").trim() && (
+                <div className="detail-section full">
+                  <span className="detail-label">지시서 변경 메모</span>
+                  <span className="detail-value">{order.worksheetChangeNote.trim()}</span>
+                </div>
+              )}
+            </div>
+
+            {card.roster?.length > 0 && (
+              <div className="modal-detail-grid">
+                <div className="detail-section full">
+                  <span className="detail-label">
+                    배부 인원 · 완료 {card.completed.length}/{card.roster.length}
+                  </span>
+                  <div className="ws-roster-list" style={{ marginTop: 6 }}>
+                    {card.roster.map((name) => {
+                      const at = completedMap.get(name);
+                      const done = !!at;
+                      return (
+                        <span
+                          key={name}
+                          className={`ws-roster-chip ws-roster-chip--${done ? "done" : "pending"}`}
+                          title={done ? `${name} · ${formatCompletedAt(at)}` : `${name} · 대기`}
+                        >
+                          {done ? (
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M3.5 8.5l3 3 6-7" />
+                            </svg>
+                          ) : (
+                            <span className="ws-roster-pin" aria-hidden="true" />
+                          )}
+                          {name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
+      </div>
+
+      <PhotoLightbox
+        photos={evidencePhotos}
+        index={lightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+        onIndexChange={setLightboxIndex}
+      />
+    </>
+  );
+}
+
 export default function WorkStatus() {
   const { token } = useAuth();
-  const navigate = useNavigate();
-  // 카드 클릭 → 발주관리의 그 주문 상세 모달을 그대로 연다(완조립 사진/지시서 확인용).
-  const openOrderDetail = (orderId) => navigate(`/admin/orders?order=${orderId}`);
+  // 카드 클릭 → 이 탭에서 바로 상세 모달(완조립 사진/지시서 확인용). 닫으면 작업현황 그대로.
+  const [detailOrderId, setDetailOrderId] = useState(null);
   // 한 worksheet = 카드 1개. 카드 안에 완료자/대기자 두 그룹을 큼직한 칩으로 묶어 표시.
   // 한 명이라도 완료한 worksheet 만 작업현황에 노출(아직 아무도 안 누른 건 발주관리에 있음).
   const [cards, setCards] = useState([]);
@@ -196,6 +487,17 @@ export default function WorkStatus() {
     }
   }, [workerCounts, workerFilter]);
 
+  // 상세 모달 — 현재 보이는 카드 목록(visible) 안에서 인덱스로 이전/다음 이동.
+  const detailIndex = useMemo(
+    () => (detailOrderId == null ? -1 : visible.findIndex((c) => c.order.id === detailOrderId)),
+    [visible, detailOrderId],
+  );
+  const detailCard = detailIndex >= 0 ? visible[detailIndex] : null;
+  // 데이터가 갱신돼 카드가 사라지면(예: 폴링) 모달도 닫는다.
+  useEffect(() => {
+    if (detailOrderId != null && detailIndex < 0) setDetailOrderId(null);
+  }, [detailOrderId, detailIndex]);
+
   // 맨 위로 버튼 — 카드가 많아 스크롤이 길어진 경우에만 노출. 400px 넘게 스크롤되면 페이드인.
   const [showScrollTop, setShowScrollTop] = useState(false);
   useEffect(() => {
@@ -268,13 +570,13 @@ export default function WorkStatus() {
               <div
                 className="ws-status-card"
                 key={o.id}
-                onClick={() => openOrderDetail(o.id)}
+                onClick={() => setDetailOrderId(o.id)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    openOrderDetail(o.id);
+                    setDetailOrderId(o.id);
                   }
                 }}
                 title="클릭 — 상세(완조립 사진/지시서) 보기"
@@ -380,6 +682,17 @@ export default function WorkStatus() {
           <path d="M10 15V5M5 10l5-5 5 5" />
         </svg>
       </button>
+
+      {detailCard && (
+        <WorkStatusDetailModal
+          card={detailCard}
+          hasPrev={detailIndex > 0}
+          hasNext={detailIndex >= 0 && detailIndex < visible.length - 1}
+          onPrev={() => setDetailOrderId(visible[detailIndex - 1]?.order.id ?? null)}
+          onNext={() => setDetailOrderId(visible[detailIndex + 1]?.order.id ?? null)}
+          onClose={() => setDetailOrderId(null)}
+        />
+      )}
     </div>
   );
 }
