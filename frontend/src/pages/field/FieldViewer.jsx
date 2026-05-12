@@ -216,12 +216,13 @@ export default function FieldViewer() {
     }, [selectedIndex]);
 
     const handleOpenFs = useCallback(async (it) => {
-        // 에이전트가 거래처 폴더를 찾는 키는 networkFolderName(우선) → companyName(폴백) 순.
-        // 둘 다 없을 일은 거의 없고, 진짜 필요한 건 .fs stem 매칭용 originalPdfFilename.
-        if (!it.originalPdfFilename || !(it.networkFolderName || it.companyName)) {
+        // 에이전트가 거래처 폴더를 찾는 키는 networkFolderName(우선) → companyName(폴백) 순 — 둘 다
+        // 없을 일은 거의 없다. originalPdfFilename 이 없는 옛 건도 막지 않는다: 에이전트가 .fs
+        // 자동매칭 대신 거래처 폴더만 열어주므로(버튼이 죽어있는 것보다 낫다).
+        if (!(it.networkFolderName || it.companyName)) {
             showToast(
                 'warn',
-                '아직 식별자가 없는 지시서입니다 — 워처가 새로 인쇄해야 [FS에서 열기]가 활성됩니다.',
+                '거래처 정보가 비어 있어 폴더를 찾을 수 없는 지시서입니다.',
                 5000,
             );
             return;
@@ -263,8 +264,8 @@ export default function FieldViewer() {
     // 키보드로 선택한 카드 열기 — 1차 Enter: 확인 모달, 2차 Enter: 실제 열기(모달 [열기] 버튼이 autoFocus).
     const askOpenFs = useCallback((it) => {
         if (!it) return;
-        const fsReady = !!(it.originalPdfFilename && (it.networkFolderName || it.companyName));
-        if (!fsReady) { handleOpenFs(it); return; }  // 아직 식별자 없음 → handleOpenFs 가 안내 토스트
+        const fsReady = !!(it.networkFolderName || it.companyName);
+        if (!fsReady) { handleOpenFs(it); return; }  // 거래처 정보 없음 → handleOpenFs 가 안내 토스트
         setConfirmAction({
             message: `[${it.title || it.orderNumber}] 작업지시서를 FlexiSIGN 에서 여시겠습니까?`,
             confirmText: '열기',
@@ -522,9 +523,12 @@ export default function FieldViewer() {
                 >
                     {sorted.map((it, idx) => {
                         const dueBadge = getDueBadge(it.dueDate);
-                        // 거래처 폴더는 networkFolderName 우선·companyName 폴백으로 에이전트가 찾으니
-                        // 버튼 활성 조건은 originalPdfFilename + (둘 중 하나) 면 충분.
-                        const fsReady = !!(it.originalPdfFilename && (it.networkFolderName || it.companyName));
+                        // 거래처 폴더는 networkFolderName 우선·companyName 폴백으로 에이전트가 찾는다.
+                        // 버튼 활성 조건은 그 둘 중 하나만 있으면 OK — originalPdfFilename 이 없는 옛 건은
+                        // .fs 자동매칭 대신 거래처 폴더만 열림(에이전트가 처리).
+                        const fsReady = !!(it.networkFolderName || it.companyName);
+                        // originalPdfFilename 이 없으면(옛 건) 자동매칭 불가 — 버튼은 살리되 안내만 다르게.
+                        const fsAutoMatch = fsReady && !!it.originalPdfFilename;
                         const isCompleted = !!worker
                             && Array.isArray(it.workerCompletions)
                             && it.workerCompletions.some((c) => c.worker === worker);
@@ -568,8 +572,10 @@ export default function FieldViewer() {
                                             onClick={() => handleOpenFs(it)}
                                             disabled={!fsReady || opening}
                                             title={!fsReady
-                                                ? '워처가 다음 인쇄로 갱신해야 활성됩니다(이전 업로드 건)'
-                                                : 'FlexiSIGN 으로 열기'}
+                                                ? '거래처 정보가 비어 있어 폴더를 찾을 수 없습니다'
+                                                : (fsAutoMatch
+                                                    ? 'FlexiSIGN 으로 열기'
+                                                    : '원본 PDF명이 없는 옛 건 — 누르면 거래처 폴더가 열립니다(.fs 직접 선택)')}
                                         >
                                             {opening ? '여는 중…' : 'FS에서 열기'}
                                         </button>

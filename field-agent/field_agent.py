@@ -561,8 +561,6 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
         company = (meta.get("companyName") or "").strip()
         network_folder_name = (meta.get("networkFolderName") or "").strip()
         pdf_filename = (meta.get("originalPdfFilename") or "").strip()
-        if not pdf_filename:
-            return {"opened": False, "message": "이 지시서엔 원본 PDF 파일명이 없습니다 — 워처가 새로 인쇄해야 활성됩니다."}
         if not network_folder_name and not company:
             return {"opened": False, "message": "거래처 정보가 비어있어 폴더를 찾을 수 없습니다."}
 
@@ -572,6 +570,18 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             return {
                 "opened": False,
                 "message": f"거래처 폴더를 찾지 못했습니다: {network_folder_name or company}",
+            }
+
+        # 옛 지시서(워처가 originalPdfFilename 을 보내기 전에 올라간 건) — 매칭할 PDF 명이
+        # 없으니 .fs 자동 매칭은 불가. 그래도 거래처 폴더는 열어줘서 사용자가 직접 .fs 를
+        # 고르게 한다(버튼이 죽어있는 것보다 낫다 — 일괄 재업로드 불필요).
+        if not pdf_filename:
+            open_folder_in_explorer(customer_folder)
+            return {
+                "opened": False,
+                "message": "이 지시서엔 원본 PDF 파일명이 없어 자동으로 .fs 를 못 찾습니다 "
+                           "(워처가 새로 인쇄·'웹에 적용' 하면 다음부턴 자동). 거래처 폴더를 열었습니다 — .fs 를 직접 골라주세요.",
+                "customerFolder": str(customer_folder),
             }
 
         fs_file, reason = find_fs_file(customer_folder, pdf_filename, fuzzy_threshold)
