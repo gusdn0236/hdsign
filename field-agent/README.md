@@ -23,7 +23,7 @@ run.bat
 
 - `api_base` — 백엔드 베이스 URL (운영: `https://hdsign-production.up.railway.app`)
 - `network_customer_base` — 사무실 네트워크 거래처 폴더 베이스 (워처와 동일 경로)
-- `flexisign_exe` — FlexiSIGN 실행파일 절대경로 (`Where is my FlexiSign.exe?` 시작메뉴 우클릭 → 파일 위치 열기로 확인)
+- `flexisign_exe` — FlexiSIGN 실행파일 절대경로. **보통 비워둔다(`""`)** — 비어 있거나 경로가 없으면 자동 탐지(레지스트리의 `.fs` 연결 프로그램 → `Program Files\SAi\**` 글롭 → 그래도 없으면 `.fs` 기본 연결로 열기). PC마다 설치 위치가 달라도 그냥 둬도 됨. 강제로 특정 PC만 다른 경로를 쓰게 하려면 그 PC의 `%LOCALAPPDATA%\HDSignFieldViewer\config.local.json` 에 `{"flexisign_exe": "D:\\...\\App.exe"}` 한 줄을 두면 공유 `config.json` 위에 덮어쓴다.
 - `port` — 충돌 시만 변경. 변경 시 프론트 환경변수 `VITE_HDSIGN_AGENT_URL` 도 같이.
 - `allowed_origins` — 호출 허용 도메인. 운영 도메인 + 로컬 개발(`http://localhost:5173`) 권장.
 - `fuzzy_threshold` — `.fs` 이름이 미세하게 변형됐을 때 자동 매칭 임계값(0~1, 권장 0.85).

@@ -31,8 +31,10 @@ DEFAULT_CONFIG = {
     "api_base": "https://hdsign-production.up.railway.app",
     # 사무실 워처와 동일한 키 — 같은 config 를 공유해도 안전하도록 같은 이름 사용.
     "network_customer_base": r"\\Main\공유\거래처",
-    # FlexiSIGN 실행파일. 환경마다 경로가 다를 수 있어 첫 실행 시 검증.
-    "flexisign_exe": r"C:\Program Files\SAi\Production Suite\Cloud\FlexiSign Pro\FlexiSign.exe",
+    # FlexiSIGN 실행파일. 빈 문자열("") 이거나 경로가 존재하지 않으면 자동 탐지
+    # (레지스트리의 .fs 연결 프로그램 → SAi 설치폴더 글롭 → 그래도 없으면 .fs 기본 연결로 열기).
+    # PC마다 설치 경로가 달라도 보통 그대로 두면 됨. 강제 지정이 필요한 예외 PC에서만 채운다.
+    "flexisign_exe": "",
     # 로컬 리스너 포트. 17345 = 1234 의 키보드 우측 시프트 — 충돌 가능성 매우 낮음.
     "port": 17345,
     # CORS 허용 origin. 운영 도메인 + 로컬 개발(http://localhost:5173) 권장.
@@ -55,6 +57,14 @@ def _config_path() -> Path:
     return Path(__file__).resolve().parent / "config.json"
 
 
+def _local_config_path() -> Path:
+    """PC별 오버라이드 — 공유 config.json 위에 이 PC만의 값(주로 flexisign_exe)을 덮어쓴다.
+    예: %LOCALAPPDATA%\\HDSignFieldViewer\\config.local.json 에
+        {"flexisign_exe": "D:\\\\SAi\\\\...\\\\FlexiSign.exe"} 한 줄."""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(base) / "HDSignFieldViewer" / "config.local.json"
+
+
 def load_config() -> dict:
     path = _config_path()
     config = dict(DEFAULT_CONFIG)
@@ -65,7 +75,17 @@ def load_config() -> dict:
                 config.update(user)
         except Exception as e:
             logging.warning("config.json 파싱 실패 — 기본값 사용: %s", e)
-    else:
+    # PC별 오버라이드(있으면) — 공유 config 위에 덮어쓴다.
+    local_path = _local_config_path()
+    if local_path.exists():
+        try:
+            local = json.loads(local_path.read_text(encoding="utf-8"))
+            if isinstance(local, dict):
+                config.update(local)
+                logging.info("로컬 오버라이드 적용: %s", local_path)
+        except Exception as e:
+            logging.warning("config.local.json 파싱 실패 — 무시: %s", e)
+    if not path.exists():
         # 첫 실행 시 템플릿 생성 — 사용자가 바로 편집 가능.
         try:
             path.write_text(
@@ -188,12 +208,120 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
 
 # ─── FlexiSIGN 실행 ─────────────────────────────────────────────────────
 
-def launch_flexisign(exe_path: str, fs_file: Path) -> tuple[bool, str]:
-    exe = Path(exe_path)
-    if not exe.exists():
-        return False, f"FlexiSIGN 실행파일이 없습니다: {exe_path}"
+# ─── FlexiSIGN 경로 해석 ────────────────────────────────────────────────
+# 우선순위: config 의 flexisign_exe(존재할 때) → 레지스트리의 .fs 연결 프로그램
+#           → SAi 설치폴더 글롭 → (그래도 없으면) os.startfile 로 .fs 기본 연결 실행.
+# PC마다 설치 경로가 달라도 보통 자동 탐지로 해결되고, 강제 지정이 필요하면
+# config.json(공유) 또는 %LOCALAPPDATA%\HDSignFieldViewer\config.local.json(PC별) 에 채운다.
+
+_FS_EXE_CACHE: str | None = None  # "" = 탐지 시도했으나 못 찾음, None = 아직 미시도
+
+
+def _parse_exe_from_command(cmd: str) -> str | None:
+    """레지스트리 shell\\open\\command 값에서 실행파일 경로만 뽑는다.
+    예: '"C:\\...\\FlexiSign.exe" "%1"' → 'C:\\...\\FlexiSign.exe'"""
+    cmd = (cmd or "").strip()
+    if not cmd:
+        return None
+    if cmd.startswith('"'):
+        end = cmd.find('"', 1)
+        if end > 1:
+            return cmd[1:end]
+    m = re.match(r"^(.*?\.exe)\b", cmd, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return cmd.split(" ")[0]
+
+
+def _flexisign_from_registry() -> str | None:
+    """.fs 더블클릭이 실제로 실행하는 프로그램을 레지스트리에서 찾는다."""
     try:
-        subprocess.Popen([str(exe), str(fs_file)], close_fds=True)
+        import winreg
+    except Exception:
+        return None
+    progid = None
+    # 사용자가 명시적으로 고른 연결(UserChoice)이 최우선.
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.fs\UserChoice",
+        ) as k:
+            progid, _ = winreg.QueryValueEx(k, "ProgId")
+    except OSError:
+        pass
+    if not progid:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, ".fs") as k:
+                progid, _ = winreg.QueryValueEx(k, "")
+        except OSError:
+            return None
+    if not progid:
+        return None
+    for root in (winreg.HKEY_CLASSES_ROOT, winreg.HKEY_CURRENT_USER):
+        sub = rf"{progid}\shell\open\command" if root == winreg.HKEY_CLASSES_ROOT \
+            else rf"Software\Classes\{progid}\shell\open\command"
+        try:
+            with winreg.OpenKey(root, sub) as k:
+                cmd, _ = winreg.QueryValueEx(k, "")
+            exe = _parse_exe_from_command(cmd)
+            if exe and Path(exe).exists():
+                return exe
+        except OSError:
+            continue
+    return None
+
+
+def _flexisign_from_glob() -> str | None:
+    """SAi 설치 폴더 아래에서 FlexiSign 실행파일을 찾는다."""
+    bases: list[Path] = []
+    for env in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        v = os.environ.get(env)
+        if v:
+            p = Path(v)
+            if p not in bases:
+                bases.append(p)
+    for base in bases:
+        sai = base / "SAi"
+        if not sai.is_dir():
+            continue
+        for name in ("FlexiSign.exe", "FlexiSIGN.exe", "Flexi.exe"):
+            for hit in sai.rglob(name):
+                return str(hit)
+        for hit in sai.rglob("*.exe"):
+            if "flexi" in hit.name.lower():
+                return str(hit)
+    return None
+
+
+def resolve_flexisign_exe(configured: str | None) -> str | None:
+    """실제로 쓸 FlexiSIGN 실행파일 경로. 없으면 None(→ 호출측이 .fs 기본 연결로 폴백)."""
+    global _FS_EXE_CACHE
+    configured = (configured or "").strip()
+    if configured and Path(configured).exists():
+        return configured
+    if _FS_EXE_CACHE is not None:
+        return _FS_EXE_CACHE or None
+    found = _flexisign_from_registry() or _flexisign_from_glob()
+    _FS_EXE_CACHE = found or ""
+    if found:
+        logging.info("FlexiSIGN 자동 탐지: %s", found)
+    else:
+        logging.warning("FlexiSIGN 실행파일을 못 찾음 — .fs 기본 연결 프로그램으로 실행 시도")
+    return found
+
+
+def launch_flexisign(fs_file: Path, exe_path: str | None) -> tuple[bool, str]:
+    if exe_path:
+        exe = Path(exe_path)
+        if exe.exists():
+            try:
+                subprocess.Popen([str(exe), str(fs_file)], close_fds=True)
+                return True, str(fs_file)
+            except Exception as e:
+                logging.warning("FlexiSIGN 직접 실행 실패(%s) — .fs 기본 연결로 폴백", e)
+    # 폴백: .fs 더블클릭과 동일하게 윈도우 기본 연결 프로그램으로 연다.
+    try:
+        os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
         return True, str(fs_file)
     except Exception as e:
         return False, f"FlexiSIGN 실행 실패: {e}"
@@ -322,15 +450,12 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
         config = self.config
         api_base = (config.get("api_base") or "").strip()
         network_base_str = (config.get("network_customer_base") or "").strip()
-        flexisign_exe = (config.get("flexisign_exe") or "").strip()
         fuzzy_threshold = float(config.get("fuzzy_threshold") or 0.85)
 
         if not api_base:
             return {"opened": False, "message": "config.json 의 api_base 가 설정되지 않았습니다."}
         if not network_base_str:
             return {"opened": False, "message": "config.json 의 network_customer_base 가 설정되지 않았습니다."}
-        if not flexisign_exe:
-            return {"opened": False, "message": "config.json 의 flexisign_exe 가 설정되지 않았습니다."}
 
         meta = fetch_worksheet(api_base, order_number)
         if not meta:
@@ -362,7 +487,8 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
                 "customerFolder": str(customer_folder),
             }
 
-        ok, info = launch_flexisign(flexisign_exe, fs_file)
+        flexisign_exe = resolve_flexisign_exe(config.get("flexisign_exe"))
+        ok, info = launch_flexisign(fs_file, flexisign_exe)
         if not ok:
             return {"opened": False, "message": info}
         logging.info("FS 실행 [%s] → %s (%s)", order_number, fs_file.name, reason)
@@ -384,7 +510,8 @@ def serve_forever(config: dict) -> None:
     logging.info("HD사인 작업뷰어 에이전트 — http://127.0.0.1:%d 에서 대기 중", port)
     logging.info("API 베이스: %s", config.get("api_base"))
     logging.info("네트워크 베이스: %s", config.get("network_customer_base"))
-    logging.info("FlexiSIGN: %s", config.get("flexisign_exe"))
+    _fs = resolve_flexisign_exe(config.get("flexisign_exe"))
+    logging.info("FlexiSIGN: %s", _fs or "(미발견 — .fs 기본 연결로 실행)")
     logging.info("허용 origin: %s", ", ".join(config.get("allowed_origins") or []))
     try:
         server.serve_forever()
