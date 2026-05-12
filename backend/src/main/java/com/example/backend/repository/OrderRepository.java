@@ -15,6 +15,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByClientAndDeletedAtIsNullOrderByCreatedAtDesc(ClientUser client);
 
+    // 거래처 삭제 가능 여부 판단용 — soft-delete 된 주문도 client_id FK 가 살아있어 포함해서 센다.
+    long countByClient(ClientUser client);
+
+    // 거래처 통합 시 client_id 재지정용 — soft-delete 포함 전체.
+    List<Order> findByClient(ClientUser client);
+
     Optional<Order> findByOrderNumber(String orderNumber);
 
     @EntityGraph(attributePaths = {"client", "files"})

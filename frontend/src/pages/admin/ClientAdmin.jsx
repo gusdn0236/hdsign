@@ -34,6 +34,8 @@ export default function ClientAdmin() {
     const [form, setForm] = useState(EMPTY_FORM);
     const [saving, setSaving] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState(null);
+    // 거래처 통합: { source: client, targetId: '' } — source 의 지시서를 targetId 거래처로 옮기고 source 삭제
+    const [mergeState, setMergeState] = useState(null);
     const overlayDownRef = useRef(false);
 
     // 일괄 등록 모달 상태
@@ -281,6 +283,27 @@ export default function ClientAdmin() {
         }
     };
 
+    const handleMerge = async () => {
+        if (!mergeState || !mergeState.targetId) return;
+        setSaving(true);
+        setFeedback(null);
+        try {
+            const res = await fetch(`${BASE_URL}/api/admin/clients/${mergeState.source.id}/merge-into/${mergeState.targetId}`, {
+                method: 'POST',
+                headers: authHeader,
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || '통합에 실패했습니다.');
+            setFeedback({ type: 'success', msg: data.message || '거래처를 통합했습니다.' });
+            setMergeState(null);
+            await loadClients();
+        } catch (err) {
+            setFeedback({ type: 'error', msg: err.message });
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const handleResetPassword = async (e) => {
         e.preventDefault();
         setSaving(true);
@@ -393,11 +416,14 @@ export default function ClientAdmin() {
                 method: 'DELETE',
                 headers: authHeader,
             });
+            const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
                 throw new Error(data.message || '삭제에 실패했습니다.');
             }
-            setFeedback({ type: 'success', msg: '거래처 계정이 삭제되었습니다.' });
+            setFeedback({
+                type: data.deactivated ? 'info' : 'success',
+                msg: data.message || '거래처 계정이 삭제되었습니다.',
+            });
             setDeleteTarget(null);
             await loadClients();
         } catch (err) {
@@ -484,6 +510,7 @@ export default function ClientAdmin() {
                                                         {client.status === 'PENDING_SIGNUP' && (
                                                             <button type="button" className="ca-edit-btn" onClick={() => openEdit(client)}>수정</button>
                                                         )}
+                                                        <button type="button" className="ca-edit-btn" onClick={() => setMergeState({ source: client, targetId: '' })}>통합</button>
                                                         <button type="button" className="ca-del-btn" onClick={() => setDeleteTarget(client)}>삭제</button>
                                                     </td>
                                                 </tr>
@@ -787,11 +814,54 @@ export default function ClientAdmin() {
                         <h3>거래처 삭제</h3>
                         <p className="ca-confirm-text">
                             <strong>{deleteTarget.companyName}</strong> 계정을 삭제하시겠습니까?
+                            <br />
+                            <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 400 }}>
+                                주문(작업지시서) 이력이 있으면 삭제 대신 비활성화 처리됩니다.
+                            </span>
                         </p>
                         <div className="ca-modal-actions">
                             <button type="button" className="ca-cancel-btn" onClick={() => setDeleteTarget(null)}>취소</button>
                             <button type="button" className="ca-delete-confirm-btn" disabled={saving} onClick={handleDelete}>
                                 {saving ? '삭제 중...' : '삭제'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 거래처 통합 모달 */}
+            {mergeState && (
+                <div className="ca-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) overlayDownRef.current = true; }} onMouseUp={(e) => { if (e.target === e.currentTarget && overlayDownRef.current) setMergeState(null); overlayDownRef.current = false; }}>
+                    <div className="ca-modal ca-modal-sm" onClick={(e) => e.stopPropagation()}>
+                        <h3>거래처 통합</h3>
+                        <p className="ca-confirm-text">
+                            <strong>{mergeState.source.companyName}</strong> 의 모든 지시서를 아래 거래처로 옮기고,
+                            <br />
+                            <strong>{mergeState.source.companyName}</strong> 계정은 삭제합니다.
+                        </p>
+                        <div className="ca-field">
+                            <label>옮길 대상 거래처</label>
+                            <select
+                                value={mergeState.targetId}
+                                onChange={(e) => setMergeState((p) => ({ ...p, targetId: e.target.value }))}
+                            >
+                                <option value="">— 선택하세요 —</option>
+                                {clients
+                                    .filter((c) => c.id !== mergeState.source.id)
+                                    .map((c) => (
+                                        <option key={c.id} value={c.id}>
+                                            {c.companyName}{c.networkFolderName ? ` (폴더: ${c.networkFolderName})` : ''}
+                                        </option>
+                                    ))}
+                            </select>
+                        </div>
+                        <p style={{ fontSize: 12, color: '#6b7280' }}>
+                            옮긴 지시서의 거래처명은 자동으로 대상 거래처명으로 표시됩니다. 되돌릴 수 없습니다.
+                        </p>
+                        <div className="ca-modal-actions">
+                            <button type="button" className="ca-cancel-btn" onClick={() => setMergeState(null)}>취소</button>
+                            <button type="button" className="ca-delete-confirm-btn" disabled={saving || !mergeState.targetId} onClick={handleMerge}>
+                                {saving ? '통합 중...' : '통합'}
                             </button>
                         </div>
                     </div>

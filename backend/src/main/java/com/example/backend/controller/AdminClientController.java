@@ -3,9 +3,12 @@ package com.example.backend.controller;
 import com.example.backend.dto.ClientUserDto;
 import com.example.backend.entity.ClientUser;
 import com.example.backend.repository.ClientUserRepository;
+import com.example.backend.repository.OrderRepository;
+import com.example.backend.entity.Order;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.text.Normalizer;
@@ -23,6 +26,7 @@ import java.util.Set;
 public class AdminClientController {
 
     private final ClientUserRepository clientUserRepository;
+    private final OrderRepository orderRepository;
     private final PasswordEncoder passwordEncoder;
 
     @GetMapping
@@ -321,12 +325,52 @@ public class AdminClientController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteClient(@PathVariable Long id) {
-        clientUserRepository.delete(
-                clientUserRepository.findById(id)
-                        .orElseThrow(() -> new RuntimeException("계정을 찾을 수 없습니다."))
-        );
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<Map<String, Object>> deleteClient(@PathVariable Long id) {
+        ClientUser user = clientUserRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("계정을 찾을 수 없습니다."));
+        long orderCount = orderRepository.countByClient(user);
+        if (orderCount > 0) {
+            // 주문(작업지시서) 이력이 있으면 orders.client_id FK 제약으로 hard delete 불가 —
+            // soft-delete 된 주문도 FK 가 살아있다. 삭제 대신 비활성화로 대체한다.
+            user.setIsActive(false);
+            user.setStatus("DISABLED");
+            clientUserRepository.save(user);
+            return ResponseEntity.ok(Map.of(
+                    "deactivated", true,
+                    "orderCount", orderCount,
+                    "message", "주문 이력 " + orderCount + "건이 있어 삭제 대신 비활성화 처리했습니다."
+            ));
+        }
+        clientUserRepository.delete(user);
+        return ResponseEntity.ok(Map.of(
+                "deactivated", false,
+                "message", "거래처 계정이 삭제되었습니다."
+        ));
+    }
+
+    /** 거래처 통합 — {id} 거래처의 모든 지시서(주문)를 {targetId} 거래처로 옮긴 뒤 {id} 계정을 삭제한다.
+     *  업체 폴더명 변경 등으로 한 거래처가 둘로 갈라졌을 때 합치는 용도.
+     *  옮긴 지시서의 거래처명 표시는 join 이라 자동으로 대상 거래처명으로 바뀐다. */
+    @PostMapping("/{id}/merge-into/{targetId}")
+    @Transactional
+    public ResponseEntity<Map<String, Object>> mergeInto(@PathVariable Long id, @PathVariable Long targetId) {
+        if (id.equals(targetId))
+            throw new IllegalArgumentException("같은 거래처로는 통합할 수 없습니다.");
+        ClientUser from = clientUserRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("옮길 거래처를 찾을 수 없습니다."));
+        ClientUser to = clientUserRepository.findById(targetId)
+                .orElseThrow(() -> new RuntimeException("대상 거래처를 찾을 수 없습니다."));
+        List<Order> orders = orderRepository.findByClient(from);
+        for (Order o : orders) o.setClient(to);
+        orderRepository.saveAll(orders);
+        clientUserRepository.delete(from);
+        return ResponseEntity.ok(Map.of(
+                "movedOrders", orders.size(),
+                "fromName", from.getCompanyName(),
+                "toName", to.getCompanyName(),
+                "message", "'" + from.getCompanyName() + "' 의 지시서 " + orders.size()
+                        + "건을 '" + to.getCompanyName() + "' 로 옮기고 '" + from.getCompanyName() + "' 계정을 삭제했습니다."
+        ));
     }
 
     private ClientUserDto.Response toResponse(ClientUser user) {

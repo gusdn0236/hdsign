@@ -62,6 +62,7 @@
     margin-bottom: 16px;
 }
 .ca-feedback.success { background: #ecfdf3; border: 1px solid #86efac; color: #166534; }
+.ca-feedback.info    { background: #eff6ff; border: 1px solid #93c5fd; color: #1d4ed8; }
 .ca-feedback.error   { background: #fff1f2; border: 1px solid #fda4af; color: #be123c; }
 
 .ca-empty {
