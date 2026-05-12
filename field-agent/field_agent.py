@@ -21,6 +21,7 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -183,6 +184,25 @@ def _stem_candidates(pdf_stem: str) -> list[str]:
     return out
 
 
+# PDF24 는 인쇄 작업명($fileName)이 비어 있으면(= 작업자가 FlexiSIGN 에서 .fs 를 저장하기
+# 전에 인쇄해서 문서명이 안 실린 경우) 파일명을 'YYYY-MM-DD HH-MM-SS' 같은 시각으로 떨군다.
+# 이 경우 stem 으로는 .fs 를 영영 못 찾으니, 인쇄 시각 근처에 저장된 .fs(작업자가 인쇄 직전/직후
+# 저장한 그 파일)로 폴백 매칭한다.
+_PDF24_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[ _\-](\d{2})-(\d{2})-(\d{2})$")
+
+
+def _parse_pdf24_timestamp(stem: str) -> float | None:
+    """stem 이 PDF24 자동 파일명(시각) 형태면 그 시각을 epoch 초로, 아니면 None."""
+    m = _PDF24_TIMESTAMP_RE.match((stem or "").strip())
+    if not m:
+        return None
+    try:
+        y, mo, d, h, mi, s = (int(x) for x in m.groups())
+        return datetime(y, mo, d, h, mi, s).timestamp()
+    except (ValueError, OverflowError):
+        return None
+
+
 def find_fs_file(customer_folder: Path, pdf_filename: str,
                  fuzzy_threshold: float) -> tuple[Path | None, str]:
     """거래처 폴더 트리에서 .fs 파일 찾기.
@@ -192,7 +212,9 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
          접두사("FlexiSIGN - " 등) 제거본 둘 다 시도.
       2. 유사 매칭 — 같은 폴더(또는 어디든) 의 .fs 파일들 중 stem 유사도(공백/특수
          문자 정규화 후 SequenceMatcher) 가 임계값 이상 + 후보 단일이면 자동 채택
-      3. 둘 다 실패 → (None, 사유)
+      3. PDF 명이 PDF24 시각형(저장 전 인쇄) 이면 — 그 시각 ±30분에 저장된 .fs 로 폴백
+         (단일이면 채택, 여럿이면 시각이 가장 가까운 것)
+      4. 모두 실패 → (None, 사유)
 
     여러 .fs 가 동일 stem 으로 있으면 가장 최근 수정된 것을 채택(같은 작업의
     버전관리 케이스). 반환: (Path 또는 None, 이유 텍스트)."""
@@ -204,12 +226,14 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
 
     target_keys = [_normalize_key(s) for s in _stem_candidates(pdf_stem)]
     target_keys = [k for k in target_keys if k]
+    all_fs: list[Path] = []
     exact_matches: list[Path] = []
     fuzzy_pool: list[tuple[float, Path]] = []
     try:
         for fs in customer_folder.rglob("*.fs"):
             if not fs.is_file():
                 continue
+            all_fs.append(fs)
             fs_key = _normalize_key(fs.stem)
             if fs_key in target_keys:
                 exact_matches.append(fs)
@@ -232,7 +256,25 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
             return None, f"유사 .fs 후보가 여러 개({len(fuzzy_pool)}건) — 거래처 폴더를 엽니다."
         return fuzzy_pool[0][1], f"fuzzy({fuzzy_pool[0][0]:.0%})"
 
-    return None, f"동일 stem 의 .fs 를 찾지 못했습니다: {pdf_stem}.fs"
+    # PDF24 시각형 파일명 — 인쇄 시각 근처에 저장된 .fs 로 폴백.
+    ts = _parse_pdf24_timestamp(pdf_stem)
+    if ts is not None:
+        window = 30 * 60  # 인쇄 시각 ±30분
+        near = sorted(
+            (p for p in all_fs if abs(p.stat().st_mtime - ts) <= window),
+            key=lambda p: abs(p.stat().st_mtime - ts),
+        )
+        if len(near) == 1:
+            return near[0], "timestamp-mtime"
+        if len(near) >= 2:
+            return near[0], f"timestamp-mtime(가장 가까움/{len(near)}건)"
+        return None, (
+            f"PDF 파일명이 시각값({pdf_stem})입니다 — FlexiSIGN 에서 .fs 를 저장하기 전에 "
+            f"인쇄된 것 같습니다. .fs 를 이 거래처 폴더에 저장한 뒤 다시 인쇄하면 자동으로 열립니다. "
+            f"거래처 폴더를 열었습니다."
+        )
+
+    return None, f"동일 stem 의 .fs 를 찾지 못했습니다: {pdf_stem}.fs (거래처 폴더를 열었습니다)"
 
 
 # ─── FlexiSIGN 실행 ─────────────────────────────────────────────────────
