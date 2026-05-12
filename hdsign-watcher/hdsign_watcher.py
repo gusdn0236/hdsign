@@ -66,8 +66,23 @@ except Exception:
 # 미설치/디코드 실패 시 None 반환 → 다이얼로그가 평소처럼 수동 선택 모드로 뜬다.
 try:
     from pyzbar.pyzbar import decode as pyzbar_decode  # type: ignore
+    try:
+        from pyzbar.pyzbar import ZBarSymbol as _ZBarSymbol  # type: ignore
+        _ZBAR_QR_ONLY = [_ZBarSymbol.QRCODE]
+    except Exception:
+        _ZBAR_QR_ONLY = None  # 구버전 pyzbar — 심볼 제한 없이 호출
 except Exception:
     pyzbar_decode = None  # type: ignore
+    _ZBAR_QR_ONLY = None  # type: ignore
+
+# OpenCV — zbar(pyzbar) 와 다른 알고리즘이라 한쪽이 놓친 QR 을 다른 쪽이 잡는 경우가 흔하다.
+# 인쇄→PDF24→재디코드 경로에서 셀이 뭉개진 QR 보강용. 없으면 조용히 건너뜀(번들 필수 아님).
+try:
+    import cv2  # type: ignore
+    import numpy as _np  # type: ignore
+except Exception:
+    cv2 = None  # type: ignore
+    _np = None  # type: ignore
 
 # 사무실 PC 마다 Windows 계정명이 다르므로 Path.home() 으로 동적으로 결정.
 # 어떤 계정에서 실행해도 그 사람 바탕화면 아래 hdsign_orders 폴더가 만들어진다.
@@ -925,7 +940,9 @@ def fetch_existing_worksheets() -> list[dict]:
 # 를 막기 위한 유틸. 최근에 [QR 코드 만들기] 또는 clip-qr 로 발급됐는데 아직 인쇄 PDF 가
 # 안 올라온(=worksheetPdfUrl 없음) 빈 발주만 골라낸다. 인쇄 시 QR 인식이 실패해도 "혹시
 # 이 발주인가요?" 로 되묻고, 다이얼로그에서는 "방금 만든 빈 발주가 있어요" 경고를 띄우는 데 쓴다.
-_RECENT_QR_ONLY_WINDOW_SEC = 60 * 60  # 같은 작업의 재발급은 보통 몇 분 내 — 1시간이면 충분히 넓다.
+# 같은 작업의 디자인 작업이 몇 시간 걸릴 수 있어(QR 발급 → 디자인 → 인쇄) 6시간으로 잡는다.
+# 너무 좁으면 디코드 실패 시 "방금 만든 빈 발주가 있어요" 안내가 사라져 고아 카드가 또 생긴다.
+_RECENT_QR_ONLY_WINDOW_SEC = 6 * 60 * 60
 
 
 def recent_incomplete_qr_only_orders(existing_worksheets: list[dict] | None = None,
@@ -1630,26 +1647,29 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
                 recent_same = []
             if recent_same:
                 m = recent_same[0]
+                # 기본 포커스 버튼([예])은 "기존 빈 발주 재사용" — 흔한 케이스(인쇄 QR 인식 실패로
+                # 같은 작업을 또 발급하려는 상황)이자 안전한 쪽이라 Enter/실수 클릭이 고아 카드를
+                # 만들지 않게 한다. 정말 다른 새 작업일 때만 [아니오] 로 새 발주를 만든다.
                 ans = messagebox.askyesnocancel(
                     "거래처 확인 — 중복 발급 주의",
                     f"「{company_disp}」\n\n"
                     f"⚠ {_humanize_age_sec(m.get('ageSec', 0))} 이미 이 거래처로 빈 발주 "
-                    f"{m.get('orderNumber')} 를 발급했습니다.\n"
-                    f"(아직 지시서가 안 올라온 상태)\n\n"
-                    f"• 같은 작업이라면 → [아니오] 를 눌러 {m.get('orderNumber')} 의 QR 을 다시 복사하세요.\n"
-                    f"• 완전히 다른 새 작업이라면 → [예] 를 눌러 새 발주를 발급하세요.\n\n"
-                    f"[예] 새 발주 발급   [아니오] {m.get('orderNumber')} QR 다시 복사   [취소] 닫기",
+                    f"{m.get('orderNumber')} 를 발급했고 아직 지시서가 안 올라왔습니다.\n\n"
+                    f"이 인쇄/디자인이 그 발주의 작업입니까?\n\n"
+                    f"• [예]  → {m.get('orderNumber')} 의 QR 을 다시 복사 (새 카드 안 만듦) — 보통 이거\n"
+                    f"• [아니오] → 완전히 다른 새 작업이라 새 발주번호를 발급\n"
+                    f"• [취소] → 닫기",
                     parent=dlg,
                 )
                 if ans is None:  # 취소
                     return
-                if ans is False:  # 기존 발주 QR 재복사 — 새 카드 안 만듦
+                if ans is True:  # 기존 발주 QR 재복사 — 새 카드 안 만듦
                     submitting["flag"] = True
                     _finish_with_order((m.get("orderNumber") or "").strip(),
                                        (m.get("companyName") or company_disp).strip(),
                                        newly_created=False)
                     return
-                # ans is True → 아래로 진행해 새 발주 발급
+                # ans is False → 아래로 진행해 새 발주 발급
             else:
                 if not messagebox.askyesno(
                     "거래처 확인",
@@ -4019,21 +4039,147 @@ def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 10):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _qr_order_from_payload(data: str) -> str | None:
+    """QR 페이로드 문자열에서 /p/{orderNumber} 를 추출해 주문번호 반환. 패턴 불일치면 None.
+
+    워처가 QR 박을 때 quote(order_number, safe="") 로 URL-인코딩되어 들어가므로 한글 주문번호
+    ("주문-260427-03" 등)면 %EC%A3%... 형태. existing_worksheets 의 orderNumber 는 원본
+    텍스트라 unquote 후 비교해야 매칭. 인코딩 안 된 원본이 와도 unquote 는 그대로 돌려준다."""
+    if not data:
+        return None
+    m = re.search(r"/p/([^/?#\s]+)", data)
+    if not m:
+        return None
+    try:
+        order = unquote(m.group(1)).strip()
+    except Exception:
+        order = m.group(1).strip()
+    return order or None
+
+
+def _otsu_threshold(gray: "Image.Image") -> "Image.Image":
+    """PIL 만으로 Otsu 이진화 — 히스토그램에서 클래스간 분산이 최대가 되는 임계값으로 자른다.
+    안티얼라이싱으로 회색 그라데이션이 낀 QR 셀 경계를 한 임계로 깔끔히 가르는 데 효과적."""
+    hist = gray.histogram()[:256]
+    total = sum(hist)
+    if total == 0:
+        return gray
+    sum_all = sum(i * hist[i] for i in range(256))
+    sum_bg = 0.0
+    w_bg = 0
+    max_var = -1.0
+    thresh = 128
+    for t in range(256):
+        w_bg += hist[t]
+        if w_bg == 0:
+            continue
+        w_fg = total - w_bg
+        if w_fg == 0:
+            break
+        sum_bg += t * hist[t]
+        m_bg = sum_bg / w_bg
+        m_fg = (sum_all - sum_bg) / w_fg
+        var_between = w_bg * w_fg * (m_bg - m_fg) ** 2
+        if var_between > max_var:
+            max_var = var_between
+            thresh = t
+    return gray.point(lambda v, th=thresh: 255 if v >= th else 0, mode="L")
+
+
+def _pyzbar_decode_qr(img):
+    """pyzbar 호출 — 가능하면 QRCODE 심볼로만 제한(다른 1D 바코드 오탐/낭비 제거)."""
+    if _ZBAR_QR_ONLY is not None:
+        try:
+            return pyzbar_decode(img, symbols=_ZBAR_QR_ONLY)
+        except Exception:
+            pass
+    return pyzbar_decode(img)
+
+
+def _cv2_decode_qr(pil) -> str | None:
+    """OpenCV QRCodeDetector — zbar 가 놓친 케이스 보강(알고리즘이 달라 상호 보완). cv2 없으면 None."""
+    if cv2 is None or _np is None:
+        return None
+    try:
+        arr = _np.array(pil.convert("L"))
+        det = cv2.QRCodeDetector()
+    except Exception:
+        return None
+    try:
+        data, _pts, _st = det.detectAndDecode(arr)
+        o = _qr_order_from_payload(data or "")
+        if o:
+            return o
+    except Exception:
+        pass
+    try:
+        ok, datas, _pts, _st = det.detectAndDecodeMulti(arr)
+        if ok and datas:
+            for data in datas:
+                o = _qr_order_from_payload(data or "")
+                if o:
+                    return o
+    except Exception:
+        pass
+    return None
+
+
+def _decode_qr_from_pil(pil: "Image.Image", *, tag: str = "") -> str | None:
+    """한 장의 PIL 이미지에서 QR 디코드 시도 — 여러 전처리 변형으로 pyzbar, 그래도 실패면 cv2.
+    찾으면 주문번호, 못 찾으면 None."""
+    if pyzbar_decode is not None:
+        gray = pil.convert("L")
+        big = gray.width * gray.height > 3000 * 4000  # 600dpi A4 급 — 확대는 비용 과해 생략
+        ac = ImageOps.autocontrast(gray, cutoff=2)
+        blurred = gray.filter(ImageFilter.GaussianBlur(radius=1))
+        variants: list[tuple[str, Image.Image]] = [
+            ("gray", gray),
+            ("otsu", _otsu_threshold(gray)),
+            ("th128", gray.point(lambda v: 255 if v >= 128 else 0, mode="L")),
+            ("th100", gray.point(lambda v: 255 if v >= 100 else 0, mode="L")),
+            ("th170", gray.point(lambda v: 255 if v >= 170 else 0, mode="L")),
+            ("autocontrast", ac),
+            ("autocontrast_otsu", _otsu_threshold(ac)),
+            ("blur_th", blurred.point(lambda v: 255 if v >= 128 else 0, mode="L")),
+        ]
+        if not big:
+            variants.append(("upscale2x", gray.resize((gray.width * 2, gray.height * 2), Image.BICUBIC)))
+        for vname, img in variants:
+            try:
+                results = _pyzbar_decode_qr(img)
+            except Exception as e:
+                ui_log(f"QR 디코드 pyzbar 실패({tag} {vname}): {e}")
+                continue
+            for r in results or []:
+                try:
+                    data = r.data.decode("utf-8", errors="ignore")
+                except Exception:
+                    continue
+                o = _qr_order_from_payload(data)
+                if o:
+                    return o
+                ui_log(f"QR 디코드: /p/ 패턴 불일치 ({tag} {vname}) — 내용: {data[:80]!r}")
+    # pyzbar 가 다 놓쳤거나 미설치 → OpenCV 로 한 번 더.
+    return _cv2_decode_qr(pil)
+
+
 def decode_pdf_qr(pdf_path: Path) -> str | None:
     """인쇄된 PDF 에서 QR 을 디코드해 주문번호를 반환. 실패/미설치 시 None.
 
     QR URL 은 워처가 박을 때 /p/{orderNumber} 형식 — 호스트는 무시하고 path 만 매칭한다
-    (스테이징/로컬 호스트로 바뀌어도 인식). pyzbar 없거나 PDF 가 깨졌으면 호출자는
+    (스테이징/로컬 호스트로 바뀌어도 인식). pyzbar/cv2 모두 없거나 PDF 가 깨졌으면 호출자는
     QR 매칭 없이 평소 다이얼로그(수동 선택)로 폴백한다.
 
-    인식 보강 (FlexSign→PDF24 경로에서 셀 경계가 흐려져 pyzbar 가 놓치는 케이스 대응):
+    인식 보강 (FlexSign→PDF24→재인쇄 경로에서 셀 경계가 흐려져 디코더가 놓치는 케이스 대응):
       - 전 페이지 순회 (PDF24 가 빈 표지/안내 페이지를 추가해도 안전)
-      - 200 → 300 → 400 dpi 순으로 재시도
-      - 각 dpi 마다 그레이스케일 + 임계 이진화 두 변형으로 pyzbar 호출
-      - 모든 변형 실패 시 첫 렌더 이미지를 state/qr_debug/<stem>.png 로 덤프 →
+      - 200 → 300 → 400 → 600 dpi 순으로 재렌더 (raster 박힌 QR 도 다른 보간으로 다시 만든다)
+      - 각 렌더마다 그레이 / Otsu / 다단 임계(100·128·170) / 오토컨트라스트 / 블러후이진화 /
+        (작은 이미지면) 2배 확대 변형으로 pyzbar 호출 — 안티얼라이싱·노이즈에 둔감해지게
+      - pyzbar 가 다 놓치면 같은 이미지를 OpenCV QRCodeDetector(detectAndDecode + Multi)로 재시도
+      - 최종 실패 시 첫 렌더 이미지를 state/qr_debug/<stem>.png 로 덤프 →
         다음 실패 때 PNG 한 장만 열면 잘림/누락/흐림 중 어느 케이스인지 즉시 판별."""
-    if pyzbar_decode is None:
-        ui_log("QR 디코드 건너뜀: pyzbar 라이브러리 없음 (exe 빌드시 --collect-all pyzbar 필요)")
+    if pyzbar_decode is None and cv2 is None:
+        ui_log("QR 디코드 건너뜀: pyzbar/opencv 라이브러리 없음 (exe 빌드시 --collect-all pyzbar 등 필요)")
         return None
     if fitz is None:
         ui_log("QR 디코드 건너뜀: pymupdf(fitz) 라이브러리 없음")
@@ -4041,10 +4187,7 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
     if not pdf_path.exists():
         return None
 
-    # 300dpi 가 보통 가장 잘 잡힌다. 안 잡히면 200/400/600 으로 재렌더 — PDF 안에 raster 로
-    # 박힌 QR 도 같은 원본을 다른 보간으로 다시 만들어 pyzbar 가 셀 격자를 잡을 확률을 높인다.
     DPIS = (300, 200, 400, 600)
-
     try:
         doc = fitz.open(str(pdf_path))
     except Exception as e:
@@ -4070,52 +4213,11 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
                     continue
                 last_size = (pil.width, pil.height)
                 if debug_image is None:
-                    # 가장 사람 눈에 익숙한 200dpi 1페이지를 디버그 후보로 잡아둔다.
+                    # 가장 사람 눈에 익숙한 첫 렌더(300dpi 1페이지)를 디버그 후보로 잡아둔다.
                     debug_image = pil
-                gray = pil.convert("L")
-
-                def _variants(g=gray, allow_upscale=(dpi <= 300)):
-                    """안티얼라이싱으로 옅어진 셀 경계를 여러 방식으로 또렷하게 만들어 본다.
-                    pyzbar 는 회색 그라데이션·작은 모듈·픽셀 노이즈에 약하므로 임계 이진화 여러 단계
-                    + 오토컨트라스트 + 살짝 블러 후 이진화 + (저해상도일 때) 2배 확대를 차례로 시도."""
-                    yield "gray", g
-                    yield "threshold128", g.point(lambda v: 255 if v >= 128 else 0, mode="L")
-                    yield "threshold100", g.point(lambda v: 255 if v >= 100 else 0, mode="L")
-                    yield "threshold170", g.point(lambda v: 255 if v >= 170 else 0, mode="L")
-                    ac = ImageOps.autocontrast(g, cutoff=2)
-                    yield "autocontrast", ac
-                    yield "autocontrast_th", ac.point(lambda v: 255 if v >= 128 else 0, mode="L")
-                    blurred = g.filter(ImageFilter.GaussianBlur(radius=1))
-                    yield "blur_th", blurred.point(lambda v: 255 if v >= 128 else 0, mode="L")
-                    if allow_upscale:
-                        yield "upscale2x", g.resize((g.width * 2, g.height * 2), Image.BICUBIC)
-
-                for variant, img in _variants():
-                    try:
-                        results = pyzbar_decode(img)
-                    except Exception as e:
-                        ui_log(f"QR 디코드 pyzbar 실패(p{page_idx} {dpi}dpi {variant}): {e}")
-                        continue
-                    if not results:
-                        continue
-                    for r in results:
-                        try:
-                            data = r.data.decode("utf-8", errors="ignore")
-                        except Exception:
-                            continue
-                        m = re.search(r"/p/([^/?#\s]+)", data)
-                        if m:
-                            # QR 박을 때 quote(order_number, safe="") 로 URL-인코딩되어 들어가므로
-                            # 한글 주문번호("주문-260427-03" 등)면 %EC%A3%... 형태로 매치된다.
-                            # existing_worksheets 의 orderNumber 는 원본 텍스트라 unquote 후 비교해야 매칭 성공.
-                            try:
-                                order = unquote(m.group(1)).strip()
-                            except Exception:
-                                order = m.group(1).strip()
-                            if order:
-                                return order
-                        else:
-                            ui_log(f"QR 디코드: /p/ 패턴 불일치 (p{page_idx} {dpi}dpi {variant}) — 내용: {data[:80]!r}")
+                o = _decode_qr_from_pil(pil, tag=f"p{page_idx} {dpi}dpi")
+                if o:
+                    return o
     finally:
         try:
             doc.close()

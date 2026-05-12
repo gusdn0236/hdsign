@@ -66,7 +66,10 @@ echo === Ensuring dependencies are installed ===
 echo.
 REM No --upgrade: keep whatever pymupdf is already installed. Newer pymupdf
 REM gives better QR / PDF rendering, the user accepts the larger bundle size.
-"%PYTHON%" -m pip install pyinstaller watchdog "qrcode[pil]" Pillow pywin32 pymupdf pyzbar
+REM opencv-python-headless: pyzbar(zbar) 와 다른 QR 디코더(cv2.QRCodeDetector) — 한쪽이
+REM 놓친 인쇄→PDF24 경유 QR 을 다른 쪽이 잡아 인식률을 끌어올린다. -headless 는 GUI 의존이
+REM 없어 번들이 가볍다. 미설치여도 워처는 cv2=None 으로 정상 동작(인식 보강만 비활성).
+"%PYTHON%" -m pip install pyinstaller watchdog "qrcode[pil]" Pillow pywin32 pymupdf pyzbar opencv-python-headless
 if errorlevel 1 (
     echo.
     echo [ERROR] Dependency install failed. See pip output above.
@@ -90,7 +93,9 @@ REM script, which creates one standard shortcut and one admin-flagged shortcut.
 REM --onedir + --noupx : faster startup. Onefile unpacked 100MB+ to temp every
 REM launch (5-15s). Onedir keeps everything extracted, only the small EXE runs (1-3s).
 REM UPX compression off too - EXE is bigger but OS cache handles it after first load.
-"%PYTHON%" -m PyInstaller --clean -y --onedir --windowed --noupx --name hdsign_worksheet --icon "%SCRIPT_DIR%hdsign_worksheet.ico" --collect-all pymupdf --collect-all pyzbar --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import encodings.idna --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" --add-data "%SCRIPT_DIR%hdsign_worksheet.ico;." "%SCRIPT_DIR%hdsign_watcher.py"
+REM --collect-all cv2 : opencv 는 native .pyd + DLL 묶음이라 collect-all 이 안전. 미설치면
+REM PyInstaller 가 조용히 건너뛰므로 빌드 실패하지 않는다(런타임 cv2=None).
+"%PYTHON%" -m PyInstaller --clean -y --onedir --windowed --noupx --name hdsign_worksheet --icon "%SCRIPT_DIR%hdsign_worksheet.ico" --collect-all pymupdf --collect-all pyzbar --collect-all cv2 --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import cv2 --hidden-import numpy --hidden-import encodings.idna --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" --add-data "%SCRIPT_DIR%hdsign_worksheet.ico;." "%SCRIPT_DIR%hdsign_watcher.py"
 if errorlevel 1 (
     echo.
     echo [ERROR] PyInstaller build failed. See output above.
