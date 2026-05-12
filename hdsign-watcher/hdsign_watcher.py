@@ -51,7 +51,7 @@ def _safe_url(url: str) -> str:
         return url
 
 import qrcode
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageOps, ImageFilter
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -348,8 +348,11 @@ def qr_to_clipboard(order_number: str) -> None:
     # 자동지시서/헤더-only 와 동일한 추적 URL — QR 코드 한 개로 흐름이 어느 경로로 들어와도 같은
     # /p/{orderNumber} 모바일 카메라 페이지로 이어진다.
     url = EVIDENCE_URL_BASE + quote(order_number, safe="")
+    # ERROR_CORRECT_Q(25%) — M(15%) 에서 올림. FlexSign→PDF24 렌더 + (작업자가 캔버스에서
+    # 축소) 과정에서 셀 경계가 뭉개져도 pyzbar 가 복원할 여지를 키운다. URL 이 짧아 버전은
+    # 여전히 낮게 유지되므로 셀이 과하게 작아지지 않는다.
     qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        error_correction=qrcode.constants.ERROR_CORRECT_Q,
         box_size=1, border=2,
     )
     qr.add_data(url)
@@ -363,10 +366,11 @@ def qr_to_clipboard(order_number: str) -> None:
     # non-uniform 으로 늘려 붙이는 경우가 있어 비정사각 캔버스는 QR 셀까지 직사각형이 됨.
     # 캔버스를 정사각으로 만들고 그 안에 QR + 주문번호 둘 다 배치하면 어떤 스케일링에도
     # QR 셀은 정사각으로 유지된다.
-    # 60mm — 30mm 가 너무 작아 보인다는 피드백을 받아 2배로 확대. 작업자가 FlexSign 에서
-    # 더 크게/작게 줄여 쓸 수 있지만, 첫 붙여넣기 사이즈가 가시성 좋도록.
-    total_w = 6000  # 60mm
-    total_h = 6000  # 60mm
+    # 80mm — 60mm 도 인쇄 후 축소되면 pyzbar 가 셀 격자를 놓치는 사례가 있어 첫 붙여넣기
+    # 사이즈를 더 키운다. 작업자가 FlexSign 에서 더 크게/작게 줄여 쓸 수 있지만, 기본값이
+    # 클수록 인쇄→PDF24→재디코드 경로에서 모듈 픽셀 수가 넉넉해진다.
+    total_w = 8000  # 80mm
+    total_h = 8000  # 80mm
 
     # 내부 logical 좌표 — 1000 × 1000 정사각 그리드.
     grid_w = 1000
@@ -915,6 +919,59 @@ def fetch_existing_worksheets() -> list[dict]:
         return []
 
 
+# 인쇄 QR 디코드 실패 / [QR 코드 만들기] 재발급으로 생기는 "납기·지시서 없는 빈 발주(고아 카드)"
+# 를 막기 위한 유틸. 최근에 [QR 코드 만들기] 또는 clip-qr 로 발급됐는데 아직 인쇄 PDF 가
+# 안 올라온(=worksheetPdfUrl 없음) 빈 발주만 골라낸다. 인쇄 시 QR 인식이 실패해도 "혹시
+# 이 발주인가요?" 로 되묻고, 다이얼로그에서는 "방금 만든 빈 발주가 있어요" 경고를 띄우는 데 쓴다.
+_RECENT_QR_ONLY_WINDOW_SEC = 60 * 60  # 같은 작업의 재발급은 보통 몇 분 내 — 1시간이면 충분히 넓다.
+
+
+def recent_incomplete_qr_only_orders(existing_worksheets: list[dict] | None = None,
+                                     within_sec: int = _RECENT_QR_ONLY_WINDOW_SEC) -> list[dict]:
+    """최근 within_sec 내 [QR 코드 만들기]/clip-qr 로 발급됐는데 아직 지시서 PDF 가 안 붙은 빈 발주.
+
+    list_recent_orders() 항목 중 originalFileName(=.ai ZIP 자동작성 표식)도, dueDate 도 없는
+    것만 후보로 잡고, 백엔드 admin 주문 목록에서 worksheetPdfUrl 이 비어 있는지 한 번 더 확인한다.
+    existing_worksheets 를 넘기면 그걸로 판정(추가 API 호출 없음), 안 넘기면 fetch 한다.
+    반환은 최신순([0] 이 가장 최근), 각 항목에 'ageSec'(발급 후 경과 초) 키를 더해 돌려준다."""
+    now = time.time()
+    cutoff = now - within_sec
+    cand = [
+        dict(o, ageSec=max(0.0, now - float(o.get("ts", 0) or 0)))
+        for o in list_recent_orders()
+        if float(o.get("ts", 0) or 0) >= cutoff
+        and not (o.get("originalFileName") or "").strip()
+        and not (o.get("dueDate") or "").strip()
+    ]
+    if not cand:
+        return []
+    if existing_worksheets is None:
+        try:
+            existing_worksheets = fetch_existing_worksheets()
+        except Exception:
+            existing_worksheets = []
+    by_num = {w.get("orderNumber"): w for w in (existing_worksheets or [])}
+    out: list[dict] = []
+    for o in cand:
+        w = by_num.get(o.get("orderNumber"))
+        if w is None:
+            # admin 주문 목록에 없음 = 이미 COMPLETED/휴지통 등 → 이어쓸 대상 아님.
+            continue
+        if (w.get("worksheetPdfUrl") or "").strip():
+            continue  # 이미 지시서가 올라옴 = 완료된 발주.
+        out.append(o)
+    return out
+
+
+def _humanize_age_sec(sec: float) -> str:
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec}초 전"
+    if sec < 3600:
+        return f"{sec // 60}분 전"
+    return f"{sec // 3600}시간 전"
+
+
 # ── Network customer folder delivery ─────────────────────────────────────────
 
 def _load_config() -> dict:
@@ -1430,6 +1487,68 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
                  anchor="w", justify="left", wraplength=DLG_W - 28
                  ).pack(fill="x", pady=(4, 10))
 
+        # ── 최근에 발급했는데 아직 지시서가 안 올라온 빈 발주 경고 ──────────────
+        # 같은 작업을 (QR 인식 실패 등으로) 또 발급하면 고아 카드가 누적된다 → 새로 고르기 전에
+        # "방금 만든 빈 발주가 있어요" 를 보여주고, 같은 작업이면 그 QR 을 다시 복사하게 한다.
+        try:
+            _recent_open = recent_incomplete_qr_only_orders()
+        except Exception:
+            _recent_open = []
+        if _recent_open:
+            warn = tk.Frame(body, bg="#fffbeb",
+                            highlightbackground="#f59e0b", highlightthickness=1)
+            warn.pack(fill="x", pady=(0, 10))
+            tk.Label(warn, text="⚠ 최근 발급한 빈 발주가 있습니다",
+                     bg="#fffbeb", fg="#92400e", font=("맑은 고딕", 9, "bold"),
+                     anchor="w").pack(fill="x", padx=10, pady=(8, 2))
+            tk.Label(warn,
+                     text="같은 작업이면 새로 발급하지 말고 아래 QR 을 다시 복사해 쓰세요.",
+                     bg="#fffbeb", fg="#92400e", font=("맑은 고딕", 8),
+                     anchor="w", justify="left", wraplength=DLG_W - 48).pack(fill="x", padx=10, pady=(0, 4))
+            for _ro in _recent_open[:3]:
+                _rline = tk.Frame(warn, bg="#fffbeb")
+                _rline.pack(fill="x", padx=10, pady=(0, 6))
+                tk.Label(_rline,
+                         text=f"{_ro.get('orderNumber')}  ·  {_ro.get('companyName') or '-'}  ·  {_humanize_age_sec(_ro.get('ageSec', 0))}",
+                         bg="#fffbeb", fg="#78350f", font=("맑은 고딕", 8),
+                         anchor="w").pack(side="left", fill="x", expand=True)
+
+                def _make_recopy(num, comp):
+                    def _do(_e=None):
+                        if submitting["flag"]:
+                            return
+                        submitting["flag"] = True
+                        ok = False
+                        try:
+                            qr_to_clipboard(num)
+                            ok = True
+                        except Exception as e:
+                            ui_log(f"QR 클립보드 복사 실패 ({num}): {e}")
+                        try:
+                            dlg.destroy()
+                        except Exception:
+                            pass
+                        if ok:
+                            messagebox.showinfo(
+                                "QR 코드 복사 완료",
+                                f"기존 빈 발주 {num} 의 QR 을 다시 복사했습니다.\n\n"
+                                f"FlexSign 캔버스에 Ctrl+V 로 붙여넣고 지시서를 그린 뒤\n"
+                                f"인쇄하시면 자동으로 매칭됩니다.")
+                        else:
+                            messagebox.showwarning(
+                                "QR 클립보드 복사 실패",
+                                f"발주번호 {num} 의 QR 복사에 실패했습니다.\n어드민 페이지에서 다시 발급해주세요.")
+                        _signal("qr_created", order_number=num)
+                    return _do
+
+                tk.Button(_rline, text="이 QR 다시 복사",
+                          bg="#f59e0b", fg="white", font=("맑은 고딕", 8, "bold"),
+                          relief="flat", bd=0, padx=8, pady=3, cursor="hand2",
+                          activebackground="#d97706", activeforeground="white",
+                          command=_make_recopy((_ro.get("orderNumber") or "").strip(),
+                                               (_ro.get("companyName") or "").strip())
+                          ).pack(side="right", padx=(6, 0))
+
         search_var = tk.StringVar()
         search_entry = tk.Entry(body, textvariable=search_var,
                                 font=("맑은 고딕", 11), bg="white",
@@ -1456,12 +1575,87 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
         submitting = {"flag": False}
         filtered: list[dict] = []
 
+        def _finish_with_order(order_num: str, company: str, *, newly_created: bool):
+            """발주번호 확정 후 공통 마무리 — QR 클립보드 복사 + 안내 + (인쇄흐름) 신호."""
+            qr_copy_ok = False
+            try:
+                qr_to_clipboard(order_num)
+                qr_copy_ok = True
+            except Exception as e:
+                ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+            if qr_copy_ok:
+                head = ("발주번호 " + order_num + " 의 QR 이 클립보드에 복사되었습니다."
+                        if newly_created
+                        else "기존 빈 발주 " + order_num + " 의 QR 을 다시 복사했습니다.")
+                messagebox.showinfo(
+                    "QR 코드 복사 완료",
+                    f"{head}\n\n"
+                    f"FlexSign 캔버스에 Ctrl+V 로 붙여넣고 지시서를 그린 뒤\n"
+                    f"인쇄하시면 자동으로 매칭됩니다.",
+                )
+            else:
+                messagebox.showwarning(
+                    "QR 클립보드 복사 실패",
+                    f"발주번호 {order_num} 는 {'등록' if newly_created else '확인'}됐지만 QR 복사에 실패했습니다.\n"
+                    f"어드민 페이지에서 QR 을 다시 발급해 사용해주세요.",
+                )
+            # 인쇄 흐름에서 진입한 경우만 의미 — _process_printed_pdf 가 깨어나
+            # 종이/업로드 생략 + 임시 PDF 정리로 빠진다.
+            _signal("qr_created", order_number=order_num)
+
         def _on_pick(client):
             if submitting["flag"]:
                 return
             client_id = client.get("id")
             if client_id is None:
                 return
+            company_disp = (client.get("companyName") or "").strip() or "(이름 없음)"
+
+            # ── 거래처 확인 + 최근 빈 발주 중복 경고 ────────────────────────────
+            # 거래처를 클릭하자마자 카드를 만들어버리면 잘못 골랐을 때 곧장 고아 카드가 된다.
+            # 또 같은 작업을 (QR 인식 실패 등으로) 또 발급하면 고아 카드가 누적된다 → 발급 전에
+            # "이 거래처 맞나요?" 를 묻고, 최근에 같은 거래처로 발급한 빈 발주가 있으면 강하게 경고.
+            try:
+                recent_same = [
+                    o for o in recent_incomplete_qr_only_orders()
+                    if (o.get("companyName") or "").strip() == (client.get("companyName") or "").strip()
+                ]
+            except Exception:
+                recent_same = []
+            if recent_same:
+                m = recent_same[0]
+                ans = messagebox.askyesnocancel(
+                    "거래처 확인 — 중복 발급 주의",
+                    f"「{company_disp}」\n\n"
+                    f"⚠ {_humanize_age_sec(m.get('ageSec', 0))} 이미 이 거래처로 빈 발주 "
+                    f"{m.get('orderNumber')} 를 발급했습니다.\n"
+                    f"(아직 지시서가 안 올라온 상태)\n\n"
+                    f"• 같은 작업이라면 → [아니오] 를 눌러 {m.get('orderNumber')} 의 QR 을 다시 복사하세요.\n"
+                    f"• 완전히 다른 새 작업이라면 → [예] 를 눌러 새 발주를 발급하세요.\n\n"
+                    f"[예] 새 발주 발급   [아니오] {m.get('orderNumber')} QR 다시 복사   [취소] 닫기",
+                    parent=dlg,
+                )
+                if ans is None:  # 취소
+                    return
+                if ans is False:  # 기존 발주 QR 재복사 — 새 카드 안 만듦
+                    submitting["flag"] = True
+                    _finish_with_order((m.get("orderNumber") or "").strip(),
+                                       (m.get("companyName") or company_disp).strip(),
+                                       newly_created=False)
+                    return
+                # ans is True → 아래로 진행해 새 발주 발급
+            else:
+                if not messagebox.askyesno(
+                    "거래처 확인",
+                    f"「{company_disp}」\n\n이 거래처로 새 발주번호 QR 을 발급할까요?",
+                    parent=dlg,
+                ):
+                    return
+
             submitting["flag"] = True
             try:
                 created = _create_qr_only_order(int(client_id))
@@ -1477,29 +1671,10 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
                 company = (created.get("clientCompanyName")
                            or client.get("companyName") or "").strip()
                 ui_log(f"{order_num} ({company}) 빈 주문 발급 완료")
-                qr_copy_ok = False
-                try:
-                    qr_to_clipboard(order_num)
-                    qr_copy_ok = True
-                except Exception as e:
-                    ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
-                dlg.destroy()
-                if qr_copy_ok:
-                    messagebox.showinfo(
-                        "QR 코드 복사 완료",
-                        f"발주번호 {order_num} 의 QR 이 클립보드에 복사되었습니다.\n\n"
-                        f"FlexSign 캔버스에 Ctrl+V 로 붙여넣고 지시서를 그린 뒤\n"
-                        f"인쇄하시면 자동으로 매칭됩니다.",
-                    )
-                else:
-                    messagebox.showwarning(
-                        "QR 클립보드 복사 실패",
-                        f"발주번호 {order_num} 는 등록되었지만 QR 복사에 실패했습니다.\n"
-                        f"어드민 페이지에서 QR 을 다시 발급해 사용해주세요.",
-                    )
-                # 인쇄 흐름에서 진입한 경우만 의미 — _process_printed_pdf 가 깨어나
-                # 종이/업로드 생략 + 임시 PDF 정리로 빠진다.
-                _signal("qr_created", order_number=order_num)
+                # 인쇄 매칭 큐에 등록 — 다음 인쇄에서 QR 인식이 실패해도 "이 발주인가요?" 로 되묻고,
+                # [QR 코드 만들기] 를 또 열면 "방금 만든 빈 발주가 있어요" 경고를 띄울 수 있게.
+                remember_order_for_print(order_num, company, "", "", "")
+                _finish_with_order(order_num, company, newly_created=True)
             except Exception as e:
                 submitting["flag"] = False
                 ui_log(f"QR 코드 만들기 중 오류: {e}")
@@ -3864,9 +4039,9 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
     if not pdf_path.exists():
         return None
 
-    # 200dpi 가 표준. 안 잡히면 300/400 으로 재렌더 — PDF 안에 raster 로 박힌 QR 도
-    # 같은 원본을 다른 보간으로 다시 만들어 pyzbar 가 셀 격자를 잡을 확률을 높인다.
-    DPIS = (200, 300, 400)
+    # 300dpi 가 보통 가장 잘 잡힌다. 안 잡히면 200/400/600 으로 재렌더 — PDF 안에 raster 로
+    # 박힌 QR 도 같은 원본을 다른 보간으로 다시 만들어 pyzbar 가 셀 격자를 잡을 확률을 높인다.
+    DPIS = (300, 200, 400, 600)
 
     try:
         doc = fitz.open(str(pdf_path))
@@ -3896,10 +4071,24 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
                     # 가장 사람 눈에 익숙한 200dpi 1페이지를 디버그 후보로 잡아둔다.
                     debug_image = pil
                 gray = pil.convert("L")
-                # 안티얼라이싱으로 옅어진 셀 경계를 또렷하게 — 임계 128 이하는 검정으로 강제.
-                # pyzbar 가 회색 그라데이션을 셀로 못 보는 케이스를 흡수한다.
-                bw = gray.point(lambda v: 255 if v >= 128 else 0, mode="L")
-                for variant, img in (("gray", gray), ("threshold", bw)):
+
+                def _variants(g=gray, allow_upscale=(dpi <= 300)):
+                    """안티얼라이싱으로 옅어진 셀 경계를 여러 방식으로 또렷하게 만들어 본다.
+                    pyzbar 는 회색 그라데이션·작은 모듈·픽셀 노이즈에 약하므로 임계 이진화 여러 단계
+                    + 오토컨트라스트 + 살짝 블러 후 이진화 + (저해상도일 때) 2배 확대를 차례로 시도."""
+                    yield "gray", g
+                    yield "threshold128", g.point(lambda v: 255 if v >= 128 else 0, mode="L")
+                    yield "threshold100", g.point(lambda v: 255 if v >= 100 else 0, mode="L")
+                    yield "threshold170", g.point(lambda v: 255 if v >= 170 else 0, mode="L")
+                    ac = ImageOps.autocontrast(g, cutoff=2)
+                    yield "autocontrast", ac
+                    yield "autocontrast_th", ac.point(lambda v: 255 if v >= 128 else 0, mode="L")
+                    blurred = g.filter(ImageFilter.GaussianBlur(radius=1))
+                    yield "blur_th", blurred.point(lambda v: 255 if v >= 128 else 0, mode="L")
+                    if allow_upscale:
+                        yield "upscale2x", g.resize((g.width * 2, g.height * 2), Image.BICUBIC)
+
+                for variant, img in _variants():
                     try:
                         results = pyzbar_decode(img)
                     except Exception as e:
@@ -3986,6 +4175,36 @@ def _process_printed_pdf(pdf_path: Path):
 
     # 다이얼로그 [기존 변경] 탭 그리드용 — UI 스레드 진입 전에 받아 둔다(API 가 느려도 UI 가 응답).
     existing_worksheets = fetch_existing_worksheets()
+
+    # QR 디코드 실패 — 하지만 방금 [QR 코드 만들기] 로 빈 발주를 발급한 직후라면, 작업자가
+    # 또 거래처를 골라 발급해 고아 카드를 만들기 전에 "이 인쇄물이 그 발주인가요?" 를 먼저 묻는다.
+    if qr_order_number is None:
+        _cand = recent_incomplete_qr_only_orders(existing_worksheets)
+        if _cand:
+            _m = _cand[0]
+            _h0: dict = {"value": None, "done": threading.Event()}
+
+            def _ask_recent_match():
+                try:
+                    _h0["value"] = messagebox.askyesno(
+                        "발주 매칭 확인",
+                        f"이 인쇄물의 QR 을 읽지 못했습니다.\n\n"
+                        f"{_humanize_age_sec(_m.get('ageSec', 0))} 발급한 빈 발주가 있습니다:\n"
+                        f"    {_m.get('orderNumber')}  ·  {_m.get('companyName') or '-'}\n\n"
+                        f"이 인쇄물이 그 발주의 지시서가 맞습니까?\n\n"
+                        f"[예] → 이 지시서를 {_m.get('orderNumber')} 에 첨부 (납기/배송 입력으로 진행)\n"
+                        f"[아니오] → 거래처를 골라 새 발주 발급")
+                except Exception as e:
+                    ui_log(f"발주 매칭 확인 다이얼로그 오류: {e}")
+                finally:
+                    _h0["done"].set()
+
+            _ui_queue.put(("run", _ask_recent_match))
+            _h0["done"].wait()
+            if _h0["value"]:
+                qr_order_number = (_m.get("orderNumber") or "").strip() or None
+                if qr_order_number:
+                    ui_log(f"QR 디코드 실패 → 최근 발급 빈 발주 {qr_order_number} 로 매칭 확정 ({pdf_path.name})")
 
     # [신규 작성] 탭에서 더 이상 거래처를 직접 고르지 않으므로 fetch 생략 — 거래처 발주 발급은
     # 메인 GUI [QR 코드 만들기] 모달에서만 일어나고, 거기서 자기 데이터를 따로 받는다.
