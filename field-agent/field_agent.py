@@ -184,11 +184,20 @@ def _stem_candidates(pdf_stem: str) -> list[str]:
     return out
 
 
-# PDF24 는 인쇄 작업명($fileName)이 비어 있으면(= 작업자가 FlexiSIGN 에서 .fs 를 저장하기
-# 전에 인쇄해서 문서명이 안 실린 경우) 파일명을 'YYYY-MM-DD HH-MM-SS' 같은 시각으로 떨군다.
-# 이 경우 stem 으로는 .fs 를 영영 못 찾으니, 인쇄 시각 근처에 저장된 .fs(작업자가 인쇄 직전/직후
-# 저장한 그 파일)로 폴백 매칭한다.
-_PDF24_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[ _\-](\d{2})-(\d{2})-(\d{2})$")
+# PDF24 자동저장 파일명을 시각값으로 잡아두면(권장 — $fileName 은 FlexiSIGN→PDF24 구간에서
+# 한글 도큐먼트명이 깨져 PDF24 가 ErrorCode 123 으로 저장 실패하는 일이 있다) 파일명에
+# 원본 정보가 없다. 보통은 사무실 워처가 QR 로 주문을 알아내 원본 .ai stem 으로 리네임해서
+# 올리지만(그러면 아래 정확/유사 매칭으로 잡힘), 워처가 원본명을 모르는 작업(작업자가 직접
+# 그린 케이스)은 시각값 그대로 올라온다 → 인쇄 시각 근처에 저장된 .fs 로 폴백 매칭한다.
+# 허용 형태: 'YYYY-MM-DD HH-MM-SS'(구분자 공백/_/-), 'YYMMDD_HHMMSS', 'YYYYMMDD_HHMMSS' 등.
+# 끝에 '(1)' 같은 PDF24 중복 회피 접미사나 '_$id' 고유번호 접미사가 붙어도 인식한다.
+_PDF24_TIMESTAMP_RE = re.compile(
+    r"^(?:"
+    r"(?P<y4a>\d{4})-(?P<mo_a>\d{2})-(?P<d_a>\d{2})[ _\-](?P<h_a>\d{2})-(?P<mi_a>\d{2})-(?P<s_a>\d{2})"
+    r"|"
+    r"(?P<yb>\d{2}|\d{4})(?P<mo_b>\d{2})(?P<d_b>\d{2})[ _\-]?(?P<h_b>\d{2})(?P<mi_b>\d{2})(?P<s_b>\d{2})"
+    r")(?:[ _\-]\w+|\s*\(\d+\))?$"
+)
 
 
 def _parse_pdf24_timestamp(stem: str) -> float | None:
@@ -197,7 +206,14 @@ def _parse_pdf24_timestamp(stem: str) -> float | None:
     if not m:
         return None
     try:
-        y, mo, d, h, mi, s = (int(x) for x in m.groups())
+        if m.group("y4a") is not None:
+            y, mo, d = int(m.group("y4a")), int(m.group("mo_a")), int(m.group("d_a"))
+            h, mi, s = int(m.group("h_a")), int(m.group("mi_a")), int(m.group("s_a"))
+        else:
+            yb = m.group("yb")
+            y = int(yb) if len(yb) == 4 else 2000 + int(yb)
+            mo, d = int(m.group("mo_b")), int(m.group("d_b"))
+            h, mi, s = int(m.group("h_b")), int(m.group("mi_b")), int(m.group("s_b"))
         return datetime(y, mo, d, h, mi, s).timestamp()
     except (ValueError, OverflowError):
         return None

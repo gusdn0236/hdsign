@@ -4053,6 +4053,146 @@ def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 10):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _flexisign_document_stem() -> str | None:
+    """현재 FlexiSIGN(App.exe) 에 열려 있는 .fs 도큐먼트의 stem 을 창 제목에서 읽어 반환.
+
+    사무실 대다수 흐름은 "거래처 .fs 를 FlexiSIGN 에 열어 헤더만 붙여 인쇄" 라 워처가
+    원본 .ai 명을 모른다. 하지만 그 .fs 는 FlexiSIGN 창 제목에 들어 있고, 창 제목은
+    윈도우가 UTF-16 으로 다루므로 인코딩이 안 깨진다 → 이 stem 으로 인쇄 PDF 를 리네임하면
+    현장 에이전트가 거래처 폴더의 .fs 를 이름으로 정확 매칭(±30분 mtime 폴백 불필요).
+
+    FlexiSIGN 창이 없거나 .fs 가 든 제목을 못 찾으면 None. .fs 후보가 여럿이면(작업자가
+    여러 문서를 열어둠) EnumWindows Z-order 상 최상단(=가장 최근 활성) FlexiSIGN 창의 것을
+    채택하되 전부 로그에 남긴다(형식 확인/오인 발견용)."""
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+        user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong)]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+        flex_exe = ""
+        try:
+            p = find_flexsign_exe()
+            flex_exe = Path(p).name if p else ""
+        except Exception:
+            flex_exe = ""
+        flex_exe = (flex_exe or "App.exe").lower()
+
+        def _proc_path(pid: int) -> str:
+            h = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return ""
+            try:
+                buf = ctypes.create_unicode_buffer(32768)
+                size = ctypes.c_ulong(32768)
+                if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    return buf.value or ""
+            finally:
+                kernel32.CloseHandle(h)
+            return ""
+
+        titles: list[str] = []  # EnumWindows = Z-order(최상단부터)
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def _cb(hwnd, _lparam):
+            try:
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                n = user32.GetWindowTextLengthW(hwnd)
+                if n <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                title = (buf.value or "").strip()
+                if not title:
+                    return True
+                pid = ctypes.c_ulong(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                exe_path = _proc_path(pid.value).lower()
+                if not exe_path:
+                    return True
+                base = exe_path.rsplit("\\", 1)[-1]
+                if base != flex_exe and "flexi" not in exe_path:
+                    return True
+                titles.append(title)
+            except Exception:
+                pass
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(_cb), 0)
+        if not titles:
+            return None
+        # 제목 어디든 박혀 있는 '<파일명>.fs' 추출 — 경로 포함이면 basename 만.
+        fs_re = re.compile(r'([^\\/:*?"<>|\r\n\[\]]+\.fs)', re.IGNORECASE)
+        ordered_stems: list[str] = []
+        for t in titles:
+            m = fs_re.search(t)
+            if not m:
+                continue
+            stem = Path(m.group(1).strip()).stem.strip()
+            if stem and stem not in ordered_stems:
+                ordered_stems.append(stem)
+        ui_log(f"FlexiSIGN 창 제목 {titles!r} → .fs 후보 {ordered_stems!r}")
+        if not ordered_stems:
+            return None
+        if len(ordered_stems) > 1:
+            ui_log(f"FlexiSIGN 열린 .fs 여럿 — 최상단 창의 '{ordered_stems[0]}' 채택")
+        return ordered_stems[0]
+    except Exception as e:
+        ui_log(f"FlexiSIGN 창 제목 읽기 실패: {e}")
+        return None
+
+
+def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str) -> Path:
+    """인쇄 PDF 를 가능하면 원본 도큐먼트명 stem 으로 리네임해서 반환.
+
+    배경: PDF24 자동저장 파일명을 시각값(%y%m%d_%H%M%S)으로 두면 ASCII 라 ErrorCode 123
+    (한글 도큐먼트 제목이 FlexSign→PDF24 구간에서 깨져 ERROR_INVALID_NAME) 이 원천 차단되지만,
+    그 대신 PDF 파일명에 원본 정보가 사라진다. 그래서 워처가 깔끔한 원본명을 직접 붙인다 —
+    업로드되는 originalPdfFilename 이 깔끔해야 현장 에이전트가 거래처 폴더의 .fs 를 이름으로
+    정확 매칭(시각 ±30분 mtime 폴백 불필요)한다.
+
+    이름 출처 우선순위:
+      ① FlexiSIGN 창에 열려 있는 .fs 의 stem  (사무실 대다수 — 거래처 .fs 에 헤더만 붙여 인쇄)
+      ② 인쇄 매칭 큐(remember_order_for_print)의 원본 .ai 명  (워처가 .ai 를 FlexiSIGN 에 넣은 자동작성 흐름)
+    둘 다 없거나 리네임 실패 시 원래 경로 그대로 반환 — 그 경우 현장 에이전트의 PDF24 시각형 폴백이 받는다."""
+    try:
+        new_stem = ""
+        fs_stem = _flexisign_document_stem()
+        if fs_stem:
+            new_stem = safe_filename_stem(fs_stem)
+        if not new_stem:
+            for o in list_recent_orders():
+                if (o.get("orderNumber") or "") == order_number:
+                    orig = (o.get("originalFileName") or "").strip()
+                    if orig:
+                        new_stem = safe_filename_stem(Path(orig).stem)
+                    break
+        if not new_stem or new_stem == pdf_path.stem:
+            return pdf_path
+        new_path = pdf_path.with_name(f"{new_stem}.pdf")
+        if new_path.exists() and new_path.resolve() != pdf_path.resolve():
+            new_path = pdf_path.with_name(f"{new_stem}_{time.strftime('%H%M%S')}.pdf")
+        # 리네임하면 watchdog 이 새 파일에 대해 on_moved/on_created 를 쏴 _process_printed_pdf 가
+        # 다시 호출된다 → 매칭 다이얼로그 중복. 새 경로 키를 미리 _seen_printed 에 넣어 차단.
+        with _seen_printed_lock:
+            _seen_printed.add(str(new_path.resolve()))
+        pdf_path.rename(new_path)
+        ui_log(f"인쇄 PDF 리네임: {pdf_path.name} → {new_path.name}")
+        return new_path
+    except Exception as e:
+        ui_log(f"인쇄 PDF 리네임 실패(원래 이름으로 업로드): {e}")
+        return pdf_path
+
+
 def _qr_order_from_payload(data: str) -> str | None:
     """QR 페이로드 문자열에서 /p/{orderNumber} 를 추출해 주문번호 반환. 패턴 불일치면 None.
 
@@ -4634,6 +4774,9 @@ def _process_printed_pdf(pdf_path: Path):
     # 사용자가 메모를 새로 입력/수정했을 때만 contentChanged=true. prefill 된 이전 메모를
     # 그대로 두고 confirm 한 단순 재인쇄는 preserve_note=True 로 보내 DB 의 메모만 보존
     # (worksheetUpdatedAt 도 갱신 안 됨 → 모바일/관리자 변경 배지 트리거 X).
+    # PDF24 가 시각값 파일명으로 떨궜어도, QR 로 매칭된 주문의 원본 .ai 명을 알면 그 stem 으로
+    # 리네임 → 업로드되는 originalPdfFilename 이 깔끔해져 현장에서 .fs 이름 매칭이 정확해진다.
+    pdf_path = _rename_printed_pdf_to_original(pdf_path, order_number)
     upload_ok = upload_worksheet_pdf(order_number, pdf_path,
                                      content_changed=bool(sel.get("content_changed", False)),
                                      change_note=sel.get("change_note") or "",
