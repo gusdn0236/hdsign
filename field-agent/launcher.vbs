@@ -107,6 +107,12 @@ If Not isAlive Then
     ' 디버그 .exe 도 같이 로컬로 — 디버그 바로가기가 로컬 복사본을 가리키는 경우 대비(있으면).
     If fso.FileExists(scriptDir & "\hdsign_field_agent_debug.exe") Then _
         fso.CopyFile scriptDir & "\hdsign_field_agent_debug.exe", binDir & "\hdsign_field_agent_debug.exe", True
+    ' ★ config.json 도 .exe 옆(=binDir)으로 복사 — frozen 에이전트는 sys.executable 옆의
+    '   config.json 을 읽으므로, 안 옮기면 DEFAULT_CONFIG(틀린 network_customer_base) 로 떨어져
+    '   "거래처 폴더를 찾지 못했습니다" 가 난다. 매번 덮어써서 네트워크 config 변경 자동 전파.
+    '   (PC별 오버라이드 config.local.json 은 %LOCALAPPDATA%\HDSignFieldViewer\ 에 그대로 — 영향 없음.)
+    If fso.FileExists(scriptDir & "\config.json") Then _
+        fso.CopyFile scriptDir & "\config.json", binDir & "\config.json", True
     Err.Clear
     On Error Goto 0
 
