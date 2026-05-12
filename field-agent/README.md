@@ -23,7 +23,8 @@ run.bat
 
 - `api_base` — 백엔드 베이스 URL (운영: `https://hdsign-production.up.railway.app`)
 - `network_customer_base` — 사무실 네트워크 거래처 폴더 베이스 (워처와 동일 경로)
-- `flexisign_exe` — FlexiSIGN 실행파일 절대경로. **보통 비워둔다(`""`)** — 비어 있거나 경로가 없으면 자동 탐지(레지스트리의 `.fs` 연결 프로그램 → `Program Files\SAi\**` 글롭 → 그래도 없으면 `.fs` 기본 연결로 열기). PC마다 설치 위치가 달라도 그냥 둬도 됨. 강제로 특정 PC만 다른 경로를 쓰게 하려면 그 PC의 `%LOCALAPPDATA%\HDSignFieldViewer\config.local.json` 에 `{"flexisign_exe": "D:\\...\\App.exe"}` 한 줄을 두면 공유 `config.json` 위에 덮어쓴다.
+- `flexisign_exe` — FlexiSIGN 실행파일 절대경로. **보통 비워둔다(`""`)** — 비어 있거나 경로가 없으면 자동 탐지(레지스트리의 `.fs` 연결 프로그램 → `Program Files\SAi\**` 글롭). 이 경로는 **실행 여부 확인 + 시작 로그**에만 쓰이고, 에이전트는 FlexiSIGN 을 새로 띄우지 않는다. 강제로 특정 PC만 다른 경로를 쓰게 하려면 그 PC의 `%LOCALAPPDATA%\HDSignFieldViewer\config.local.json` 에 `{"flexisign_exe": "D:\\...\\App.exe"}` 한 줄을 두면 공유 `config.json` 위에 덮어쓴다.
+- `flexisign_process_name` — 실행 여부를 확인할 프로세스 이미지명. 보통 비워둔다(`flexisign_exe` 파일명으로 자동, 그것도 없으면 `FlexiSign.exe`/`Flexi.exe`/`App.exe` 후보군). 설치 exe 이름이 너무 흔할 때(예: `App.exe` 가 다른 앱과 겹침)만 명시.
 - `port` — 충돌 시만 변경. 변경 시 프론트 환경변수 `VITE_HDSIGN_AGENT_URL` 도 같이.
 - `allowed_origins` — 호출 허용 도메인. 운영 도메인 + 로컬 개발(`http://localhost:5173`) 권장.
 - `fuzzy_threshold` — `.fs` 이름이 미세하게 변형됐을 때 자동 매칭 임계값(0~1, 권장 0.85).
@@ -38,7 +39,8 @@ run.bat
    - **정확 매칭** — `<pdf_stem>.fs` 그대로 (대다수)
    - **유사 매칭** — stem 정규화 후 SequenceMatcher 유사도 ≥ `fuzzy_threshold`, 단일 후보일 때만
    - **실패** — 거래처 폴더 자체를 탐색기로 열고 웹에 "수동 선택" 토스트
-4. 매칭 .fs 를 FlexiSIGN subprocess 로 실행
+4. **FlexiSIGN 이 실행 중인지 확인** — 안 떠 있으면 "FlexiSIGN 을 먼저 켜세요" 메시지(에이전트는 절대 새로 띄우지 않음)
+5. 떠 있으면 매칭 `.fs` 를 `os.startfile` 로 연다 = `.fs` 더블클릭과 동일 → 이미 떠 있는 FlexiSIGN 창에서 열림
 
 ## 보안
 

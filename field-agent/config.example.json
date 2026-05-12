@@ -2,6 +2,7 @@
   "api_base": "https://hdsign-production.up.railway.app",
   "network_customer_base": "\\\\Main\\공유\\거래처",
   "flexisign_exe": "",
+  "flexisign_process_name": "",
   "port": 17345,
   "allowed_origins": [
     "https://hdsigncraft.com",

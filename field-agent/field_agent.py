@@ -32,9 +32,15 @@ DEFAULT_CONFIG = {
     # 사무실 워처와 동일한 키 — 같은 config 를 공유해도 안전하도록 같은 이름 사용.
     "network_customer_base": r"\\Main\공유\거래처",
     # FlexiSIGN 실행파일. 빈 문자열("") 이거나 경로가 존재하지 않으면 자동 탐지
-    # (레지스트리의 .fs 연결 프로그램 → SAi 설치폴더 글롭 → 그래도 없으면 .fs 기본 연결로 열기).
-    # PC마다 설치 경로가 달라도 보통 그대로 두면 됨. 강제 지정이 필요한 예외 PC에서만 채운다.
+    # (레지스트리의 .fs 연결 프로그램 → SAi 설치폴더 글롭). PC마다 설치 경로가 달라도
+    # 보통 그대로 두면 됨. 강제 지정이 필요한 예외 PC에서만 채운다.
+    # ※ 에이전트는 절대 FlexiSIGN 을 새로 띄우지 않는다 — 이미 떠 있는 FlexiSIGN 에서만
+    #   파일을 연다(켜져 있지 않으면 "먼저 켜세요" 안내). exe 경로는 "그 프로세스가 떠 있나"
+    #   확인용 + 시작 로그용으로만 쓰인다.
     "flexisign_exe": "",
+    # FlexiSIGN 실행 여부를 확인할 프로세스 이미지명. 비어 있으면 flexisign_exe(자동탐지 포함)
+    # 의 파일명을 쓰고, 그것도 없으면 기본 후보군(FlexiSign.exe / Flexi.exe / App.exe)으로 확인.
+    "flexisign_process_name": "",
     # 로컬 리스너 포트. 17345 = 1234 의 키보드 우측 시프트 — 충돌 가능성 매우 낮음.
     "port": 17345,
     # CORS 허용 origin. 운영 도메인 + 로컬 개발(http://localhost:5173) 권장.
@@ -207,10 +213,13 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
 
 
 # ─── FlexiSIGN 실행 ─────────────────────────────────────────────────────
-
-# ─── FlexiSIGN 경로 해석 ────────────────────────────────────────────────
-# 우선순위: config 의 flexisign_exe(존재할 때) → 레지스트리의 .fs 연결 프로그램
-#           → SAi 설치폴더 글롭 → (그래도 없으면) os.startfile 로 .fs 기본 연결 실행.
+# 정책: 에이전트는 FlexiSIGN 을 새로 띄우지 않는다. 작업자는 보통 FlexiSIGN 을
+#       켜둔 채로 작업하므로, 이미 떠 있는 인스턴스에서 .fs 만 열려야 한다(os.startfile
+#       = .fs 더블클릭과 동일 → 실행 중이면 그 창에서 열림). FlexiSIGN 이 꺼져 있으면
+#       새로 켜지 않고 "먼저 켜세요" 메시지를 돌려준다(켜져 있을 때만 동작 = 더 안정적).
+#
+# 경로 해석 우선순위: config 의 flexisign_exe(존재할 때) → 레지스트리의 .fs 연결 프로그램
+#           → SAi 설치폴더 글롭. 이 경로는 "그 프로세스가 떠 있나" 확인 + 시작 로그용.
 # PC마다 설치 경로가 달라도 보통 자동 탐지로 해결되고, 강제 지정이 필요하면
 # config.json(공유) 또는 %LOCALAPPDATA%\HDSignFieldViewer\config.local.json(PC별) 에 채운다.
 
@@ -294,7 +303,8 @@ def _flexisign_from_glob() -> str | None:
 
 
 def resolve_flexisign_exe(configured: str | None) -> str | None:
-    """실제로 쓸 FlexiSIGN 실행파일 경로. 없으면 None(→ 호출측이 .fs 기본 연결로 폴백)."""
+    """FlexiSIGN 실행파일 경로(실행 여부 확인·로그용). 못 찾으면 None — 그 경우
+    실행 확인은 기본 후보 프로세스명으로 한다."""
     global _FS_EXE_CACHE
     configured = (configured or "").strip()
     if configured and Path(configured).exists():
@@ -306,25 +316,47 @@ def resolve_flexisign_exe(configured: str | None) -> str | None:
     if found:
         logging.info("FlexiSIGN 자동 탐지: %s", found)
     else:
-        logging.warning("FlexiSIGN 실행파일을 못 찾음 — .fs 기본 연결 프로그램으로 실행 시도")
+        logging.warning("FlexiSIGN 실행파일을 못 찾음 — 기본 프로세스명(%s)으로 실행 여부 확인",
+                        ", ".join(_DEFAULT_FS_PROC_NAMES))
     return found
 
 
-def launch_flexisign(fs_file: Path, exe_path: str | None) -> tuple[bool, str]:
+_DEFAULT_FS_PROC_NAMES = ("flexisign.exe", "flexi.exe", "app.exe")
+
+
+def _flexisign_process_names(exe_path: str | None, config: dict) -> tuple[str, ...]:
+    """FlexiSIGN 실행 여부 확인에 쓸 프로세스 이미지명(소문자) 목록."""
+    pn = (config.get("flexisign_process_name") or "").strip().lower()
+    if pn:
+        return (pn,)
     if exe_path:
-        exe = Path(exe_path)
-        if exe.exists():
-            try:
-                subprocess.Popen([str(exe), str(fs_file)], close_fds=True)
-                return True, str(fs_file)
-            except Exception as e:
-                logging.warning("FlexiSIGN 직접 실행 실패(%s) — .fs 기본 연결로 폴백", e)
-    # 폴백: .fs 더블클릭과 동일하게 윈도우 기본 연결 프로그램으로 연다.
+        return (Path(exe_path).name.lower(),)
+    return _DEFAULT_FS_PROC_NAMES
+
+
+def flexisign_is_running(exe_path: str | None, config: dict) -> bool:
+    """FlexiSIGN 프로세스가 떠 있는지. 확인 자체가 실패하면(드묾) 막지 않고 True."""
+    names = _flexisign_process_names(exe_path, config)
+    try:
+        out = subprocess.run(
+            ["tasklist", "/NH", "/FO", "CSV"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).stdout.lower()
+    except Exception as e:
+        logging.warning("tasklist 실행 실패(%s) — FlexiSIGN 실행 확인 생략", e)
+        return True
+    return any(f'"{n}"' in out for n in names)
+
+
+def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
+    """.fs 를 윈도우 기본 연결로 연다 — FlexiSIGN 이 이미 떠 있으면 그 창에서 열린다.
+    (.fs 더블클릭과 동일. 새 인스턴스를 띄우지 않으려고 exe 를 직접 Popen 하지 않는다.)"""
     try:
         os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
         return True, str(fs_file)
     except Exception as e:
-        return False, f"FlexiSIGN 실행 실패: {e}"
+        return False, f".fs 열기 실패({e}) — .fs 가 FlexiSIGN 에 연결돼 있는지 확인하세요."
 
 
 def open_folder_in_explorer(folder: Path) -> None:
@@ -488,7 +520,13 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             }
 
         flexisign_exe = resolve_flexisign_exe(config.get("flexisign_exe"))
-        ok, info = launch_flexisign(fs_file, flexisign_exe)
+        if not flexisign_is_running(flexisign_exe, config):
+            return {
+                "opened": False,
+                "needsFlexiSign": True,
+                "message": "FlexiSIGN 이 실행돼 있지 않습니다. FlexiSIGN 을 먼저 켠 뒤 다시 [FS에서 열기] 를 누르세요.",
+            }
+        ok, info = open_in_flexisign(fs_file)
         if not ok:
             return {"opened": False, "message": info}
         logging.info("FS 실행 [%s] → %s (%s)", order_number, fs_file.name, reason)
@@ -511,7 +549,8 @@ def serve_forever(config: dict) -> None:
     logging.info("API 베이스: %s", config.get("api_base"))
     logging.info("네트워크 베이스: %s", config.get("network_customer_base"))
     _fs = resolve_flexisign_exe(config.get("flexisign_exe"))
-    logging.info("FlexiSIGN: %s", _fs or "(미발견 — .fs 기본 연결로 실행)")
+    logging.info("FlexiSIGN: %s (실행 중일 때만 .fs 를 그 창에서 엶 — 새로 띄우지 않음)",
+                 _fs or "(경로 미발견)")
     logging.info("허용 origin: %s", ", ".join(config.get("allowed_origins") or []))
     try:
         server.serve_forever()
