@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import './ClientAdmin.css';
 
@@ -20,6 +21,7 @@ function statusLabel(status, isActive) {
 
 export default function ClientAdmin() {
     const { token } = useAuth();
+    const location = useLocation();
     const authHeader = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
     const [feedback, setFeedback] = useState(null);
@@ -50,6 +52,8 @@ export default function ClientAdmin() {
     const [credentials, setCredentials] = useState(null); // {companyName, username, password, hint}
     // status 필터: 'all' | 'PENDING_SIGNUP' | 'PENDING_APPROVAL' | 'ACTIVE'
     const [statusFilter, setStatusFilter] = useState('all');
+    // 검색어 — 업체명/아이디/담당자/연락처/이메일/별칭/폴더명 부분일치
+    const [search, setSearch] = useState('');
 
     const field = (key) => ({
         value: form[key] ?? '',
@@ -89,6 +93,15 @@ export default function ClientAdmin() {
     };
 
     useEffect(() => { loadClients(); }, []); // eslint-disable-line
+
+    // 폴더 변경 안내 모달에서 "새 폴더 일괄 등록 열기"로 들어온 경우 자동으로 일괄 등록 화면을 연다.
+    const bulkAutoOpenedRef = useRef(false);
+    useEffect(() => {
+        if (location.state?.openBulk && !bulkAutoOpenedRef.current) {
+            bulkAutoOpenedRef.current = true;
+            openBulk();
+        }
+    }, [location.state]); // eslint-disable-line
 
     const loadFolderOptions = async () => {
         try {
@@ -452,7 +465,13 @@ export default function ClientAdmin() {
                     acc[c.status || 'ACTIVE'] = (acc[c.status || 'ACTIVE'] || 0) + 1;
                     return acc;
                 }, {});
-                const filtered = statusFilter === 'all' ? clients : clients.filter((c) => (c.status || 'ACTIVE') === statusFilter);
+                const q = search.trim().toLowerCase();
+                const byStatus = statusFilter === 'all' ? clients : clients.filter((c) => (c.status || 'ACTIVE') === statusFilter);
+                const filtered = !q ? byStatus : byStatus.filter((c) => {
+                    const hay = [c.companyName, c.username, c.contactName, c.phone, c.email, c.aliases, c.networkFolderName]
+                        .filter(Boolean).join(' ').toLowerCase();
+                    return hay.includes(q);
+                });
                 return (
                     <>
                         <div className="ca-status-tabs">
@@ -460,12 +479,21 @@ export default function ClientAdmin() {
                             <button type="button" className={`ca-tab-btn ${statusFilter === 'PENDING_APPROVAL' ? 'active' : ''}`} onClick={() => setStatusFilter('PENDING_APPROVAL')}>승인대기 {counts.PENDING_APPROVAL || 0}</button>
                             <button type="button" className={`ca-tab-btn ${statusFilter === 'PENDING_SIGNUP' ? 'active' : ''}`} onClick={() => setStatusFilter('PENDING_SIGNUP')}>가입대기 {counts.PENDING_SIGNUP || 0}</button>
                             <button type="button" className={`ca-tab-btn ${statusFilter === 'ACTIVE' ? 'active' : ''}`} onClick={() => setStatusFilter('ACTIVE')}>활성 {counts.ACTIVE || 0}</button>
+                            <div className="ca-search">
+                                <input
+                                    type="search"
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="업체명·아이디·담당자·연락처·폴더명 검색"
+                                />
+                                {search && <button type="button" className="ca-search-clear" onClick={() => setSearch('')} aria-label="검색어 지우기">×</button>}
+                            </div>
                         </div>
 
                         {loading ? (
                             <p className="ca-empty">불러오는 중...</p>
                         ) : filtered.length === 0 ? (
-                            <p className="ca-empty">표시할 거래처가 없습니다.</p>
+                            <p className="ca-empty">{q ? `'${search.trim()}' 검색 결과가 없습니다.` : '표시할 거래처가 없습니다.'}</p>
                         ) : (
                             <div className="ca-table-wrap">
                                 <table className="ca-table">

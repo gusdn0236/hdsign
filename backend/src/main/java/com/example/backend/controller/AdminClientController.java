@@ -239,6 +239,79 @@ public class AdminClientController {
         return ResponseEntity.ok(body);
     }
 
+    /** 워처가 푸시한 네트워크 거래처 폴더와 등록된 거래처를 비교해 "바뀐 것"을 정리해서 돌려준다.
+     *  관리자 페이지 진입 시 안내 모달을 띄우는 용도.
+     *   - newFolders: 폴더는 있는데 매칭되는 거래처가 없음 → 신규 등록 대상
+     *   - missingClients: 거래처에 networkFolderName 이 있는데 그 폴더가 더 이상 없음 → 폴더명 수정/삭제 대상
+     *   - renameSuggestions: missingClient 의 옛 폴더명과 비슷한 newFolder 가 있으면 "이름변경 아닌가요?" 후보
+     *  hasData: 워처가 한 번이라도 푸시했는지 — false 면 모달을 띄우면 안 된다(서버 재시작 직후 등). */
+    @GetMapping("/folder-diff")
+    public ResponseEntity<Map<String, Object>> folderDiff() {
+        List<String> folders = NetworkFolderController.currentFolders();
+        Instant syncedAt = NetworkFolderController.currentSyncedAt();
+        List<ClientUser> clients = clientUserRepository.findAll();
+
+        Set<String> folderKeys = new HashSet<>();
+        for (String f : folders) folderKeys.add(normalizeKey(f));
+
+        Set<String> takenKeys = new HashSet<>();
+        for (ClientUser c : clients) {
+            if (c.getNetworkFolderName() != null && !c.getNetworkFolderName().isBlank())
+                takenKeys.add(normalizeKey(c.getNetworkFolderName()));
+            if (c.getCompanyName() != null && !c.getCompanyName().isBlank())
+                takenKeys.add(normalizeKey(c.getCompanyName()));
+        }
+
+        List<String> newFolders = new ArrayList<>();
+        for (String f : folders) {
+            if (!takenKeys.contains(normalizeKey(f))) newFolders.add(f);
+        }
+
+        List<Map<String, Object>> missingClients = new ArrayList<>();
+        for (ClientUser c : clients) {
+            String nf = c.getNetworkFolderName();
+            if (nf == null || nf.isBlank()) continue;
+            if (folderKeys.contains(normalizeKey(nf))) continue;
+            if (c.getCompanyName() != null && folderKeys.contains(normalizeKey(c.getCompanyName()))) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", c.getId());
+            m.put("companyName", c.getCompanyName());
+            m.put("networkFolderName", nf);
+            m.put("orderCount", orderRepository.countByClient(c));
+            missingClients.add(m);
+        }
+
+        List<Map<String, Object>> renameSuggestions = new ArrayList<>();
+        for (Map<String, Object> mc : missingClients) {
+            String oldF = (String) mc.get("networkFolderName");
+            String oldK = normalizeKey(oldF);
+            if (oldK.isEmpty()) continue;
+            for (String nf : newFolders) {
+                String nk = normalizeKey(nf);
+                if (nk.isEmpty() || nk.equals(oldK)) continue;
+                if (oldK.contains(nk) || nk.contains(oldK)) {
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("clientId", mc.get("id"));
+                    r.put("companyName", mc.get("companyName"));
+                    r.put("oldFolder", oldF);
+                    r.put("newFolder", nf);
+                    renameSuggestions.add(r);
+                }
+            }
+        }
+
+        boolean hasData = syncedAt != null && !folders.isEmpty();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("hasData", hasData);
+        body.put("syncedAt", syncedAt != null ? syncedAt.toString() : null);
+        body.put("totalFolders", folders.size());
+        body.put("newFolders", newFolders);
+        body.put("missingClients", missingClients);
+        body.put("renameSuggestions", renameSuggestions);
+        body.put("hasChanges", hasData && (!newFolders.isEmpty() || !missingClients.isEmpty()));
+        return ResponseEntity.ok(body);
+    }
+
     /** 행 배열을 받아 각각 거래처 계정으로 등록. 행 단위 결과 리포트 반환 —
      *  실패한 행이 있어도 다른 행은 영향 없이 처리한다(트랜잭션 묶지 않음). */
     @PostMapping("/bulk")

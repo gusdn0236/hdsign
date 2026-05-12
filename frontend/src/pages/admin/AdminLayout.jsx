@@ -4,6 +4,7 @@ import Banner from '../../components/common/Banner';
 import SubNav from '../../components/common/SubNav.jsx';
 import { supportBannerImg } from '../../assets/img';
 import { useAuth } from '../../context/AuthContext';
+import AdminFolderChangeNotice from './AdminFolderChangeNotice.jsx';
 import './AdminLayout.css';
 
 const AdminLayout = () => {
@@ -36,6 +37,7 @@ const AdminLayout = () => {
                 )}
             />
             <SubNav links={adminMenu} />
+            <AdminFolderChangeNotice />
             <div className="admin-content">
                 <Outlet />
             </div>

@@ -159,7 +159,32 @@
 .ca-status.pending-approval { background: #dbeafe; color: #1e40af; }
 
 /* status 필터 탭 */
-.ca-status-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.ca-status-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+.ca-search { position: relative; margin-left: auto; }
+.ca-search input {
+    width: 280px;
+    max-width: 60vw;
+    padding: 8px 28px 8px 12px;
+    border: 1px solid #dbe2ea;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #0f172a;
+}
+.ca-search input:focus { outline: none; border-color: #334155; }
+.ca-search-clear {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: transparent;
+    font-size: 18px;
+    line-height: 1;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0 4px;
+}
+.ca-search-clear:hover { color: #475569; }
 
 /* 액션 버튼 추가 색상 */
 .ca-approve-btn {
