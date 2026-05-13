@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import subprocess
 import sys
 import threading
@@ -24,6 +25,18 @@ import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# ─── HTTPS 인증서 컨텍스트 ────────────────────────────────────────────────
+# 시스템(윈도우) 인증서 저장소 + certifi 번들을 둘 다 신뢰 목록에 넣는다.
+# 일부 현장 PC 가 윈도우 인증서 저장소에 Railway 인증서 체인의 루트/중간 CA 가 없어
+# `[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer certificate` 로 백엔드
+# 조회가 실패하는 사례가 있어서, certifi(모질라 CA 번들)를 함께 실어 PC 와 무관하게 통하게 한다.
+SSL_CONTEXT = ssl.create_default_context()
+try:
+    import certifi  # PyInstaller 가 cacert.pem 까지 번들. 개발/설치 안 됐으면 except 로 폴백.
+    SSL_CONTEXT.load_verify_locations(certifi.where())
+except Exception:  # noqa: BLE001 — certifi 없으면 시스템 인증서만으로 진행
+    pass
 
 # ─── 설정 ─────────────────────────────────────────────────────────────────
 
@@ -457,7 +470,7 @@ def fetch_worksheet(api_base: str, order_number: str) -> dict | None:
     url = f"{api_base.rstrip('/')}/api/public/worksheets/{urllib.parse.quote(order_number, safe='')}/locator"
     req = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=SSL_CONTEXT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data if isinstance(data, dict) else None
     except Exception as e:

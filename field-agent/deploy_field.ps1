@@ -62,9 +62,9 @@ if (-not $DeployOnly) {
         Get-Process $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     }
 
-    Step 'PyInstaller 도구 최신화 (pip)'
-    & py -3 -m pip install --disable-pip-version-check --upgrade pyinstaller
-    if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller 실패 (인터넷 확인). exit=$LASTEXITCODE" }
+    Step 'PyInstaller + certifi 최신화 (pip)'
+    & py -3 -m pip install --disable-pip-version-check --upgrade pyinstaller certifi
+    if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller/certifi 실패 (인터넷 확인). exit=$LASTEXITCODE" }
 
     Step '정식 빌드 (--onefile --noconsole)'
     Invoke-PiBuild 'hdsign_field_agent' '--noconsole'

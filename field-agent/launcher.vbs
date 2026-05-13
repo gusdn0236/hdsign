@@ -126,7 +126,9 @@ If Not isAlive Then
             WScript.Quit 1
         End If
     End If
-    shell.Run """" & agentExe & """", 0, False   ' hidden, no wait — agent is --noconsole
+    ' BelowNormal 우선순위로 — 현장 PC(저사양) 에서 포그라운드 작업(복사/붙여넣기·FlexiSIGN
+    ' 등) 이 백그라운드 에이전트와 CPU 를 다투지 않게. /b = 새 콘솔창 없이.
+    shell.Run "cmd /c start """" /belownormal /b """ & agentExe & """", 0, False
     WScript.Sleep 1500                            ' let the bootloader bind the port
 End If
 
@@ -197,12 +199,22 @@ On Error Goto 0
 
 ' --- 3c. Open the sidebar and WAIT for it to close ----------------------
 ' --user-data-dir 가 새 프로필이라 여기서 띄운 브라우저 프로세스가 메인 → 창 닫을
-' 때까지 살아 있음 → shell.Run(..., True) 가 그때까지 블록.
-Dim browserArgs
+' 때까지 살아 있음. 'cmd /c start "" /belownormal /wait' 가 그 브라우저 종료까지
+' 기다리므로 shell.Run(..., True) 도 그때까지 블록 → "창 닫으면 에이전트 종료" 흐름 유지.
+'   ▸ /belownormal : 현장 PC(저사양)에서 포그라운드 작업(복사·붙여넣기·FlexiSIGN 등)이
+'                    사이드바 크롬과 CPU 경쟁하지 않게. 자식(렌더러/GPU)도 이 우선순위 상속.
+'   ▸ 가벼운 플래그 : 백그라운드 네트워킹/번역/미디어라우터/컴포넌트업데이트/sync 끄고
+'                    렌더러 프로세스 1개로 제한 → 메모리·CPU 절약.
+Dim browserArgs, lightFlags
+lightFlags = "--no-first-run --no-default-browser-check --disable-sync --disable-extensions" _
+    & " --disable-background-networking --disable-component-update --disable-domain-reliability" _
+    & " --renderer-process-limit=1" _
+    & " --disable-features=Translate,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,CalculateNativeWinOcclusion"
 browserArgs = "--app=" & sidebarUrl _
     & " --user-data-dir=""" & profileDir & """" _
+    & " " & lightFlags _
     & " --window-size=" & winW & "," & winH & " --window-position=" & winX & "," & winY
-shell.Run """" & browserExe & """ " & browserArgs, 1, True
+shell.Run "cmd /c start """" /belownormal /wait """ & browserExe & """ " & browserArgs, 0, True
 
 ' --- 4. Sidebar closed → stop the agent ---------------------------------
 shell.Run "taskkill /F /T /IM hdsign_field_agent.exe", 0, True
