@@ -4354,9 +4354,25 @@ def _auto_save_flexisign_for_print(pdf_path: Path) -> tuple[bool, str]:
         ui_log(f"FlexiSIGN Ctrl+S 송신 완료 — '{stem}.fs' 저장 처리")
         return True, 'saved'
 
-    # status == "unsaved" — 새 도큐먼트, Save As 띄움
-    if hwnd:
-        _send_save_keystroke_to(hwnd)
+    # status == "unsaved" — 두 케이스가 섞여 있다:
+    #   (a) 디스크에 이미 .fs 가 있고 제목에 더티 마커('*') 만 붙은 경우. FlexiSIGN 이 인쇄/뷰
+    #       조작처럼 비-콘텐츠 동작도 더티로 표시할 때가 있어 '저장하고 인쇄 눌렀는데?' 함정에
+    #       잘 빠진다. Ctrl+S 한 번이면 '*' 가 즉시 사라진다.
+    #   (b) 새 도큐먼트 — Ctrl+S 가 Save As 다이얼로그를 띄우고 사용자가 파일명을 직접 입력.
+    #       몇 초~수십 초 걸린다.
+    # (a) 도 똑같이 대기 모달부터 띄우면 UX 가 나쁘므로, 모달 전에 Ctrl+S 송신 후 2초만 짧게
+    # 폴링해 본다. (a) 는 거의 즉시 'saved' 로 떨어지고, (b) 는 그 안에 절대 끝나지 않으므로
+    # 시간으로 자연스럽게 분리된다.
+    sent_ok = _send_save_keystroke_to(hwnd) if hwnd else False
+    if sent_ok:
+        quick_deadline = time.time() + 2.0
+        while time.time() < quick_deadline:
+            s2, st2, _ = _flexisign_window_status()
+            if s2 == "saved" and st2:
+                ui_log(f"FlexiSIGN 더티 마커 — Ctrl+S 즉시 클리어('{st2}.fs') → 저장 대기 모달 생략")
+                return True, 'saved'
+            time.sleep(0.25)
+
     wait_holder, cancel_evt = _show_save_wait_window()
     saved_stem: str | None = None
     deadline = time.time() + 180  # 3분
