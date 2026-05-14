@@ -1,0 +1,1 @@
+import{j as o}from"./index-CoyP-w9p.js";import{G as t}from"./GalleryPage-A-qzoFeu.js";const e=[{name:"아크릴네온",subCategory:"아크릴네온",description:"아크릴 소재로 제작된 네온 사인입니다."},{name:"아크릴조각사인",subCategory:"아크릴조각사인",description:"아크릴 조각으로 제작된 사인입니다."}],s=()=>o.jsx(t,{category:"artneon",categoryTabs:e});export{s as default};
