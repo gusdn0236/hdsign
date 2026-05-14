@@ -4326,9 +4326,19 @@ def _show_combined_done_modal(alert_kind: str, ops_msg: str) -> None:
     ))
 
 
-def _auto_save_flexisign_for_print(pdf_path: Path) -> tuple[bool, str]:
+def _auto_save_flexisign_for_print(
+    pdf_path: Path,
+    prior_status: str = '',
+    prior_stem: str | None = None,
+) -> tuple[bool, str]:
     """인쇄 PDF 감지 시 호출 — FlexiSIGN 도큐먼트 자동 Ctrl+S 저장.
     반환 (계속진행, alert_kind).
+
+    prior_status / prior_stem: 인쇄 시작 시점(_ask_print_intent_modal 직전) 에 한 번
+      관측한 FlexiSIGN 창 상태. 매칭 다이얼로그가 닫히는 사이 창 상태가 잠시 흔들리거나
+      FlexiSIGN 버전마다 제목 포맷이 달라(예: 확장자 미표시) 현재 검사에서 'unsaved' 가
+      잘못 잡히는 경우가 있다. '먼저 저장해주세요' 모달을 띄우면 "이미 저장했는데?"
+      함정이라, 인쇄 시작 시점에 saved + stem 이 잡혔다면 그 상태를 신뢰한다.
 
     alert_kind: 호출 측이 즉시 띄울 안내 메시지 종류
       - ''        : 안내 안 띄움 (no_window 또는 unsaved 분기에서 사용자 직접 저장)
@@ -4354,25 +4364,24 @@ def _auto_save_flexisign_for_print(pdf_path: Path) -> tuple[bool, str]:
         ui_log(f"FlexiSIGN Ctrl+S 송신 완료 — '{stem}.fs' 저장 처리")
         return True, 'saved'
 
-    # status == "unsaved" — 두 케이스가 섞여 있다:
-    #   (a) 디스크에 이미 .fs 가 있고 제목에 더티 마커('*') 만 붙은 경우. FlexiSIGN 이 인쇄/뷰
-    #       조작처럼 비-콘텐츠 동작도 더티로 표시할 때가 있어 '저장하고 인쇄 눌렀는데?' 함정에
-    #       잘 빠진다. Ctrl+S 한 번이면 '*' 가 즉시 사라진다.
-    #   (b) 새 도큐먼트 — Ctrl+S 가 Save As 다이얼로그를 띄우고 사용자가 파일명을 직접 입력.
-    #       몇 초~수십 초 걸린다.
-    # (a) 도 똑같이 대기 모달부터 띄우면 UX 가 나쁘므로, 모달 전에 Ctrl+S 송신 후 2초만 짧게
-    # 폴링해 본다. (a) 는 거의 즉시 'saved' 로 떨어지고, (b) 는 그 안에 절대 끝나지 않으므로
-    # 시간으로 자연스럽게 분리된다.
-    sent_ok = _send_save_keystroke_to(hwnd) if hwnd else False
-    if sent_ok:
-        quick_deadline = time.time() + 2.0
-        while time.time() < quick_deadline:
-            s2, st2, _ = _flexisign_window_status()
-            if s2 == "saved" and st2:
-                ui_log(f"FlexiSIGN 더티 마커 — Ctrl+S 즉시 클리어('{st2}.fs') → 저장 대기 모달 생략")
-                return True, 'saved'
-            time.sleep(0.25)
+    # 현재 'unsaved' — 다만 인쇄 시작 시점엔 saved + stem 이 잡혔다면, 매칭 다이얼로그 중
+    # 창 상태가 잠시 흔들렸거나 제목 포맷 차이로 우리가 잘못 판정한 것일 가능성이 크다.
+    # 사용자는 이미 인쇄 누르기 전에 저장한 상태이므로 '먼저 저장해주세요' 모달은
+    # "이미 저장했는데?" 함정이 된다. prior 신뢰 + Ctrl+S 한 번만 보내고 통과한다.
+    if prior_status == "saved" and prior_stem and hwnd:
+        sent_ok = _send_save_keystroke_to(hwnd)
+        if not sent_ok:
+            return True, 'failed'
+        ui_log(
+            f"FlexiSIGN — 현재 unsaved 로 보이지만 인쇄 시작 시점엔 "
+            f"'{prior_stem}.fs' saved 였음 → 신뢰하고 모달 생략, Ctrl+S 만 송신"
+        )
+        return True, 'saved'
 
+    # status == "unsaved" 이고 prior 도 saved 가 아니었던 경우 — 진짜 새 도큐먼트.
+    # FlexiSIGN 이 Save As 다이얼로그를 띄울 테니 사용자에게 직접 저장 요청.
+    if hwnd:
+        _send_save_keystroke_to(hwnd)
     wait_holder, cancel_evt = _show_save_wait_window()
     saved_stem: str | None = None
     deadline = time.time() + 180  # 3분
@@ -5502,7 +5511,11 @@ def _process_printed_pdf(pdf_path: Path):
     #     폴링 창 표시. 사용자가 저장 완료하면 평소 흐름. [취소]/타임아웃이면 PDF 삭제 +
     #     auto_ok=False 반환 → patch/업로드/종이 모두 생략하고 종료.
     #   ・no_window (다른 앱 인쇄): Ctrl+S 안 보내고 그대로 통과.
-    auto_ok, alert_kind = _auto_save_flexisign_for_print(pdf_path)
+    auto_ok, alert_kind = _auto_save_flexisign_for_print(
+        pdf_path,
+        prior_status=_intent_status,
+        prior_stem=_intent_stem,
+    )
     if not auto_ok:
         ui_log(f"인쇄 — 자동 저장 대기 중 사용자 취소/타임아웃: patch/업로드/종이 모두 생략 ({pdf_path.name})")
         return
