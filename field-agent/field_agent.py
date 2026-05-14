@@ -133,30 +133,59 @@ def _normalize_key(value: str) -> str:
     return re.sub(r"\s+", "", norm)
 
 
+_COMPANY_CONTACT_SUFFIX_RE = re.compile(r"^(?P<company>.+?)\((?P<contact>[^()]{1,50})\)\s*$")
+
+
+def _split_company_contact_label(value: str) -> tuple[str, str]:
+    raw = (value or "").strip()
+    if not raw:
+        return "", ""
+    match = _COMPANY_CONTACT_SUFFIX_RE.match(raw)
+    if not match:
+        return raw, ""
+    company = match.group("company").strip()
+    contact = match.group("contact").strip()
+    return company or raw, contact
+
+
+def _customer_folder_name_candidates(network_folder_name: str, company_name: str) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for raw in (network_folder_name, company_name):
+        raw = (raw or "").strip()
+        root, _contact = _split_company_contact_label(raw)
+        for name in (root, raw):
+            key = _normalize_key(name)
+            if key and key not in seen:
+                candidates.append(name.strip())
+                seen.add(key)
+    return candidates
+
+
 def find_customer_folder(network_base: Path, network_folder_name: str,
                          company_name: str) -> Path | None:
     """네트워크 베이스에서 거래처 폴더 찾기. 1순위 networkFolderName, 2순위 companyName.
     못 찾으면 None — 호출자가 [거래처 폴더 못 찾음] 토스트 띄우게 함."""
-    primary = _normalize_key(network_folder_name)
-    fallback = _normalize_key(company_name)
-    if not primary and not fallback:
+    candidates = _customer_folder_name_candidates(network_folder_name, company_name)
+    candidate_keys = [_normalize_key(name) for name in candidates]
+    if not candidate_keys:
         return None
     try:
         if not network_base.exists():
             logging.warning("네트워크 베이스 접근 불가: %s", network_base)
             return None
-        primary_hit = None
-        fallback_hit = None
+        hits: dict[str, Path] = {}
         for child in network_base.iterdir():
             if not child.is_dir():
                 continue
             key = _normalize_key(child.name)
-            if primary and key == primary:
-                primary_hit = child
-                break  # 1순위 발견 즉시 종료
-            if fallback and key == fallback and fallback_hit is None:
-                fallback_hit = child
-        return primary_hit or fallback_hit
+            if key in candidate_keys:
+                hits.setdefault(key, child)
+        for key in candidate_keys:
+            if key in hits:
+                return hits[key]
+        logging.warning("거래처 폴더 매칭 실패: candidates=%s base=%s", candidates, network_base)
+        return None
     except Exception as e:
         logging.warning("거래처 폴더 스캔 실패: %s", e)
         return None
