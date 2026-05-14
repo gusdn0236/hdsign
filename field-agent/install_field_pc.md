@@ -35,7 +35,13 @@ build.bat
   "network_customer_base": "\\\\Main\\공유\\거래처",
   "flexisign_exe": "C:\\Program Files\\SAi\\Production Suite\\Cloud\\FlexiSign Pro\\FlexiSign.exe",
   "port": 17345,
-  "allowed_origins": ["https://hdsigncraft.com", "https://www.hdsigncraft.com"],
+  "allowed_origins": [
+    "https://hdsigncraft.com",
+    "https://www.hdsigncraft.com",
+    "https://hdsign-production.up.railway.app",
+    "https://hdsign.com",
+    "https://www.hdsign.com"
+  ],
   "fuzzy_threshold": 0.85
 }
 ```

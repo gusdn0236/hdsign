@@ -14,9 +14,6 @@ const AGENT_URL = import.meta.env.VITE_HDSIGN_AGENT_URL || 'http://127.0.0.1:173
 const WORKER_KEY = 'hdsign_uploader_worker';
 // "내 지시서만 보기" 체크 상태 — 켜면 본인 부서 슬롯에 잡힌 지시서만 보임(미설정 시 기본 켜짐).
 const MYONLY_KEY = 'hdsign_field_myonly';
-// 현장 프로그램에서만 "삭제"(=숨김) 처리한 주문번호 목록 — 발주관리 DB 와는 무관, 이 PC localStorage 한정.
-// '내 지시서만 보기' 가 켜진 동안만 숨겨지고, 끄면(전체 보기) 다시 노출된다.
-const HIDDEN_KEY = 'hdsign_field_hidden';
 
 function readWorker() {
     try { return (localStorage.getItem(WORKER_KEY) || '').trim(); } catch { return ''; }
@@ -36,15 +33,6 @@ function readMyOnly() {
 function writeMyOnly(value) {
     try { localStorage.setItem(MYONLY_KEY, value ? '1' : '0'); } catch { /* ignore */ }
 }
-function readHidden() {
-    try {
-        const a = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]');
-        return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : [];
-    } catch { return []; }
-}
-function writeHidden(arr) {
-    try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(arr)); } catch { /* ignore */ }
-}
 
 function formatShortDate(dateStr) {
     if (!dateStr) return '';
@@ -52,34 +40,6 @@ function formatShortDate(dateStr) {
     if (Number.isNaN(d.getTime())) return dateStr;
     const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
     return `${d.getMonth() + 1}/${d.getDate()} (${dow})`;
-}
-
-// "옛 지시서 찾기" — 발주연도 드롭다운 옵션(현재연도 ~ 2023).
-const ARCHIVE_YEARS = (() => {
-    const now = new Date().getFullYear();
-    const out = [];
-    for (let y = now; y >= 2023; y--) out.push(y);
-    return out;
-})();
-// 그 달의 마지막 날 (yyyy-mm-dd).
-function lastDayOfMonth(year, month) {
-    return new Date(year, month, 0).getDate();   // month: 1~12 → new Date(y, m, 0) = 전월 말일 트릭
-}
-function pad2(n) { return String(n).padStart(2, '0'); }
-// ISO datetime("2025-09-03T..." 또는 "2025-09-03") → "9월" / "9/3" 등 표시용.
-function ymOf(iso) {
-    if (!iso) return '';
-    const m = String(iso).match(/^(\d{4})-(\d{2})/);
-    return m ? `${m[1]}-${m[2]}` : '';
-}
-function monthHeaderLabel(ym) {
-    const m = ym.match(/^(\d{4})-(\d{2})$/);
-    if (!m) return ym || '기타';
-    return `${m[1]}년 ${Number(m[2])}월`;
-}
-function dayOf(iso) {
-    const m = String(iso || '').match(/^\d{4}-\d{2}-(\d{2})/);
-    return m ? Number(m[1]) : null;
 }
 
 function getDueBadge(dateStr) {
@@ -97,6 +57,8 @@ function getDueBadge(dateStr) {
 
 export default function FieldViewer() {
     const [items, setItems] = useState([]);
+    // 발주관리 '작업완료' 탭(=deletedAt != null) 의 주문들. 30일 후 스케줄러가 완전삭제.
+    const [completedItems, setCompletedItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
@@ -106,19 +68,8 @@ export default function FieldViewer() {
     const [searchTerm, setSearchTerm] = useState('');
     const [worker, setWorker] = useState(() => readWorker());
     const [myOnly, setMyOnly] = useState(() => readMyOnly());
-    const [hidden, setHidden] = useState(() => readHidden());
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
-    // 옛 지시서 찾기 모달
-    const [archiveOpen, setArchiveOpen] = useState(false);
-    const [arCompany, setArCompany] = useState('');
-    const [arYear, setArYear] = useState('');     // '' = 연도 무관
-    const [arMonth, setArMonth] = useState('');   // '' = 월 무관 (연도 지정 시에만 의미)
-    const [arDay, setArDay] = useState('');       // '' = 일 무관 (연·월 지정 시에만 의미)
-    const [arFilename, setArFilename] = useState('');
-    const [arResults, setArResults] = useState(null);   // null = 아직 검색 안 함
-    const [arLoading, setArLoading] = useState(false);
-    const [arError, setArError] = useState('');
     const [openingFs, setOpeningFs] = useState(null);     // orderNumber 진행중
     const [openingFolder, setOpeningFolder] = useState(null); // orderNumber 진행중
     const [completing, setCompleting] = useState(null);   // orderNumber 진행중
@@ -132,17 +83,23 @@ export default function FieldViewer() {
     const fetchList = useCallback(async ({ manual = false } = {}) => {
         if (manual) setRefreshing(true);
         try {
-            const res = await fetch(
-                `${BASE_URL}/api/public/worksheets?_=${Date.now()}`,
-                { cache: 'no-store' },
-            );
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
+            // 작업중(IN_PROGRESS) + 작업완료(deletedAt != null) 를 병렬 fetch. 각각 별도 엔드포인트.
+            const [activeRes, doneRes] = await Promise.all([
+                fetch(`${BASE_URL}/api/public/worksheets?_=${Date.now()}`, { cache: 'no-store' }),
+                fetch(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`, { cache: 'no-store' }),
+            ]);
+            if (!activeRes.ok) {
+                const body = await activeRes.json().catch(() => ({}));
                 throw new Error(body.message || '목록을 불러오지 못했습니다.');
             }
-            const data = await res.json();
+            if (!doneRes.ok) {
+                const body = await doneRes.json().catch(() => ({}));
+                throw new Error(body.message || '작업완료 목록을 불러오지 못했습니다.');
+            }
+            const [activeData, doneData] = await Promise.all([activeRes.json(), doneRes.json()]);
             if (!aliveRef.current) return;
-            setItems(Array.isArray(data) ? data : []);
+            setItems(Array.isArray(activeData) ? activeData : []);
+            setCompletedItems(Array.isArray(doneData) ? doneData : []);
             setError('');
         } catch (err) {
             if (!aliveRef.current) return;
@@ -185,14 +142,35 @@ export default function FieldViewer() {
     useEffect(() => {
         aliveRef.current = true;
         fetchList();
-        // 백→포 복귀 시 1회 새로고침. 현장 PC 는 항상 켜져 있어 자동 폴링은 불필요.
-        const onVisible = () => {
-            if (document.visibilityState === 'visible') fetchList();
+        // 백→포 복귀(작업표시줄 클릭/창 활성화) 시 1회 새로고침 + 검색창 자동 포커스 — 바로 키보드 입력 가능.
+        // 현장 PC 는 항상 켜져 있어 자동 폴링은 불필요.
+        // 모달이 떠 있거나 카드를 키보드로 골라둔 상태에서는 포커스를 가로채지 않음(Enter 동작 깨짐 방지).
+        const focusSearchSoon = () => {
+            // 약간 지연 — 브라우저가 창 활성화 직후 처리하는 native focus 와 충돌하지 않도록.
+            window.setTimeout(() => {
+                const el = searchInputRef.current;
+                if (!el) return;
+                // 확인/담당자 모달이 떠 있으면 포커스 가로채지 않음(Enter 동작 깨짐 방지).
+                if (document.querySelector('.fv-modal-bg')) return;
+                el.focus();
+                el.select?.();
+            }, 50);
         };
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') {
+                fetchList();
+                focusSearchSoon();
+            }
+        };
+        const onWindowFocus = () => focusSearchSoon();
         document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('focus', onWindowFocus);
+        // 초기 마운트에도 1회 포커스 — Chrome --app 으로 띄우자마자 키보드 입력 가능.
+        focusSearchSoon();
         return () => {
             aliveRef.current = false;
             document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('focus', onWindowFocus);
         };
     }, [fetchList]);
 
@@ -201,26 +179,23 @@ export default function FieldViewer() {
         window.setTimeout(() => setToast(null), ms);
     }, []);
 
-    const isDoneByMe = useCallback((it) => !!worker
-        && Array.isArray(it.workerCompletions)
-        && it.workerCompletions.some((c) => c.worker === worker), [worker]);
-
-    const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
-    // '내 지시서만 보기' 가 켜져 있고 담당자가 설정돼 있을 때만: 본인 슬롯에 잡힌 것 + 숨김 처리 안 한 것.
-    // 끄면(또는 담당자 미설정) 전 부서 전체가 다 보인다(숨김도 무시 — 거기서 다시 찾을 수 있게).
+    // '내 지시서만 보기' 가 켜져 있고 담당자가 설정돼 있을 때만 본인 슬롯에 잡힌 것만 보여준다.
+    // 끄면(또는 담당자 미설정) 전 부서 전체가 다 보인다.
     const effectiveMyOnly = myOnly && !!worker;
-    const visibleItems = useMemo(() => {
+    // 작업중(IN_PROGRESS) — myOnly 면 본인 슬롯만, 아니면 전부.
+    const visibleActive = useMemo(() => {
         if (!effectiveMyOnly) return items;
-        return items.filter((it) => matchesWorker(it.departmentSlots, worker) && !hiddenSet.has(it.orderNumber));
-    }, [items, effectiveMyOnly, worker, hiddenSet]);
+        return items.filter((it) => matchesWorker(it.departmentSlots, worker));
+    }, [items, effectiveMyOnly, worker]);
+    // 작업완료(발주관리 '작업완료' 탭과 동일 = deletedAt != null) — myOnly 면 본인 슬롯만, 아니면 전부.
+    const visibleDone = useMemo(() => {
+        if (!effectiveMyOnly) return completedItems;
+        return completedItems.filter((it) => matchesWorker(it.departmentSlots, worker));
+    }, [completedItems, effectiveMyOnly, worker]);
 
-    // 탭 분리 — 본인이 [완료] 누른 건은 '완료' 탭으로, 나머지는 '작업중'.
-    // (사무실에서 정식 완료처리되면 status 가 COMPLETED 로 가서 LIST 응답에서 빠진다 = 자동으로 양 탭 모두에서 사라짐)
-    // '내 지시서만 보기' 가 꺼진 전체 보기 모드에선 '내가 완료한 것' 개념이 무의미 → 완료 탭은 비우고 전부 작업중에.
-    const tabFiltered = useMemo(() => {
-        if (!effectiveMyOnly) return tab === 'active' ? visibleItems : [];
-        return visibleItems.filter((it) => (tab === 'active' ? !isDoneByMe(it) : isDoneByMe(it)));
-    }, [visibleItems, tab, isDoneByMe, effectiveMyOnly]);
+    // 탭 선택 — 작업중 / 완료. 본인이 [완료] 버튼을 눌렀는지 여부는 더 이상 탭 분기에 영향 없음.
+    // (완료 신고는 백엔드 per-worker 기록 → 홈페이지 '작업현황' 탭만 갱신.)
+    const tabFiltered = tab === 'active' ? visibleActive : visibleDone;
 
     const dateFiltered = useMemo(() => {
         if (dateFilter === 'all') return tabFiltered;
@@ -264,15 +239,22 @@ export default function FieldViewer() {
         return searchFiltered.filter((it) => it.companyName === companyFilter);
     }, [searchFiltered, companyFilter]);
 
-    // 납기 임박 순. null 납기는 뒤로.
+    // 정렬 — 작업중: 납기 임박순(null 납기는 뒤). 완료: 작업완료일(deletedAt) 최신순(없으면 worksheetUpdatedAt 폴백).
     const sorted = useMemo(() => {
+        if (tab === 'done') {
+            return [...filtered].sort((a, b) => {
+                const ad = a.deletedAt || a.worksheetUpdatedAt || '';
+                const bd = b.deletedAt || b.worksheetUpdatedAt || '';
+                return bd.localeCompare(ad);
+            });
+        }
         return [...filtered].sort((a, b) => {
             const ad = a.dueDate || '9999-12-31';
             const bd = b.dueDate || '9999-12-31';
             if (ad !== bd) return ad < bd ? -1 : 1;
             return (b.worksheetUpdatedAt || '').localeCompare(a.worksheetUpdatedAt || '');
         });
-    }, [filtered]);
+    }, [filtered, tab]);
 
     // sorted 가 바뀌면(필터/검색/탭/새로고침) 선택 인덱스를 범위 안으로 정리.
     useEffect(() => {
@@ -373,74 +355,6 @@ export default function FieldViewer() {
         }
     }, [showToast]);
 
-    // 옛 지시서 찾기 — 입력한 조건(거래처/연·월·일/파일명)을 AND 로 백엔드에 검색. 조건 더 줄수록 더 좁아짐.
-    const runArchiveSearch = useCallback(async () => {
-        const company = arCompany.trim();
-        const filename = arFilename.trim();
-        let from = '';
-        let to = '';
-        if (arYear) {
-            const y = Number(arYear);
-            if (arMonth) {
-                const mo = Number(arMonth);
-                if (arDay) {
-                    const d = Number(arDay);
-                    if (!Number.isInteger(d) || d < 1 || d > 31) { setArError('일은 1~31 사이로 입력하세요.'); return; }
-                    from = `${y}-${pad2(mo)}-${pad2(d)}`;
-                    to = from;
-                } else {
-                    from = `${y}-${pad2(mo)}-01`;
-                    to = `${y}-${pad2(mo)}-${pad2(lastDayOfMonth(y, mo))}`;
-                }
-            } else {
-                from = `${y}-01-01`;
-                to = `${y}-12-31`;
-            }
-        }
-        if (!company && !filename && !from) {
-            setArError('거래처 · 발주시기 · 파일명 중 하나는 입력하세요.');
-            return;
-        }
-        setArError('');
-        setArLoading(true);
-        setArResults(null);
-        try {
-            const params = new URLSearchParams();
-            if (company) params.set('company', company);
-            if (filename) params.set('filename', filename);
-            if (from) params.set('from', from);
-            if (to) params.set('to', to);
-            const res = await fetch(
-                `${BASE_URL}/api/public/worksheets/search?${params.toString()}`,
-                { cache: 'no-store' },
-            );
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                throw new Error(body.message || `검색 실패 (${res.status})`);
-            }
-            const data = await res.json();
-            setArResults(Array.isArray(data) ? data : []);
-        } catch (err) {
-            setArError(err.message || '검색 중 오류가 발생했습니다.');
-            setArResults(null);
-        } finally {
-            setArLoading(false);
-        }
-    }, [arCompany, arFilename, arYear, arMonth, arDay]);
-
-    // 검색결과를 발주 연-월별로 묶고 최근 월 먼저. (거래처만 검색하면 그 거래처 작업이 월별로 쌓이고,
-    // 특정 달만 검색하면 그 달 작업이 거래처 라벨과 함께 한 그룹에 보인다.)
-    const arGroups = useMemo(() => {
-        if (!arResults) return [];
-        const map = new Map();
-        for (const it of arResults) {
-            const key = ymOf(it.orderedAt) || '기타';
-            if (!map.has(key)) map.set(key, []);
-            map.get(key).push(it);
-        }
-        return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
-    }, [arResults]);
-
     // 키보드로 선택한 카드 열기 — 1차 Enter: 확인 모달, 2차 Enter: 실제 열기(모달 [열기] 버튼이 autoFocus).
     const askOpenFs = useCallback((it) => {
         if (!it) return;
@@ -496,7 +410,8 @@ export default function FieldViewer() {
                         const body = await res.json().catch(() => ({}));
                         throw new Error(body.message || '완료 신고 실패');
                     }
-                    // 낙관적 갱신 — 다음 fetch 까지 기다리지 않고 즉시 탭 이동을 유도.
+                    // 낙관적 갱신 — 다음 fetch 까지 기다리지 않고 [완료]→[완료취소하기] 로 즉시 토글.
+                    // (탭 이동 없음 — 완료 신고는 홈페이지 작업현황 탭만 갱신.)
                     const stamp = new Date().toISOString();
                     setItems((prev) => prev.map((p) => p.orderNumber === it.orderNumber
                         ? {
@@ -561,39 +476,15 @@ export default function FieldViewer() {
         setShowWorkerModal(false);
     };
 
-    const counts = useMemo(() => {
-        if (!effectiveMyOnly) return { active: visibleItems.length, done: 0 };
-        let active = 0;
-        let done = 0;
-        visibleItems.forEach((it) => {
-            if (isDoneByMe(it)) done += 1;
-            else active += 1;
-        });
-        return { active, done };
-    }, [visibleItems, isDoneByMe, effectiveMyOnly]);
-
-    // '완료' 탭 — 현재 보이는 완료 카드 전부를 현장 목록에서 숨김(삭제). 발주관리 DB 와는 무관.
-    const handleDeleteAllDone = useCallback(() => {
-        const nums = visibleItems.filter(isDoneByMe).map((it) => it.orderNumber);
-        if (nums.length === 0) return;
-        setConfirmAction({
-            message: `완료한 작업 ${nums.length}건을 현장 목록에서 삭제하시겠습니까? (홈페이지 발주관리에는 영향 없음 — '내 지시서만 보기'를 끄면 다시 볼 수 있습니다.)`,
-            confirmText: '삭제',
-            onConfirm: () => {
-                const merged = Array.from(new Set([...hidden, ...nums]));
-                setHidden(merged);
-                writeHidden(merged);
-                showToast('success', `${nums.length}건을 현장 목록에서 삭제했습니다.`);
-            },
-        });
-    }, [visibleItems, isDoneByMe, hidden, showToast]);
+    const counts = useMemo(() => ({
+        active: visibleActive.length,
+        done: visibleDone.length,
+    }), [visibleActive, visibleDone]);
 
     const toggleMyOnly = useCallback(() => {
         const next = !myOnly;
         setMyOnly(next);
         writeMyOnly(next);
-        // 전체 보기로 바뀌면 완료 탭은 비므로(내 완료 개념 없음) 작업중 탭으로 이동.
-        if (!next) setTab('active');
         // 켜려는데 담당자가 없으면 — 먼저 담당자부터 고르게 안내(설정 안 하면 필터가 무의미).
         if (next && !worker) {
             setWorkerDraft('');
@@ -607,18 +498,6 @@ export default function FieldViewer() {
                 <div className="fv-header-row">
                     <h1 className="fv-title">현장 지시서</h1>
                     <div className="fv-header-actions">
-                        <button
-                            type="button"
-                            className="fv-archive-open"
-                            onClick={() => setArchiveOpen(true)}
-                            title="거래처·발주시기·파일명으로 지난 작업지시서를 찾습니다 (작업완료에서 정리된 옛 건 포함)"
-                        >
-                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <circle cx="7" cy="7" r="4.5" />
-                                <path d="M10.5 10.5L13.5 13.5" />
-                            </svg>
-                            <span>옛 지시서 찾기</span>
-                        </button>
                         <button
                             type="button"
                             className={`fv-refresh${refreshing ? ' spinning' : ''}`}
@@ -740,18 +619,7 @@ export default function FieldViewer() {
                 {!loading && error && <div className="fv-empty error">{error}</div>}
                 {!loading && !error && sorted.length === 0 && (
                     <div className="fv-empty">
-                        {tab === 'done' ? '완료 처리한 지시서가 없습니다.' : '표시할 지시서가 없습니다.'}
-                    </div>
-                )}
-
-                {!loading && !error && tab === 'done' && sorted.length > 0 && (
-                    <div className="fv-done-toolbar">
-                        <span className="fv-done-hint">완료한 작업을 목록에서 정리합니다</span>
-                        <button
-                            type="button"
-                            className="fv-clear-all"
-                            onClick={handleDeleteAllDone}
-                        >전체 삭제</button>
+                        {tab === 'done' ? '작업완료된 지시서가 없습니다.' : '표시할 지시서가 없습니다.'}
                     </div>
                 )}
 
@@ -831,9 +699,10 @@ export default function FieldViewer() {
                                         >
                                             {openingDir ? '여는 중…' : '폴더열기'}
                                         </button>
-                                        {/* '완료'/'완료취소' 는 '내 지시서만 보기' 모드에서만 — 전체 보기에선 누가
-                                            완료했는지 개념이 무의미하므로 [FS에서 열기]·[폴더열기] 만 노출. */}
-                                        {effectiveMyOnly && (isCompleted ? (
+                                        {/* '완료'/'완료취소' 는 '작업중' 탭의 '내 지시서만 보기' 모드에서만.
+                                            완료 신고는 홈페이지 '작업현황' 탭만 갱신하고 탭 분기에는 영향 없음.
+                                            완료 탭(=발주관리 작업완료) 카드는 이미 사무실에서 마감된 작업이라 노출 X. */}
+                                        {tab === 'active' && effectiveMyOnly && (isCompleted ? (
                                             <button
                                                 type="button"
                                                 className="fv-btn fv-btn-completed"
@@ -932,135 +801,6 @@ export default function FieldViewer() {
                 </div>
             )}
 
-            {archiveOpen && (
-                <div className="fv-modal-bg" onClick={() => setArchiveOpen(false)}>
-                    <div
-                        className="fv-modal fv-archive-modal"
-                        onClick={(e) => e.stopPropagation()}
-                        onKeyDown={(e) => { if (e.key === 'Escape') setArchiveOpen(false); }}
-                    >
-                        <div className="fv-archive-head">
-                            <h2>옛 지시서 찾기</h2>
-                            <button type="button" className="fv-archive-x" onClick={() => setArchiveOpen(false)} aria-label="닫기">×</button>
-                        </div>
-                        <p className="fv-modal-desc">
-                            거래처 · 발주시기 · 파일명 중 <b>아는 것만</b> 입력하세요. 조건을 더 줄수록 더 좁게 걸러집니다.
-                            작업완료에서 정리된 옛 지시서도 검색됩니다 — <b>[FS에서 열기]</b> 로 거래처 폴더의 .fs 를 바로 엽니다.
-                        </p>
-                        <div className="fv-archive-form">
-                            <label className="fv-archive-field fv-archive-grow">
-                                <span>거래처</span>
-                                <input
-                                    type="text" value={arCompany}
-                                    onChange={(e) => setArCompany(e.target.value)}
-                                    placeholder="거래처명 일부"
-                                    onKeyDown={(e) => { if (e.key === 'Enter') runArchiveSearch(); }}
-                                />
-                            </label>
-                            <label className="fv-archive-field">
-                                <span>발주 연도</span>
-                                <select
-                                    value={arYear}
-                                    onChange={(e) => { setArYear(e.target.value); if (!e.target.value) { setArMonth(''); setArDay(''); } }}
-                                >
-                                    <option value="">연도 무관</option>
-                                    {ARCHIVE_YEARS.map((y) => <option key={y} value={y}>{y}년</option>)}
-                                </select>
-                            </label>
-                            <label className="fv-archive-field">
-                                <span>월</span>
-                                <select
-                                    value={arMonth} disabled={!arYear}
-                                    onChange={(e) => { setArMonth(e.target.value); if (!e.target.value) setArDay(''); }}
-                                >
-                                    <option value="">전체</option>
-                                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{m}월</option>)}
-                                </select>
-                            </label>
-                            <label className="fv-archive-field fv-archive-day">
-                                <span>일</span>
-                                <input
-                                    type="number" min="1" max="31" value={arDay} disabled={!arMonth}
-                                    onChange={(e) => setArDay(e.target.value)} placeholder="전체"
-                                    onKeyDown={(e) => { if (e.key === 'Enter') runArchiveSearch(); }}
-                                />
-                            </label>
-                            <label className="fv-archive-field fv-archive-grow">
-                                <span>파일명</span>
-                                <input
-                                    type="text" value={arFilename}
-                                    onChange={(e) => setArFilename(e.target.value)}
-                                    placeholder="원본 PDF 파일명 일부"
-                                    onKeyDown={(e) => { if (e.key === 'Enter') runArchiveSearch(); }}
-                                />
-                            </label>
-                            <button type="button" className="fv-archive-search" onClick={runArchiveSearch} disabled={arLoading}>
-                                {arLoading ? '검색 중…' : '검색'}
-                            </button>
-                        </div>
-                        {arError && <div className="fv-archive-error">{arError}</div>}
-                        <div className="fv-archive-results">
-                            {arLoading && <div className="fv-empty">검색 중…</div>}
-                            {!arLoading && arResults && arResults.length === 0 && (
-                                <div className="fv-empty">조건에 맞는 지시서가 없습니다.</div>
-                            )}
-                            {!arLoading && arResults && arResults.length > 0 && (
-                                <>
-                                    <div className="fv-archive-count">
-                                        {arResults.length}건{arResults.length >= 300 ? ' · 최대 300건만 표시 — 조건을 더 좁혀보세요' : ''}
-                                    </div>
-                                    {arGroups.map(([ym, list]) => (
-                                        <div key={ym} className="fv-archive-group">
-                                            <div className="fv-archive-month">{monthHeaderLabel(ym)} <span>({list.length})</span></div>
-                                            {list.map((it) => {
-                                                const fsReady = !!(it.networkFolderName || it.companyName);
-                                                const opening = openingFs === it.orderNumber;
-                                                const openingDir = openingFolder === it.orderNumber;
-                                                const dd = dayOf(it.orderedAt);
-                                                const mm = ym.match(/^\d{4}-(\d{2})$/);
-                                                const spec = (it.additionalItems || it.note || '').trim();
-                                                return (
-                                                    <div key={it.orderNumber} className="fv-archive-item">
-                                                        <div className="fv-archive-item-main">
-                                                            <div className="fv-archive-item-top">
-                                                                <span className="fv-archive-item-company">{it.companyName || '거래처 미상'}</span>
-                                                                {dd && mm && <span className="fv-archive-item-day">{Number(mm[1])}/{dd}</span>}
-                                                                {it.archived && <span className="fv-archive-tag">아카이브</span>}
-                                                            </div>
-                                                            {it.title && <div className="fv-archive-item-title">{it.title}</div>}
-                                                            {it.originalPdfFilename && <div className="fv-archive-item-file">📄 {it.originalPdfFilename}</div>}
-                                                            {spec && <div className="fv-archive-item-spec">{spec.length > 160 ? spec.slice(0, 160) + '…' : spec}</div>}
-                                                            <div className="fv-archive-item-meta">
-                                                                {it.dueDate && <span>납기 {formatShortDate(it.dueDate)}{it.dueTime ? ` ${it.dueTime}` : ''}</span>}
-                                                                <span>{it.orderNumber}</span>
-                                                            </div>
-                                                        </div>
-                                                        <div className="fv-archive-item-actions">
-                                                            <button
-                                                                type="button" className="fv-btn fv-btn-fs"
-                                                                disabled={!fsReady || opening}
-                                                                title={!fsReady
-                                                                    ? '거래처 정보가 비어 있어 폴더를 찾을 수 없습니다'
-                                                                    : (it.originalPdfFilename ? 'FlexiSIGN 으로 열기' : '원본 PDF명이 없는 옛 건 — 누르면 거래처 폴더가 열립니다')}
-                                                                onClick={() => handleOpenFs(it)}
-                                                            >{opening ? '여는 중…' : 'FS에서 열기'}</button>
-                                                            <button
-                                                                type="button" className="fv-btn fv-btn-folder"
-                                                                disabled={!fsReady || openingDir}
-                                                                onClick={() => handleOpenFolder(it)}
-                                                            >{openingDir ? '여는 중…' : '폴더열기'}</button>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ))}
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }
