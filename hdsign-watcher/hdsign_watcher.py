@@ -26,9 +26,25 @@ except Exception:
 from datetime import date, timedelta
 from tkinter import filedialog, messagebox, ttk
 import io
+import ssl
 import urllib.error
 import urllib.request
 import zipfile
+
+# ── SSL: certifi 번들로 검증 ───────────────────────────────────────────────
+# 사장님 노트북은 윈도우 인증서 저장소가 최신이라 default https context 로도 통하지만,
+# 다른 사무실 PC(Windows Update 안 돌린 상태) 는 Railway HTTPS 체인의 루트/중간 CA 가
+# 없거나 frozen Python 의 ssl 이 윈도우 store + AIA 페치를 제대로 못 함.
+# → certifi 번들을 default https context 로 박아 모든 urlopen 호출이 통과되도록 한다.
+# (개별 urlopen 에 context= 를 다 붙이는 대신 default 만 갈아끼움 — 13개 호출 + 미래 호출 자동 적용)
+try:
+    import certifi
+    _CERTIFI_PATH = certifi.where()
+    def _certifi_https_context() -> ssl.SSLContext:
+        return ssl.create_default_context(cafile=_CERTIFI_PATH)
+    ssl._create_default_https_context = _certifi_https_context  # type: ignore[attr-defined]
+except Exception:  # noqa: BLE001 — certifi 미설치/번들 누락 시 시스템 인증서로 폴백
+    pass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -936,6 +952,30 @@ def fetch_existing_worksheets() -> list[dict]:
         return []
 
 
+def fetch_public_worksheet_detail(order_number: str) -> dict | None:
+    """QR 로 읽은 주문번호 1건을 공개 엔드포인트에서 직접 조회.
+
+    PC별 admin 계정 설정이 없거나 로컬 인쇄 매칭 큐가 비어 있으면 전체 목록 기반 매칭이
+    실패할 수 있다. /api/public/worksheets/{orderNumber} 는 PDF 가 아직 안 붙은 주문도
+    orderNumber 로 조회하므로, QR 을 읽은 순간의 최후 안전망으로 쓴다.
+    """
+    order_number = (order_number or "").strip()
+    if not order_number:
+        return None
+    url = f"{API_BASE}/api/public/worksheets/{quote(order_number, safe='')}"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data if isinstance(data, dict) else None
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            ui_log(f"QR 주문 단건 조회 실패(HTTP {e.code}): {order_number}")
+        return None
+    except Exception as e:
+        ui_log(f"QR 주문 단건 조회 실패: {order_number} ({e})")
+        return None
+
+
 # 인쇄 QR 디코드 실패 / [QR 코드 만들기] 재발급으로 생기는 "납기·지시서 없는 빈 발주(고아 카드)"
 # 를 막기 위한 유틸. 최근에 [QR 코드 만들기] 또는 clip-qr 로 발급됐는데 아직 인쇄 PDF 가
 # 안 올라온(=worksheetPdfUrl 없음) 빈 발주만 골라낸다. 인쇄 시 QR 인식이 실패해도 "혹시
@@ -1225,11 +1265,15 @@ def _admin_login(username: str, password: str) -> str | None:
         return None
 
 
+_DEFAULT_ADMIN_USERNAME = "hdno88"
+_DEFAULT_ADMIN_PASSWORD = "hdno0958"
+
+
 def _get_admin_token() -> str | None:
-    """캐시된 admin 토큰 반환. 없거나 곧 만료면 재로그인. config 미설정 시 None."""
+    """캐시된 admin 토큰 반환. 없거나 곧 만료면 재로그인. config 미설정 시 fallback 계정 사용."""
     config = _load_config()
-    username = (config.get("admin_username") or "").strip()
-    password = (config.get("admin_password") or "")
+    username = (config.get("admin_username") or "").strip() or _DEFAULT_ADMIN_USERNAME
+    password = (config.get("admin_password") or "") or _DEFAULT_ADMIN_PASSWORD
     if not username or not password:
         return None
     now = time.time()
@@ -4157,32 +4201,20 @@ def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 10):
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _title_has_dirty_marker(title: str) -> bool:
-    """창 제목에 미저장(더티) 마커가 있는지. 윈도우 파일명에 '*' 가 들어갈 수 없으므로
-    제목 어디든 '*' 가 보이면 거의 확실히 더티 마커. 일부 앱은 (modified)/(unsaved) 같은
-    영문 토큰도 쓴다 — 이것도 같이 감지(false positive 위험 거의 없음)."""
-    if not title:
-        return False
-    if "*" in title:
-        return True
-    low = title.lower()
-    for tok in ("(modified)", "(unsaved)", "[modified]", "[unsaved]"):
-        if tok in low:
-            return True
-    return False
-
-
 def _flexisign_window_status() -> tuple[str, str | None, int]:
     """현재 FlexiSIGN(App.exe) 창들 EnumWindows + 제목 분석 → (status, stem, hwnd).
 
     반환 status:
-      - 'saved': 어느 FlexiSIGN 창 제목에 '.fs' 가 박혀 있고 더티 마커가 없음 → 저장된 도큐먼트.
-      - 'unsaved': 다음 두 케이스 — 다이얼로그 트리거 대상.
-          (a) 창 제목에 '.fs' 자체가 없음 (저장 안 된 새 도큐먼트)
-          (b) 창 제목에 '.fs' 는 있지만 미저장 마커('*' 등) 가 같이 있음 (기존 .fs 수정 후 미저장)
-        stem 은 None(저장 안 된 상태에선 stem 을 못 신뢰), hwnd 는 EnumWindows Z-order 상 최상단
-        FlexiSIGN 창(Ctrl+S 타겟).
+      - 'saved': 어느 FlexiSIGN 창 제목에 '.fs' 가 박혀 있음 → 그 stem 사용.
+      - 'unsaved': FlexiSIGN 창은 떠 있는데 제목 어디에도 '.fs' 가 없음. 보통은 진짜
+        새(저장 안 된) 도큐먼트지만, FlexiSIGN 버전/설정에 따라 확장자를 표시하지 않을
+        수도 있어 무조건 미저장이라고 단정하지 않는다(호출 측이 사용자 입력을 신뢰).
+        stem=None, hwnd=Ctrl+S 타겟(최상단 FlexiSIGN 창).
       - 'no_window': FlexiSIGN 자체가 안 떠 있음. stem=None, hwnd=0. (다른 앱 인쇄로 추정)
+
+    NOTE(2026-05-14): 옛 '*' 더티 마커 감지(_title_has_dirty_marker) 는 제거. FlexiSIGN 은
+      실제로 '*' 표기를 쓰지 않으며, 가끔 다른 이유로 '*' 가 보이면 "이미 저장했는데?" 함정만
+      유발했다. 이제 .fs 가 제목에 있으면 무조건 'saved' 로 본다.
 
     창 제목은 윈도우가 UTF-16 으로 다루므로 인코딩이 깨지지 않는다 → 'saved' 일 땐 이 stem 으로
     인쇄 PDF 를 리네임하면 현장 에이전트가 거래처 폴더의 .fs 를 이름으로 정확 매칭(±30분 mtime
@@ -4268,29 +4300,26 @@ def _flexisign_window_status() -> tuple[str, str | None, int]:
 
         # 제목 어디든 박혀 있는 '<파일명>.fs' 추출 — 경로 포함이면 basename 만.
         fs_re = re.compile(r'([^\\/:*?"<>|\r\n\[\]]+\.fs)', re.IGNORECASE)
-        # (stem, hwnd, title, dirty) — Z-order 보존, title/dirty 는 매칭창 자체의 미저장 여부 판정용.
-        ordered: list[tuple[str, int, str, bool]] = []
+        # (stem, hwnd, title) — Z-order 보존. 미저장(더티) 마커 감지는 더 이상 안 함
+        # (FlexiSIGN 은 '*' 같은 표기를 안 씀 — 옛 가설은 폐기).
+        ordered: list[tuple[str, int, str]] = []
         for h_int, t in windows:
             m = fs_re.search(t)
             if not m:
                 continue
             stem = Path(m.group(1).strip()).stem.strip()
-            if stem and not any(s == stem for s, _, _, _ in ordered):
-                ordered.append((stem, h_int, t, _title_has_dirty_marker(t)))
+            if stem and not any(s == stem for s, _, _ in ordered):
+                ordered.append((stem, h_int, t))
         titles_only = [w[1] for w in windows]
-        ui_log(f"FlexiSIGN 창 제목 {titles_only!r} → .fs 후보 {[s for s, _, _, _ in ordered]!r}")
+        ui_log(f"FlexiSIGN 창 제목 {titles_only!r} → .fs 후보 {[s for s, _, _ in ordered]!r}")
         if ordered:
-            first_stem, first_hwnd, first_title, first_dirty = ordered[0]
-            if first_dirty:
-                # 제목에 .fs 는 있지만 미저장 마커('*' 등) — 기존 .fs 를 수정만 한 상태.
-                # 이대로 인쇄해 업로드하면 stem 은 깔끔하지만 현장에서는 디스크의 옛 .fs 를 열게
-                # 됨(사용자의 수정 사항 반영 안 됨) → unsaved 로 취급해서 저장 다이얼로그 띄움.
-                ui_log(f"FlexiSIGN 제목 '{first_title}' 에 미저장 마커 — unsaved 로 판정")
-                return ("unsaved", None, first_hwnd)
+            first_stem, first_hwnd, _first_title = ordered[0]
             if len(ordered) > 1:
                 ui_log(f"FlexiSIGN 열린 .fs 여럿 — 최상단 창의 '{first_stem}' 채택")
             return ("saved", first_stem, first_hwnd)
-        # 창은 있는데 .fs 가 한 군데도 없음 = 저장 안 된 새 도큐먼트
+        # 창은 있는데 .fs 가 한 군데도 없음 — 진짜 새(저장 안 된) 도큐먼트일 수도 있고,
+        # FlexiSIGN 버전이 확장자를 숨기는 설정일 수도 있다. 호출 측은 사용자가 인쇄를
+        # 눌렀다는 사실을 신뢰해 그대로 진행한다(stem 만 None — PDF 리네임 폴백).
         return ("unsaved", None, windows[0][0])
     except Exception as e:
         ui_log(f"FlexiSIGN 창 상태 읽기 실패: {e}")
@@ -4304,6 +4333,112 @@ def _flexisign_document_stem() -> str | None:
     """
     status, stem, _ = _flexisign_window_status()
     return stem if status == "saved" else None
+
+
+def _dialog_title_looks_like_save_as(title: str) -> bool:
+    """Win32 공용 #32770 중 '새 이름으로 저장' 계열만 True.
+
+    FlexiSIGN 의 인쇄/열기/경고창도 같은 #32770 클래스라 클래스명만 보면
+    기존 지시서 웹반영 흐름을 새 지시서 Save As 로 오인할 수 있다.
+    """
+    t = (title or "").strip().lower()
+    if not t:
+        return False
+    blockers = (
+        "print", "printer", "printing", "인쇄",
+        "open", "열기",
+        "warning", "error", "alert", "확인", "경고", "오류",
+    )
+    if any(x in t for x in blockers):
+        return False
+    markers = (
+        "save as", "save file", "save .fs",
+        "다른 이름으로 저장", "파일 저장",
+    )
+    return any(x in t for x in markers)
+
+
+def _flexisign_save_as_dialog_present() -> bool:
+    """FlexiSIGN 위에 Save As(다른 이름으로 저장) 다이얼로그가 떠 있는지 감지.
+
+    Ctrl+S 가 새 도큐먼트에 송신되면 FlexiSIGN 이 Save As 다이얼로그(Win32 표준 클래스
+    '#32770')를 띄우고 사용자가 파일명을 직접 입력해야 한다. 이 함수가 True 면 사용자가
+    파일명 입력 중이라고 판단해 워처는 그 입력이 끝날 때까지 대기 모달을 띄운다.
+
+    기존(이미 저장된) 도큐먼트에 Ctrl+S 를 보내면 다이얼로그는 안 뜨고 즉시 saved →
+    이 함수는 False 를 반환하므로 워처는 그대로 통과한다.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+        user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+        user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong)]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+        flex_exe = "App.exe"
+        try:
+            p = find_flexsign_exe()
+            if p:
+                flex_exe = Path(p).name
+        except Exception:
+            pass
+        flex_exe_lower = flex_exe.lower()
+
+        found = [False]
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def _cb(hwnd, _lparam):
+            try:
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                class_buf = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, class_buf, 256)
+                # Win32 표준 다이얼로그. Save As/Open/Print 등 공용 컨트롤이 모두 '#32770'.
+                if class_buf.value != "#32770":
+                    return True
+                title = ""
+                try:
+                    n = user32.GetWindowTextLengthW(hwnd)
+                    if n > 0:
+                        title_buf = ctypes.create_unicode_buffer(n + 1)
+                        user32.GetWindowTextW(hwnd, title_buf, n + 1)
+                        title = title_buf.value or ""
+                except Exception:
+                    title = ""
+                if not _dialog_title_looks_like_save_as(title):
+                    return True
+                pid = ctypes.c_ulong(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                h = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+                if not h:
+                    return True
+                try:
+                    buf = ctypes.create_unicode_buffer(32768)
+                    size = ctypes.c_ulong(32768)
+                    if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                        exe = (buf.value or "").rsplit("\\", 1)[-1].lower()
+                        if exe == flex_exe_lower or "flexi" in (buf.value or "").lower():
+                            found[0] = True
+                            return False  # 발견 → 열거 중단
+                finally:
+                    kernel32.CloseHandle(h)
+            except Exception:
+                pass
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(_cb), 0)
+        return found[0]
+    except Exception as e:
+        ui_log(f"Save As 다이얼로그 감지 예외: {e}")
+        return False
 
 
 def _force_flexisign_foreground(hwnd: int, timeout_ms: int = 600) -> bool:
@@ -4448,102 +4583,20 @@ def _show_combined_done_modal(alert_kind: str, ops_msg: str) -> None:
     ))
 
 
-def _auto_save_flexisign_for_print(
-    pdf_path: Path,
-    prior_status: str = '',
-    prior_stem: str | None = None,
-) -> tuple[bool, str]:
-    """인쇄 PDF 감지 시 호출 — FlexiSIGN 도큐먼트 자동 Ctrl+S 저장.
-    반환 (계속진행, alert_kind).
-
-    prior_status / prior_stem: 인쇄 시작 시점(_ask_print_intent_modal 직전) 에 한 번
-      관측한 FlexiSIGN 창 상태. 매칭 다이얼로그가 닫히는 사이 창 상태가 잠시 흔들리거나
-      FlexiSIGN 버전마다 제목 포맷이 달라(예: 확장자 미표시) 현재 검사에서 'unsaved' 가
-      잘못 잡히는 경우가 있다. '먼저 저장해주세요' 모달을 띄우면 "이미 저장했는데?"
-      함정이라, 인쇄 시작 시점에 saved + stem 이 잡혔다면 그 상태를 신뢰한다.
-
-    alert_kind: 호출 측이 즉시 띄울 안내 메시지 종류
-      - ''        : 안내 안 띄움 (no_window 또는 unsaved 분기에서 사용자 직접 저장)
-      - 'saved'   : Ctrl+S 송신 성공 — '✓ 저장 완료' 정보 토스트
-      - 'failed'  : 포그라운드 검증 실패로 Ctrl+S 송신 못 함 — 경고 토스트
-                    (사용자가 [✓ 적용] 직후 다른 창을 클릭해 포커스를 뺏긴 경우 등)
-
-    NOTE: 'saved' 분기는 Ctrl+S 송신 직후 즉시 반환한다. 예전엔 송신 후 0.4s sleep +
-    거래처 폴더 트리 rglob (수초 가능) + mtime 비교로 "워처가 실제로 디스크에
-    저장시켰는가" 를 판정했는데, 그게 알림 표시 지연의 주범이었다. 이제
-    _force_flexisign_foreground 가 포그라운드를 검증하므로 Ctrl+S 가 FlexiSIGN 에
-    박힌 것 자체는 신뢰할 수 있다. 이미 깨끗하게 저장된 상태였다면 FlexiSIGN 의
-    Ctrl+S 는 무동작이지만, 그 경우에도 메시지가 중립적("저장 완료")이라 거짓이 아니다.
-    """
-    status, stem, hwnd = _flexisign_window_status()
-    if status == "no_window":
-        return True, ''
-
-    if status == "saved" and stem:
-        send_ok = _send_save_keystroke_to(hwnd) if hwnd else False
-        if not send_ok:
-            return True, 'failed'
-        ui_log(f"FlexiSIGN Ctrl+S 송신 완료 — '{stem}.fs' 저장 처리")
-        return True, 'saved'
-
-    # 현재 'unsaved' — 다만 인쇄 시작 시점엔 saved + stem 이 잡혔다면, 매칭 다이얼로그 중
-    # 창 상태가 잠시 흔들렸거나 제목 포맷 차이로 우리가 잘못 판정한 것일 가능성이 크다.
-    # 사용자는 이미 인쇄 누르기 전에 저장한 상태이므로 '먼저 저장해주세요' 모달은
-    # "이미 저장했는데?" 함정이 된다. prior 신뢰 + Ctrl+S 한 번만 보내고 통과한다.
-    if prior_status == "saved" and prior_stem and hwnd:
-        sent_ok = _send_save_keystroke_to(hwnd)
-        if not sent_ok:
-            return True, 'failed'
-        ui_log(
-            f"FlexiSIGN — 현재 unsaved 로 보이지만 인쇄 시작 시점엔 "
-            f"'{prior_stem}.fs' saved 였음 → 신뢰하고 모달 생략, Ctrl+S 만 송신"
-        )
-        return True, 'saved'
-
-    # status == "unsaved" 이고 prior 도 saved 가 아니었던 경우 — 진짜 새 도큐먼트.
-    # FlexiSIGN 이 Save As 다이얼로그를 띄울 테니 사용자에게 직접 저장 요청.
-    if hwnd:
-        _send_save_keystroke_to(hwnd)
-    wait_holder, cancel_evt = _show_save_wait_window()
-    saved_stem: str | None = None
-    deadline = time.time() + 180  # 3분
-    try:
-        while time.time() < deadline:
-            if cancel_evt.is_set():
-                break
-            s2, st2, _ = _flexisign_window_status()
-            if s2 == "saved" and st2:
-                saved_stem = st2
-                break
-            time.sleep(0.5)
-    finally:
-        _close_save_wait_window(wait_holder)
-    if not saved_stem:
-        if cancel_evt.is_set():
-            ui_log(f"인쇄 — 저장 대기 중 사용자 [취소] : PDF 삭제 ({pdf_path.name})")
-        else:
-            ui_log(f"인쇄 — 저장 대기 타임아웃(3분): PDF 삭제 ({pdf_path.name})")
-        try:
-            if pdf_path.exists():
-                pdf_path.unlink()
-        except Exception as e:
-            ui_log(f"PDF 삭제 실패: {e}")
-        return False, ''
-    ui_log(f"인쇄 — FlexiSIGN 저장 완료('{saved_stem}.fs') → 평소 흐름 진행")
-    return True, ''  # 사용자가 직접 저장 — 알림 별도로 안 띄움
-
-
 def _show_save_wait_window() -> tuple[dict, threading.Event]:
-    """저장 완료 폴링 동안 띄워두는 작은 안내창. (holder, cancel_event) 반환.
-    holder['win'] = Toplevel (또는 None). cancel_event 가 set 되면 사용자가 [취소] 누른 것.
-    호출 측은 폴링 끝나면 _close_save_wait_window(holder) 호출."""
+    """새 도큐먼트 Save As 다이얼로그가 떴을 때만 띄우는 안내창. (holder, cancel_event) 반환.
+
+    사용자가 FlexiSIGN 의 Save As 창에서 파일명을 입력 → 저장 → 다이얼로그 닫힘 까지 대기.
+    cancel_event 가 set 되면 사용자가 [취소] 누른 것. 호출 측은 폴링 끝나면
+    _close_save_wait_window(holder) 호출.
+    """
     holder: dict = {"win": None}
     cancel_event = threading.Event()
 
     def _show():
         try:
             w = tk.Toplevel()
-            w.title("저장 대기 중")
+            w.title("지시서 제목 입력 대기")
             w.configure(bg="#ffffff")
             w.resizable(False, False)
             try:
@@ -4552,14 +4605,15 @@ def _show_save_wait_window() -> tuple[dict, threading.Event]:
                 pass
             fr = tk.Frame(w, bg="#ffffff")
             fr.pack(padx=26, pady=20)
-            tk.Label(fr, text="먼저 저장해주세요",
+            tk.Label(fr, text="새 지시서 — 제목을 입력해 주세요",
                      bg="#ffffff", fg="#18181b", font=("맑은 고딕", 13, "bold"),
                      anchor="w").pack(fill="x")
             tk.Label(fr,
-                     text="인쇄(웹 반영)을 하려면 먼저 저장해주셔야 합니다.",
+                     text="FlexiSIGN '다른 이름으로 저장' 창에서 파일명을 입력 → 저장하면\n"
+                          "자동으로 다음 단계(웹 업로드/인쇄)가 이어집니다.",
                      bg="#ffffff", fg="#3f3f46", font=("맑은 고딕", 10),
-                     anchor="w").pack(fill="x", pady=(6, 12))
-            pb = ttk.Progressbar(fr, mode="indeterminate", length=340)
+                     justify="left", anchor="w").pack(fill="x", pady=(6, 12))
+            pb = ttk.Progressbar(fr, mode="indeterminate", length=360)
             pb.pack(fill="x")
             try:
                 pb.start(12)
@@ -4583,8 +4637,7 @@ def _show_save_wait_window() -> tuple[dict, threading.Event]:
             w.update_idletasks()
             ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
             sw, _sh = w.winfo_screenwidth(), w.winfo_screenheight()
-            # 화면 상단 가운데에 띄운다 — 사용자가 FlexiSIGN 캔버스에서 저장 작업하는 동안
-            # 가운데 떠 있으면 가려서 방해되므로 위로 올려둔다.
+            # 화면 상단 가운데 — FlexiSIGN Save As 캔버스 영역을 가리지 않도록.
             w.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+30")
             holder["win"] = w
         except Exception as e:
@@ -4606,6 +4659,106 @@ def _close_save_wait_window(holder: dict):
             pass
 
     _ui_queue.put(("run", _do))
+
+
+def _auto_save_flexisign_for_print(
+    pdf_path: Path,
+    prior_status: str = '',
+    prior_stem: str | None = None,
+) -> tuple[bool, str]:
+    """인쇄 PDF 감지 시 호출 — FlexiSIGN 도큐먼트 자동 Ctrl+S 저장.
+
+    반환 (계속진행, alert_kind).
+      - 계속진행=False : 사용자가 대기 모달에서 [취소] / 타임아웃 (새 도큐먼트의 Save As
+        다이얼로그 케이스에서만 발생) — 호출 측은 PDF 삭제 + 업로드/인쇄 모두 생략.
+      - alert_kind:
+          ''       : 안내 안 띄움 (no_window — 다른 앱 인쇄로 추정)
+          'saved'  : Ctrl+S 송신 성공
+          'failed' : 포그라운드 검증 실패로 Ctrl+S 송신 못 함 — 경고 토스트
+
+    prior_status / prior_stem: _ask_print_intent_modal 직전에 한 번 더 관측한 FlexiSIGN
+      창 상태. 현재 검사에서 stem 을 못 잡을 때 폴백으로 쓴다.
+
+    동작 정책(2026-05-14):
+      - 항상 Ctrl+S 한 번 송신. 이미 깨끗하게 저장된 상태면 FlexiSIGN 이 무동작이라 즉시 통과.
+        미저장 변경이 있는 기존 .fs 면 자동저장. 둘 다 사용자 개입 없이 진행.
+      - 진짜 새(이름 없는) 도큐먼트의 경우에만 FlexiSIGN 이 Save As 다이얼로그를 띄움.
+        워처는 그 다이얼로그를 감지하면 "지시서 제목 입력 대기" 모달을 띄우고, 사용자가
+        파일명 입력 → 저장 → 다이얼로그 닫힘 을 기다린다.
+      - 옛 '*' 더티 마커 / '제목에 .fs 없으면 무조건 unsaved' 로 모달을 띄우던 가설은 폐기.
+        "이미 저장했는데?" 함정만 발생.
+    """
+    status, stem, hwnd = _flexisign_window_status()
+    if status == "no_window":
+        ui_log("FlexiSIGN 창 없음 — 다른 앱 인쇄로 추정, Ctrl+S 생략")
+        return True, ''
+
+    effective_stem = stem or prior_stem
+
+    # Ctrl+S 송신 — 이미 저장된 상태면 무동작, 미저장 변경 있는 .fs 면 자동저장,
+    # 진짜 새 도큐먼트면 FlexiSIGN 이 Save As 다이얼로그를 띄움.
+    if hwnd:
+        send_ok = _send_save_keystroke_to(hwnd)
+        if not send_ok:
+            ui_log("FlexiSIGN — Ctrl+S 포그라운드 검증 실패, 그대로 진행")
+            return True, 'failed'
+
+    # 이미 .fs 이름이 잡힌 기존 지시서는 Ctrl+S 만으로 저장이 끝난다. 이 상태에서
+    # FlexiSIGN 인쇄/경고 같은 다른 #32770 창이 잠깐 남아 있어도 새 지시서 Save As 로
+    # 기다리면 웹반영이 멈추므로, 이름 있는 문서는 Save As 감시를 하지 않는다.
+    if effective_stem:
+        ui_log(f"FlexiSIGN Ctrl+S 송신 — '{effective_stem}.fs' 저장 처리")
+        return True, 'saved'
+
+    # Save As 다이얼로그가 떴는지 짧게 폴링. 떴으면 사용자가 파일명 입력 중 → 대기 모달.
+    # 안 떴으면(보통의 경우 — 이미 저장된 .fs 또는 변경분 자동저장) 즉시 통과.
+    # 0.1s × 12 = 1.2s 예산: Save As 는 거의 즉시 뜨고, 이 정도면 잡힌다.
+    save_as_open = False
+    for _ in range(12):
+        time.sleep(0.1)
+        if _flexisign_save_as_dialog_present():
+            save_as_open = True
+            break
+
+    if not save_as_open:
+        ui_log("FlexiSIGN Ctrl+S 송신 — Save As 미발생, stem 미상으로 진행")
+        return True, 'saved'
+
+    # Save As 다이얼로그 열림 — 사용자에게 제목 입력 안내. 다이얼로그가 닫힐 때까지 대기.
+    ui_log("FlexiSIGN — Save As 다이얼로그 감지, 사용자 파일명 입력 대기 모달 띄움")
+    wait_holder, cancel_evt = _show_save_wait_window()
+    deadline = time.time() + 180  # 3분
+    saved_after: str | None = None
+    try:
+        while time.time() < deadline:
+            if cancel_evt.is_set():
+                break
+            # 다이얼로그가 사라졌으면 저장(또는 사용자 직접 취소) 완료로 판정.
+            if not _flexisign_save_as_dialog_present():
+                # 짧게 더 기다린 뒤 .fs 잡히는지 확인 — 저장 완료라면 제목이 업데이트됨.
+                time.sleep(0.2)
+                s2, st2, _ = _flexisign_window_status()
+                if s2 == "saved" and st2:
+                    saved_after = st2
+                break
+            time.sleep(0.3)
+    finally:
+        _close_save_wait_window(wait_holder)
+
+    if cancel_evt.is_set():
+        ui_log(f"인쇄 — Save As 대기 중 사용자 [취소] : PDF 삭제 ({pdf_path.name})")
+        try:
+            if pdf_path.exists():
+                pdf_path.unlink()
+        except Exception as e:
+            ui_log(f"PDF 삭제 실패: {e}")
+        return False, ''
+
+    if saved_after:
+        ui_log(f"인쇄 — FlexiSIGN Save As 완료('{saved_after}.fs') → 평소 흐름 진행")
+    else:
+        ui_log("인쇄 — Save As 다이얼로그 사라짐(저장됐는지 확인 못함), stem 미상으로 진행")
+    return True, 'saved'
 
 
 def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str) -> Path:
@@ -5289,6 +5442,27 @@ def _process_printed_pdf(pdf_path: Path):
     _ew_thread.join(timeout=15)
     existing_worksheets = _ew_holder.get("v") or []
 
+    if qr_order_number:
+        has_existing = any(
+            (w.get("orderNumber") or "") == qr_order_number
+            for w in existing_worksheets
+        )
+        has_recent = any(
+            (o.get("orderNumber") or "") == qr_order_number
+            for o in orders
+        )
+        if not has_existing and not has_recent:
+            qr_detail = fetch_public_worksheet_detail(qr_order_number)
+            if qr_detail:
+                if (qr_detail.get("worksheetPdfUrl") or "").strip():
+                    existing_worksheets = [qr_detail] + list(existing_worksheets)
+                    ui_log(f"QR 단건 조회 매칭: {qr_order_number} (기존 지시서)")
+                else:
+                    orders = [qr_detail] + list(orders)
+                    ui_log(f"QR 단건 조회 매칭: {qr_order_number} (첫 지시서 등록)")
+            else:
+                ui_log(f"QR 주문 단건 조회 결과 없음: {qr_order_number}")
+
     # QR 디코드 실패 — 하지만 방금 [QR 코드 만들기] 로 빈 발주를 발급한 직후라면, 작업자가
     # 또 거래처를 골라 발급해 고아 카드를 만들기 전에 "이 인쇄물이 그 발주인가요?" 를 먼저 묻는다.
     _asked_recent_qr_only = False  # 이미 "이 빈 발주 맞습니까?" 를 물어봤으면 [QR 코드 만들기] 모달은 같은 경고 생략
@@ -5540,14 +5714,11 @@ def _process_printed_pdf(pdf_path: Path):
         return
 
     # 사용자가 매칭 다이얼로그에서 [✓ 적용하기] 또는 [매칭 안 함] 등 *진행* 의사를 표시한
-    # 직후 FlexiSIGN 자동저장 시도. 이 시점 이후로는 patch_due_date / 업로드 / 종이 인쇄가
-    # 차례로 일어나므로 .fs 가 인쇄 시점 상태로 디스크에 박혀 있어야 사무실/현장의 .fs ↔ PDF
-    # 매칭이 정확해진다.
-    #   ・saved (기존 .fs 가 열려 있음): Ctrl+S 송신 → alert_kind='saved' → 끝에 합친 모달.
-    #     포그라운드 검증 실패 시 alert_kind='failed' → 끝의 합친 모달이 경고 스타일.
-    #   ・unsaved (새 도큐먼트): FlexiSIGN Save As 창이 뜨고 화면 상단에 '먼저 저장해주세요'
-    #     폴링 창 표시. 사용자가 저장 완료하면 평소 흐름. [취소]/타임아웃이면 PDF 삭제 +
-    #     auto_ok=False 반환 → patch/업로드/종이 모두 생략하고 종료.
+    # 직후 FlexiSIGN 자동저장. 항상 Ctrl+S 한 번 보내고:
+    #   ・이미 저장된 .fs (또는 변경분만 있는 .fs): FlexiSIGN 이 즉시 자동저장 → 즉시 통과.
+    #   ・진짜 새(이름 없는) 도큐먼트: FlexiSIGN 이 Save As 다이얼로그를 띄움 →
+    #     워처가 그걸 감지하면 "지시서 제목 입력 대기" 모달, 사용자가 저장 완료 시 통과.
+    #     [취소]/타임아웃이면 auto_ok=False → patch/업로드/종이 모두 생략하고 종료.
     #   ・no_window (다른 앱 인쇄): Ctrl+S 안 보내고 그대로 통과.
     auto_ok, alert_kind = _auto_save_flexisign_for_print(
         pdf_path,
@@ -5555,7 +5726,7 @@ def _process_printed_pdf(pdf_path: Path):
         prior_stem=_intent_stem,
     )
     if not auto_ok:
-        ui_log(f"인쇄 — 자동 저장 대기 중 사용자 취소/타임아웃: patch/업로드/종이 모두 생략 ({pdf_path.name})")
+        ui_log(f"인쇄 — Save As 대기 중 사용자 취소/타임아웃: patch/업로드/종이 모두 생략 ({pdf_path.name})")
         return
 
     # NOTE: 자동저장 결과 + 처리 결과를 한 번의 모달에 합쳐서 끝에 띄운다. 사용자가

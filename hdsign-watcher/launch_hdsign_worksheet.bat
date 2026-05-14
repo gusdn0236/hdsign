@@ -1,4 +1,5 @@
 @echo off
+title HD사인 지시서 업데이트 중...
 REM HD Sign Worksheet launcher.
 REM Master location: Z:\worksheet-program\launch_hdsign_worksheet.bat
 REM (Each PC must have Z: mapped to \\Main\hyundai-share-root.)
@@ -20,22 +21,23 @@ if %ERRORLEVEL%==0 exit /b 0
 if not exist "%DST%" mkdir "%DST%"
 
 if exist "%SRC%" (
-    echo Syncing worksheet program from network...
+    echo HD사인 지시서 프로그램 업데이트 중...
+    echo 잠시만 기다려주세요.
     robocopy "%SRC%" "%DST%" /MIR /R:1 /W:1 /MT:8 /NFL /NDL /NJH /NJS /NC /NS /NP >nul
     if errorlevel 8 (
-        echo [WARN] Network sync failed. Launching last local copy.
+        echo [경고] 네트워크 업데이트 실패 - 이전 버전으로 실행합니다.
     )
 ) else (
-    echo [WARN] Master folder not reachable - launching last local copy.
+    echo [경고] 마스터 폴더에 접근할 수 없습니다 - 이전 버전으로 실행합니다.
     echo        %SRC%
-    echo        Check that drive Z: is mapped on this PC.
+    echo        이 PC 에 Z: 드라이브가 매핑돼 있는지 확인해주세요.
 )
 
 if not exist "%EXE%" (
     echo.
-    echo [ERROR] hdsign_worksheet.exe not found at:
+    echo [오류] hdsign_worksheet.exe 를 찾을 수 없습니다:
     echo   %EXE%
-    echo Check that the master folder is reachable:
+    echo 마스터 폴더에 접근 가능한지 확인해주세요:
     echo   %SRC%
     pause
     exit /b 1

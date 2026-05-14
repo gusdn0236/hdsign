@@ -47,7 +47,7 @@ if (-not $DeployOnly) {
     Step '의존성 설치/확인 (pip)'
     # opencv-python-headless: pyzbar(zbar) 와 다른 QR 디코더(cv2.QRCodeDetector) — 인쇄→PDF24
     # 경유 QR 인식 보강. 미설치여도 워처는 cv2=None 으로 정상 동작(보강만 비활성).
-    & $python -m pip install --disable-pip-version-check pyinstaller watchdog 'qrcode[pil]' Pillow pywin32 pymupdf pyzbar opencv-python-headless
+    & $python -m pip install --disable-pip-version-check pyinstaller watchdog 'qrcode[pil]' Pillow pywin32 pymupdf pyzbar opencv-python-headless certifi
     if ($LASTEXITCODE -ne 0) { throw "pip install 실패 (인터넷 확인). exit=$LASTEXITCODE" }
 
     Step 'PyInstaller 빌드 (--onedir)'
@@ -57,9 +57,9 @@ if (-not $DeployOnly) {
     $piArgs = @(
         '-m','PyInstaller','--clean','-y','--onedir','--windowed','--noupx',
         '--name','hdsign_worksheet','--icon',$icoPath,
-        '--collect-all','pymupdf','--collect-all','pyzbar','--collect-all','cv2',
+        '--collect-all','pymupdf','--collect-all','pyzbar','--collect-all','cv2','--collect-all','certifi',
         '--hidden-import','fitz','--hidden-import','pyzbar','--hidden-import','pyzbar.pyzbar',
-        '--hidden-import','cv2','--hidden-import','numpy','--hidden-import','encodings.idna',
+        '--hidden-import','cv2','--hidden-import','numpy','--hidden-import','encodings.idna','--hidden-import','certifi',
         '--add-data',"$assetsJpg;assets",'--add-data',"$icoPath;.",
         $script
     )
