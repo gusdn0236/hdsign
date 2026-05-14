@@ -2597,6 +2597,12 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     dlg.configure(bg=BG)
     dlg.resizable(False, False)
     dlg.attributes("-topmost", True)
+
+    # 최종 의도(intent) — form_col 하단 라디오로 사용자가 결정한다. 호출자는 기본값 'web_print'
+    # 로 dialog 를 열고, 사용자가 web_only / paper_only 로 바꾸면 confirm() 결과에 반영된다.
+    intent_var = tk.StringVar(
+        value=intent if intent in ("web_print", "web_only", "paper_only") else "web_print"
+    )
     # 세로형 — 메인은 ③ 분배함 사진. 사용자는 이 다이얼로그를 화면 좌측 끝에 붙이고
     # 우측 빈 공간에 FlexiSign 지시서를 띄워 확대해 보면서 어느 칸에 꽂을지 결정한다.
     # 좁은 폭(440)이면 1920px 모니터에서도 FlexiSign 영역 1480px 가 확보됨.
@@ -3788,6 +3794,20 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     # Enter 키/녹색 버튼 모두 기본 변종을 부르고, "웹에만 적용하고 인쇄안하기" 버튼만
     # skip_print=True 로 호출한다.
     def confirm(_event=None, skip_print=False):
+        # 라디오에서 [종이만 인쇄] 를 골랐다면 매칭/납기 검증 없이 종이만 출력하고 끝낸다.
+        # 호출 측은 sel.get("order_number") is None + intent=="paper_only" 로 알아챈다.
+        if intent_var.get() == "paper_only":
+            result["value"] = {
+                "order_number": None,
+                "intent": "paper_only",
+                "copies": _committed_total(),
+                "skip_print": False,
+                "department_tags": [],
+                "department_slots": [],
+            }
+            dlg.destroy()
+            return
+
         idx = notebook.index(notebook.select())
         if idx == 0:
             # ── [신규 작성] 탭 ──────────────────────────────
@@ -3826,6 +3846,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 "department_slots": collect_dept_slots(),
                 "skip_print": bool(skip_print),
                 "copies": total_copies,
+                "intent": intent_var.get(),
             }
             dlg.destroy()
             return
@@ -3894,6 +3915,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             "department_slots": collect_dept_slots(),
             "skip_print": bool(skip_print),
             "copies": total_copies_m,
+            "intent": intent_var.get(),
         }
         dlg.destroy()
         return
@@ -3905,23 +3927,55 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     # ── 액션 버튼 (form_col 하단) ────────────────────────
     # form_col 폭 260 — 메인 액션을 풀 폭으로, 보조 3개를 한 줄로.
     # form_col 안에 두면 빈 여백이 줄고 폼-액션 동선이 같은 컬럼에서 이어짐.
-    # pack(side="bottom") 은 먼저 pack 한 게 바닥 — btns_section 먼저, divider 나중에.
+    # pack(side="bottom") 은 먼저 pack 한 게 바닥 — btns_section 먼저, divider 그 위, intent 라디오 그 위.
     btns_section = tk.Frame(form_col, bg=BG)
     btns_section.pack(side="bottom", fill="x", pady=(0, 4))
     tk.Frame(form_col, bg=BORDER, height=1).pack(side="bottom", fill="x", pady=(8, 6))
 
-    # 1행: 메인 액션 — 풀 폭, 강조. 라벨은 intent 에 따라 다르다.
-    # 의도 모달에서 [웹반영만] 골랐다면 종이 인쇄는 강제 스킵이므로 라벨에서도 "& 인쇄" 제거.
-    _main_label = "✓ 웹에만 적용" if intent == "web_only" else "✓ 웹에 적용 & 인쇄"
-    tk.Button(
-        btns_section, text=_main_label, command=confirm,
+    # 인쇄 의도 라디오 — 최종 결정. 사용자가 [웹반영&인쇄/웹반영만/종이만] 중 고른다.
+    # 캐시·첫 모달 의도 없이 매번 이 자리에서 결정 → 직전 선택이 굳어지는 사고 방지.
+    intent_section = tk.Frame(form_col, bg=BG)
+    intent_section.pack(side="bottom", fill="x", pady=(2, 0))
+    tk.Label(intent_section, text="처리 방식",
+             bg=BG, fg=LABEL_FG, font=("맑은 고딕", 9, "bold"),
+             anchor="w").pack(fill="x")
+    _RADIO_LABELS = [
+        ("web_print", "웹반영 & 인쇄"),
+        ("web_only", "웹반영만 (종이 인쇄 없음)"),
+        ("paper_only", "종이만 인쇄 (웹 업로드 없음)"),
+    ]
+    for _val, _txt in _RADIO_LABELS:
+        tk.Radiobutton(
+            intent_section, text=_txt, value=_val, variable=intent_var,
+            bg=BG, fg=TITLE_FG, font=("맑은 고딕", 9),
+            activebackground=BG, selectcolor=BG_SOFT,
+            anchor="w", padx=2, pady=1, cursor="hand2",
+        ).pack(fill="x")
+
+    # 1행: 메인 액션 — 풀 폭, 강조. 라벨은 intent 라디오를 따라 동적으로 바뀐다.
+    _INTENT_BTN_LABEL = {
+        "web_print": "✓ 웹에 적용 & 인쇄",
+        "web_only": "✓ 웹에만 적용",
+        "paper_only": "✓ 종이만 인쇄",
+    }
+    _main_btn = tk.Button(
+        btns_section, text=_INTENT_BTN_LABEL.get(intent_var.get(), "✓ 적용하기"),
+        command=confirm,
         font=("맑은 고딕", 11, "bold"),
         bg=ACCENT, fg="white",
         activebackground=ACCENT_HOVER, activeforeground="white",
         relief="flat", padx=10, pady=9, cursor="hand2", bd=0,
-    ).pack(fill="x")
+    )
+    _main_btn.pack(fill="x")
 
-    # 2행: 보조 액션은 [취소] 만 — [종이만 인쇄]/[웹만 적용] 은 의도 모달이 앞서 묻기 때문에 제거.
+    def _refresh_main_label(*_a):
+        try:
+            _main_btn.config(text=_INTENT_BTN_LABEL.get(intent_var.get(), "✓ 적용하기"))
+        except Exception:
+            pass
+    intent_var.trace_add("write", _refresh_main_label)
+
+    # 2행: 보조 액션은 [취소] 만 — [종이만 인쇄]/[웹만 적용] 은 위 라디오로 통합.
     sec_row = tk.Frame(btns_section, bg=BG)
     sec_row.pack(fill="x", pady=(6, 0))
     tk.Button(
@@ -4779,17 +4833,11 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
     return None
 
 
-# ── 인쇄 의도(intent) 선택 — 3옵션 모달 + 파일당 캐시 ──────────────────────────
-# 사용자가 인쇄 누르면 매번 [💾 웹반영&인쇄] / [💾 웹반영만] / [🖨 종이인쇄만] 중에서 선택.
-# 캐시 정책(비대칭 기억):
-#   ・"web_print" / "web_only" 만 .fs stem 별로 캐시 — 같은 파일 다음 인쇄 시 직전 선택을
-#     1.5초 토스트로 보여주고 자동 진행([변경] 누르면 모달 재호출).
-#   ・"paper_only" 는 캐시 안 함 — 초안에서 종이만 뽑은 게 최종까지 살아남아 웹 반영을
-#     누락시키는 사고를 막기 위함. 종이만 인쇄는 매번 명시적으로 선택해야 함.
-#   ・unsaved 도큐먼트는 stem 이 없어 캐시 키 생성 불가 → 매번 모달.
-_intent_cache: dict[str, str] = {}
-_intent_cache_lock = threading.Lock()
-
+# ── 인쇄 의도(intent) 선택 — 2단계 분리 ────────────────────────────────────────
+# 인쇄 누르면 매번 [💾 웹 작업으로 진행] / [🖨 종이만 인쇄] 두 옵션의 필터 모달만 뜬다.
+# 종이만이면 fast path 로 빠르게 종이만 출력하고 끝. 웹 작업으로 가면 QR 감지 + 매칭
+# 다이얼로그로 진행하고, 거기서 [웹반영&인쇄 / 웹반영만 / 종이만] 라디오로 최종 의도를 고른다.
+# (캐시는 없음 — 매번 사용자가 직접 결정해야 직전 의도가 굳어지는 사고가 없음.)
 _INTENT_LABEL = {
     "web_print": "웹반영 & 인쇄",
     "web_only": "웹반영만",
@@ -4797,28 +4845,20 @@ _INTENT_LABEL = {
 }
 
 
-def _get_intent_cache(stem: str) -> str | None:
-    with _intent_cache_lock:
-        return _intent_cache.get(stem)
-
-
-def _set_intent_cache(stem: str, intent: str) -> None:
-    # paper_only 는 의도적으로 캐시 안 함(위 정책).
-    if intent not in ("web_print", "web_only"):
-        return
-    with _intent_cache_lock:
-        _intent_cache[stem] = intent
-
-
 def _ask_print_intent_modal(stem: str | None, busy_close) -> tuple[str, int]:
-    """인쇄 의도 3옵션 모달. (intent, paper_copies) 반환.
-    intent ∈ {"web_print", "web_only", "paper_only", "cancel"}.
-    paper_copies: intent=='paper_only' 일 때만 의미 있음(>=1). 그 외엔 0.
+    """인쇄 직후 1단계 필터 모달. (choice, paper_copies) 반환.
+    choice ∈ {"web_flow", "paper_only", "cancel"}.
+
+    "web_flow" 는 QR 감지 + 매칭 다이얼로그로 진행해 거기서 최종 의도(웹반영&인쇄/웹반영만/
+    종이만) 를 라디오로 다시 고른다. 여기서는 그냥 "종이만 인쇄로 끝낼지" 만 거른다 — QR
+    디코드/주문목록 fetch/매칭 다이얼로그 비용을 피하려는 fast path.
+
+    paper_copies: choice=='paper_only' 일 때만 의미 있음(>=1). 그 외엔 0.
 
     busy_close: 모달 표시 직전에 호출할 콜백(인쇄물 처리중 안내창 닫기용).
     저장된 .fs 면 파일명 표시, 미저장이면 그 사실을 안내.
     """
-    holder: dict = {"intent": "cancel", "copies": 0, "done": threading.Event()}
+    holder: dict = {"choice": "cancel", "copies": 0, "done": threading.Event()}
 
     def _show():
         try:
@@ -4851,8 +4891,8 @@ def _ask_print_intent_modal(stem: str | None, busy_close) -> tuple[str, int]:
                          bg="#ffffff", fg="#b91c1c", font=("맑은 고딕", 9),
                          anchor="w").pack(fill="x", pady=(0, 14))
 
-            def _choose(intent: str):
-                holder["intent"] = intent
+            def _choose(c: str):
+                holder["choice"] = c
                 try:
                     win.destroy()
                 except Exception:
@@ -4898,18 +4938,13 @@ def _ask_print_intent_modal(stem: str | None, busy_close) -> tuple[str, int]:
                     w.bind("<Leave>", _on_leave)
 
             _make_choice(frm,
-                "웹반영 & 인쇄",
-                "저장 → 웹 업로드 → 종이 인쇄",
+                "웹 작업으로 진행",
+                "QR 감지 → 매칭 다이얼로그에서 최종 결정 (웹반영&인쇄 / 웹반영만 / 종이만)",
                 "\U0001F4BE", "#2563eb", "white",
-                lambda: _choose("web_print"), "#1d4ed8")
+                lambda: _choose("web_flow"), "#1d4ed8")
             _make_choice(frm,
-                "웹반영만",
-                "저장 → 웹 업로드 (종이 인쇄 없음)",
-                "\U0001F4BE", "#10b981", "white",
-                lambda: _choose("web_only"), "#0ea371")
-            _make_choice(frm,
-                "종이 인쇄만",
-                "현재 화면 그대로 종이만 인쇄 (저장/업로드 없음)",
+                "종이만 인쇄",
+                "현재 화면 그대로 종이만 인쇄 (저장/업로드 없음 — 빠른 경로)",
                 "\U0001F5A8", "#f4f4f5", "#18181b",
                 lambda: _choose("paper_only"), "#e4e4e7")
 
@@ -4933,13 +4968,13 @@ def _ask_print_intent_modal(stem: str | None, busy_close) -> tuple[str, int]:
     _ui_queue.put(("run", _show))
     holder["done"].wait()
 
-    if holder["intent"] == "paper_only":
+    if holder["choice"] == "paper_only":
         copies = _ask_paper_copies_modal()
         if copies <= 0:
             return ("cancel", 0)
         holder["copies"] = copies
 
-    return (holder["intent"], holder["copies"])
+    return (holder["choice"], holder["copies"])
 
 
 def _ask_paper_copies_modal() -> int:
@@ -5024,89 +5059,6 @@ def _ask_paper_copies_modal() -> int:
     return holder["value"]
 
 
-def _confirm_cached_intent(stem: str, cached: str, busy_close) -> str:
-    """캐시된 직전 선택 확인 — 1.5초 토스트로 알리고 자동 진행.
-    반환: cached(그대로 진행) 또는 "remodal"(사용자가 [변경] 클릭 → 호출 측이 모달 재호출).
-    X/Esc/Return 도 그대로 진행으로 처리(가장 흔한 의도).
-    """
-    label = _INTENT_LABEL.get(cached, cached)
-    holder: dict = {"result": cached, "done": threading.Event(), "closed": False}
-
-    def _show():
-        try:
-            busy_close()
-        except Exception:
-            pass
-        try:
-            win = tk.Toplevel()
-            win.title("직전 선택대로 진행")
-            win.configure(bg="#ffffff")
-            win.resizable(False, False)
-            try:
-                win.attributes("-topmost", True)
-            except Exception:
-                pass
-            frm = tk.Frame(win, bg="#ffffff")
-            frm.pack(padx=22, pady=16)
-            tk.Label(frm, text=f"이 파일은 직전에 [{label}] 로 진행했습니다.",
-                     bg="#ffffff", fg="#18181b", font=("맑은 고딕", 11, "bold"),
-                     anchor="w").pack(fill="x")
-            tk.Label(frm, text=f"파일 : {stem}.fs   ·   잠시 후 자동으로 진행합니다.",
-                     bg="#ffffff", fg="#71717a", font=("맑은 고딕", 9),
-                     anchor="w").pack(fill="x", pady=(4, 10))
-            pb = ttk.Progressbar(frm, mode="determinate", length=300, maximum=100)
-            pb.pack(fill="x")
-            btns = tk.Frame(frm, bg="#ffffff")
-            btns.pack(fill="x", pady=(12, 0))
-
-            def _close_with(result: str):
-                if holder["closed"]:
-                    return
-                holder["closed"] = True
-                holder["result"] = result
-                try:
-                    win.destroy()
-                except Exception:
-                    pass
-
-            tk.Button(btns, text="변경", command=lambda: _close_with("remodal"),
-                      font=("맑은 고딕", 9), bg="#e4e4e7", fg="#18181b",
-                      activebackground="#d4d4d8", relief="flat", bd=0, padx=12, pady=6,
-                      cursor="hand2").pack(side="right")
-            tk.Button(btns, text="지금 진행", command=lambda: _close_with(cached),
-                      font=("맑은 고딕", 9, "bold"), bg="#2563eb", fg="white",
-                      activebackground="#1d4ed8", relief="flat", bd=0, padx=12, pady=6,
-                      cursor="hand2").pack(side="right", padx=(0, 8))
-
-            win.protocol("WM_DELETE_WINDOW", lambda: _close_with(cached))
-            win.bind("<Escape>", lambda _e: _close_with(cached))
-            win.bind("<Return>", lambda _e: _close_with(cached))
-            win.update_idletasks()
-            ww, wh = win.winfo_reqwidth(), win.winfo_reqheight()
-            sw, _sh = win.winfo_screenwidth(), win.winfo_screenheight()
-            # 화면 상단 가운데 — 사용자가 FlexiSIGN 으로 돌아가기 쉽게 작업 영역 비움.
-            win.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+60")
-            try:
-                win.grab_set()
-                win.focus_force()
-            except Exception:
-                pass
-            # 1.5초 동안 progressbar 채우면서 자동 진행.
-            for i in range(1, 16):
-                win.after(i * 100,
-                          lambda v=i * 7: pb.configure(value=v) if pb.winfo_exists() else None)
-            win.after(1500, lambda: _close_with(cached))
-            win.wait_window()
-        except Exception as e:
-            ui_log(f"캐시 확인 토스트 오류: {e}")
-        finally:
-            holder["done"].set()
-
-    _ui_queue.put(("run", _show))
-    holder["done"].wait()
-    return holder["result"]
-
-
 def _process_printed_pdf(pdf_path: Path):
     """인쇄 폴더에 새 PDF 가 떨어졌을 때 호출.
     드롭다운 다이얼로그로 어떤 주문에 매칭할지 직원이 선택.
@@ -5185,33 +5137,23 @@ def _process_printed_pdf(pdf_path: Path):
     # 한 번 빗나가고(QR 미인식 → 폴백) 이후 종이/업로드는 더 늦게 일어나니 문제 없음.
     time.sleep(0.3)
 
-    # ── 인쇄 의도(intent) 선택 — 3옵션 모달 ────────────────────────────────────
-    # 사용자가 인쇄 누르면 [💾 웹반영&인쇄] / [💾 웹반영만] / [🖨 종이 인쇄만] 중 선택.
-    # 웹반영 계열은 .fs stem 별로 캐시 → 같은 파일 다음 인쇄 시 1.5초 토스트만 띄우고 자동
-    # 진행. 종이인쇄만은 캐시 안 함(초안 단계의 일회성 선택이 최종 단계까지 살아남는 사고 방지).
+    # ── 인쇄 직후 1단계 필터 모달 ──────────────────────────────────────────────
+    # [💾 웹 작업으로 진행] / [🖨 종이만 인쇄] 두 옵션. 종이만이면 QR/매칭 전부 건너뛰는
+    # fast path. 웹 작업이면 QR 감지 + 매칭 다이얼로그에서 [웹반영&인쇄 / 웹반영만 / 종이만]
+    # 라디오로 최종 의도 결정.
+    # (FlexiSIGN 창 상태는 자동저장 시 prior_status 보완용으로만 기억.)
     _intent_status, _intent_stem, _ = _flexisign_window_status()
-    intent_cache_key = _intent_stem if (_intent_status == "saved" and _intent_stem) else None
 
-    intent: str | None = None
-    paper_copies = 0
-    if intent_cache_key:
-        cached = _get_intent_cache(intent_cache_key)
-        if cached in ("web_print", "web_only"):
-            decision = _confirm_cached_intent(intent_cache_key, cached, _close_busy)
-            if decision != "remodal":
-                intent = decision
-                ui_log(f"인쇄 의도 — 캐시 적용 '{_INTENT_LABEL.get(intent, intent)}' ({intent_cache_key}.fs)")
-    if intent is None:
-        intent, paper_copies = _ask_print_intent_modal(intent_cache_key, _close_busy)
-        ui_log(f"인쇄 의도 — 모달 선택 '{intent}' (stem={intent_cache_key or '(unsaved)'}, copies={paper_copies})")
+    filter_choice, paper_copies = _ask_print_intent_modal(_intent_stem, _close_busy)
+    ui_log(f"인쇄 필터 — '{filter_choice}' (stem={_intent_stem or '(unsaved)'}, copies={paper_copies})")
 
-    if intent == "cancel":
-        ui_log(f"인쇄 — 의도 모달 취소: 종이/업로드 모두 생략 ({pdf_path.name})")
+    if filter_choice == "cancel":
+        ui_log(f"인쇄 — 필터 모달 취소: 종이/업로드 모두 생략 ({pdf_path.name})")
         _ui_queue.put(("run", _close_busy))
         _schedule_printed_pdf_cleanup(pdf_path)
         return
 
-    if intent == "paper_only":
+    if filter_choice == "paper_only":
         ui_log(f"인쇄 — [종이 인쇄만] {paper_copies}장 ({pdf_path.name}) — 저장/매칭/업로드 모두 생략")
         _ui_queue.put(("run", _close_busy))
         if paper_copies > 0:
@@ -5222,9 +5164,10 @@ def _process_printed_pdf(pdf_path: Path):
         _schedule_printed_pdf_cleanup(pdf_path)
         return
 
-    # 웹반영 계열 — 캐시 갱신(stem 있을 때만, 캐시 적용으로 도달했어도 동일 값 재기록).
-    if intent_cache_key:
-        _set_intent_cache(intent_cache_key, intent)
+    # filter_choice == "web_flow" — 매칭 다이얼로그가 최종 의도 결정. 일단 기본은 web_print 로
+    # 시작하고, 매칭 다이얼로그의 라디오로 사용자가 web_only/paper_only 로 바꾸면 sel["intent"]
+    # 가 그 값을 가져온다. 아래 로직은 sel["intent"] 를 받은 뒤 분기.
+    intent = "web_print"
 
     # 의도 모달이 busy 안내창을 닫아버렸으므로, 이후 QR 디코드 + 발주 목록 fetch 동안
     # 사용자에게 다시 진행 상태 보여줌(매칭/QR-create 다이얼로그가 뜨면서 닫는다).
@@ -5501,6 +5444,23 @@ def _process_printed_pdf(pdf_path: Path):
         _schedule_printed_pdf_cleanup(pdf_path)
         return
 
+    # 매칭 다이얼로그에서 최종 의도 결정 — 라디오 값을 받아 intent 로 반영한다.
+    intent = sel.get("intent") or intent
+    ui_log(f"인쇄 의도 — 매칭 다이얼로그 최종 결정 '{_INTENT_LABEL.get(intent, intent)}' ({pdf_path.name})")
+
+    # 라디오에서 [종이만 인쇄] 를 골랐다면 FlexiSIGN 저장/매칭/업로드 모두 건너뛰고 종이만.
+    # (매칭 다이얼로그에서 사용자가 '아 그냥 종이만 뽑을래' 로 마음 바꾼 케이스.)
+    if intent == "paper_only":
+        copies = int(sel.get("copies") or 0)
+        ui_log(f"인쇄 — 매칭 다이얼로그 [종이만 인쇄] {copies}장 ({pdf_path.name}) — 저장/업로드 생략")
+        if copies > 0:
+            try:
+                print_pdf_to_paper(pdf_path, copies=copies)
+            except Exception as e:
+                ui_log(f"종이 인쇄 실패: {e}")
+        _schedule_printed_pdf_cleanup(pdf_path)
+        return
+
     # 사용자가 매칭 다이얼로그에서 [✓ 적용하기] 또는 [매칭 안 함] 등 *진행* 의사를 표시한
     # 직후 FlexiSIGN 자동저장 시도. 이 시점 이후로는 patch_due_date / 업로드 / 종이 인쇄가
     # 차례로 일어나므로 .fs 가 인쇄 시점 상태로 디스크에 박혀 있어야 사무실/현장의 .fs ↔ PDF
@@ -5523,8 +5483,8 @@ def _process_printed_pdf(pdf_path: Path):
     # NOTE: 자동저장 결과 + 처리 결과를 한 번의 모달에 합쳐서 끝에 띄운다. 사용자가
     # "확인" 한 번만 클릭하면 끝. alert_kind 는 아래 분기에서 메시지 prefix 로 사용.
 
-    # [💾 웹반영만] 으로 진입한 경우 — 매칭 다이얼로그가 정해주는 copies 와 무관하게
-    # 종이 인쇄는 무조건 스킵. 아래 print_done 분기에서 sel.get("skip_print") 가 받는다.
+    # [웹반영만] 라디오 — 매칭 다이얼로그가 정해주는 copies 와 무관하게 종이 인쇄는
+    # 무조건 스킵. 아래 print_done 분기에서 sel.get("skip_print") 가 받는다.
     if intent == "web_only":
         sel["skip_print"] = True
 
