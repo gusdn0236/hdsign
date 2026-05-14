@@ -113,6 +113,10 @@
 .summary-completed .summary-count {
   color: #047857;
 }
+.summary-completed.is-selected {
+  background: #ecfdf5;
+  border-color: #047857;
+}
 
 /* 지연 필터 카드 — 빨간 강조. 0건이면 회색으로 죽이고 비활성. */
 .summary-overdue .summary-count {

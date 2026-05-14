@@ -225,7 +225,7 @@ public class AdminOrderController {
 
         if (order.getDeletedAt() != null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("message", "이미 휴지통에 있는 작업입니다."));
+                    .body(Map.of("message", "이미 작업완료로 이동된 작업입니다."));
         }
 
         if (order.getStatus() != Order.OrderStatus.COMPLETED) {
@@ -244,7 +244,7 @@ public class AdminOrderController {
 
         if (order.getDeletedAt() == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("message", "휴지통에 없는 작업입니다."));
+                    .body(Map.of("message", "작업완료 상태가 아닌 작업입니다."));
         }
 
         order.setDeletedAt(null);
@@ -262,7 +262,7 @@ public class AdminOrderController {
 
         if (order.getDeletedAt() == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("message", "휴지통에 있는 작업만 영구 삭제할 수 있습니다."));
+                    .body(Map.of("message", "작업완료 상태의 작업만 영구 삭제할 수 있습니다."));
         }
 
         orderArchiveService.purgeFilesKeepRecord(order);

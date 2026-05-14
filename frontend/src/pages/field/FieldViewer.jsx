@@ -611,7 +611,7 @@ export default function FieldViewer() {
                             type="button"
                             className="fv-archive-open"
                             onClick={() => setArchiveOpen(true)}
-                            title="거래처·발주시기·파일명으로 지난 작업지시서를 찾습니다 (휴지통에서 정리된 옛 건 포함)"
+                            title="거래처·발주시기·파일명으로 지난 작업지시서를 찾습니다 (작업완료에서 정리된 옛 건 포함)"
                         >
                             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                 <circle cx="7" cy="7" r="4.5" />
@@ -945,7 +945,7 @@ export default function FieldViewer() {
                         </div>
                         <p className="fv-modal-desc">
                             거래처 · 발주시기 · 파일명 중 <b>아는 것만</b> 입력하세요. 조건을 더 줄수록 더 좁게 걸러집니다.
-                            휴지통에서 정리된 옛 지시서도 검색됩니다 — <b>[FS에서 열기]</b> 로 거래처 폴더의 .fs 를 바로 엽니다.
+                            작업완료에서 정리된 옛 지시서도 검색됩니다 — <b>[FS에서 열기]</b> 로 거래처 폴더의 .fs 를 바로 엽니다.
                         </p>
                         <div className="fv-archive-form">
                             <label className="fv-archive-field fv-archive-grow">

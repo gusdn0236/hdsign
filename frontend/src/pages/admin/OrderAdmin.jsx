@@ -255,7 +255,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         }),
       ]);
       if (!activeRes.ok) throw new Error("주문 목록을 불러오지 못했습니다.");
-      if (!trashRes.ok) throw new Error("휴지통을 불러오지 못했습니다.");
+      if (!trashRes.ok) throw new Error("작업완료 목록을 불러오지 못했습니다.");
       if (!archiveRes.ok) throw new Error("아카이브를 불러오지 못했습니다.");
       const activeData = await activeRes.json();
       const trashData = await trashRes.json();
@@ -685,9 +685,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return () => window.removeEventListener("keydown", handler);
   }, [selectedOrderId, lightboxIndex, currentOrderIndex, visibleOrders, reviewSession, reviewStage, reviewChoice, orders]);
 
-  // 메인 필터(접수/작업중/지연) 는 상단 큰 요약카드 클릭. 휴지통·아카이브만 별도의 작은 탭으로 유지.
+  // 메인 필터(접수/작업중/작업완료/지연) 는 상단 큰 요약카드 클릭. 아카이브만 작은 알약 탭으로 유지.
   const filterTabs = [
-    { key: "TRASH", label: "휴지통", count: trashOrders.length },
     { key: "ARCHIVE", label: "아카이브", count: archiveOrders.length },
   ];
 
@@ -718,10 +717,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   const moveCompletedToTrash = async (order) => {
     if (!order || order.status !== "COMPLETED") {
-      setFeedback({ type: "error", msg: "완료된 요청만 휴지통으로 이동할 수 있습니다." });
+      setFeedback({ type: "error", msg: "완료된 요청만 작업완료로 이동할 수 있습니다." });
       return;
     }
-    if (!window.confirm(`"${order.orderNumber}" 요청을 휴지통으로 이동하시겠습니까?\n${TRASH_RETENTION_DAYS}일 후 자동 삭제되며, 그 전에 복원할 수 있습니다.`)) {
+    if (!window.confirm(`"${order.orderNumber}" 요청을 작업완료로 이동하시겠습니까?\n${TRASH_RETENTION_DAYS}일 후 자동 삭제되며, 그 전에 복원할 수 있습니다.`)) {
       return;
     }
 
@@ -734,7 +733,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
       if (!res.ok) {
         const errorBody = await res.json().catch(() => ({}));
-        throw new Error(errorBody.message || "휴지통 이동에 실패했습니다.");
+        throw new Error(errorBody.message || "작업완료 이동에 실패했습니다.");
       }
 
       setOrders((prev) => prev.filter((item) => item.id !== order.id));
@@ -743,9 +742,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         ...prev,
       ]);
       if (selectedOrderId === order.id) setSelectedOrderId(null);
-      setFeedback({ type: "success", msg: "휴지통으로 이동했습니다." });
+      setFeedback({ type: "success", msg: "작업완료로 이동했습니다." });
     } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "휴지통 이동 중 오류가 발생했습니다." });
+      setFeedback({ type: "error", msg: err.message || "작업완료 이동 중 오류가 발생했습니다." });
     } finally {
       setTrashingOrderId(null);
     }
@@ -759,7 +758,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setFeedback({ type: "error", msg: "선택된 항목이 없습니다." });
       return;
     }
-    if (!window.confirm(`선택한 ${ids.length}건을 휴지통으로 이동하시겠습니까?\n${TRASH_RETENTION_DAYS}일 후 자동 삭제되며, 그 전에 복원할 수 있습니다.`)) {
+    if (!window.confirm(`선택한 ${ids.length}건을 작업완료로 이동하시겠습니까?\n${TRASH_RETENTION_DAYS}일 후 자동 삭제되며, 그 전에 복원할 수 있습니다.`)) {
       return;
     }
     setBulkTrashing(true);
@@ -788,7 +787,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       exitBulkSelect();
       const failed = results.length - movedIds.size;
       if (failed === 0) {
-        setFeedback({ type: "success", msg: `${movedIds.size}건을 휴지통으로 이동했습니다.` });
+        setFeedback({ type: "success", msg: `${movedIds.size}건을 작업완료로 이동했습니다.` });
       } else {
         setFeedback({ type: "error", msg: `${movedIds.size}건 이동, ${failed}건 실패` });
       }
@@ -921,7 +920,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       const failed =
         (trashResults.length - trashedIds.length) + (rescheduleResults.length - rescheduled.length);
       const parts = [];
-      if (trashedIds.length > 0) parts.push(`완료·휴지통 이동 ${trashedIds.length}건`);
+      if (trashedIds.length > 0) parts.push(`작업완료 이동 ${trashedIds.length}건`);
       if (rescheduled.length > 0) parts.push(`납기 수정 ${rescheduled.length}건`);
       if (failed > 0) parts.push(`실패 ${failed}건`);
       setFeedback({
@@ -1021,10 +1020,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   const bulkPurgeTrash = async () => {
     if (trashOrders.length === 0) {
-      setFeedback({ type: "error", msg: "휴지통이 비어 있습니다." });
+      setFeedback({ type: "error", msg: "작업완료 목록이 비어 있습니다." });
       return;
     }
-    if (!window.confirm(`휴지통의 ${trashOrders.length}건을 모두 영구 삭제하시겠습니까?\n첨부 파일까지 즉시 삭제되며 되돌릴 수 없습니다.`)) {
+    if (!window.confirm(`작업완료의 ${trashOrders.length}건을 모두 영구 삭제하시겠습니까?\n첨부 파일까지 즉시 삭제되며 되돌릴 수 없습니다.`)) {
       return;
     }
     setBulkPurging(true);
@@ -1202,7 +1201,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             )}
             {isTrash ? (
               <span className="status-badge status-trash">
-                {daysLeft === null ? "휴지통" : `${daysLeft}일 남음`}
+                {daysLeft === null ? "작업완료" : `${daysLeft}일 남음`}
               </span>
             ) : isArchive ? (
               <span className="status-badge status-trash">아카이브</span>
@@ -1315,9 +1314,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     className="next-status-btn action-trash"
                     onClick={() => moveCompletedToTrash(order)}
                     disabled={trashing}
-                    title="이미 완료 — 휴지통으로 이동"
+                    title="이미 완료 — 작업완료로 이동"
                   >
-                    {trashing ? "이동 중..." : "휴지통으로"}
+                    {trashing ? "이동 중..." : "작업완료로"}
                   </button>
                 )}
               </>
@@ -1355,6 +1354,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         >
           <span className="summary-count">{statusCounts.IN_PROGRESS + statusCounts.COMPLETED}</span>
           <span className="summary-label">작업중</span>
+        </button>
+        <button
+          type="button"
+          className={`summary-card summary-completed ${activeFilter === "TRASH" ? "is-selected" : ""}`}
+          onClick={() => setActiveFilter("TRASH")}
+          disabled={!!reviewSession}
+          aria-pressed={activeFilter === "TRASH"}
+          title={`완료검토를 마친 항목 — ${TRASH_RETENTION_DAYS}일 후 자동 정리`}
+        >
+          <span className="summary-count">{trashOrders.length}</span>
+          <span className="summary-label">작업완료</span>
         </button>
         {isOrderPage && (
           <button
@@ -1471,7 +1481,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
       {activeFilter === "TRASH" && trashOrders.length > 0 && (
         <div className="bulk-action-row">
-          <span className="bulk-action-text">휴지통 {trashOrders.length}건</span>
+          <span className="bulk-action-text">작업완료 {trashOrders.length}건</span>
           <button
             type="button"
             className="bulk-delete-btn"
@@ -1484,7 +1494,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       )}
       {activeFilter === "TRASH" && (
         <p className="trash-hint">
-          휴지통의 항목은 삭제일로부터 {TRASH_RETENTION_DAYS}일 후 자동으로 영구 삭제됩니다.
+          작업완료의 항목은 이동일로부터 {TRASH_RETENTION_DAYS}일 후 자동으로 영구 삭제됩니다.
           영구 삭제 시 첨부·도안·미리보기·지시서 PDF 는 사라지지만, 현장 프로그램에서 옛 지시서를 다시 찾을 수 있도록
           거래처·제목·발주일·납기·사양메모·파일명 등 최소 정보는 '아카이브'에 남습니다.
         </p>
@@ -1502,7 +1512,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             const list = activeFilter === "TRASH" ? trashOrders : archiveOrders;
             if (loading) return <div className="order-empty">요청 목록을 불러오는 중입니다.</div>;
             if (list.length === 0) {
-              return <div className="order-empty">{activeFilter === "TRASH" ? "휴지통이 비어 있습니다." : "아카이브가 비어 있습니다."}</div>;
+              return <div className="order-empty">{activeFilter === "TRASH" ? "작업완료된 항목이 없습니다." : "아카이브가 비어 있습니다."}</div>;
             }
             return <div className="order-card-grid">{list.map(renderOrderCard)}</div>;
           })()}
@@ -1559,7 +1569,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   className="calendar-review-btn"
                   onClick={() => startBulkCompleteReview()}
                   disabled={!!reviewSession}
-                  title={`완료 검토 대상 ${overdueCount}건 · 한 건씩 PDF 보며 완료(휴지통) / 납기수정 결정`}
+                  title={`완료 검토 대상 ${overdueCount}건 · 한 건씩 PDF 보며 완료(작업완료) / 납기수정 결정`}
                 >
                   {reviewSession ? "검토 중..." : `완료 검토 ${overdueCount}건`}
                 </button>
@@ -1610,7 +1620,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             })}
           </div>
 
-          {/* 다중 선택 → 일괄 휴지통 (접수·작업중 탭). 달력 아래, 작업카드 위. */}
+          {/* 다중 선택 → 일괄 작업완료 (접수·작업중 탭). 달력 아래, 작업카드 위. */}
           {bulkSelectAvailable && (() => {
             const allChecked = visibleOrders.length > 0 && visibleOrders.every((o) => bulkSelectedIds.has(o.id));
             return (
@@ -1621,7 +1631,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     className="bulk-select-toggle"
                     onClick={() => setBulkSelectMode(true)}
                     disabled={!!reviewSession || visibleOrders.length === 0}
-                    title="여러 건을 골라 한꺼번에 휴지통으로 이동"
+                    title="여러 건을 골라 한꺼번에 작업완료로 이동"
                   >
                     ☑ 여러 건 선택
                   </button>
@@ -1644,7 +1654,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                       onClick={bulkMoveToTrash}
                       disabled={bulkTrashing || bulkSelectedIds.size === 0}
                     >
-                      {bulkTrashing ? "이동 중..." : `휴지통으로 이동${bulkSelectedIds.size ? ` (${bulkSelectedIds.size})` : ""}`}
+                      {bulkTrashing ? "이동 중..." : `작업완료로 이동${bulkSelectedIds.size ? ` (${bulkSelectedIds.size})` : ""}`}
                     </button>
                     <button type="button" className="sort-btn" onClick={exitBulkSelect}>
                       취소
@@ -1892,7 +1902,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 <span className="modal-label">작업 상태</span>
                 {selectedOrder.deletedAt ? (
                   <span className="status-badge status-trash">
-                    휴지통 · {daysLeftUntilPurge(selectedOrder.deletedAt) ?? 0}일 남음
+                    작업완료 · {daysLeftUntilPurge(selectedOrder.deletedAt) ?? 0}일 남음
                   </span>
                 ) : (
                   <span className={`status-badge ${(STATUS_META[selectedOrder.status] || STATUS_META.RECEIVED).className}`}>
@@ -1953,7 +1963,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           disabled={trashingOrderId === selectedOrder.id}
                           onClick={() => moveCompletedToTrash(selectedOrder)}
                         >
-                          {trashingOrderId === selectedOrder.id ? "이동 중..." : "휴지통으로"}
+                          {trashingOrderId === selectedOrder.id ? "이동 중..." : "작업완료로"}
                         </button>
                       )}
                     </>
