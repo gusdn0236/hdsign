@@ -1163,10 +1163,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       } else {
         setFeedback({ type: "error", msg: body.message || "파일을 찾지 못해 거래처 폴더를 열었습니다." });
       }
-    } catch {
+    } catch (err) {
       setFeedback({
         type: "error",
-        msg: "에이전트 연결 실패 — 트레이의 HD사인 작업뷰어 프로그램이 켜져있는지 확인하세요.",
+        msg: err.message || "에이전트 연결 실패 — 트레이의 HD사인 작업뷰어 프로그램이 켜져있는지 확인하세요.",
       });
     } finally {
       setOpeningFsId(null);

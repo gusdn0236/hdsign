@@ -45,7 +45,7 @@ DEFAULT_CONFIG = {
     # 백엔드 API 베이스. 운영/개발 모두 같은 키.
     "api_base": "https://hdsign-production.up.railway.app",
     # 사무실 워처와 동일한 키 — 같은 config 를 공유해도 안전하도록 같은 이름 사용.
-    "network_customer_base": r"\\Main\공유\거래처",
+    "network_customer_base": r"\\Main\현대공유\00000 2026년 자료\000 2026년 거래처",
     # FlexiSIGN 실행파일. 빈 문자열("") 이거나 경로가 존재하지 않으면 자동 탐지
     # (레지스트리의 .fs 연결 프로그램 → SAi 설치폴더 글롭). PC마다 설치 경로가 달라도
     # 보통 그대로 두면 됨. 강제 지정이 필요한 예외 PC에서만 채운다.
@@ -63,6 +63,9 @@ DEFAULT_CONFIG = {
     "allowed_origins": [
         "https://hdsigncraft.com",
         "https://www.hdsigncraft.com",
+        "https://hdsign-production.up.railway.app",
+        "https://hdsign.com",
+        "https://www.hdsign.com",
         "http://localhost:5173",
     ],
     # .fs stem 유사도 폴백 임계값(0~1). 0.85 = 글자 85% 유사할 때만 자동 채택.
@@ -550,6 +553,7 @@ def open_in_flexisign(fs_file: Path, exe_path: str) -> tuple[bool, str]:
     try:
         subprocess.Popen(
             [exe_path, str(fs_file)],
+            cwd=str(fs_file.parent),
             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
             close_fds=True,
         )
@@ -606,6 +610,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, X-HDSign-Field")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
             self.send_header("Access-Control-Max-Age", "600")
 
     def _send_json(self, status: int, payload: dict, origin: str | None) -> None:
@@ -756,6 +761,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
         return {
             "opened": True,
             "matchedFile": fs_file.name,
+            "matchedFolder": str(fs_file.parent),
             "matchKind": reason,
             "customerFolder": str(customer_folder),
         }
