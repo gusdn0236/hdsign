@@ -5146,12 +5146,17 @@ def _process_printed_pdf(pdf_path: Path):
             return
         _seen_printed.add(key)
 
-    # ── "처리 중" 창 ── 인쇄물 감지 후 QR 디코드 + 진행중 지시서 목록 fetch 가 끝나 실제
-    # 매칭/거래처 다이얼로그가 뜨기 전까지 1~3초쯤 빈 화면이라 사용자가 헷갈린다 → 그동안
-    # 작은 진행 표시 창을 띄워 둔다. 실제 다이얼로그가 뜨기 직전(또는 이 함수가 끝날 때) 닫는다.
+    # ── "처리 중" 창 ── 인쇄물 감지~매칭 다이얼로그 사이 + 매칭 확정 후 패치/업로드/인쇄
+    # 진행 단계까지 빈 화면을 메우는 진행 안내. 단계마다 메시지가 다르므로 _show_busy 가
+    # title/subtitle 을 받는다. 기존 창이 있으면 먼저 닫고 새로 띄움.
     _busy: dict = {"win": None, "pb": None}
 
-    def _show_busy():
+    def _show_busy(title: str | None = None, subtitle: str | None = None):
+        # 이미 열린 창이 있으면 닫고 새로 그린다 — 같은 처리 안에서 단계 전환할 때 사용.
+        if _busy.get("win") is not None:
+            _close_busy()
+        title_text = title or "인쇄물을 확인하고 있습니다…"
+        sub_text = subtitle or "QR 코드 인식 · 발주 목록 불러오는 중 — 잠시만 기다려 주세요."
         try:
             w = tk.Toplevel()
             w.title("인쇄물 처리 중")
@@ -5163,9 +5168,9 @@ def _process_printed_pdf(pdf_path: Path):
                 pass
             fr = tk.Frame(w, bg="#ffffff")
             fr.pack(padx=28, pady=22)
-            tk.Label(fr, text="인쇄물을 확인하고 있습니다…", bg="#ffffff", fg="#18181b",
+            tk.Label(fr, text=title_text, bg="#ffffff", fg="#18181b",
                      font=("맑은 고딕", 12, "bold"), anchor="w").pack(fill="x")
-            tk.Label(fr, text="QR 코드 인식 · 발주 목록 불러오는 중 — 잠시만 기다려 주세요.",
+            tk.Label(fr, text=sub_text,
                      bg="#ffffff", fg="#71717a", font=("맑은 고딕", 9), anchor="w").pack(fill="x", pady=(6, 12))
             pb = ttk.Progressbar(fr, mode="indeterminate", length=300)
             pb.pack(fill="x")
@@ -5522,10 +5527,15 @@ def _process_printed_pdf(pdf_path: Path):
         copies = int(sel.get("copies") or 0)
         ui_log(f"인쇄 — 매칭 다이얼로그 [종이만 인쇄] {copies}장 ({pdf_path.name}) — 저장/업로드 생략")
         if copies > 0:
+            _ui_queue.put(("run", lambda c=copies: _show_busy(
+                "종이 인쇄 중…",
+                f"{c}장 출력 중 — 잠시만 기다려 주세요.",
+            )))
             try:
                 print_pdf_to_paper(pdf_path, copies=copies)
             except Exception as e:
                 ui_log(f"종이 인쇄 실패: {e}")
+            _ui_queue.put(("run", _close_busy))
         _schedule_printed_pdf_cleanup(pdf_path)
         return
 
@@ -5551,6 +5561,17 @@ def _process_printed_pdf(pdf_path: Path):
     # NOTE: 자동저장 결과 + 처리 결과를 한 번의 모달에 합쳐서 끝에 띄운다. 사용자가
     # "확인" 한 번만 클릭하면 끝. alert_kind 는 아래 분기에서 메시지 prefix 로 사용.
 
+    # 자동 저장 이후 patch/업로드/(필요 시) 인쇄가 네트워크 + I/O 라 수 초 걸린다 — 진행 안내.
+    # 의도별로 다음 단계 표현을 다르게(상세 결과 모달과 일관성 유지).
+    _PROGRESS_SUB = {
+        "web_print": "저장 완료 · 웹 업로드 → 종이 인쇄 — 잠시만 기다려 주세요.",
+        "web_only":  "저장 완료 · 웹 업로드 중 — 잠시만 기다려 주세요.",
+    }
+    _ui_queue.put(("run", lambda i=intent: _show_busy(
+        "웹에 반영 중…",
+        _PROGRESS_SUB.get(i, "처리 중 — 잠시만 기다려 주세요."),
+    )))
+
     # [웹반영만] 라디오 — 매칭 다이얼로그가 정해주는 copies 와 무관하게 종이 인쇄는
     # 무조건 스킵. 아래 print_done 분기에서 sel.get("skip_print") 가 받는다.
     if intent == "web_only":
@@ -5562,6 +5583,7 @@ def _process_printed_pdf(pdf_path: Path):
     copies_raw = sel.get("copies")
     copies = int(copies_raw) if copies_raw is not None else 1
     if order_number is None:
+        _ui_queue.put(("run", _close_busy))
         if intent == "web_only":
             # 웹반영만 의도였는데 매칭이 안 됨 — 업로드도 인쇄도 안 일어남, 명시적으로 안내.
             ui_log(f"인쇄 — [웹반영만] + 매칭 안 함: 아무 작업도 수행 안 됨 ({pdf_path.name})")
@@ -5625,6 +5647,9 @@ def _process_printed_pdf(pdf_path: Path):
     else:
         print_pdf_to_paper(pdf_path, copies=copies)
         print_done = True
+
+    # 처리 결과 알림 직전 — '웹에 반영 중' 창 닫고 결과 모달로 교체.
+    _ui_queue.put(("run", _close_busy))
 
     # 처리 결과 알림 — 자동저장 결과까지 한 모달에 합쳐서 끝에 한 번만 띄움.
     if upload_ok:
