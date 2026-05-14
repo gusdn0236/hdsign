@@ -3797,10 +3797,24 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         # 라디오에서 [종이만 인쇄] 를 골랐다면 매칭/납기 검증 없이 종이만 출력하고 끝낸다.
         # 호출 측은 sel.get("order_number") is None + intent=="paper_only" 로 알아챈다.
         if intent_var.get() == "paper_only":
+            paper_copies = _committed_total()
+            if paper_copies <= 0:
+                # 분배함 슬롯을 안 눌러 매수가 0 인데 [✓ 종이만 인쇄] 를 눌렀음 — 그냥 진행하면
+                # 0장이 인쇄되어 사용자는 "왜 안 나오지?" 가 됨. 명시적으로 알리고 막는다.
+                try:
+                    messagebox.showwarning(
+                        "매수 미입력",
+                        "종이 인쇄 매수가 0장입니다.\n\n"
+                        "우측 분배함에서 슬롯을 클릭해 매수를 정한 뒤\n"
+                        "다시 [✓ 종이만 인쇄] 를 눌러주세요.",
+                    )
+                except Exception:
+                    pass
+                return
             result["value"] = {
                 "order_number": None,
                 "intent": "paper_only",
-                "copies": _committed_total(),
+                "copies": paper_copies,
                 "skip_print": False,
                 "department_tags": [],
                 "department_slots": [],
@@ -3932,25 +3946,52 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     btns_section.pack(side="bottom", fill="x", pady=(0, 4))
     tk.Frame(form_col, bg=BORDER, height=1).pack(side="bottom", fill="x", pady=(8, 6))
 
-    # 인쇄 의도 라디오 — 최종 결정. 사용자가 [웹반영&인쇄/웹반영만/종이만] 중 고른다.
+    # 인쇄 의도 — 최종 결정. 세그먼트 버튼 3개 ([웹반영&인쇄/웹반영만/종이만]) 중 하나 선택.
     # 캐시·첫 모달 의도 없이 매번 이 자리에서 결정 → 직전 선택이 굳어지는 사고 방지.
     intent_section = tk.Frame(form_col, bg=BG)
     intent_section.pack(side="bottom", fill="x", pady=(2, 0))
     tk.Label(intent_section, text="처리 방식",
              bg=BG, fg=LABEL_FG, font=("맑은 고딕", 9, "bold"),
-             anchor="w").pack(fill="x")
-    _RADIO_LABELS = [
-        ("web_print", "웹반영 & 인쇄"),
-        ("web_only", "웹반영만 (종이 인쇄 없음)"),
-        ("paper_only", "종이만 인쇄 (웹 업로드 없음)"),
+             anchor="w").pack(fill="x", pady=(0, 5))
+
+    seg_row = tk.Frame(intent_section, bg=BG)
+    seg_row.pack(fill="x")
+
+    # 세그먼트 버튼 — 선택 시 색 칠. (val, 라벨, 선택색).
+    _SEG_DEFS = [
+        ("web_print",  "웹반영 & 인쇄", "#10b981"),  # 에메랄드
+        ("web_only",   "웹반영만",       "#2563eb"),  # 블루
+        ("paper_only", "종이만",         "#52525b"),  # 다크그레이
     ]
-    for _val, _txt in _RADIO_LABELS:
-        tk.Radiobutton(
-            intent_section, text=_txt, value=_val, variable=intent_var,
-            bg=BG, fg=TITLE_FG, font=("맑은 고딕", 9),
-            activebackground=BG, selectcolor=BG_SOFT,
-            anchor="w", padx=2, pady=1, cursor="hand2",
-        ).pack(fill="x")
+    _seg_widgets: dict = {}  # val -> (frame, label, selected_bg)
+
+    def _on_seg_click(val):
+        intent_var.set(val)
+
+    for _i, (_val, _txt, _on_bg) in enumerate(_SEG_DEFS):
+        _pad_right = (0, 0) if _i == len(_SEG_DEFS) - 1 else (0, 5)
+        _fr = tk.Frame(seg_row, bg=BG_SOFT, cursor="hand2",
+                       highlightbackground=BORDER, highlightthickness=1)
+        _fr.pack(side="left", fill="both", expand=True, padx=_pad_right)
+        _lbl = tk.Label(_fr, text=_txt, bg=BG_SOFT, fg=LABEL_FG,
+                        font=("맑은 고딕", 10, "bold"),
+                        padx=4, pady=9, cursor="hand2")
+        _lbl.pack(fill="both", expand=True)
+        _seg_widgets[_val] = (_fr, _lbl, _on_bg)
+        _fr.bind("<Button-1>", lambda _e, v=_val: _on_seg_click(v))
+        _lbl.bind("<Button-1>", lambda _e, v=_val: _on_seg_click(v))
+
+    def _refresh_seg_visuals(*_a):
+        cur = intent_var.get()
+        for val, (fr, lbl, on_bg) in _seg_widgets.items():
+            if val == cur:
+                fr.configure(bg=on_bg, highlightbackground=on_bg, highlightthickness=1)
+                lbl.configure(bg=on_bg, fg="white")
+            else:
+                fr.configure(bg=BG_SOFT, highlightbackground=BORDER, highlightthickness=1)
+                lbl.configure(bg=BG_SOFT, fg=LABEL_FG)
+    intent_var.trace_add("write", _refresh_seg_visuals)
+    _refresh_seg_visuals()
 
     # 1행: 메인 액션 — 풀 폭, 강조. 라벨은 intent 라디오를 따라 동적으로 바뀐다.
     _INTENT_BTN_LABEL = {
