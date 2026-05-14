@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
@@ -7,6 +7,8 @@ import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import "./OrderAdmin.css";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+// 현장 작업뷰어 에이전트(127.0.0.1) — 트레이에 떠 있을 때만 동작. 폴링 없이 클릭 시 한 번만 호출.
+const AGENT_URL = import.meta.env.VITE_HDSIGN_AGENT_URL || "http://127.0.0.1:17345";
 
 const STATUS_META = {
   RECEIVED: { label: "접수", className: "status-received" },
@@ -179,8 +181,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const pageTitle = isOrderPage ? "발주 관리" : "견적 관리";
   const [orders, setOrders] = useState([]);
   const [trashOrders, setTrashOrders] = useState([]);
-  // 아카이브 — 영구삭제되어 R2 파일은 모두 사라지고, 현장 프로그램 검색용 최소 레코드만 남은 건.
-  const [archiveOrders, setArchiveOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState(null);
   // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
@@ -204,6 +204,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [restoringOrderId, setRestoringOrderId] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [openingFsId, setOpeningFsId] = useState(null);
   const [bulkPurging, setBulkPurging] = useState(false);
   // 접수·작업중 탭의 다중 선택 → 일괄 휴지통 이동. 선택모드일 땐 카드 클릭이 모달 대신 체크 토글.
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
@@ -243,28 +244,22 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const loadOrders = async () => {
     setLoading(true);
     try {
-      const [activeRes, trashRes, archiveRes] = await Promise.all([
+      const [activeRes, trashRes] = await Promise.all([
         fetch(`${BASE_URL}/api/admin/orders`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
         fetch(`${BASE_URL}/api/admin/orders/trash`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch(`${BASE_URL}/api/admin/orders/archive`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
       ]);
       if (!activeRes.ok) throw new Error("주문 목록을 불러오지 못했습니다.");
       if (!trashRes.ok) throw new Error("작업완료 목록을 불러오지 못했습니다.");
-      if (!archiveRes.ok) throw new Error("아카이브를 불러오지 못했습니다.");
       const activeData = await activeRes.json();
       const trashData = await trashRes.json();
-      const archiveData = await archiveRes.json();
       const filterByType = (arr) =>
         Array.isArray(arr) ? arr.filter((o) => o.requestType === requestType) : [];
       setOrders(filterByType(activeData));
       setTrashOrders(filterByType(trashData));
-      setArchiveOrders(filterByType(archiveData));
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "주문 목록 조회 중 오류가 발생했습니다." });
     } finally {
@@ -308,9 +303,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     () =>
       orders.find((order) => order.id === selectedOrderId) ||
       trashOrders.find((order) => order.id === selectedOrderId) ||
-      archiveOrders.find((order) => order.id === selectedOrderId) ||
       null,
-    [orders, trashOrders, archiveOrders, selectedOrderId]
+    [orders, trashOrders, selectedOrderId]
   );
 
   const selectedFiles = useMemo(() => {
@@ -432,7 +426,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   const statusFilteredOrders = useMemo(() => {
     if (activeFilter === "TRASH") return trashOrders;
-    if (activeFilter === "ARCHIVE") return archiveOrders;
     // 지연 — 휴지통 가지 않은 모든 활성 주문 중 dueDate 가 오늘 이전. 상태(IN_PROGRESS/COMPLETED/RECEIVED)
     // 무관 — overdueCount 와 같은 기준이라 수치와 보이는 카드 수가 일치.
     if (activeFilter === "OVERDUE") {
@@ -445,7 +438,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       return filteredOrders.filter((o) => o.status === "IN_PROGRESS" || o.status === "COMPLETED");
     }
     return filteredOrders.filter((order) => order.status === activeFilter);
-  }, [activeFilter, filteredOrders, trashOrders, archiveOrders]);
+  }, [activeFilter, filteredOrders, trashOrders]);
 
   const availableClients = useMemo(() => {
     const set = new Set();
@@ -470,16 +463,22 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     });
   }, [statusFilteredOrders, clientSearch, calendarClientChips]);
 
-  // 'YYYY-MM-DD' → 그 날짜에 납기인 주문 수.
+  // 캘린더 그룹 기준 날짜를 활성 탭에 맞춰 고른다 — 일반 탭은 납기(dueDate),
+  // 작업완료 탭은 작업완료 처리일(deletedAt). 작업완료 카드는 모두 deletedAt 이 박혀 있다.
+  const isTrashView = activeFilter === "TRASH";
+  const calendarDateOf = useCallback((o) => (isTrashView ? o.deletedAt : o.dueDate), [isTrashView]);
+
+  // 'YYYY-MM-DD' → 그 날짜에 해당하는 주문 수 (납기 또는 작업완료 처리일 기준).
   const calendarCountByDate = useMemo(() => {
     const map = new Map();
     calendarOrdersBase.forEach((o) => {
-      if (!o.dueDate) return;
-      const d = String(o.dueDate).split("T")[0];
+      const raw = calendarDateOf(o);
+      if (!raw) return;
+      const d = String(raw).split("T")[0];
       map.set(d, (map.get(d) || 0) + 1);
     });
     return map;
-  }, [calendarOrdersBase]);
+  }, [calendarOrdersBase, calendarDateOf]);
 
   // 6주 × 7일 = 42칸. 첫째 주는 이전 달, 마지막 주는 다음 달로 채워 항상 6줄.
   const calendarCells = useMemo(() => {
@@ -507,28 +506,36 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return cells;
   }, [calendarMonth]);
 
-  // 선택 일자에 납기인 주문들 — 가까운 등록 순(최근 등록 먼저)으로.
+  // 선택 일자에 해당하는 주문들 — 일반 탭은 납기일, 작업완료 탭은 작업완료 처리일.
+  // 정렬은 등록일(작업완료는 처리일 자체) 최근 순.
   const calendarSelectedOrders = useMemo(() => {
     if (!selectedCalendarDate) return [];
     return calendarOrdersBase
-      .filter((o) => o.dueDate && String(o.dueDate).split("T")[0] === selectedCalendarDate)
+      .filter((o) => {
+        const raw = calendarDateOf(o);
+        return raw && String(raw).split("T")[0] === selectedCalendarDate;
+      })
       .sort((a, b) => {
-        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        const ka = isTrashView ? a.deletedAt : a.createdAt;
+        const kb = isTrashView ? b.deletedAt : b.createdAt;
+        const ta = ka ? new Date(ka).getTime() : 0;
+        const tb = kb ? new Date(kb).getTime() : 0;
         return tb - ta;
       });
-  }, [calendarOrdersBase, selectedCalendarDate]);
+  }, [calendarOrdersBase, selectedCalendarDate, calendarDateOf, isTrashView]);
 
   const todayYmd = useMemo(() => formatYmd(new Date()), []);
 
   // 전체보기 모드 — selectedCalendarDate === null. 거래처 필터 적용된 전체 주문을
-  // 날짜 그룹으로 정렬해 한 화면에 노출. 가까운 납기 먼저, 납기 미정은 맨 끝.
+  // 날짜 그룹으로 정렬해 한 화면에 노출. 일반 탭은 가까운 납기 먼저(납기 미정 맨 끝),
+  // 작업완료 탭은 최근에 처리된 날짜 먼저(처리일은 모두 박혀 있어 "none" 그룹 없음).
   const isAllView = selectedCalendarDate === null;
   const calendarAllGroups = useMemo(() => {
     if (!isAllView) return [];
     const map = new Map();
     calendarOrdersBase.forEach((o) => {
-      const key = o.dueDate ? String(o.dueDate).split("T")[0] : "none";
+      const raw = calendarDateOf(o);
+      const key = raw ? String(raw).split("T")[0] : "none";
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(o);
     });
@@ -536,15 +543,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       .sort(([a], [b]) => {
         if (a === "none") return 1;
         if (b === "none") return -1;
-        return a.localeCompare(b);
+        return isTrashView ? b.localeCompare(a) : a.localeCompare(b);
       })
       .map(([key, list]) => ({
         key,
         dateLabel: formatGroupDateLabel(key),
-        badge: key === "none" ? null : getDueBadge(key),
+        badge: isTrashView || key === "none" ? null : getDueBadge(key),
         list,
       }));
-  }, [isAllView, calendarOrdersBase]);
+  }, [isAllView, calendarOrdersBase, calendarDateOf, isTrashView]);
 
   const calendarPrevMonth = () =>
     setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
@@ -557,10 +564,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   };
   const calendarShowAll = () => setSelectedCalendarDate(null);
 
-  // 지연 필터 진입 시 자동 전체보기 — 과거 날짜 산재라 단일 일자 뷰면 빈 화면이 흔함.
-  // 한 번에 모든 지연 카드를 날짜별 그룹으로 보여줘야 즉시 작업 가능.
+  // 지연·작업완료 필터 진입 시 자동 전체보기 — 과거 날짜 산재라 단일 일자 뷰면 빈 화면이 흔함.
+  // 한 번에 모든 카드를 날짜별 그룹으로 보여줘야 즉시 작업 가능.
   useEffect(() => {
-    if (activeFilter === "OVERDUE") {
+    if (activeFilter === "OVERDUE" || activeFilter === "TRASH") {
       setSelectedCalendarDate(null);
     }
   }, [activeFilter]);
@@ -584,14 +591,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setBulkSelectedIds(new Set());
   };
 
-  // 모달 prev/next 의 "현재 화면" 대상 — 휴지통은 평면 그리드 전체,
-  // 달력 전체보기면 필터된 모든 주문, 그 외엔 선택 일자 카드.
+  // 모달 prev/next 의 "현재 화면" 대상 — 달력 전체보기면 필터된 모든 주문, 그 외엔 선택 일자 카드.
+  // 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과를 들고 있다.
   const visibleOrders = useMemo(() => {
-    if (activeFilter === "TRASH") return trashOrders;
-    if (activeFilter === "ARCHIVE") return archiveOrders;
     if (isAllView) return calendarOrdersBase;
     return calendarSelectedOrders;
-  }, [activeFilter, trashOrders, archiveOrders, isAllView, calendarOrdersBase, calendarSelectedOrders]);
+  }, [isAllView, calendarOrdersBase, calendarSelectedOrders]);
 
   const currentOrderIndex = useMemo(() => {
     if (!selectedOrderId) return -1;
@@ -684,11 +689,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [selectedOrderId, lightboxIndex, currentOrderIndex, visibleOrders, reviewSession, reviewStage, reviewChoice, orders]);
-
-  // 메인 필터(접수/작업중/작업완료/지연) 는 상단 큰 요약카드 클릭. 아카이브만 작은 알약 탭으로 유지.
-  const filterTabs = [
-    { key: "ARCHIVE", label: "아카이브", count: archiveOrders.length },
-  ];
 
   const updateOrderStatus = async (orderId, nextStatus) => {
     if (!nextStatus) return;
@@ -955,21 +955,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  // 영구삭제 = R2 의 첨부·도안·미리보기·지시서 PDF 를 전부 지우되, 현장 프로그램이 옛 지시서를
-  // 다시 찾을 수 있도록 거래처·제목·발주일·납기·사양메모·파일명 등 최소 레코드는 "아카이브"에 남긴다.
-  const toArchivedShape = (order) => ({
-    ...order,
-    files: [],
-    worksheetPdfUrl: null,
-    worksheetOriginalPdfUrl: null,
-    worksheetThumbnailUrl: null,
-    worksheetChangeNote: null,
-    deletedAt: order.deletedAt || new Date().toISOString(),
-    purgedAt: new Date().toISOString(),
-  });
-
+  // 영구삭제 = R2 의 첨부·도안·미리보기·지시서 PDF + Order 행까지 모두 하드 삭제. 되돌릴 수 없음.
+  // (옛 "아카이브"(최소 레코드 보존) 흐름은 폐기 — 작업완료 30일 경과 시 동일하게 완전 삭제.)
   const deletePermanently = async (order) => {
-    if (!window.confirm(`"${order.orderNumber}" 요청을 영구 삭제하시겠습니까?\n\n첨부 파일·도안·미리보기·지시서 PDF 는 즉시 삭제됩니다.\n다만 현장 프로그램에서 옛 지시서를 다시 찾을 수 있도록 거래처·제목·발주일·납기·사양메모·파일명 등 최소 정보는 '아카이브'에 남습니다. (아카이브 탭에서 [완전삭제] 하면 그것까지 사라집니다.)`)) {
+    if (!window.confirm(`"${order.orderNumber}" 요청을 완전히 삭제하시겠습니까?\n\n첨부 파일·도안·미리보기·지시서 PDF 및 모든 기록이 즉시 사라지며 되돌릴 수 없습니다.`)) {
       return;
     }
     setDeletingOrderId(order.id);
@@ -983,36 +972,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         throw new Error(errorBody.message || "영구 삭제에 실패했습니다.");
       }
       setTrashOrders((prev) => prev.filter((o) => o.id !== order.id));
-      setArchiveOrders((prev) => [toArchivedShape(order), ...prev]);
-      if (selectedOrderId === order.id) setSelectedOrderId(null);
-      setFeedback({ type: "success", msg: "영구 삭제했습니다. (현장 검색용 최소 레코드는 아카이브에 보존)" });
-    } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "영구 삭제 중 오류가 발생했습니다." });
-    } finally {
-      setDeletingOrderId(null);
-    }
-  };
-
-  // 아카이브에서 완전삭제 — 최소 레코드(orders 행)까지 진짜로 제거. 되돌릴 수 없음.
-  const forgetArchived = async (order) => {
-    if (!window.confirm(`"${order.orderNumber}" — 현장 검색용 최소 레코드까지 완전히 삭제하시겠습니까?\n이후 현장 프로그램에서도 이 지시서를 찾을 수 없게 되며, 되돌릴 수 없습니다.`)) {
-      return;
-    }
-    setDeletingOrderId(order.id);
-    try {
-      const res = await fetch(`${BASE_URL}/api/admin/orders/${order.id}/archive`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const errorBody = await res.json().catch(() => ({}));
-        throw new Error(errorBody.message || "완전 삭제에 실패했습니다.");
-      }
-      setArchiveOrders((prev) => prev.filter((o) => o.id !== order.id));
       if (selectedOrderId === order.id) setSelectedOrderId(null);
       setFeedback({ type: "success", msg: "완전 삭제했습니다." });
     } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "완전 삭제 중 오류가 발생했습니다." });
+      setFeedback({ type: "error", msg: err.message || "영구 삭제 중 오류가 발생했습니다." });
     } finally {
       setDeletingOrderId(null);
     }
@@ -1023,7 +986,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setFeedback({ type: "error", msg: "작업완료 목록이 비어 있습니다." });
       return;
     }
-    if (!window.confirm(`작업완료의 ${trashOrders.length}건을 모두 영구 삭제하시겠습니까?\n첨부 파일까지 즉시 삭제되며 되돌릴 수 없습니다.`)) {
+    if (!window.confirm(`작업완료의 ${trashOrders.length}건을 모두 완전 삭제하시겠습니까?\n첨부 파일과 모든 기록이 즉시 사라지며 되돌릴 수 없습니다.`)) {
       return;
     }
     setBulkPurging(true);
@@ -1042,13 +1005,52 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       const deletedIds = new Set(
         results.filter((r) => r.status === "fulfilled").map((r) => r.value)
       );
-      const purgedOrders = trashOrders.filter((o) => deletedIds.has(o.id)).map(toArchivedShape);
       setTrashOrders((prev) => prev.filter((o) => !deletedIds.has(o.id)));
-      setArchiveOrders((prev) => [...purgedOrders, ...prev]);
       if (selectedOrderId && deletedIds.has(selectedOrderId)) setSelectedOrderId(null);
       const failed = results.length - deletedIds.size;
       if (failed === 0) {
-        setFeedback({ type: "success", msg: `${deletedIds.size}건을 영구 삭제했습니다. (현장 검색용 최소 레코드는 아카이브에 보존)` });
+        setFeedback({ type: "success", msg: `${deletedIds.size}건을 완전 삭제했습니다.` });
+      } else {
+        setFeedback({ type: "error", msg: `${deletedIds.size}건 삭제, ${failed}건 실패` });
+      }
+    } finally {
+      setBulkPurging(false);
+    }
+  };
+
+  // 작업완료 탭 — 선택된 항목만 완전 삭제. bulkSelectMode + bulkSelectedIds 를 트래시 탭에서도
+  // 동일하게 재사용한다. 단건 [영구삭제] 와 동일 엔드포인트, 결과 후 trashOrders 에서 제거.
+  const bulkDeleteSelectedTrash = async () => {
+    const ids = Array.from(bulkSelectedIds);
+    if (ids.length === 0) {
+      setFeedback({ type: "error", msg: "선택된 항목이 없습니다." });
+      return;
+    }
+    if (!window.confirm(`선택한 ${ids.length}건을 완전 삭제하시겠습니까?\n첨부 파일과 모든 기록이 즉시 사라지며 되돌릴 수 없습니다.`)) {
+      return;
+    }
+    setBulkPurging(true);
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) =>
+          fetch(`${BASE_URL}/api/admin/orders/${id}/permanent`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${token}` },
+          }).then((res) => {
+            if (!res.ok) throw new Error(String(id));
+            return id;
+          })
+        )
+      );
+      const deletedIds = new Set(
+        results.filter((r) => r.status === "fulfilled").map((r) => r.value)
+      );
+      setTrashOrders((prev) => prev.filter((o) => !deletedIds.has(o.id)));
+      if (selectedOrderId && deletedIds.has(selectedOrderId)) setSelectedOrderId(null);
+      exitBulkSelect();
+      const failed = results.length - deletedIds.size;
+      if (failed === 0) {
+        setFeedback({ type: "success", msg: `${deletedIds.size}건을 완전 삭제했습니다.` });
       } else {
         setFeedback({ type: "error", msg: `${deletedIds.size}건 삭제, ${failed}건 실패` });
       }
@@ -1135,19 +1137,57 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
+  // [FS에서 열기] — 현장 에이전트(field-agent)가 떠 있어야 동작. 사무실 PC 에도 같은 에이전트가
+  // 트레이에 떠 있는 케이스에서 발주관리 카드에서 바로 .fs 를 열 수 있게 한다. 폴링 없이
+  // 클릭 시 한 번만 호출하고, 실패는 토스트만(에이전트가 알아서 폴더 폴백까지 해줌).
+  const handleOpenFs = useCallback(async (e, order) => {
+    e.stopPropagation();
+    setOpeningFsId(order.id);
+    try {
+      const res = await fetch(`${AGENT_URL}/open`, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "application/json",
+          "X-HDSign-Field": "1",
+        },
+        body: JSON.stringify({ orderNumber: order.orderNumber }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || `에이전트 응답 ${res.status}`);
+      }
+      const body = await res.json();
+      if (body.opened) {
+        setFeedback({ type: "success", msg: `FlexiSIGN 으로 여는 중… (${body.matchedFile || ""})` });
+      } else {
+        setFeedback({ type: "error", msg: body.message || "파일을 찾지 못해 거래처 폴더를 열었습니다." });
+      }
+    } catch {
+      setFeedback({
+        type: "error",
+        msg: "에이전트 연결 실패 — 트레이의 HD사인 작업뷰어 프로그램이 켜져있는지 확인하세요.",
+      });
+    } finally {
+      setOpeningFsId(null);
+    }
+  }, []);
+
   const requestLabel = (requestType) => REQUEST_TYPE_LABELS[requestType] || "요청";
 
   // 주문 카드 1건 렌더 — 카드 뷰와 달력 뷰(선택 일자 카드 영역) 양쪽에서 동일한 마크업 재사용.
   // 클로저로 활성 필터/선택모드/로딩 플래그/핸들러를 모두 캡처하므로 인자는 order 하나면 충분.
   const renderOrderCard = (order) => {
     const isTrash = activeFilter === "TRASH";
-    const isArchive = activeFilter === "ARCHIVE";
     const statusMeta = STATUS_META[order.status] || STATUS_META.RECEIVED;
     const nextStatus = getNextStatus(order.status);
     const updating = statusUpdatingId === order.id;
     const trashing = trashingOrderId === order.id;
     const restoring = restoringOrderId === order.id;
     const deleting = deletingOrderId === order.id;
+    const openingFs = openingFsId === order.id;
+    // FS 버튼은 지시서가 만들어진 카드에만 — RECEIVED(워크시트 없음) 는 자연히 빠진다.
+    const fsReady = !!order.worksheetPdfUrl;
     const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
     // 사진/변경 태그 — '본 시각(adminViewedAt)' 과 무관하게, 데이터가 존재하면 항상 표시.
     // (열람해도 사라지지 않게 해달라는 요청 — 한 번 보고 나서도 어느 카드에 사진/변경이 있는지 계속 보여야 함)
@@ -1156,23 +1196,21 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const hasWorksheetChange = !!worksheetChangeNote;
     const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
     const isOrderType = order.requestType === "ORDER";
-    const selecting = !isTrash && !isArchive && bulkSelectMode;
+    // 다중 선택 모드 — 접수·작업중 탭은 선택 → 작업완료 이동, 작업완료 탭은 선택 → 완전삭제로 재사용.
+    const selecting = bulkSelectMode;
     const checked = selecting && bulkSelectedIds.has(order.id);
-    // 아카이브 카드는 R2 파일이 이미 없어 열어볼 게 없으므로 모달을 띄우지 않는다.
     const openCard = () => {
-      if (isArchive) return;
       if (selecting) toggleBulkSelected(order.id);
       else setSelectedOrderId(order.id);
     };
     return (
       <div
         key={order.id}
-        className={`order-card order-card--${typeKey} ${isTrash || isArchive ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
+        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
         onClick={openCard}
-        role={isArchive ? undefined : "button"}
-        tabIndex={isArchive ? undefined : 0}
+        role="button"
+        tabIndex={0}
         onKeyDown={(e) => {
-          if (isArchive) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             openCard();
@@ -1203,8 +1241,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               <span className="status-badge status-trash">
                 {daysLeft === null ? "작업완료" : `${daysLeft}일 남음`}
               </span>
-            ) : isArchive ? (
-              <span className="status-badge status-trash">아카이브</span>
             ) : (
               <span className={`status-badge ${statusMeta.className}`}>
                 {statusMeta.label}
@@ -1252,6 +1288,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
           {!selecting && (
           <div className="order-card-actions" onClick={(e) => e.stopPropagation()}>
+            {fsReady && (
+              <button
+                type="button"
+                className="next-status-btn action-fs"
+                onClick={(e) => handleOpenFs(e, order)}
+                disabled={openingFs}
+                title="현장 에이전트로 거래처 폴더의 .fs 를 FlexiSIGN 에서 엽니다"
+              >
+                {openingFs ? "여는 중..." : "FS에서 열기"}
+              </button>
+            )}
             {isTrash ? (
               <>
                 <button
@@ -1271,16 +1318,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   {deleting ? "삭제 중..." : "영구삭제"}
                 </button>
               </>
-            ) : isArchive ? (
-              <button
-                type="button"
-                className="next-status-btn action-delete"
-                onClick={() => forgetArchived(order)}
-                disabled={deleting}
-                title="현장 검색용 최소 레코드까지 완전히 삭제 — 되돌릴 수 없습니다"
-              >
-                {deleting ? "삭제 중..." : "완전삭제"}
-              </button>
             ) : (
               <>
                 {/* 새 워크플로우: 작업완료 / 다음 단계 버튼 제거. IN_PROGRESS 카드는 납기가 지나면
@@ -1381,22 +1418,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         )}
       </div>
 
-      <div className="order-filter-tabs">
-        {filterTabs.map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            className={`filter-tab ${activeFilter === tab.key ? "active" : ""} ${tab.key === "TRASH" || tab.key === "ARCHIVE" ? "trash-tab" : ""}`}
-            onClick={() => setActiveFilter(tab.key)}
-          >
-            {tab.label}
-            <span className="tab-count">{tab.count}</span>
-          </button>
-        ))}
-      </div>
-
-      {activeFilter !== "TRASH" && activeFilter !== "ARCHIVE" && (
-        <div className="order-sort-row">
+      <div className="order-sort-row">
           {/* 거래처 필터 — 입력 후 Enter 로 칩 추가, 여러 거래처 OR 매칭. 입력만 하고 Enter
               안 눌러도 라이브 미리보기. 백스페이스로 마지막 칩 제거. */}
           <div className="calendar-chip-box">
@@ -1472,53 +1494,29 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             </button>
           )}
           <span className="sort-result-count">
-            {calendarOrdersBase.filter((o) => !!o.dueDate).length}건
-            {calendarOrdersBase.filter((o) => !o.dueDate).length > 0 &&
-              ` / 납기 미정 ${calendarOrdersBase.filter((o) => !o.dueDate).length}건`}
+            {isTrashView
+              ? `${calendarOrdersBase.length}건`
+              : (() => {
+                  const withDue = calendarOrdersBase.filter((o) => !!o.dueDate).length;
+                  const noDue = calendarOrdersBase.length - withDue;
+                  return (
+                    <>
+                      {withDue}건
+                      {noDue > 0 && ` / 납기 미정 ${noDue}건`}
+                    </>
+                  );
+                })()}
           </span>
         </div>
-      )}
 
-      {activeFilter === "TRASH" && trashOrders.length > 0 && (
-        <div className="bulk-action-row">
-          <span className="bulk-action-text">작업완료 {trashOrders.length}건</span>
-          <button
-            type="button"
-            className="bulk-delete-btn"
-            onClick={bulkPurgeTrash}
-            disabled={bulkPurging}
-          >
-            {bulkPurging ? "삭제 중..." : "전부 영구삭제"}
-          </button>
-        </div>
-      )}
-      {activeFilter === "TRASH" && (
+      {isTrashView && (
         <p className="trash-hint">
-          작업완료의 항목은 이동일로부터 {TRASH_RETENTION_DAYS}일 후 자동으로 영구 삭제됩니다.
-          영구 삭제 시 첨부·도안·미리보기·지시서 PDF 는 사라지지만, 현장 프로그램에서 옛 지시서를 다시 찾을 수 있도록
-          거래처·제목·발주일·납기·사양메모·파일명 등 최소 정보는 '아카이브'에 남습니다.
-        </p>
-      )}
-      {activeFilter === "ARCHIVE" && (
-        <p className="trash-hint">
-          영구 삭제되어 첨부 파일은 모두 사라지고, 현장 프로그램 "옛 지시서 찾기"용 최소 레코드(거래처·제목·발주일·납기·사양메모·파일명)만 남은 항목입니다.
-          [완전삭제] 하면 이 레코드까지 사라져 현장에서도 더 이상 찾을 수 없게 됩니다. (자동 삭제 없음 — 직접 정리)
+          작업완료 항목은 이동일로부터 {TRASH_RETENTION_DAYS}일 후 자동으로 완전 삭제됩니다.
+          (첨부·도안·미리보기·지시서 PDF 와 모든 기록이 사라지며 되돌릴 수 없습니다.)
         </p>
       )}
 
-      {(activeFilter === "TRASH" || activeFilter === "ARCHIVE") ? (
-        <div className="order-card-view">
-          {(() => {
-            const list = activeFilter === "TRASH" ? trashOrders : archiveOrders;
-            if (loading) return <div className="order-empty">요청 목록을 불러오는 중입니다.</div>;
-            if (list.length === 0) {
-              return <div className="order-empty">{activeFilter === "TRASH" ? "작업완료된 항목이 없습니다." : "아카이브가 비어 있습니다."}</div>;
-            }
-            return <div className="order-card-grid">{list.map(renderOrderCard)}</div>;
-          })()}
-        </div>
-      ) : (
-        <div className="order-calendar-view">
+      <div className="order-calendar-view">
           <div className="calendar-toolbar">
             <button
               type="button"
@@ -1592,7 +1590,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               const isToday = key === todayYmd;
               const isSelected = key === selectedCalendarDate;
               const dow = cell.date.getDay();
-              const badge = count > 0 && cell.currentMonth ? getDueBadge(key) : null;
+              // 작업완료 탭은 모두 과거 날짜라 dueBadge(지난 납기/오늘/내일) 의미가 없음 — 배지 생략.
+              const badge = !isTrashView && count > 0 && cell.currentMonth ? getDueBadge(key) : null;
+              const ariaCountLabel = isTrashView ? "처리" : "납기";
               return (
                 <button
                   key={key + (cell.currentMonth ? "" : "-o")}
@@ -1607,7 +1607,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     dow === 6 ? "calendar-cell--sat" : "",
                   ].filter(Boolean).join(" ")}
                   onClick={() => setSelectedCalendarDate(key)}
-                  aria-label={`${cell.date.getMonth() + 1}월 ${cell.date.getDate()}일${count > 0 ? `, 납기 ${count}건` : ""}`}
+                  aria-label={`${cell.date.getMonth() + 1}월 ${cell.date.getDate()}일${count > 0 ? `, ${ariaCountLabel} ${count}건` : ""}`}
                 >
                   <span className="calendar-day-num">{cell.date.getDate()}</span>
                   {count > 0 && cell.currentMonth && (
@@ -1620,50 +1620,81 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             })}
           </div>
 
-          {/* 다중 선택 → 일괄 작업완료 (접수·작업중 탭). 달력 아래, 작업카드 위. */}
-          {bulkSelectAvailable && (() => {
-            const allChecked = visibleOrders.length > 0 && visibleOrders.every((o) => bulkSelectedIds.has(o.id));
-            return (
-              <div className={`bulk-select-row ${bulkSelectMode ? "is-active" : ""}`}>
-                {!bulkSelectMode ? (
+          {/* 작업완료 탭 — 달력 아래, 작업카드 위에 다중 선택/전부 영구삭제 툴바. */}
+          {isTrashView && trashOrders.length > 0 && (
+            <div className={`bulk-select-row bulk-select-row--trash ${bulkSelectMode ? "is-active" : ""}`}>
+              {!bulkSelectMode ? (
+                <>
+                  <span className="bulk-action-text">작업완료 {trashOrders.length}건</span>
                   <button
                     type="button"
                     className="bulk-select-toggle"
                     onClick={() => setBulkSelectMode(true)}
-                    disabled={!!reviewSession || visibleOrders.length === 0}
-                    title="여러 건을 골라 한꺼번에 작업완료로 이동"
+                    title="여러 건을 골라 한꺼번에 완전 삭제"
                   >
                     ☑ 여러 건 선택
                   </button>
-                ) : (
-                  <>
-                    <span className="bulk-select-count">{bulkSelectedIds.size}건 선택됨</span>
-                    <button
-                      type="button"
-                      className="sort-btn"
-                      onClick={() =>
-                        setBulkSelectedIds(allChecked ? new Set() : new Set(visibleOrders.map((o) => o.id)))
-                      }
-                      disabled={visibleOrders.length === 0}
-                    >
-                      {allChecked ? "전체 해제" : `전체 선택 (${visibleOrders.length})`}
-                    </button>
-                    <button
-                      type="button"
-                      className="bulk-delete-btn"
-                      onClick={bulkMoveToTrash}
-                      disabled={bulkTrashing || bulkSelectedIds.size === 0}
-                    >
-                      {bulkTrashing ? "이동 중..." : `작업완료로 이동${bulkSelectedIds.size ? ` (${bulkSelectedIds.size})` : ""}`}
-                    </button>
-                    <button type="button" className="sort-btn" onClick={exitBulkSelect}>
-                      취소
-                    </button>
-                  </>
-                )}
-              </div>
-            );
-          })()}
+                  {/* 잘못 누르는 사고 방지 — 다른 버튼과 떨어진 맨 우측에 배치. */}
+                  <button
+                    type="button"
+                    className="bulk-delete-btn bulk-delete-btn--rightmost"
+                    onClick={bulkPurgeTrash}
+                    disabled={bulkPurging}
+                  >
+                    {bulkPurging ? "삭제 중..." : "전부 영구삭제"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="bulk-select-count">{bulkSelectedIds.size}건 선택됨</span>
+                  <button
+                    type="button"
+                    className="bulk-delete-btn"
+                    onClick={bulkDeleteSelectedTrash}
+                    disabled={bulkPurging || bulkSelectedIds.size === 0}
+                  >
+                    {bulkPurging ? "삭제 중..." : `완전 삭제${bulkSelectedIds.size ? ` (${bulkSelectedIds.size})` : ""}`}
+                  </button>
+                  <button type="button" className="sort-btn" onClick={exitBulkSelect}>
+                    취소
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* 다중 선택 → 일괄 작업완료 (접수·작업중 탭). 달력 아래, 작업카드 위.
+              [전체 선택] 은 의도적으로 두지 않음 — 실수로 한 번에 다 잡혀 작업완료로 넘어가는 사고 방지. */}
+          {bulkSelectAvailable && (
+            <div className={`bulk-select-row ${bulkSelectMode ? "is-active" : ""}`}>
+              {!bulkSelectMode ? (
+                <button
+                  type="button"
+                  className="bulk-select-toggle"
+                  onClick={() => setBulkSelectMode(true)}
+                  disabled={!!reviewSession || visibleOrders.length === 0}
+                  title="여러 건을 골라 한꺼번에 작업완료로 이동"
+                >
+                  ☑ 여러 건 선택
+                </button>
+              ) : (
+                <>
+                  <span className="bulk-select-count">{bulkSelectedIds.size}건 선택됨</span>
+                  <button
+                    type="button"
+                    className="bulk-delete-btn"
+                    onClick={bulkMoveToTrash}
+                    disabled={bulkTrashing || bulkSelectedIds.size === 0}
+                  >
+                    {bulkTrashing ? "이동 중..." : `작업완료로 이동${bulkSelectedIds.size ? ` (${bulkSelectedIds.size})` : ""}`}
+                  </button>
+                  <button type="button" className="sort-btn" onClick={exitBulkSelect}>
+                    취소
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
           <section className="calendar-selected-section">
             {isAllView ? (
@@ -1701,7 +1732,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               <>
                 <h3 className="calendar-selected-head">
                   {(() => {
-                    const badge = getDueBadge(selectedCalendarDate);
+                    // 작업완료 탭은 과거 처리일이라 dueBadge 무의미 — 배지 생략.
+                    const badge = isTrashView ? null : getDueBadge(selectedCalendarDate);
                     return (
                       <>
                         {badge && (
@@ -1717,9 +1749,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
                 ) : calendarSelectedOrders.length === 0 ? (
                   <div className="order-empty">
-                    {calendarClientChips.length > 0 || clientSearch.trim()
-                      ? "이 날짜에 해당 거래처 납기가 없습니다."
-                      : "이 날짜에 납기가 없습니다."}
+                    {isTrashView
+                      ? (calendarClientChips.length > 0 || clientSearch.trim()
+                          ? "이 날짜에 해당 거래처의 작업완료 처리가 없습니다."
+                          : "이 날짜에 작업완료 처리된 건이 없습니다.")
+                      : (calendarClientChips.length > 0 || clientSearch.trim()
+                          ? "이 날짜에 해당 거래처 납기가 없습니다."
+                          : "이 날짜에 납기가 없습니다.")}
                   </div>
                 ) : (
                   <div className="order-card-grid">
@@ -1730,7 +1766,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             )}
           </section>
         </div>
-      )}
 
       <PhotoLightbox
         photos={evidencePhotos}

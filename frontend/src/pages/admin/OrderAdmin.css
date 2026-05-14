@@ -347,6 +347,11 @@
   cursor: default;
 }
 
+/* 잘못 누르는 사고 방지 — 다른 버튼과 시각적으로 멀리 떨어진 맨 우측에 둔다. */
+.bulk-delete-btn--rightmost {
+  margin-left: auto;
+}
+
 /* 접수·작업중 탭 다중 선택 툴바 — 달력 아래, 작업카드 위. */
 .bulk-select-row {
   display: flex;
@@ -355,11 +360,17 @@
   margin: 4px 0 12px;
   flex-wrap: wrap;
 }
+/* 선택 모드 활성화 시 스크롤해도 화면 상단에 따라다니게 — 카드 많아서 아래로 내려가도
+   [작업완료로 이동] 빨간 버튼이 항상 보이도록. */
 .bulk-select-row.is-active {
-  padding: 8px 12px;
+  position: sticky;
+  top: 8px;
+  z-index: 30;
+  padding: 10px 14px;
   background: #fef2f2;
   border: 1px solid #fecaca;
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(220, 38, 38, 0.18);
 }
 .bulk-select-toggle {
   border: 1px solid #d4d4d8;
@@ -708,6 +719,14 @@
 
 .next-status-btn.action-restore:hover:not(:disabled) {
   background: #0284c7;
+}
+
+.next-status-btn.action-fs {
+  background: #059669;
+}
+
+.next-status-btn.action-fs:hover:not(:disabled) {
+  background: #047857;
 }
 
 /* 휴지통 탭 옆 [QR 생성] 트리거 + 펼침 패널.

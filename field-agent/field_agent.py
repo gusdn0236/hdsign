@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import collections
 import difflib
 import json
 import logging
@@ -232,6 +233,46 @@ def _parse_pdf24_timestamp(stem: str) -> float | None:
         return None
 
 
+# ── stem → .fs 경로 캐시 ────────────────────────────────────────────────────
+# 같은 거래처/같은 PDF 파일명을 두 번째 이상 조회할 때 거래처 폴더 트리를 다시 rglob
+# 하지 않도록 마지막 매칭 결과(Path + reason)를 (거래처폴더, PDF파일명) 키로 보관.
+# 캐시 히트 시에도 cache.path.is_file() 로 한 번 더 검증해 .fs 가 이동/삭제됐으면
+# 캐시를 비우고 평소 흐름으로 폴백. 프로세스 내부 LRU (max 256) — 일정 작업 시간 안에
+# 같은 PC 가 동일 작업을 여러 번 스캔하는 패턴에서 첫 1회만 느리고 이후는 즉시.
+_FS_PATH_CACHE: "collections.OrderedDict[tuple[str, str], tuple[Path, str]]" = collections.OrderedDict()
+_FS_PATH_CACHE_LOCK = threading.Lock()
+_FS_PATH_CACHE_MAX = 256
+
+
+def _cached_fs_lookup(customer_folder: Path, pdf_filename: str) -> tuple[Path, str] | None:
+    """캐시 조회 + 경로 유효성 검증. 캐시 손상(파일 이동/삭제) 시 자체 무효화."""
+    key = (str(customer_folder), pdf_filename)
+    with _FS_PATH_CACHE_LOCK:
+        hit = _FS_PATH_CACHE.get(key)
+        if hit is None:
+            return None
+        path, reason = hit
+        try:
+            if path.is_file():
+                _FS_PATH_CACHE.move_to_end(key)  # LRU 갱신
+                return path, reason
+        except OSError:
+            pass
+        # 파일이 사라졌거나 접근 불가 — 캐시에서 제거하고 원래 탐색 흐름으로.
+        _FS_PATH_CACHE.pop(key, None)
+    return None
+
+
+def _store_fs_lookup(customer_folder: Path, pdf_filename: str,
+                     fs_path: Path, reason: str) -> None:
+    key = (str(customer_folder), pdf_filename)
+    with _FS_PATH_CACHE_LOCK:
+        _FS_PATH_CACHE[key] = (fs_path, reason)
+        _FS_PATH_CACHE.move_to_end(key)
+        while len(_FS_PATH_CACHE) > _FS_PATH_CACHE_MAX:
+            _FS_PATH_CACHE.popitem(last=False)
+
+
 def find_fs_file(customer_folder: Path, pdf_filename: str,
                  fuzzy_threshold: float) -> tuple[Path | None, str]:
     """거래처 폴더 트리에서 .fs 파일 찾기.
@@ -246,12 +287,21 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
       4. 모두 실패 → (None, 사유)
 
     여러 .fs 가 동일 stem 으로 있으면 가장 최근 수정된 것을 채택(같은 작업의
-    버전관리 케이스). 반환: (Path 또는 None, 이유 텍스트)."""
+    버전관리 케이스). 반환: (Path 또는 None, 이유 텍스트).
+
+    성능: 같은 (거래처, PDF 파일명) 조합에 대한 두 번째 이상 호출은 [[_FS_PATH_CACHE]]
+    히트로 rglob 없이 즉시 반환. .fs 가 이동/삭제됐으면 캐시가 자체 무효화해
+    원래 탐색 흐름으로 떨어진다."""
     if not pdf_filename:
         return None, "원본 PDF 파일명이 없습니다."
     pdf_stem = Path(pdf_filename).stem
     if not pdf_stem:
         return None, "PDF 파일명에서 stem 을 추출하지 못했습니다."
+
+    cached = _cached_fs_lookup(customer_folder, pdf_filename)
+    if cached is not None:
+        path, reason = cached
+        return path, f"{reason} [cached]"
 
     target_keys = [_normalize_key(s) for s in _stem_candidates(pdf_stem)]
     target_keys = [k for k in target_keys if k]
@@ -276,6 +326,7 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
     if exact_matches:
         # 정확 stem 동일 .fs 가 여러 개 — 가장 최근 수정본 채택.
         best = max(exact_matches, key=lambda p: p.stat().st_mtime)
+        _store_fs_lookup(customer_folder, pdf_filename, best, "exact")
         return best, "exact"
 
     if fuzzy_pool:
@@ -283,7 +334,9 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
         # 1위와 2위가 모두 임계값 이상이면 모호 — 사용자에게 선택권을 주려고 폴더만 열기.
         if len(fuzzy_pool) >= 2 and fuzzy_pool[0][0] - fuzzy_pool[1][0] < 0.05:
             return None, f"유사 .fs 후보가 여러 개({len(fuzzy_pool)}건) — 거래처 폴더를 엽니다."
-        return fuzzy_pool[0][1], f"fuzzy({fuzzy_pool[0][0]:.0%})"
+        reason = f"fuzzy({fuzzy_pool[0][0]:.0%})"
+        _store_fs_lookup(customer_folder, pdf_filename, fuzzy_pool[0][1], reason)
+        return fuzzy_pool[0][1], reason
 
     # PDF24 시각형 파일명 — 인쇄 시각 근처에 저장된 .fs 로 폴백.
     ts = _parse_pdf24_timestamp(pdf_stem)
@@ -294,9 +347,12 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
             key=lambda p: abs(p.stat().st_mtime - ts),
         )
         if len(near) == 1:
+            _store_fs_lookup(customer_folder, pdf_filename, near[0], "timestamp-mtime")
             return near[0], "timestamp-mtime"
         if len(near) >= 2:
-            return near[0], f"timestamp-mtime(가장 가까움/{len(near)}건)"
+            reason = f"timestamp-mtime(가장 가까움/{len(near)}건)"
+            _store_fs_lookup(customer_folder, pdf_filename, near[0], reason)
+            return near[0], reason
         return None, (
             f"PDF 파일명이 시각값({pdf_stem})입니다 — FlexiSIGN 에서 .fs 를 저장하기 전에 "
             f"인쇄된 것 같습니다. .fs 를 이 거래처 폴더에 저장한 뒤 다시 인쇄하면 자동으로 열립니다. "
@@ -337,7 +393,11 @@ def _parse_exe_from_command(cmd: str) -> str | None:
 
 
 def _flexisign_from_registry() -> str | None:
-    """.fs 더블클릭이 실제로 실행하는 프로그램을 레지스트리에서 찾는다."""
+    """.fs 의 기본 연결이 FlexiSIGN 인 PC 에서만 그 exe 경로를 돌려준다.
+    파일명에 'flexi' 가 없으면(예: VS Code 의 F# 스크립트 연결, 메모장 등) 무시 —
+    이 함수의 목적은 "FlexiSIGN 이 어디에 있나" 알아내는 거지 ".fs 핸들러가 뭐든 따라가자"
+    가 아니다. .fs 가 VS Code 에 연결된 PC 에서 VS Code 가 FlexiSIGN 으로 오인되는 사고
+    방지."""
     try:
         import winreg
     except Exception:
@@ -367,32 +427,66 @@ def _flexisign_from_registry() -> str | None:
             with winreg.OpenKey(root, sub) as k:
                 cmd, _ = winreg.QueryValueEx(k, "")
             exe = _parse_exe_from_command(cmd)
-            if exe and Path(exe).exists():
+            if exe and Path(exe).exists() and "flexi" in Path(exe).name.lower():
                 return exe
         except OSError:
             continue
     return None
 
 
-def _flexisign_from_glob() -> str | None:
-    """SAi 설치 폴더 아래에서 FlexiSign 실행파일을 찾는다."""
-    bases: list[Path] = []
-    for env in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
-        v = os.environ.get(env)
-        if v:
-            p = Path(v)
-            if p not in bases:
-                bases.append(p)
-    for base in bases:
-        sai = base / "SAi"
-        if not sai.is_dir():
-            continue
+def _search_for_flexisign(base: Path) -> str | None:
+    """주어진 폴더에서 FlexiSIGN 실행파일을 rglob 으로 찾는다 — 첫 일치 즉시 반환."""
+    try:
         for name in ("FlexiSign.exe", "FlexiSIGN.exe", "Flexi.exe"):
-            for hit in sai.rglob(name):
+            for hit in base.rglob(name):
                 return str(hit)
-        for hit in sai.rglob("*.exe"):
+        for hit in base.rglob("*.exe"):
             if "flexi" in hit.name.lower():
                 return str(hit)
+    except OSError:
+        pass
+    return None
+
+
+def _flexisign_from_glob() -> str | None:
+    """일반적인 FlexiSIGN 설치 위치에서 FlexiSign 실행파일을 찾는다.
+
+    탐색 순서(앞에서 찾으면 즉시 반환):
+      1. Program Files / Program Files (x86) 의 SAi 폴더 (표준 설치) — 사무실/현장 PC 대부분.
+      2. 사용자 Desktop/Documents/Downloads/Home 아래 이름에 'flexi' 가 든 폴더
+         (비표준 — 압축 풀어서 데스크탑에 두고 쓰는 노트북 케이스).
+
+    드라이브 루트(C:\\, D:\\, …) 순회는 의도적으로 안 함 — 빈 CD/DVD 드라이브나 응답 느린
+    매핑 드라이브에서 is_dir 가 수십 초 블록될 수 있어 에이전트 전체가 멈춘다. C:\\ 등에
+    바로 푼 PC 는 %LOCALAPPDATA%\\HDSignFieldViewer\\config.local.json 에 flexisign_exe 직접
+    지정으로 처리."""
+    # 1. 표준 설치 위치.
+    for env in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        v = os.environ.get(env)
+        if not v:
+            continue
+        sai = Path(v) / "SAi"
+        if sai.is_dir():
+            hit = _search_for_flexisign(sai)
+            if hit:
+                return hit
+
+    # 2. 사용자 폴더 아래 'flexi*' 폴더.
+    home = Path.home()
+    for d in [home / sub for sub in ("Desktop", "Documents", "Downloads")] + [home]:
+        try:
+            if not d.is_dir():
+                continue
+            for child in d.iterdir():
+                try:
+                    if child.is_dir() and "flexi" in child.name.lower():
+                        hit = _search_for_flexisign(child)
+                        if hit:
+                            return hit
+                except OSError:
+                    continue
+        except OSError:
+            continue
     return None
 
 
@@ -405,7 +499,10 @@ def resolve_flexisign_exe(configured: str | None) -> str | None:
         return configured
     if _FS_EXE_CACHE is not None:
         return _FS_EXE_CACHE or None
-    found = _flexisign_from_registry() or _flexisign_from_glob()
+    # 글롭(Program Files\SAi\…)을 먼저 — FlexiSIGN 설치 폴더는 OS 규약상 거의 고정이라 가장 안전.
+    # 레지스트리는 위 함수에서 "flexi" 가 들어간 exe 만 통과시켜도, 사용자가 한 번 잘못 연결해두면
+    # 그 잘못된 매핑이 캐시되는 위험이 있어 후순위로.
+    found = _flexisign_from_glob() or _flexisign_from_registry()
     _FS_EXE_CACHE = found or ""
     if found:
         logging.info("FlexiSIGN 자동 탐지: %s", found)
@@ -443,14 +540,22 @@ def flexisign_is_running(exe_path: str | None, config: dict) -> bool:
     return any(f'"{n}"' in out for n in names)
 
 
-def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
-    """.fs 를 윈도우 기본 연결로 연다 — FlexiSIGN 이 이미 떠 있으면 그 창에서 열린다.
-    (.fs 더블클릭과 동일. 새 인스턴스를 띄우지 않으려고 exe 를 직접 Popen 하지 않는다.)"""
+def open_in_flexisign(fs_file: Path, exe_path: str) -> tuple[bool, str]:
+    """FlexiSIGN exe 를 명시적으로 실행해 .fs 를 연다.
+
+    윈도우 기본 연결(`.fs`)이 VS Code/메모장/F# 등 다른 앱에 매핑돼 있어도 항상 FlexiSIGN
+    으로만 열림. FlexiSIGN 은 단일 인스턴스라 이미 떠 있으면 같은 창에서 파일이 열리고
+    두 번째 프로세스는 즉시 종료된다. exe_path 는 호출 측에서 None 이 아님을 보장
+    (process_open 이 사전 체크)."""
     try:
-        os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
+        subprocess.Popen(
+            [exe_path, str(fs_file)],
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+            close_fds=True,
+        )
         return True, str(fs_file)
     except Exception as e:
-        return False, f".fs 열기 실패({e}) — .fs 가 FlexiSIGN 에 연결돼 있는지 확인하세요."
+        return False, f".fs 열기 실패({e}) — FlexiSIGN 실행을 다시 시도하세요."
 
 
 def open_folder_in_explorer(folder: Path) -> None:
@@ -629,13 +734,22 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             }
 
         flexisign_exe = resolve_flexisign_exe(config.get("flexisign_exe"))
+        if not flexisign_exe:
+            # FlexiSIGN 자체가 이 PC 에 설치돼 있지 않음 — 노트북/관리용 PC 같은 케이스.
+            # os.startfile 폴백으로 떨어뜨리면 .fs 가 VS Code 등 다른 앱으로 잘못 열려
+            # 사용자가 혼동하므로, 여기서 명시적으로 거부한다.
+            return {
+                "opened": False,
+                "message": "이 PC 에는 FlexiSIGN 이 설치돼 있지 않아 .fs 를 열 수 없습니다 "
+                           "(보통 Program Files\\SAi 아래). 작업용 PC 에서 시도하세요.",
+            }
         if not flexisign_is_running(flexisign_exe, config):
             return {
                 "opened": False,
                 "needsFlexiSign": True,
                 "message": "FlexiSIGN 이 실행돼 있지 않습니다. FlexiSIGN 을 먼저 켠 뒤 다시 [FS에서 열기] 를 누르세요.",
             }
-        ok, info = open_in_flexisign(fs_file)
+        ok, info = open_in_flexisign(fs_file, flexisign_exe)
         if not ok:
             return {"opened": False, "message": info}
         logging.info("FS 실행 [%s] → %s (%s)", order_number, fs_file.name, reason)
