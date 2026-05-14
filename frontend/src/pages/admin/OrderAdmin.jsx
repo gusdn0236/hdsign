@@ -241,6 +241,58 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setCalendarClientChips((arr) => arr.filter((c) => c !== chip));
   };
 
+  // 우측 플로팅 도크(검색입력 + 맨위로) — 페이지를 어느 정도 내렸을 때만 페이드인.
+  // 카드 그리드까지 닿기 전엔 상단 인라인 검색바가 바로 보이니 굳이 노출하지 않는다.
+  const [showFloatingDock, setShowFloatingDock] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setShowFloatingDock(window.scrollY > 240);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // 거래처 검색 Enter → 매칭 카드를 순차 이동. 같은 검색어로 Enter 를 반복 누르면
+  // 다음 카드로 넘어가며(끝에 닿으면 처음으로 순환) 한 건씩 "확인 확인 확인" 가능.
+  // 검색어가 바뀌면 인덱스 리셋. 라이브 필터(clientSearch) 는 그대로 동작.
+  const flashTimerRef = useRef(null);
+  const cycleStateRef = useRef({ query: "", index: -1 });
+  const scrollToNextClientCard = useCallback((raw) => {
+    const q = String(raw || "").trim().toLowerCase();
+    if (!q) return;
+    // 매칭 가능한 카드는 두 군데 — 단일 일자 그리드 + 전체보기 그룹들 — 의 모든 .order-card.
+    // 매번 다시 쿼리해 리렌더로 카드가 추가/제거된 경우에도 일관되게 동작.
+    const nodes = Array.from(document.querySelectorAll("[data-order-company]"));
+    const matches = nodes.filter((el) => {
+      const name = (el.getAttribute("data-order-company") || "").toLowerCase();
+      return name && name.includes(q);
+    });
+    if (matches.length === 0) {
+      setFeedback({ type: "info", msg: `"${raw.trim()}" 와 일치하는 카드가 없습니다.` });
+      cycleStateRef.current = { query: q, index: -1 };
+      return;
+    }
+    const last = cycleStateRef.current;
+    const nextIdx = last.query === q ? (last.index + 1) % matches.length : 0;
+    cycleStateRef.current = { query: q, index: nextIdx };
+    // 이전 강조가 남아 있을 수 있으므로 모두 지우고 새 타겟에만 부착.
+    nodes.forEach((el) => el.classList.remove("order-card--flash"));
+    const target = matches[nextIdx];
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("order-card--flash");
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => {
+      target.classList.remove("order-card--flash");
+      flashTimerRef.current = null;
+    }, 1600);
+    if (matches.length > 1) {
+      setFeedback({ type: "info", msg: `${matches.length}건 중 ${nextIdx + 1}번째 — Enter 로 다음` });
+    }
+  }, []);
+  // 검색어가 바뀌면 다음 Enter 부터 0번째로 시작 — clientSearch 변화 시 cycle 인덱스만 리셋.
+  useEffect(() => {
+    cycleStateRef.current = { query: clientSearch.trim().toLowerCase(), index: -1 };
+  }, [clientSearch]);
+
   const loadOrders = async () => {
     setLoading(true);
     try {
@@ -1206,6 +1258,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     return (
       <div
         key={order.id}
+        data-order-company={order.clientCompanyName || ""}
         className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
         onClick={openCard}
         role="button"
@@ -1439,18 +1492,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               className="calendar-chip-input"
               placeholder={
                 calendarClientChips.length === 0
-                  ? "거래처 검색 — Enter 로 추가 (여러 곳 가능)"
-                  : "거래처 추가..."
+                  ? "거래처 검색 — Enter 로 해당 카드 위치로 이동"
+                  : "거래처 검색..."
               }
               value={clientSearch}
               onChange={(e) => setClientSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  if (clientSearch.trim()) {
-                    addCalendarChip(clientSearch);
-                    setClientSearch("");
-                  }
+                  if (clientSearch.trim()) scrollToNextClientCard(clientSearch);
                 } else if (
                   e.key === "Backspace" &&
                   clientSearch === "" &&
@@ -2200,6 +2250,59 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           </div>
         </div>
       )}
+
+      {/* 우측 플로팅 도크 — 화면을 일정 거리 내린 뒤에만 페이드인.
+          상단 인라인 검색바와 동일한 clientSearch 를 공유 — 어느 쪽에 타이핑해도 라이브 필터.
+          Enter = 매칭 카드 위치로 이동. ↑ = 페이지 맨 위로. */}
+      <aside
+        className={`order-floating-dock ${showFloatingDock ? "is-visible" : ""}`}
+        aria-hidden={!showFloatingDock}
+      >
+        <div className="order-floating-search">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5" />
+            <path d="M10.5 10.5l3 3" />
+          </svg>
+          <input
+            type="search"
+            className="order-floating-input"
+            placeholder="거래처 검색 (Enter)"
+            value={clientSearch}
+            onChange={(e) => setClientSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (clientSearch.trim()) scrollToNextClientCard(clientSearch);
+              }
+            }}
+            tabIndex={showFloatingDock ? 0 : -1}
+            aria-label="거래처 검색"
+          />
+          {clientSearch && (
+            <button
+              type="button"
+              className="order-floating-clear"
+              onClick={() => setClientSearch("")}
+              aria-label="검색어 지우기"
+              title="검색어 지우기"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          className="order-floating-top"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          title="맨 위로"
+          aria-label="맨 위로"
+          tabIndex={showFloatingDock ? 0 : -1}
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M10 15V5M5 10l5-5 5 5" />
+          </svg>
+        </button>
+      </aside>
 
       {reviewSession && !selectedOrderId && (() => {
         const decisions = Object.values(reviewSession.decisions);

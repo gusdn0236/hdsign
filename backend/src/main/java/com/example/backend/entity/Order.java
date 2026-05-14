@@ -162,13 +162,10 @@ public class Order {
     @Column
     private LocalDateTime deletedAt;
 
-    // 휴지통에서 영구삭제(관리자 수동) 또는 30일 경과 자동삭제 시 찍힌다.
-    // 의미: R2 의 도안 원본·미리보기·지시서 PDF·order_files 행은 모두 삭제됐고,
-    // 현장 프로그램이 옛 지시서를 다시 찾는 데 필요한 최소 정보(거래처·제목·발주일·납기·
-    // 사양메모·originalPdfFilename)만 남긴 "아카이브" 레코드라는 표시.
-    // deletedAt != null && purgedAt == null  → 휴지통(파일 살아있음, 복원 가능)
-    // purgedAt != null                       → 아카이브(파일 없음, 검색 전용)
-    // 이 레코드 자체는 관리자가 아카이브 탭에서 [완전삭제] 해야 비로소 행이 사라진다.
+    // [DEPRECATED — 2026-05-14 아카이브 흐름 폐기] 옛 "아카이브"(파일은 영구삭제됐지만 최소 레코드만
+    // 남긴 상태) 표시 컬럼. 신규 코드에서는 더 이상 쓰지 않으며, 작업완료(deletedAt) 30일 경과 시
+    // R2 파일 + Order 행을 같이 하드 삭제한다. DB 호환을 위해 컬럼만 남겨두며, 옛 archived 행이
+    // 남아 있어도 스케줄러가 다음 run 에서 함께 하드 삭제한다.
     @Column
     private LocalDateTime purgedAt;
 

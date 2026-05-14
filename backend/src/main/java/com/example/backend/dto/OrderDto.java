@@ -47,8 +47,6 @@ public class OrderDto {
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
-        // null 이 아니면 "아카이브" — R2 파일은 모두 삭제됐고 현장 검색용 최소 레코드만 남은 상태.
-        private LocalDateTime purgedAt;
     }
 
     @Getter
@@ -130,7 +128,6 @@ public class OrderDto {
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .deletedAt(order.getDeletedAt())
-                .purgedAt(order.getPurgedAt())
                 .build();
     }
 

@@ -145,21 +145,10 @@ public class AdminOrderController {
         return ResponseEntity.ok(orders);
     }
 
-    // 휴지통 목록 (삭제된 지 최근순) — 아카이브로 넘어간 건(파일 영구삭제됨)은 제외.
+    // 작업완료(휴지통) 목록 — 30일 후 자동 완전삭제 대상.
     @GetMapping("/trash")
     public ResponseEntity<List<OrderDto.Response>> getTrash() {
-        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNotNullAndPurgedAtIsNullOrderByDeletedAtDesc()
-                .stream()
-                .map(OrderDto::toResponse)
-                .toList();
-        return ResponseEntity.ok(orders);
-    }
-
-    // 아카이브 목록 (영구삭제되어 최소 레코드만 남은 건, 최근 정리순).
-    // 여기서 [완전삭제] 해야 비로소 행이 사라진다.
-    @GetMapping("/archive")
-    public ResponseEntity<List<OrderDto.Response>> getArchive() {
-        List<OrderDto.Response> orders = orderRepository.findByPurgedAtIsNotNullOrderByPurgedAtDesc()
+        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()
                 .stream()
                 .map(OrderDto::toResponse)
                 .toList();
@@ -252,9 +241,8 @@ public class AdminOrderController {
         return ResponseEntity.ok(OrderDto.toResponse(saved));
     }
 
-    // 휴지통에서 영구 삭제 — R2 의 도안·미리보기·지시서 PDF·order_files 행을 전부 지우되,
-    // 현장 프로그램이 옛 지시서를 다시 찾을 수 있도록 최소 레코드(거래처·제목·발주일·납기·
-    // 사양메모·파일명)는 남겨 "아카이브" 상태로 만든다. 이 최소 레코드의 진짜 삭제는 아래 /archive.
+    // 작업완료에서 즉시 완전 삭제 — R2 의 도안·미리보기·지시서 PDF·order_files 행 + Order 행까지
+    // 모두 하드 삭제. 30일 자동 삭제 전에 관리자가 수동으로 지울 수도 있게 둠.
     @DeleteMapping("/{id}/permanent")
     public ResponseEntity<?> deletePermanently(@PathVariable Long id) {
         Order order = orderRepository.findById(id)
@@ -265,22 +253,7 @@ public class AdminOrderController {
                     .body(Map.of("message", "작업완료 상태의 작업만 영구 삭제할 수 있습니다."));
         }
 
-        orderArchiveService.purgeFilesKeepRecord(order);
-        return ResponseEntity.noContent().build();
-    }
-
-    // 아카이브에서 완전 삭제 — 최소 레코드(orders 행)까지 진짜로 제거한다. 되돌릴 수 없음.
-    @DeleteMapping("/{id}/archive")
-    public ResponseEntity<?> forgetArchived(@PathVariable Long id) {
-        Order order = orderRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
-
-        if (order.getPurgedAt() == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("message", "아카이브된 작업만 완전 삭제할 수 있습니다."));
-        }
-
-        orderRepository.delete(order);
+        orderArchiveService.hardDeleteOrder(order);
         return ResponseEntity.noContent().build();
     }
 

@@ -2454,3 +2454,135 @@
     font-size: 11px;
   }
 }
+
+/* 우측 플로팅 도크 — 화면을 내려 카드 그리드를 볼 때 우측에 따라다니는 검색입력 + ↑ 버튼.
+   상단 인라인 검색바와 같은 state(clientSearch)를 공유하므로 어디서 입력해도 즉시 라이브 필터. */
+.order-floating-dock {
+  position: fixed;
+  right: 18px;
+  top: 50%;
+  transform: translate(8px, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  z-index: 45;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.22s ease;
+}
+.order-floating-dock.is-visible {
+  opacity: 1;
+  transform: translate(0, -50%);
+  pointer-events: auto;
+}
+
+.order-floating-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  background: #fff;
+  border: 1px solid #d4d4d8;
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  color: #71717a;
+  min-width: 220px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.order-floating-search:focus-within {
+  border-color: #005f73;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16), 0 0 0 3px rgba(0, 95, 115, 0.16);
+}
+
+.order-floating-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  font-family: inherit;
+  color: #18181b;
+  padding: 4px 2px;
+}
+.order-floating-input::placeholder {
+  color: #a1a1aa;
+}
+
+.order-floating-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: #f4f4f5;
+  color: #52525b;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.order-floating-clear:hover {
+  background: #e4e4e7;
+  color: #18181b;
+}
+
+.order-floating-top {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #1a1a2e;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.order-floating-top:hover {
+  background: #2d2d4e;
+  transform: translateY(-1px);
+}
+.order-floating-top:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* Enter 로 해당 거래처 첫 카드로 점프했을 때 잠깐 강조 — 어느 카드로 이동했는지 즉시 인지. */
+.order-card--flash {
+  animation: order-card-flash 1.6s ease;
+}
+@keyframes order-card-flash {
+  0% {
+    box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.65), 0 8px 20px rgba(0, 95, 115, 0.18);
+  }
+  70% {
+    box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.45), 0 8px 20px rgba(0, 95, 115, 0.12);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(0, 95, 115, 0), 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+@media (max-width: 720px) {
+  .order-floating-dock {
+    right: 10px;
+    gap: 8px;
+  }
+  .order-floating-search {
+    min-width: 170px;
+    padding: 5px 6px 5px 10px;
+  }
+  .order-floating-input {
+    font-size: 12px;
+  }
+  .order-floating-top {
+    width: 40px;
+    height: 40px;
+  }
+}

@@ -26,19 +26,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByDeletedAtIsNullOrderByCreatedAtDesc();
 
+    // 작업완료(휴지통) 목록 — 30일 후 자동 완전삭제 대상. 별도 아카이브 상태는 없음.
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByDeletedAtIsNotNullOrderByDeletedAtDesc();
 
-    // 휴지통(파일 살아있음, 복원 가능) — 아카이브로 넘어간 건(purgedAt != null)은 제외.
-    @EntityGraph(attributePaths = {"client", "files"})
-    List<Order> findByDeletedAtIsNotNullAndPurgedAtIsNullOrderByDeletedAtDesc();
-
-    // 아카이브 목록 — 파일은 이미 영구삭제됐고 최소 레코드만 남은 건. 관리자 [완전삭제] 대상.
-    @EntityGraph(attributePaths = {"client"})
-    List<Order> findByPurgedAtIsNotNullOrderByPurgedAtDesc();
-
-    // 30일 자동 아카이브 스케줄러용 — 이미 아카이브된 건(purgedAt != null)은 다시 안 건드림.
-    List<Order> findByDeletedAtBeforeAndPurgedAtIsNull(LocalDateTime cutoff);
+    // 30일 자동 완전삭제 스케줄러용.
+    List<Order> findByDeletedAtBefore(LocalDateTime cutoff);
 
     // 발주번호 채번에 사용 — count(11) + 1 = 12 라도 중간에 삭제로 빈 슬롯이 생기면
     // 이미 -12 가 존재해 unique 충돌이 났다(2026-05-06). MAX(suffix) + 1 로 바꾸기 위해
