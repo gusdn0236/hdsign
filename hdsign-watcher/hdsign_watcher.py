@@ -3845,6 +3845,20 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             delivery_ko = (new_delivery_var.get() or "").strip()
             delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
             total_copies = _committed_total()
+            if intent_var.get() == "web_print" and total_copies <= 0:
+                # [웹반영 & 인쇄] 인데 매수 0 — 그대로 진행하면 웹만 반영되고 종이는 안 나옴.
+                # 사용자는 "왜 종이가 안 나오지?" 함정에 빠지므로 명시적으로 알리고 막는다.
+                try:
+                    messagebox.showwarning(
+                        "매수 미입력",
+                        "종이 인쇄 매수가 0장입니다.\n\n"
+                        "우측 분배함에서 슬롯을 클릭해 매수를 정한 뒤\n"
+                        "다시 [✓ 웹에 적용 & 인쇄] 를 눌러주세요.\n\n"
+                        "(종이 없이 웹에만 반영하려면 [웹반영만] 으로 바꿔주세요.)",
+                    )
+                except Exception:
+                    pass
+                return
             result["value"] = {
                 "mode": "new",
                 "change_type": "delivery",  # 신규는 사실상 납기/배송 흐름과 동일
@@ -3913,6 +3927,19 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         note_unchanged = bool(note) and note == original_note
         content_changed = bool(note) and not note_unchanged
         total_copies_m = _committed_total()
+        if intent_var.get() == "web_print" and total_copies_m <= 0:
+            # [웹반영 & 인쇄] 인데 매수 0 — 신규 탭과 같은 가드.
+            try:
+                messagebox.showwarning(
+                    "매수 미입력",
+                    "종이 인쇄 매수가 0장입니다.\n\n"
+                    "우측 분배함에서 슬롯을 클릭해 매수를 정한 뒤\n"
+                    "다시 [✓ 웹에 적용 & 인쇄] 를 눌러주세요.\n\n"
+                    "(종이 없이 웹에만 반영하려면 [웹반영만] 으로 바꿔주세요.)",
+                )
+            except Exception:
+                pass
+            return
         result["value"] = {
             "mode": "modify",
             "change_type": "combined",
