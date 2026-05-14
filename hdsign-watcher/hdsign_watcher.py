@@ -1566,7 +1566,9 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
                                 "QR 코드 복사 완료",
                                 f"기존 빈 발주 {num} 의 QR 을 다시 복사했습니다.\n\n"
                                 f"FlexSign 캔버스에 Ctrl+V 로 붙여넣고 지시서를 그린 뒤\n"
-                                f"인쇄하시면 자동으로 매칭됩니다.")
+                                f"인쇄하시면 자동으로 매칭됩니다.\n\n"
+                                f"※ 이 창을 닫으면 FlexSign 으로 자동 전환됩니다.")
+                            _focus_flexisign_window_async()
                         else:
                             messagebox.showwarning(
                                 "QR 클립보드 복사 실패",
@@ -1628,8 +1630,10 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
                     "QR 코드 복사 완료",
                     f"{head}\n\n"
                     f"FlexSign 캔버스에 Ctrl+V 로 붙여넣고 지시서를 그린 뒤\n"
-                    f"인쇄하시면 자동으로 매칭됩니다.",
+                    f"인쇄하시면 자동으로 매칭됩니다.\n\n"
+                    f"※ 이 창을 닫으면 FlexSign 으로 자동 전환됩니다.",
                 )
+                _focus_flexisign_window_async()
             else:
                 messagebox.showwarning(
                     "QR 클립보드 복사 실패",
@@ -1851,6 +1855,7 @@ def open_qr_create_dialog_async(*, print_routing_context: dict | None = None):
                         ctx.get("existing_worksheets") or [],
                         qr_order_number=None,
                         clients_for_new=ctx.get("clients_for_new") or [],
+                        intent=ctx.get("intent") or "web_print",
                     )
                 except Exception as e:
                     ui_log(f"[기존지시서 변경하기] 다이얼로그 오류: {e}")
@@ -2515,7 +2520,8 @@ def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
 def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                               existing_worksheets: list[dict],
                               qr_order_number: str | None = None,
-                              clients_for_new: list[dict] | None = None) -> dict | None:
+                              clients_for_new: list[dict] | None = None,
+                              intent: str = "web_print") -> dict | None:
     """모달 다이얼로그: 방금 인쇄한 PDF 를 어느 작업에 어떻게 반영할지 결정한다.
 
     탭 두 개로 분기:
@@ -3892,17 +3898,8 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         dlg.destroy()
         return
 
-    def confirm_no_print(_event=None):
-        confirm(skip_print=True)
-
     def cancel(_event=None):
         result["value"] = None
-        dlg.destroy()
-
-    def skip_upload(_event=None):
-        # 종이 인쇄만 — 웹에 안 올림. 확정 매수(committed_copies)만 따라가므로,
-        # 분배함 슬롯이 자동 복원돼도 적용하기를 안 누른 상태면 0장 = 인쇄 생략.
-        result["value"] = {"order_number": None, "copies": _committed_total()}
         dlg.destroy()
 
     # ── 액션 버튼 (form_col 하단) ────────────────────────
@@ -3913,42 +3910,27 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     btns_section.pack(side="bottom", fill="x", pady=(0, 4))
     tk.Frame(form_col, bg=BORDER, height=1).pack(side="bottom", fill="x", pady=(8, 6))
 
-    # 1행: 메인 액션 — 풀 폭, 강조.
+    # 1행: 메인 액션 — 풀 폭, 강조. 라벨은 intent 에 따라 다르다.
+    # 의도 모달에서 [웹반영만] 골랐다면 종이 인쇄는 강제 스킵이므로 라벨에서도 "& 인쇄" 제거.
+    _main_label = "✓ 웹에만 적용" if intent == "web_only" else "✓ 웹에 적용 & 인쇄"
     tk.Button(
-        btns_section, text="✓ 웹에 적용 & 인쇄", command=confirm,
+        btns_section, text=_main_label, command=confirm,
         font=("맑은 고딕", 11, "bold"),
         bg=ACCENT, fg="white",
         activebackground=ACCENT_HOVER, activeforeground="white",
         relief="flat", padx=10, pady=9, cursor="hand2", bd=0,
     ).pack(fill="x")
 
-    # 2행: 보조 액션 3개 — 균등 분할.
+    # 2행: 보조 액션은 [취소] 만 — [종이만 인쇄]/[웹만 적용] 은 의도 모달이 앞서 묻기 때문에 제거.
     sec_row = tk.Frame(btns_section, bg=BG)
     sec_row.pack(fill="x", pady=(6, 0))
-    sec_row.columnconfigure(0, weight=1, uniform="sec")
-    sec_row.columnconfigure(1, weight=1, uniform="sec")
-    sec_row.columnconfigure(2, weight=1, uniform="sec")
-    tk.Button(
-        sec_row, text="종이만 인쇄", command=skip_upload,
-        font=("맑은 고딕", 9),
-        bg=BG_SOFT, fg=SUB_FG,
-        activebackground=BORDER, activeforeground=TITLE_FG,
-        relief="flat", pady=6, cursor="hand2", bd=0,
-    ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
-    tk.Button(
-        sec_row, text="웹만 적용", command=confirm_no_print,
-        font=("맑은 고딕", 9),
-        bg=BG_SOFT, fg=SUB_FG,
-        activebackground=BORDER, activeforeground=TITLE_FG,
-        relief="flat", pady=6, cursor="hand2", bd=0,
-    ).grid(row=0, column=1, sticky="ew", padx=3)
     tk.Button(
         sec_row, text="취소", command=cancel,
         font=("맑은 고딕", 9),
         bg=BG_SOFT, fg=LABEL_FG,
         activebackground=BORDER, activeforeground=TITLE_FG,
         relief="flat", pady=6, cursor="hand2", bd=0,
-    ).grid(row=0, column=2, sticky="ew", padx=(3, 0))
+    ).pack(fill="x")
 
     # Enter/Esc 는 다이얼로그 어디에 포커스가 있어도 동작하도록 위젯별로도 바인딩.
     dlg.bind("<Return>", confirm)
@@ -4053,17 +4035,38 @@ def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 10):
     threading.Thread(target=_run, daemon=True).start()
 
 
-def _flexisign_document_stem() -> str | None:
-    """현재 FlexiSIGN(App.exe) 에 열려 있는 .fs 도큐먼트의 stem 을 창 제목에서 읽어 반환.
+def _title_has_dirty_marker(title: str) -> bool:
+    """창 제목에 미저장(더티) 마커가 있는지. 윈도우 파일명에 '*' 가 들어갈 수 없으므로
+    제목 어디든 '*' 가 보이면 거의 확실히 더티 마커. 일부 앱은 (modified)/(unsaved) 같은
+    영문 토큰도 쓴다 — 이것도 같이 감지(false positive 위험 거의 없음)."""
+    if not title:
+        return False
+    if "*" in title:
+        return True
+    low = title.lower()
+    for tok in ("(modified)", "(unsaved)", "[modified]", "[unsaved]"):
+        if tok in low:
+            return True
+    return False
 
-    사무실 대다수 흐름은 "거래처 .fs 를 FlexiSIGN 에 열어 헤더만 붙여 인쇄" 라 워처가
-    원본 .ai 명을 모른다. 하지만 그 .fs 는 FlexiSIGN 창 제목에 들어 있고, 창 제목은
-    윈도우가 UTF-16 으로 다루므로 인코딩이 안 깨진다 → 이 stem 으로 인쇄 PDF 를 리네임하면
-    현장 에이전트가 거래처 폴더의 .fs 를 이름으로 정확 매칭(±30분 mtime 폴백 불필요).
 
-    FlexiSIGN 창이 없거나 .fs 가 든 제목을 못 찾으면 None. .fs 후보가 여럿이면(작업자가
-    여러 문서를 열어둠) EnumWindows Z-order 상 최상단(=가장 최근 활성) FlexiSIGN 창의 것을
-    채택하되 전부 로그에 남긴다(형식 확인/오인 발견용)."""
+def _flexisign_window_status() -> tuple[str, str | None, int]:
+    """현재 FlexiSIGN(App.exe) 창들 EnumWindows + 제목 분석 → (status, stem, hwnd).
+
+    반환 status:
+      - 'saved': 어느 FlexiSIGN 창 제목에 '.fs' 가 박혀 있고 더티 마커가 없음 → 저장된 도큐먼트.
+      - 'unsaved': 다음 두 케이스 — 다이얼로그 트리거 대상.
+          (a) 창 제목에 '.fs' 자체가 없음 (저장 안 된 새 도큐먼트)
+          (b) 창 제목에 '.fs' 는 있지만 미저장 마커('*' 등) 가 같이 있음 (기존 .fs 수정 후 미저장)
+        stem 은 None(저장 안 된 상태에선 stem 을 못 신뢰), hwnd 는 EnumWindows Z-order 상 최상단
+        FlexiSIGN 창(Ctrl+S 타겟).
+      - 'no_window': FlexiSIGN 자체가 안 떠 있음. stem=None, hwnd=0. (다른 앱 인쇄로 추정)
+
+    창 제목은 윈도우가 UTF-16 으로 다루므로 인코딩이 깨지지 않는다 → 'saved' 일 땐 이 stem 으로
+    인쇄 PDF 를 리네임하면 현장 에이전트가 거래처 폴더의 .fs 를 이름으로 정확 매칭(±30분 mtime
+    폴백 불필요). .fs 후보가 여럿이면(여러 문서를 열어둠) Z-order 첫 매칭(=가장 최근 활성) 을
+    채택하되 전부 로그.
+    """
     try:
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
@@ -4099,7 +4102,8 @@ def _flexisign_document_stem() -> str | None:
                 kernel32.CloseHandle(h)
             return ""
 
-        titles: list[str] = []  # EnumWindows = Z-order(최상단부터)
+        # (hwnd_int, title) 튜플 목록. EnumWindows = Z-order(최상단부터).
+        windows: list[tuple[int, str]] = []
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
         def _cb(hwnd, _lparam):
@@ -4122,33 +4126,339 @@ def _flexisign_document_stem() -> str | None:
                 base = exe_path.rsplit("\\", 1)[-1]
                 if base != flex_exe and "flexi" not in exe_path:
                     return True
-                titles.append(title)
+                # ctypes 콜백의 hwnd 는 c_void_p — Ctrl+S 송신 시 user32.SetForegroundWindow 가
+                # 받을 수 있는 정수형으로 박제(아래에서 c_void_p 로 다시 감싸 호출한다).
+                try:
+                    h_int = int(hwnd) if hwnd is not None else 0
+                except Exception:
+                    try:
+                        h_int = ctypes.cast(hwnd, ctypes.c_void_p).value or 0
+                    except Exception:
+                        h_int = 0
+                windows.append((h_int, title))
             except Exception:
                 pass
             return True
 
         user32.EnumWindows(WNDENUMPROC(_cb), 0)
-        if not titles:
-            return None
+        if not windows:
+            return ("no_window", None, 0)
+
         # 제목 어디든 박혀 있는 '<파일명>.fs' 추출 — 경로 포함이면 basename 만.
         fs_re = re.compile(r'([^\\/:*?"<>|\r\n\[\]]+\.fs)', re.IGNORECASE)
-        ordered_stems: list[str] = []
-        for t in titles:
+        # (stem, hwnd, title, dirty) — Z-order 보존, title/dirty 는 매칭창 자체의 미저장 여부 판정용.
+        ordered: list[tuple[str, int, str, bool]] = []
+        for h_int, t in windows:
             m = fs_re.search(t)
             if not m:
                 continue
             stem = Path(m.group(1).strip()).stem.strip()
-            if stem and stem not in ordered_stems:
-                ordered_stems.append(stem)
-        ui_log(f"FlexiSIGN 창 제목 {titles!r} → .fs 후보 {ordered_stems!r}")
-        if not ordered_stems:
-            return None
-        if len(ordered_stems) > 1:
-            ui_log(f"FlexiSIGN 열린 .fs 여럿 — 최상단 창의 '{ordered_stems[0]}' 채택")
-        return ordered_stems[0]
+            if stem and not any(s == stem for s, _, _, _ in ordered):
+                ordered.append((stem, h_int, t, _title_has_dirty_marker(t)))
+        titles_only = [w[1] for w in windows]
+        ui_log(f"FlexiSIGN 창 제목 {titles_only!r} → .fs 후보 {[s for s, _, _, _ in ordered]!r}")
+        if ordered:
+            first_stem, first_hwnd, first_title, first_dirty = ordered[0]
+            if first_dirty:
+                # 제목에 .fs 는 있지만 미저장 마커('*' 등) — 기존 .fs 를 수정만 한 상태.
+                # 이대로 인쇄해 업로드하면 stem 은 깔끔하지만 현장에서는 디스크의 옛 .fs 를 열게
+                # 됨(사용자의 수정 사항 반영 안 됨) → unsaved 로 취급해서 저장 다이얼로그 띄움.
+                ui_log(f"FlexiSIGN 제목 '{first_title}' 에 미저장 마커 — unsaved 로 판정")
+                return ("unsaved", None, first_hwnd)
+            if len(ordered) > 1:
+                ui_log(f"FlexiSIGN 열린 .fs 여럿 — 최상단 창의 '{first_stem}' 채택")
+            return ("saved", first_stem, first_hwnd)
+        # 창은 있는데 .fs 가 한 군데도 없음 = 저장 안 된 새 도큐먼트
+        return ("unsaved", None, windows[0][0])
     except Exception as e:
-        ui_log(f"FlexiSIGN 창 제목 읽기 실패: {e}")
-        return None
+        ui_log(f"FlexiSIGN 창 상태 읽기 실패: {e}")
+        return ("no_window", None, 0)
+
+
+def _flexisign_document_stem() -> str | None:
+    """저장된 FlexiSIGN 도큐먼트의 stem 을 창 제목에서 읽어 반환. 저장 안 됐거나 창이 없으면 None.
+
+    내부적으로 _flexisign_window_status 를 호출 — 기존 호출부 호환용 래퍼.
+    """
+    status, stem, _ = _flexisign_window_status()
+    return stem if status == "saved" else None
+
+
+def _force_flexisign_foreground(hwnd: int, timeout_ms: int = 600) -> bool:
+    """FlexiSIGN 창을 포그라운드로 끌어와 GetForegroundWindow == hwnd 로 검증.
+
+    Alt 토글로 OS foreground 잠금 해제 + 점유 스레드 AttachThreadInput 으로
+    SetForegroundWindow 차단 우회 + 검증 루프(짧은 슬립). 검증 실패 시 False —
+    이 경우 호출 측은 글로벌 Ctrl+S 송신을 *건너뛰어야* 한다(브라우저 등 다른
+    창에 키가 잘못 박혀 페이지 새로고침/저장 다이얼로그가 뜨는 사고 방지)."""
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        import win32api
+        VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            time.sleep(0.08)
+        deadline = time.time() + timeout_ms / 1000.0
+        attempt = 0
+        while time.time() < deadline:
+            attempt += 1
+            if user32.GetForegroundWindow() == hwnd:
+                return True
+            # Alt 1회 토글 — 다른 프로세스가 foreground 잠금을 걸어둔 상태에서도
+            # SetForegroundWindow 를 통과시키는 잘 알려진 트릭.
+            win32api.keybd_event(VK_MENU, 0, 0, 0)
+            win32api.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+            fg = user32.GetForegroundWindow()
+            cur_thread = kernel32.GetCurrentThreadId()
+            attached = False
+            fg_thread = 0
+            try:
+                if fg and fg != hwnd:
+                    fg_thread = user32.GetWindowThreadProcessId(fg, None)
+                    if fg_thread and fg_thread != cur_thread:
+                        user32.AttachThreadInput(cur_thread, fg_thread, True)
+                        attached = True
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                user32.SetActiveWindow(hwnd)
+            finally:
+                if attached:
+                    user32.AttachThreadInput(cur_thread, fg_thread, False)
+            time.sleep(0.04 if attempt <= 2 else 0.08)
+        return user32.GetForegroundWindow() == hwnd
+    except Exception as e:
+        ui_log(f"FlexiSIGN 포그라운드 전환 예외: {e}")
+        return False
+
+
+def _focus_flexisign_window_async() -> None:
+    """QR 클립보드 복사 안내 모달 [확인] 직후 호출 — FlexiSIGN 창을 포그라운드로 자동 전환.
+
+    이유: 클립보드 복사 후 사용자가 워처 창에서 Ctrl+V 를 누르면 빈 클립보드가 박히거나
+    엉뚱한 곳에 붙어 빈 껍데기 지시서가 생기던 사고가 있었음. 사용자가 "확인" 만 누르면
+    바로 Ctrl+V 가 FlexiSIGN 캔버스에 박히도록 강제 포커스 전환.
+
+    데몬 스레드로 비동기 실행 — UI 스레드 막지 않게(_force_flexisign_foreground 가
+    최대 ~600ms sleep 루프).
+    """
+    def _do():
+        try:
+            status, _stem, hwnd = _flexisign_window_status()
+            if status == "no_window" or not hwnd:
+                ui_log("FlexiSIGN 창 없음 — QR 복사 후 포커스 전환 생략")
+                return
+            ok = _force_flexisign_foreground(hwnd, timeout_ms=800)
+            ui_log(f"QR 복사 후 FlexiSIGN 포커스 전환 — {'성공' if ok else '실패(다른 창이 점유)'}")
+        except Exception as e:
+            ui_log(f"QR 복사 후 FlexiSIGN 포커스 전환 예외: {e}")
+    threading.Thread(target=_do, daemon=True).start()
+
+
+def _show_qr_copy_done_and_focus_flex(title: str, msg: str) -> None:
+    """QR 클립보드 복사 완료 안내 모달 → 사용자 [확인] 직후 FlexiSIGN 포커스 자동 전환.
+    showinfo 가 모달이라 사용자가 [확인] 누를 때까지 블록되고, 닫히는 즉시 FlexiSIGN 으로 점프."""
+    def _do():
+        try:
+            messagebox.showinfo(title, msg)
+        finally:
+            _focus_flexisign_window_async()
+    _ui_queue.put(("run", _do))
+
+
+def _send_save_keystroke_to(hwnd: int) -> bool:
+    """FlexiSIGN 창을 포그라운드로 잠그고 Ctrl+S 송신. 검증 실패 시 송신 안 함.
+
+    keybd_event 는 글로벌 키 이벤트라 *현재* 포그라운드 창이 받는다. 사용자가
+    매칭 다이얼로그 [✓ 적용] 직후 다른 창(브라우저 등)을 클릭해 포그라운드를
+    뺏긴 상태라면 Ctrl+S 가 그 창에 박혀 페이지 새로고침/저장 다이얼로그가 뜨고
+    FlexiSIGN 은 저장되지 않는다. 그래서 *반드시* 검증된 foreground 상태에서만
+    키를 보낸다."""
+    if not _force_flexisign_foreground(hwnd):
+        ui_log("FlexiSIGN 포그라운드 검증 실패 — Ctrl+S 송신 건너뜀(다른 창 오송신 방지)")
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        VK_CONTROL = 0x11
+        VK_S = 0x53
+        KEYEVENTF_KEYUP = 0x0002
+        user32.keybd_event(VK_CONTROL, 0, 0, 0)
+        time.sleep(0.04)
+        user32.keybd_event(VK_S, 0, 0, 0)
+        time.sleep(0.04)
+        user32.keybd_event(VK_S, 0, KEYEVENTF_KEYUP, 0)
+        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+        ui_log("FlexiSIGN 에 Ctrl+S 송신 (포그라운드 검증 완료)")
+        return True
+    except Exception as e:
+        ui_log(f"FlexiSIGN Ctrl+S 송신 실패: {e}")
+        return False
+
+
+def _show_combined_done_modal(alert_kind: str, ops_msg: str) -> None:
+    """자동저장 결과 + 처리 결과를 한 모달에 합쳐서 사용자에게 띄움.
+
+    - alert_kind=='saved' : 정보 모달, "FlexiSIGN 자동 저장 완료" + ops_msg
+    - alert_kind=='failed': 경고 모달, "자동 저장 실패 — 직접 저장 필요" + ops_msg
+    - alert_kind==''      : 정보 모달, ops_msg 만 (no_window/unsaved 분기)
+    """
+    if alert_kind == 'saved':
+        title = "처리 완료"
+        body = f"FlexiSIGN 자동 저장 완료.\n{ops_msg}"
+        fn = messagebox.showinfo
+    elif alert_kind == 'failed':
+        title = "처리 완료 (저장 확인 필요)"
+        body = (
+            "FlexiSIGN 자동 저장에 실패했습니다.\n"
+            "[✓ 적용] 직후 다른 창으로 포커스가 옮겨갔을 수 있습니다.\n"
+            "FlexiSIGN 으로 돌아가 Ctrl+S 로 직접 저장해주세요.\n\n"
+            f"{ops_msg}"
+        )
+        fn = messagebox.showwarning
+    else:
+        title = "처리 완료"
+        body = ops_msg
+        fn = messagebox.showinfo
+    _ui_queue.put((
+        "run",
+        lambda t=title, b=body, f=fn: f(t, b),
+    ))
+
+
+def _auto_save_flexisign_for_print(pdf_path: Path) -> tuple[bool, str]:
+    """인쇄 PDF 감지 시 호출 — FlexiSIGN 도큐먼트 자동 Ctrl+S 저장.
+    반환 (계속진행, alert_kind).
+
+    alert_kind: 호출 측이 즉시 띄울 안내 메시지 종류
+      - ''        : 안내 안 띄움 (no_window 또는 unsaved 분기에서 사용자 직접 저장)
+      - 'saved'   : Ctrl+S 송신 성공 — '✓ 저장 완료' 정보 토스트
+      - 'failed'  : 포그라운드 검증 실패로 Ctrl+S 송신 못 함 — 경고 토스트
+                    (사용자가 [✓ 적용] 직후 다른 창을 클릭해 포커스를 뺏긴 경우 등)
+
+    NOTE: 'saved' 분기는 Ctrl+S 송신 직후 즉시 반환한다. 예전엔 송신 후 0.4s sleep +
+    거래처 폴더 트리 rglob (수초 가능) + mtime 비교로 "워처가 실제로 디스크에
+    저장시켰는가" 를 판정했는데, 그게 알림 표시 지연의 주범이었다. 이제
+    _force_flexisign_foreground 가 포그라운드를 검증하므로 Ctrl+S 가 FlexiSIGN 에
+    박힌 것 자체는 신뢰할 수 있다. 이미 깨끗하게 저장된 상태였다면 FlexiSIGN 의
+    Ctrl+S 는 무동작이지만, 그 경우에도 메시지가 중립적("저장 완료")이라 거짓이 아니다.
+    """
+    status, stem, hwnd = _flexisign_window_status()
+    if status == "no_window":
+        return True, ''
+
+    if status == "saved" and stem:
+        send_ok = _send_save_keystroke_to(hwnd) if hwnd else False
+        if not send_ok:
+            return True, 'failed'
+        ui_log(f"FlexiSIGN Ctrl+S 송신 완료 — '{stem}.fs' 저장 처리")
+        return True, 'saved'
+
+    # status == "unsaved" — 새 도큐먼트, Save As 띄움
+    if hwnd:
+        _send_save_keystroke_to(hwnd)
+    wait_holder, cancel_evt = _show_save_wait_window()
+    saved_stem: str | None = None
+    deadline = time.time() + 180  # 3분
+    try:
+        while time.time() < deadline:
+            if cancel_evt.is_set():
+                break
+            s2, st2, _ = _flexisign_window_status()
+            if s2 == "saved" and st2:
+                saved_stem = st2
+                break
+            time.sleep(0.5)
+    finally:
+        _close_save_wait_window(wait_holder)
+    if not saved_stem:
+        if cancel_evt.is_set():
+            ui_log(f"인쇄 — 저장 대기 중 사용자 [취소] : PDF 삭제 ({pdf_path.name})")
+        else:
+            ui_log(f"인쇄 — 저장 대기 타임아웃(3분): PDF 삭제 ({pdf_path.name})")
+        try:
+            if pdf_path.exists():
+                pdf_path.unlink()
+        except Exception as e:
+            ui_log(f"PDF 삭제 실패: {e}")
+        return False, ''
+    ui_log(f"인쇄 — FlexiSIGN 저장 완료('{saved_stem}.fs') → 평소 흐름 진행")
+    return True, ''  # 사용자가 직접 저장 — 알림 별도로 안 띄움
+
+
+def _show_save_wait_window() -> tuple[dict, threading.Event]:
+    """저장 완료 폴링 동안 띄워두는 작은 안내창. (holder, cancel_event) 반환.
+    holder['win'] = Toplevel (또는 None). cancel_event 가 set 되면 사용자가 [취소] 누른 것.
+    호출 측은 폴링 끝나면 _close_save_wait_window(holder) 호출."""
+    holder: dict = {"win": None}
+    cancel_event = threading.Event()
+
+    def _show():
+        try:
+            w = tk.Toplevel()
+            w.title("저장 대기 중")
+            w.configure(bg="#ffffff")
+            w.resizable(False, False)
+            try:
+                w.attributes("-topmost", True)
+            except Exception:
+                pass
+            fr = tk.Frame(w, bg="#ffffff")
+            fr.pack(padx=26, pady=20)
+            tk.Label(fr, text="먼저 저장해주세요",
+                     bg="#ffffff", fg="#18181b", font=("맑은 고딕", 13, "bold"),
+                     anchor="w").pack(fill="x")
+            tk.Label(fr,
+                     text="인쇄(웹 반영)을 하려면 먼저 저장해주셔야 합니다.",
+                     bg="#ffffff", fg="#3f3f46", font=("맑은 고딕", 10),
+                     anchor="w").pack(fill="x", pady=(6, 12))
+            pb = ttk.Progressbar(fr, mode="indeterminate", length=340)
+            pb.pack(fill="x")
+            try:
+                pb.start(12)
+            except Exception:
+                pass
+            btns = tk.Frame(fr, bg="#ffffff")
+            btns.pack(fill="x", pady=(12, 0))
+
+            def _do_cancel():
+                cancel_event.set()
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+
+            tk.Button(btns, text="취소 — 인쇄 중단", command=_do_cancel,
+                      font=("맑은 고딕", 9), bg="#e4e4e7", fg="#18181b",
+                      activebackground="#d4d4d8", relief="flat", bd=0, padx=12, pady=6,
+                      cursor="hand2").pack(side="right")
+            w.protocol("WM_DELETE_WINDOW", _do_cancel)
+            w.update_idletasks()
+            ww, wh = w.winfo_reqwidth(), w.winfo_reqheight()
+            sw, _sh = w.winfo_screenwidth(), w.winfo_screenheight()
+            # 화면 상단 가운데에 띄운다 — 사용자가 FlexiSIGN 캔버스에서 저장 작업하는 동안
+            # 가운데 떠 있으면 가려서 방해되므로 위로 올려둔다.
+            w.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+30")
+            holder["win"] = w
+        except Exception as e:
+            ui_log(f"저장 대기 창 표시 오류: {e}")
+
+    _ui_queue.put(("run", _show))
+    return holder, cancel_event
+
+
+def _close_save_wait_window(holder: dict):
+    def _do():
+        w = holder.get("win")
+        if w is None:
+            return
+        holder["win"] = None
+        try:
+            w.destroy()
+        except Exception:
+            pass
+
+    _ui_queue.put(("run", _do))
 
 
 def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str) -> Path:
@@ -4317,6 +4627,20 @@ def _decode_qr_from_pil(pil: "Image.Image", *, tag: str = "") -> str | None:
     return _cv2_decode_qr(pil)
 
 
+def _qr_shape_present_cv2(pil: "Image.Image") -> bool:
+    """cv2.QRCodeDetector.detect() — corner 패턴만 찾고 디코드는 안 한다(decode 보다 훨씬 싸다).
+    QR 모양 자체가 없으면 False → 호출 측이 슬로우 변형 스윕을 건너뛰도록 신호."""
+    if cv2 is None or _np is None:
+        return False
+    try:
+        arr = _np.array(pil.convert("L"))
+        det = cv2.QRCodeDetector()
+        ok, _pts = det.detect(arr)
+        return bool(ok)
+    except Exception:
+        return False
+
+
 def decode_pdf_qr(pdf_path: Path) -> str | None:
     """인쇄된 PDF 에서 QR 을 디코드해 주문번호를 반환. 실패/미설치 시 None.
 
@@ -4324,14 +4648,15 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
     (스테이징/로컬 호스트로 바뀌어도 인식). pyzbar/cv2 모두 없거나 PDF 가 깨졌으면 호출자는
     QR 매칭 없이 평소 다이얼로그(수동 선택)로 폴백한다.
 
-    인식 보강 (FlexSign→PDF24→재인쇄 경로에서 셀 경계가 흐려져 디코더가 놓치는 케이스 대응):
-      - 전 페이지 순회 (PDF24 가 빈 표지/안내 페이지를 추가해도 안전)
-      - 200 → 300 → 400 → 600 dpi 순으로 재렌더 (raster 박힌 QR 도 다른 보간으로 다시 만든다)
-      - 각 렌더마다 그레이 / Otsu / 다단 임계(100·128·170) / 오토컨트라스트 / 블러후이진화 /
-        (작은 이미지면) 2배 확대 변형으로 pyzbar 호출 — 안티얼라이싱·노이즈에 둔감해지게
-      - pyzbar 가 다 놓치면 같은 이미지를 OpenCV QRCodeDetector(detectAndDecode + Multi)로 재시도
-      - 최종 실패 시 첫 렌더 이미지를 state/qr_debug/<stem>.png 로 덤프 →
-        다음 실패 때 PNG 한 장만 열면 잘림/누락/흐림 중 어느 케이스인지 즉시 판별."""
+    2단 구조 — 신규 지시서(QR 없음) 처리 속도 회복:
+      [Fast pass] 전 페이지 300dpi gray 한 번씩만 pyzbar 시도 + cv2.detect 코너 검사.
+        ・pyzbar 가 디코드하면 즉시 반환 (대부분의 깨끗한 QR 케이스)
+        ・어느 페이지에서도 cv2 코너 검출이 안 되면 "QR 부재" 로 판단해 슬로우 스윕 생략
+      [Slow sweep] cv2 가 코너는 잡았지만 pyzbar 가 못 풀었을 때만 진입 — FlexSign→PDF24
+        경로에서 모듈 경계가 뭉개진 케이스 보강(예: 진성커뮤니티 11-19 같은 큰 도면).
+        ・200/300/400/600dpi 재렌더 + 8가지 전처리 변형 + OpenCV detectAndDecode 폴백
+        ・최종 실패 시 첫 렌더 이미지를 state/qr_debug/<stem>.png 로 덤프
+    """
     if pyzbar_decode is None and cv2 is None:
         ui_log("QR 디코드 건너뜀: pyzbar/opencv 라이브러리 없음 (exe 빌드시 --collect-all pyzbar 등 필요)")
         return None
@@ -4351,6 +4676,44 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
     debug_image: Image.Image | None = None
     last_size: tuple[int, int] | None = None
     try:
+        # ── Fast pass: 페이지별 300dpi 한 번씩만 시도, cv2 코너 검출 동시 수행. ──
+        any_qr_shape = False
+        for page_idx in range(doc.page_count):
+            try:
+                page = doc[page_idx]
+                mat = fitz.Matrix(300 / 72, 300 / 72)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                pil = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            except Exception as e:
+                ui_log(f"QR 디코드 fast 렌더 실패(p{page_idx}): {e}")
+                continue
+            last_size = (pil.width, pil.height)
+            if debug_image is None:
+                debug_image = pil
+            # 1) pyzbar 빠른 1샷 (gray, 변형 없음)
+            if pyzbar_decode is not None:
+                try:
+                    results = _pyzbar_decode_qr(pil.convert("L"))
+                    for r in results or []:
+                        try:
+                            data = r.data.decode("utf-8", errors="ignore")
+                        except Exception:
+                            continue
+                        o = _qr_order_from_payload(data)
+                        if o:
+                            return o
+                except Exception as e:
+                    ui_log(f"QR fast pyzbar 실패(p{page_idx}): {e}")
+            # 2) cv2 코너 검출 (decode 안 함, 빠름) — 모양만이라도 보이면 슬로우 스윕 가치 있음
+            if not any_qr_shape and _qr_shape_present_cv2(pil):
+                any_qr_shape = True
+                ui_log(f"QR fast: 코너 검출됨(p{page_idx}) — 디코드는 슬로우 스윕에서 재시도")
+
+        if not any_qr_shape:
+            ui_log(f"QR 디코드: 사전 스캔으로 QR 부재 확인 ({pdf_path.name}) — 슬로우 스윕 생략")
+            return None
+
+        # ── Slow sweep: 코너는 검출됐는데 디코드 못한 케이스만 진입 ──
         for page_idx in range(doc.page_count):
             try:
                 page = doc[page_idx]
@@ -4366,9 +4729,6 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
                     ui_log(f"QR 디코드 렌더 실패(p{page_idx} {dpi}dpi): {e}")
                     continue
                 last_size = (pil.width, pil.height)
-                if debug_image is None:
-                    # 가장 사람 눈에 익숙한 첫 렌더(300dpi 1페이지)를 디버그 후보로 잡아둔다.
-                    debug_image = pil
                 o = _decode_qr_from_pil(pil, tag=f"p{page_idx} {dpi}dpi")
                 if o:
                     return o
@@ -4392,6 +4752,334 @@ def decode_pdf_qr(pdf_path: Path) -> str | None:
     else:
         ui_log(f"QR 디코드: PDF 안에서 QR 코드를 찾지 못함 ({pdf_path.name})")
     return None
+
+
+# ── 인쇄 의도(intent) 선택 — 3옵션 모달 + 파일당 캐시 ──────────────────────────
+# 사용자가 인쇄 누르면 매번 [💾 웹반영&인쇄] / [💾 웹반영만] / [🖨 종이인쇄만] 중에서 선택.
+# 캐시 정책(비대칭 기억):
+#   ・"web_print" / "web_only" 만 .fs stem 별로 캐시 — 같은 파일 다음 인쇄 시 직전 선택을
+#     1.5초 토스트로 보여주고 자동 진행([변경] 누르면 모달 재호출).
+#   ・"paper_only" 는 캐시 안 함 — 초안에서 종이만 뽑은 게 최종까지 살아남아 웹 반영을
+#     누락시키는 사고를 막기 위함. 종이만 인쇄는 매번 명시적으로 선택해야 함.
+#   ・unsaved 도큐먼트는 stem 이 없어 캐시 키 생성 불가 → 매번 모달.
+_intent_cache: dict[str, str] = {}
+_intent_cache_lock = threading.Lock()
+
+_INTENT_LABEL = {
+    "web_print": "웹반영 & 인쇄",
+    "web_only": "웹반영만",
+    "paper_only": "종이 인쇄만",
+}
+
+
+def _get_intent_cache(stem: str) -> str | None:
+    with _intent_cache_lock:
+        return _intent_cache.get(stem)
+
+
+def _set_intent_cache(stem: str, intent: str) -> None:
+    # paper_only 는 의도적으로 캐시 안 함(위 정책).
+    if intent not in ("web_print", "web_only"):
+        return
+    with _intent_cache_lock:
+        _intent_cache[stem] = intent
+
+
+def _ask_print_intent_modal(stem: str | None, busy_close) -> tuple[str, int]:
+    """인쇄 의도 3옵션 모달. (intent, paper_copies) 반환.
+    intent ∈ {"web_print", "web_only", "paper_only", "cancel"}.
+    paper_copies: intent=='paper_only' 일 때만 의미 있음(>=1). 그 외엔 0.
+
+    busy_close: 모달 표시 직전에 호출할 콜백(인쇄물 처리중 안내창 닫기용).
+    저장된 .fs 면 파일명 표시, 미저장이면 그 사실을 안내.
+    """
+    holder: dict = {"intent": "cancel", "copies": 0, "done": threading.Event()}
+
+    def _show():
+        try:
+            busy_close()
+        except Exception:
+            pass
+        try:
+            win = tk.Toplevel()
+            win.title("인쇄 방식 선택")
+            win.configure(bg="#ffffff")
+            win.resizable(False, False)
+            try:
+                win.attributes("-topmost", True)
+            except Exception:
+                pass
+            frm = tk.Frame(win, bg="#ffffff")
+            frm.pack(padx=28, pady=22, fill="both")
+            tk.Label(frm, text="인쇄 방식 선택",
+                     bg="#ffffff", fg="#18181b", font=("맑은 고딕", 14, "bold"),
+                     anchor="w").pack(fill="x")
+            tk.Label(frm, text="FlexiSIGN 인쇄가 감지되었습니다. 어떻게 처리할까요?",
+                     bg="#ffffff", fg="#71717a", font=("맑은 고딕", 10),
+                     anchor="w").pack(fill="x", pady=(6, 4))
+            if stem:
+                tk.Label(frm, text=f"파일 : {stem}.fs",
+                         bg="#ffffff", fg="#52525b", font=("맑은 고딕", 9),
+                         anchor="w").pack(fill="x", pady=(0, 14))
+            else:
+                tk.Label(frm, text="※ 아직 저장되지 않은 새 도큐먼트입니다.",
+                         bg="#ffffff", fg="#b91c1c", font=("맑은 고딕", 9),
+                         anchor="w").pack(fill="x", pady=(0, 14))
+
+            def _choose(intent: str):
+                holder["intent"] = intent
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+
+            def _make_choice(parent, label, sub, icon, color_bg, color_fg, on_click,
+                             hover_bg):
+                btn = tk.Frame(parent, bg=color_bg, cursor="hand2",
+                               highlightbackground="#a1a1aa", highlightthickness=1)
+                btn.pack(fill="x", pady=(0, 8))
+                inner = tk.Frame(btn, bg=color_bg, cursor="hand2")
+                inner.pack(fill="x", padx=14, pady=10)
+                icon_lbl = tk.Label(inner, text=icon, bg=color_bg, fg=color_fg,
+                                    font=("Segoe UI Emoji", 18), cursor="hand2")
+                icon_lbl.pack(side="left", padx=(0, 12))
+                text_fr = tk.Frame(inner, bg=color_bg, cursor="hand2")
+                text_fr.pack(side="left", fill="x", expand=True)
+                title_lbl = tk.Label(text_fr, text=label, bg=color_bg, fg=color_fg,
+                                     font=("맑은 고딕", 12, "bold"), anchor="w",
+                                     cursor="hand2")
+                title_lbl.pack(fill="x")
+                sub_lbl = tk.Label(text_fr, text=sub, bg=color_bg, fg=color_fg,
+                                   font=("맑은 고딕", 9), anchor="w", cursor="hand2")
+                sub_lbl.pack(fill="x")
+
+                def _on_enter(_e=None):
+                    for w in (btn, inner, icon_lbl, text_fr, title_lbl, sub_lbl):
+                        try:
+                            w.configure(bg=hover_bg)
+                        except Exception:
+                            pass
+
+                def _on_leave(_e=None):
+                    for w in (btn, inner, icon_lbl, text_fr, title_lbl, sub_lbl):
+                        try:
+                            w.configure(bg=color_bg)
+                        except Exception:
+                            pass
+
+                for w in (btn, inner, icon_lbl, text_fr, title_lbl, sub_lbl):
+                    w.bind("<Button-1>", lambda _e: on_click())
+                    w.bind("<Enter>", _on_enter)
+                    w.bind("<Leave>", _on_leave)
+
+            _make_choice(frm,
+                "웹반영 & 인쇄",
+                "저장 → 웹 업로드 → 종이 인쇄",
+                "\U0001F4BE", "#2563eb", "white",
+                lambda: _choose("web_print"), "#1d4ed8")
+            _make_choice(frm,
+                "웹반영만",
+                "저장 → 웹 업로드 (종이 인쇄 없음)",
+                "\U0001F4BE", "#10b981", "white",
+                lambda: _choose("web_only"), "#0ea371")
+            _make_choice(frm,
+                "종이 인쇄만",
+                "현재 화면 그대로 종이만 인쇄 (저장/업로드 없음)",
+                "\U0001F5A8", "#f4f4f5", "#18181b",
+                lambda: _choose("paper_only"), "#e4e4e7")
+
+            win.protocol("WM_DELETE_WINDOW", lambda: _choose("cancel"))
+            win.bind("<Escape>", lambda _e: _choose("cancel"))
+            win.update_idletasks()
+            ww, wh = win.winfo_reqwidth(), win.winfo_reqheight()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+{max(40, (sh - wh) // 3)}")
+            try:
+                win.grab_set()
+                win.focus_force()
+            except Exception:
+                pass
+            win.wait_window()
+        except Exception as e:
+            ui_log(f"인쇄 의도 모달 오류: {e}")
+        finally:
+            holder["done"].set()
+
+    _ui_queue.put(("run", _show))
+    holder["done"].wait()
+
+    if holder["intent"] == "paper_only":
+        copies = _ask_paper_copies_modal()
+        if copies <= 0:
+            return ("cancel", 0)
+        holder["copies"] = copies
+
+    return (holder["intent"], holder["copies"])
+
+
+def _ask_paper_copies_modal() -> int:
+    """[종이 인쇄만] 선택 시 매수 입력 모달. 0 또는 취소 시 0 반환."""
+    holder: dict = {"value": 0, "done": threading.Event()}
+
+    def _show():
+        try:
+            win = tk.Toplevel()
+            win.title("인쇄 매수")
+            win.configure(bg="#ffffff")
+            win.resizable(False, False)
+            try:
+                win.attributes("-topmost", True)
+            except Exception:
+                pass
+            frm = tk.Frame(win, bg="#ffffff")
+            frm.pack(padx=28, pady=22)
+            tk.Label(frm, text="종이 인쇄 매수",
+                     bg="#ffffff", fg="#18181b", font=("맑은 고딕", 13, "bold"),
+                     anchor="w").pack(fill="x")
+            tk.Label(frm, text="현재 화면 그대로 인쇄할 매수를 입력해주세요.",
+                     bg="#ffffff", fg="#71717a", font=("맑은 고딕", 10),
+                     anchor="w").pack(fill="x", pady=(6, 14))
+            entry_var = tk.StringVar(value="1")
+            entry = tk.Entry(frm, textvariable=entry_var, font=("맑은 고딕", 14),
+                             width=10, justify="center")
+            entry.pack(pady=(0, 16))
+
+            def _confirm():
+                try:
+                    v = int(entry_var.get().strip())
+                except Exception:
+                    v = 0
+                if v < 1:
+                    v = 0
+                holder["value"] = v
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+
+            def _cancel():
+                holder["value"] = 0
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+
+            btns = tk.Frame(frm, bg="#ffffff")
+            btns.pack(fill="x")
+            tk.Button(btns, text="취소", command=_cancel,
+                      font=("맑은 고딕", 10), bg="#e4e4e7", fg="#18181b",
+                      activebackground="#d4d4d8", relief="flat", bd=0, padx=14, pady=8,
+                      cursor="hand2").pack(side="right")
+            tk.Button(btns, text="✓ 인쇄", command=_confirm,
+                      font=("맑은 고딕", 10, "bold"), bg="#2563eb", fg="white",
+                      activebackground="#1d4ed8", relief="flat", bd=0, padx=14, pady=8,
+                      cursor="hand2").pack(side="right", padx=(0, 8))
+
+            win.bind("<Return>", lambda _e: _confirm())
+            win.bind("<Escape>", lambda _e: _cancel())
+            win.protocol("WM_DELETE_WINDOW", _cancel)
+            win.update_idletasks()
+            ww, wh = win.winfo_reqwidth(), win.winfo_reqheight()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+{max(40, (sh - wh) // 3)}")
+            try:
+                win.grab_set()
+                entry.focus_set()
+                entry.select_range(0, tk.END)
+            except Exception:
+                pass
+            win.wait_window()
+        except Exception as e:
+            ui_log(f"인쇄 매수 모달 오류: {e}")
+        finally:
+            holder["done"].set()
+
+    _ui_queue.put(("run", _show))
+    holder["done"].wait()
+    return holder["value"]
+
+
+def _confirm_cached_intent(stem: str, cached: str, busy_close) -> str:
+    """캐시된 직전 선택 확인 — 1.5초 토스트로 알리고 자동 진행.
+    반환: cached(그대로 진행) 또는 "remodal"(사용자가 [변경] 클릭 → 호출 측이 모달 재호출).
+    X/Esc/Return 도 그대로 진행으로 처리(가장 흔한 의도).
+    """
+    label = _INTENT_LABEL.get(cached, cached)
+    holder: dict = {"result": cached, "done": threading.Event(), "closed": False}
+
+    def _show():
+        try:
+            busy_close()
+        except Exception:
+            pass
+        try:
+            win = tk.Toplevel()
+            win.title("직전 선택대로 진행")
+            win.configure(bg="#ffffff")
+            win.resizable(False, False)
+            try:
+                win.attributes("-topmost", True)
+            except Exception:
+                pass
+            frm = tk.Frame(win, bg="#ffffff")
+            frm.pack(padx=22, pady=16)
+            tk.Label(frm, text=f"이 파일은 직전에 [{label}] 로 진행했습니다.",
+                     bg="#ffffff", fg="#18181b", font=("맑은 고딕", 11, "bold"),
+                     anchor="w").pack(fill="x")
+            tk.Label(frm, text=f"파일 : {stem}.fs   ·   잠시 후 자동으로 진행합니다.",
+                     bg="#ffffff", fg="#71717a", font=("맑은 고딕", 9),
+                     anchor="w").pack(fill="x", pady=(4, 10))
+            pb = ttk.Progressbar(frm, mode="determinate", length=300, maximum=100)
+            pb.pack(fill="x")
+            btns = tk.Frame(frm, bg="#ffffff")
+            btns.pack(fill="x", pady=(12, 0))
+
+            def _close_with(result: str):
+                if holder["closed"]:
+                    return
+                holder["closed"] = True
+                holder["result"] = result
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+
+            tk.Button(btns, text="변경", command=lambda: _close_with("remodal"),
+                      font=("맑은 고딕", 9), bg="#e4e4e7", fg="#18181b",
+                      activebackground="#d4d4d8", relief="flat", bd=0, padx=12, pady=6,
+                      cursor="hand2").pack(side="right")
+            tk.Button(btns, text="지금 진행", command=lambda: _close_with(cached),
+                      font=("맑은 고딕", 9, "bold"), bg="#2563eb", fg="white",
+                      activebackground="#1d4ed8", relief="flat", bd=0, padx=12, pady=6,
+                      cursor="hand2").pack(side="right", padx=(0, 8))
+
+            win.protocol("WM_DELETE_WINDOW", lambda: _close_with(cached))
+            win.bind("<Escape>", lambda _e: _close_with(cached))
+            win.bind("<Return>", lambda _e: _close_with(cached))
+            win.update_idletasks()
+            ww, wh = win.winfo_reqwidth(), win.winfo_reqheight()
+            sw, _sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            # 화면 상단 가운데 — 사용자가 FlexiSIGN 으로 돌아가기 쉽게 작업 영역 비움.
+            win.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+60")
+            try:
+                win.grab_set()
+                win.focus_force()
+            except Exception:
+                pass
+            # 1.5초 동안 progressbar 채우면서 자동 진행.
+            for i in range(1, 16):
+                win.after(i * 100,
+                          lambda v=i * 7: pb.configure(value=v) if pb.winfo_exists() else None)
+            win.after(1500, lambda: _close_with(cached))
+            win.wait_window()
+        except Exception as e:
+            ui_log(f"캐시 확인 토스트 오류: {e}")
+        finally:
+            holder["done"].set()
+
+    _ui_queue.put(("run", _show))
+    holder["done"].wait()
+    return holder["result"]
 
 
 def _process_printed_pdf(pdf_path: Path):
@@ -4471,6 +5159,57 @@ def _process_printed_pdf(pdf_path: Path):
     # 짧게 — 더 길게 잡으면 그만큼 매칭 창이 늦게 뜬다. 혹시 부분 파일이면 QR 디코드만
     # 한 번 빗나가고(QR 미인식 → 폴백) 이후 종이/업로드는 더 늦게 일어나니 문제 없음.
     time.sleep(0.3)
+
+    # ── 인쇄 의도(intent) 선택 — 3옵션 모달 ────────────────────────────────────
+    # 사용자가 인쇄 누르면 [💾 웹반영&인쇄] / [💾 웹반영만] / [🖨 종이 인쇄만] 중 선택.
+    # 웹반영 계열은 .fs stem 별로 캐시 → 같은 파일 다음 인쇄 시 1.5초 토스트만 띄우고 자동
+    # 진행. 종이인쇄만은 캐시 안 함(초안 단계의 일회성 선택이 최종 단계까지 살아남는 사고 방지).
+    _intent_status, _intent_stem, _ = _flexisign_window_status()
+    intent_cache_key = _intent_stem if (_intent_status == "saved" and _intent_stem) else None
+
+    intent: str | None = None
+    paper_copies = 0
+    if intent_cache_key:
+        cached = _get_intent_cache(intent_cache_key)
+        if cached in ("web_print", "web_only"):
+            decision = _confirm_cached_intent(intent_cache_key, cached, _close_busy)
+            if decision != "remodal":
+                intent = decision
+                ui_log(f"인쇄 의도 — 캐시 적용 '{_INTENT_LABEL.get(intent, intent)}' ({intent_cache_key}.fs)")
+    if intent is None:
+        intent, paper_copies = _ask_print_intent_modal(intent_cache_key, _close_busy)
+        ui_log(f"인쇄 의도 — 모달 선택 '{intent}' (stem={intent_cache_key or '(unsaved)'}, copies={paper_copies})")
+
+    if intent == "cancel":
+        ui_log(f"인쇄 — 의도 모달 취소: 종이/업로드 모두 생략 ({pdf_path.name})")
+        _ui_queue.put(("run", _close_busy))
+        _schedule_printed_pdf_cleanup(pdf_path)
+        return
+
+    if intent == "paper_only":
+        ui_log(f"인쇄 — [종이 인쇄만] {paper_copies}장 ({pdf_path.name}) — 저장/매칭/업로드 모두 생략")
+        _ui_queue.put(("run", _close_busy))
+        if paper_copies > 0:
+            try:
+                print_pdf_to_paper(pdf_path, copies=paper_copies)
+            except Exception as e:
+                ui_log(f"종이 인쇄 실패: {e}")
+        _schedule_printed_pdf_cleanup(pdf_path)
+        return
+
+    # 웹반영 계열 — 캐시 갱신(stem 있을 때만, 캐시 적용으로 도달했어도 동일 값 재기록).
+    if intent_cache_key:
+        _set_intent_cache(intent_cache_key, intent)
+
+    # 의도 모달이 busy 안내창을 닫아버렸으므로, 이후 QR 디코드 + 발주 목록 fetch 동안
+    # 사용자에게 다시 진행 상태 보여줌(매칭/QR-create 다이얼로그가 뜨면서 닫는다).
+    _ui_queue.put(("run", _show_busy))
+
+    # NOTE: FlexiSIGN 자동저장(Ctrl+S → .fs)은 매칭 다이얼로그가 *뜨기 전* 이 아니라,
+    # 사용자가 매칭 다이얼로그에서 [✓ 적용하기] 를 누른 *후* 에 수행된다(patch_due_date 직전).
+    # 이유: 다이얼로그 뜨자마자 자동저장하면, 사용자가 매칭 다이얼로그에서 [취소] 하더라도
+    # .fs 는 이미 덮어써진 상태가 됨 — "취소했는데 파일은 저장됨" UX 가 의도와 다름.
+    # [✓ 적용하기] 후로 옮기면, 취소 시엔 .fs 도 손대지 않고 그대로 보존된다.
 
     # 시스템 기본 프린터는 워처 실행 동안 PDF24 로 유지 — 종이 인쇄는
     # print_pdf_to_paper 가 시스템 기본과 무관하게 삼성으로 직접 보낸다.
@@ -4624,12 +5363,10 @@ def _process_printed_pdf(pdf_path: Path):
                         f"1) FlexSign 캔버스로 돌아가 (지워졌거나 흐린) QR 자리에 Ctrl+V 로 붙여넣기\n"
                         f"2) 지시서 저장 후 다시 인쇄\n\n"
                         f"이번 인쇄물은 QR 이 없어 배부/업로드하지 않았습니다.\n"
-                        f"두 번째 인쇄에서 납기 / 배송 / 분배함 입력 단계로 진행됩니다."
+                        f"두 번째 인쇄에서 납기 / 배송 / 분배함 입력 단계로 진행됩니다.\n\n"
+                        f"※ 이 창을 닫으면 FlexSign 으로 자동 전환됩니다."
                     )
-                    _ui_queue.put((
-                        "run",
-                        lambda m=_reqr_msg: messagebox.showinfo("QR 코드 복사 완료 — 다시 인쇄하세요", m),
-                    ))
+                    _show_qr_copy_done_and_focus_flex("QR 코드 복사 완료 — 다시 인쇄하세요", _reqr_msg)
                 else:
                     _ui_queue.put((
                         "alert",
@@ -4657,6 +5394,8 @@ def _process_printed_pdf(pdf_path: Path):
             "clients_for_new": clients_for_new,
             # 위에서 "이 빈 발주 맞습니까?" 를 이미 물어보고 [아니오] 했으면 모달 안에서 같은 경고 생략.
             "skip_recent_qr_warning": _asked_recent_qr_only,
+            # [기존지시서 변경하기] 진입 시 _ask_print_match_blocking 에 그대로 전달.
+            "intent": intent,
             # 모달이 거래처 목록 다 받고 화면에 뜨기 직전 "처리 중" 창을 닫게 한다.
             "busy_close": _close_busy,
             "result": {"action": "cancel"},
@@ -4686,6 +5425,7 @@ def _process_printed_pdf(pdf_path: Path):
                     orders, pdf_path, existing_worksheets,
                     qr_order_number=qr_order_number,
                     clients_for_new=clients_for_new,
+                    intent=intent,
                 )
             except Exception as e:
                 # 다이얼로그 자체가 터지면 사용자가 취소한 것처럼 조용히 묻혀 PDF24 인쇄가 무위로 끝나므로,
@@ -4718,17 +5458,14 @@ def _process_printed_pdf(pdf_path: Path):
                 ui_log(f"QR 클립보드 복사 실패 ({order_num}): {e}")
             if qr_copy_ok:
                 ui_log(f"{order_num} QR 클립보드 복사 완료 — FlexSign 에 붙여넣고 다시 인쇄")
-                info_title = "QR 코드 복사 완료"
                 info_msg = (
                     f"발주번호 {order_num} 의 QR 이 클립보드에 복사되었습니다.\n\n"
                     f"1) FlexSign 캔버스로 돌아가 Ctrl+V 로 붙여넣기\n"
                     f"2) 지시서 저장 후 다시 인쇄\n\n"
-                    f"두 번째 인쇄에서 납기 / 배송 / 분배함 입력 단계로 진행됩니다."
+                    f"두 번째 인쇄에서 납기 / 배송 / 분배함 입력 단계로 진행됩니다.\n\n"
+                    f"※ 이 창을 닫으면 FlexSign 으로 자동 전환됩니다."
                 )
-                _ui_queue.put((
-                    "run",
-                    lambda t=info_title, m=info_msg: messagebox.showinfo(t, m),
-                ))
+                _show_qr_copy_done_and_focus_flex("QR 코드 복사 완료", info_msg)
             else:
                 _ui_queue.put((
                     "alert",
@@ -4739,17 +5476,55 @@ def _process_printed_pdf(pdf_path: Path):
         _schedule_printed_pdf_cleanup(pdf_path)
         return
 
+    # 사용자가 매칭 다이얼로그에서 [✓ 적용하기] 또는 [매칭 안 함] 등 *진행* 의사를 표시한
+    # 직후 FlexiSIGN 자동저장 시도. 이 시점 이후로는 patch_due_date / 업로드 / 종이 인쇄가
+    # 차례로 일어나므로 .fs 가 인쇄 시점 상태로 디스크에 박혀 있어야 사무실/현장의 .fs ↔ PDF
+    # 매칭이 정확해진다.
+    #   ・saved (기존 .fs 가 열려 있음): Ctrl+S 송신 → alert_kind='saved' → 끝에 합친 모달.
+    #     포그라운드 검증 실패 시 alert_kind='failed' → 끝의 합친 모달이 경고 스타일.
+    #   ・unsaved (새 도큐먼트): FlexiSIGN Save As 창이 뜨고 화면 상단에 '먼저 저장해주세요'
+    #     폴링 창 표시. 사용자가 저장 완료하면 평소 흐름. [취소]/타임아웃이면 PDF 삭제 +
+    #     auto_ok=False 반환 → patch/업로드/종이 모두 생략하고 종료.
+    #   ・no_window (다른 앱 인쇄): Ctrl+S 안 보내고 그대로 통과.
+    auto_ok, alert_kind = _auto_save_flexisign_for_print(pdf_path)
+    if not auto_ok:
+        ui_log(f"인쇄 — 자동 저장 대기 중 사용자 취소/타임아웃: patch/업로드/종이 모두 생략 ({pdf_path.name})")
+        return
+
+    # NOTE: 자동저장 결과 + 처리 결과를 한 번의 모달에 합쳐서 끝에 띄운다. 사용자가
+    # "확인" 한 번만 클릭하면 끝. alert_kind 는 아래 분기에서 메시지 prefix 로 사용.
+
+    # [💾 웹반영만] 으로 진입한 경우 — 매칭 다이얼로그가 정해주는 copies 와 무관하게
+    # 종이 인쇄는 무조건 스킵. 아래 print_done 분기에서 sel.get("skip_print") 가 받는다.
+    if intent == "web_only":
+        sel["skip_print"] = True
+
     order_number = sel.get("order_number")
     # 다이얼로그 [✓ 적용하기] 로 확정된 매수. 0 이면 종이 인쇄 생략 — 0 or 1 함정 회피를
     # 위해 None 인 경우만 1 로 폴백하고, 명시적 0 은 그대로 0 으로 전달한다.
     copies_raw = sel.get("copies")
     copies = int(copies_raw) if copies_raw is not None else 1
     if order_number is None:
-        if copies < 1:
+        if intent == "web_only":
+            # 웹반영만 의도였는데 매칭이 안 됨 — 업로드도 인쇄도 안 일어남, 명시적으로 안내.
+            ui_log(f"인쇄 — [웹반영만] + 매칭 안 함: 아무 작업도 수행 안 됨 ({pdf_path.name})")
+            _ui_queue.put((
+                "run",
+                lambda: messagebox.showwarning(
+                    "처리 안 됨",
+                    "[웹반영만]을 선택했지만 발주 매칭이 안 되어\n"
+                    "업로드와 종이 인쇄가 모두 진행되지 않았습니다.",
+                ),
+            ))
+        elif copies < 1:
             ui_log(f"인쇄 — 매칭 안 함 선택 + 매수 0, 종이 인쇄 생략 ({pdf_path.name})")
         else:
             ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name}, {copies}장)")
             print_pdf_to_paper(pdf_path, copies=copies)
+            _show_combined_done_modal(
+                alert_kind,
+                f"종이 인쇄 완료 ({copies}장).\n웹 반영은 진행하지 않았습니다.",
+            )
         # 직원이 명시적으로 "웹에 안 올림" 선택 — PDF 가 더 갈 데 없으므로 정리.
         _schedule_printed_pdf_cleanup(pdf_path)
         return
@@ -4771,6 +5546,9 @@ def _process_printed_pdf(pdf_path: Path):
     dept_tags = list(sel.get("department_tags") or [])
     dept_slots = list(sel.get("department_slots") or [])
     patch_due_date(order_number, new_due, delivery_to_send, dept_tags, dept_slots)
+
+    # NOTE: '자동 저장' 안내는 이 함수 앞쪽(_auto_save_flexisign_for_print 직후)에서
+    # 이미 띄웠다 — patch/업로드 전에 사용자에게 결과를 먼저 보여주기 위함.
     # 사용자가 메모를 새로 입력/수정했을 때만 contentChanged=true. prefill 된 이전 메모를
     # 그대로 두고 confirm 한 단순 재인쇄는 preserve_note=True 로 보내 DB 의 메모만 보존
     # (worksheetUpdatedAt 도 갱신 안 됨 → 모바일/관리자 변경 배지 트리거 X).
@@ -4782,12 +5560,40 @@ def _process_printed_pdf(pdf_path: Path):
                                      change_note=sel.get("change_note") or "",
                                      preserve_note=bool(sel.get("preserve_note", False)))
     # "웹에만 적용하고 인쇄 안 함" 선택 또는 확정 매수 0 인 경우 종이 인쇄 생략.
+    print_done = False
     if sel.get("skip_print"):
         ui_log(f"인쇄 — '인쇄 안 함' 선택, 종이 인쇄 생략 ({pdf_path.name})")
     elif copies < 1:
         ui_log(f"인쇄 — 매수 0(적용 안 함), 종이 인쇄 생략 ({pdf_path.name})")
     else:
         print_pdf_to_paper(pdf_path, copies=copies)
+        print_done = True
+
+    # 처리 결과 알림 — 자동저장 결과까지 한 모달에 합쳐서 끝에 한 번만 띄움.
+    if upload_ok:
+        if print_done:
+            ops_msg = f"웹 반영 + 종이 인쇄 완료 ({copies}장)."
+        else:
+            ops_msg = "웹 반영 완료 (종이 인쇄 없이 업로드만 진행)."
+        _show_combined_done_modal(alert_kind, ops_msg)
+    else:
+        # 업로드 자체가 실패한 경우 — 자동저장 결과는 부차적이므로 prefix 만 짧게.
+        save_prefix = ""
+        if alert_kind == 'saved':
+            save_prefix = "FlexiSIGN 자동 저장 완료.\n"
+        elif alert_kind == 'failed':
+            save_prefix = "FlexiSIGN 자동 저장 실패 — Ctrl+S 로 직접 저장해주세요.\n"
+        _ui_queue.put((
+            "run",
+            lambda p=save_prefix: messagebox.showwarning(
+                "웹 반영 실패",
+                f"{p}\n"
+                "웹 업로드에 실패했습니다.\n"
+                "PDF 는 로컬에 보관되어 있으니 잠시 후 다시 시도하거나,\n"
+                "어드민 페이지에서 직접 업로드해주세요.",
+            ),
+        ))
+
     # 업로드 성공 시 로컬 PDF 자동 삭제 — 웹(R2)에 보관됐으니 printed/ 누적 방지.
     # 종이 프린터(외부 리더)가 파일 핸들을 닫기 전에 지우면 인쇄 실패하므로 30초 지연.
     # 업로드 실패 시엔 보존 — 사용자가 수동 재업로드/검증할 수 있게.
