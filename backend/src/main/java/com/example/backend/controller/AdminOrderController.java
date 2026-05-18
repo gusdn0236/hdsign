@@ -7,6 +7,7 @@ import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
 import com.example.backend.service.OrderArchiveService;
+import com.example.backend.service.StorageUsageService;
 import com.example.backend.service.WorksheetFlattenService;
 import com.example.backend.service.WorksheetThumbnailService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,6 +54,7 @@ public class AdminOrderController {
     private final WorksheetThumbnailService thumbnailService;
     private final WorksheetFlattenService flattenService;
     private final OrderArchiveService orderArchiveService;
+    private final StorageUsageService storageUsageService;
     private final JdbcTemplate jdbcTemplate;
 
     @Value("${r2.bucket}")
@@ -254,7 +256,38 @@ public class AdminOrderController {
         }
 
         orderArchiveService.hardDeleteOrder(order);
+        storageUsageService.invalidateCache();
         return ResponseEntity.noContent().build();
+    }
+
+    // 작업완료 전체 일괄 영구삭제 — 사고 방지를 위해 본문에 confirmation="전부삭제" 가 필수.
+    // 30일 자동 삭제를 기다리지 않고 관리자가 직접 R2 사용량을 정리할 때 사용. 한 건씩 best-effort
+    // 로 hardDeleteOrder 를 돌고, 실패 건수는 응답에 포함해 프론트에 표시한다.
+    @DeleteMapping("/trash/purge-all")
+    public ResponseEntity<?> purgeAllTrash(@RequestBody(required = false) Map<String, Object> body) {
+        String confirmation = body == null ? null : String.valueOf(body.getOrDefault("confirmation", ""));
+        if (!"전부삭제".equals(confirmation)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("message", "confirmation 값이 일치하지 않습니다. \"전부삭제\" 를 정확히 입력해 주세요."));
+        }
+
+        List<Order> targets = orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc();
+        int deleted = 0;
+        int failed = 0;
+        for (Order order : targets) {
+            try {
+                orderArchiveService.hardDeleteOrder(order);
+                deleted += 1;
+            } catch (Exception e) {
+                log.warn("[PurgeAllTrash] 주문 {} 삭제 실패: {}", order.getOrderNumber(), e.getMessage());
+                failed += 1;
+            }
+        }
+        storageUsageService.invalidateCache();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("deleted", deleted);
+        result.put("failed", failed);
+        return ResponseEntity.ok(result);
     }
 
     /**

@@ -183,6 +183,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [trashOrders, setTrashOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState(null);
+  // R2 사용량 — 작업완료 탭 상단 프로그레스 바. /api/admin/storage/usage 는 60초 캐시라
+  // 탭 진입/리프레시마다 호출해도 부담 없음. 영구삭제 후엔 즉시 다시 호출해 줄어든 수치를 본다.
+  const [storageUsage, setStorageUsage] = useState(null);
+  // "전부삭제" 입력 모달.
+  const [purgeAllModalOpen, setPurgeAllModalOpen] = useState(false);
+  const [purgeConfirmText, setPurgeConfirmText] = useState("");
   // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
   const [activeFilter, setActiveFilter] = useState("IN_PROGRESS");
   const [selectedOrderId, setSelectedOrderId] = useState(null);
@@ -324,6 +330,26 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     loadOrders();
     // requestType 이 바뀌면(/admin/orders ↔ /admin/quotes 전환) 다시 가져와서 필터링.
   }, [token, requestType]);
+
+  // R2 사용량 — 작업완료 탭에서 보여줄 프로그레스 바 데이터. 백엔드 60초 캐시이므로
+  // 처음 로드 + 작업완료 탭 진입 + 영구삭제 직후에만 호출하면 충분하다.
+  const loadStorageUsage = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${BASE_URL}/api/admin/storage/usage`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setStorageUsage(data);
+    } catch {
+      // 사용량 표시 실패는 본 기능과 무관 — 조용히 무시.
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadStorageUsage();
+  }, [loadStorageUsage]);
 
   useEffect(() => {
     if (!feedback) return;
@@ -1025,6 +1051,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       }
       setTrashOrders((prev) => prev.filter((o) => o.id !== order.id));
       if (selectedOrderId === order.id) setSelectedOrderId(null);
+      loadStorageUsage();
       setFeedback({ type: "success", msg: "완전 삭제했습니다." });
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "영구 삭제 중 오류가 발생했습니다." });
@@ -1033,38 +1060,51 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
-  const bulkPurgeTrash = async () => {
+  // [전부 영구삭제] — 실수 누름 방지를 위해 모달에서 "전부삭제" 를 정확히 타이핑해야만
+  // 백엔드 호출이 통과한다. 백엔드에서도 동일 확인을 검증해 양쪽에서 막는다.
+  const openPurgeAllModal = () => {
     if (trashOrders.length === 0) {
       setFeedback({ type: "error", msg: "작업완료 목록이 비어 있습니다." });
       return;
     }
-    if (!window.confirm(`작업완료의 ${trashOrders.length}건을 모두 완전 삭제하시겠습니까?\n첨부 파일과 모든 기록이 즉시 사라지며 되돌릴 수 없습니다.`)) {
-      return;
-    }
+    setPurgeConfirmText("");
+    setPurgeAllModalOpen(true);
+  };
+
+  const submitPurgeAll = async () => {
+    if (purgeConfirmText.trim() !== "전부삭제") return;
     setBulkPurging(true);
     try {
-      const results = await Promise.allSettled(
-        trashOrders.map((order) =>
-          fetch(`${BASE_URL}/api/admin/orders/${order.id}/permanent`, {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${token}` },
-          }).then((res) => {
-            if (!res.ok) throw new Error(String(order.id));
-            return order.id;
-          })
-        )
-      );
-      const deletedIds = new Set(
-        results.filter((r) => r.status === "fulfilled").map((r) => r.value)
-      );
-      setTrashOrders((prev) => prev.filter((o) => !deletedIds.has(o.id)));
-      if (selectedOrderId && deletedIds.has(selectedOrderId)) setSelectedOrderId(null);
-      const failed = results.length - deletedIds.size;
-      if (failed === 0) {
-        setFeedback({ type: "success", msg: `${deletedIds.size}건을 완전 삭제했습니다.` });
-      } else {
-        setFeedback({ type: "error", msg: `${deletedIds.size}건 삭제, ${failed}건 실패` });
+      const res = await fetch(`${BASE_URL}/api/admin/orders/trash/purge-all`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ confirmation: "전부삭제" }),
+      });
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({}));
+        throw new Error(errorBody.message || "전부 영구삭제에 실패했습니다.");
       }
+      const data = await res.json();
+      const deleted = Number(data?.deleted ?? 0);
+      const failed = Number(data?.failed ?? 0);
+      setTrashOrders([]);
+      if (selectedOrderId) setSelectedOrderId(null);
+      setPurgeAllModalOpen(false);
+      setPurgeConfirmText("");
+      // 줄어든 R2 사용량을 즉시 반영.
+      loadStorageUsage();
+      if (failed === 0) {
+        setFeedback({ type: "success", msg: `${deleted}건을 완전 삭제했습니다.` });
+      } else {
+        setFeedback({ type: "error", msg: `${deleted}건 삭제, ${failed}건 실패` });
+        // 실패 건은 서버에 그대로 남아 있을 수 있으니 목록 동기화.
+        loadOrders();
+      }
+    } catch (err) {
+      setFeedback({ type: "error", msg: err.message || "전부 영구삭제 중 오류가 발생했습니다." });
     } finally {
       setBulkPurging(false);
     }
@@ -1099,6 +1139,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       );
       setTrashOrders((prev) => prev.filter((o) => !deletedIds.has(o.id)));
       if (selectedOrderId && deletedIds.has(selectedOrderId)) setSelectedOrderId(null);
+      loadStorageUsage();
       exitBulkSelect();
       const failed = results.length - deletedIds.size;
       if (failed === 0) {
@@ -1670,6 +1711,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             })}
           </div>
 
+          {/* 작업완료 탭 — R2 사용량 프로그레스 바. 달력 바로 아래, 카드 위. */}
+          {isTrashView && storageUsage && (
+            <StorageUsageBar usage={storageUsage} onRefresh={loadStorageUsage} />
+          )}
+
           {/* 작업완료 탭 — 달력 아래, 작업카드 위에 다중 선택/전부 영구삭제 툴바. */}
           {isTrashView && trashOrders.length > 0 && (
             <div className={`bulk-select-row bulk-select-row--trash ${bulkSelectMode ? "is-active" : ""}`}>
@@ -1688,7 +1734,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   <button
                     type="button"
                     className="bulk-delete-btn bulk-delete-btn--rightmost"
-                    onClick={bulkPurgeTrash}
+                    onClick={openPurgeAllModal}
                     disabled={bulkPurging}
                   >
                     {bulkPurging ? "삭제 중..." : "전부 영구삭제"}
@@ -2345,6 +2391,144 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           </div>
         );
       })()}
+
+      {/* 전부 영구삭제 — "전부삭제" 라는 문구를 정확히 타이핑해야 활성화. 비번 입력은 두지 않는다
+          (관리자 로그인 후 세션 안이라). 백엔드도 동일 confirmation 을 한 번 더 검증. */}
+      {purgeAllModalOpen && (
+        <div
+          className="purge-all-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !bulkPurging) {
+              setPurgeAllModalOpen(false);
+              setPurgeConfirmText("");
+            }
+          }}
+        >
+          <div className="purge-all-modal">
+            <h3 className="purge-all-title">전부 영구삭제</h3>
+            <p className="purge-all-body">
+              작업완료의 <b>{trashOrders.length}건</b>을 모두 완전 삭제합니다.
+              <br />
+              첨부 파일·도안·미리보기·지시서 PDF 까지 즉시 사라지며 되돌릴 수 없습니다.
+            </p>
+            <p className="purge-all-prompt">
+              계속하려면 아래 칸에 <b>전부삭제</b> 를 정확히 입력해 주세요.
+            </p>
+            <input
+              type="text"
+              className="purge-all-input"
+              value={purgeConfirmText}
+              onChange={(e) => setPurgeConfirmText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && purgeConfirmText.trim() === "전부삭제" && !bulkPurging) {
+                  submitPurgeAll();
+                }
+              }}
+              placeholder="전부삭제"
+              autoFocus
+              disabled={bulkPurging}
+            />
+            <div className="purge-all-actions">
+              <button
+                type="button"
+                className="purge-all-cancel"
+                onClick={() => {
+                  setPurgeAllModalOpen(false);
+                  setPurgeConfirmText("");
+                }}
+                disabled={bulkPurging}
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                className="purge-all-confirm"
+                onClick={submitPurgeAll}
+                disabled={bulkPurging || purgeConfirmText.trim() !== "전부삭제"}
+              >
+                {bulkPurging ? "삭제 중..." : "전부 영구삭제"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// 작업완료 탭 상단 — R2 사용량 프로그레스 바. 한도(STORAGE_QUOTA_GB) 대비 사용%를 표시하고,
+// 작업완료/작업중/갤러리/orphan 분류로 어디가 차 있는지 한눈에. percent 가 70 이상이면 주황,
+// 90 이상이면 빨강으로 변해 정리 신호를 준다.
+function StorageUsageBar({ usage, onRefresh }) {
+  const totalBytes = Number(usage?.totalBytes ?? 0);
+  const quotaBytes = Number(usage?.quotaBytes ?? 1);
+  const percent = Math.min(100, Number(usage?.percent ?? 0));
+  const quotaGb = Number(usage?.quotaGb ?? 10);
+  const trashBytes = Number(usage?.trashBytes ?? 0);
+  const activeOrderBytes = Number(usage?.activeOrderBytes ?? 0);
+  const galleryBytes = Number(usage?.galleryBytes ?? 0);
+  const orphanBytes = Number(usage?.orphanOrderBytes ?? 0);
+  const trashOrderCount = Number(usage?.trashOrderCount ?? 0);
+  const tone = percent >= 90 ? "danger" : percent >= 70 ? "warn" : "ok";
+  const trashPct = quotaBytes > 0 ? (100 * trashBytes) / quotaBytes : 0;
+  const activePct = quotaBytes > 0 ? (100 * activeOrderBytes) / quotaBytes : 0;
+  const galleryPct = quotaBytes > 0 ? (100 * galleryBytes) / quotaBytes : 0;
+  const orphanPct = quotaBytes > 0 ? (100 * orphanBytes) / quotaBytes : 0;
+  return (
+    <div className={`storage-usage storage-usage--${tone}`}>
+      <div className="storage-usage-head">
+        <span className="storage-usage-title">서버 저장공간</span>
+        <span className="storage-usage-amount">
+          <b>{formatBytes(totalBytes)}</b> / {quotaGb}GB ({percent.toFixed(1)}%)
+        </span>
+        <button
+          type="button"
+          className="storage-usage-refresh"
+          onClick={onRefresh}
+          title="다시 측정 (백엔드 캐시 60초 단위로 자동 갱신)"
+        >
+          ↻
+        </button>
+      </div>
+      {/* 4-구간 스택 바 — 작업완료 / 작업중 / 갤러리 / orphan(누수) 순. */}
+      <div className="storage-usage-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+        <div className="storage-usage-seg storage-usage-seg--trash" style={{ width: `${trashPct}%` }} />
+        <div className="storage-usage-seg storage-usage-seg--active" style={{ width: `${activePct}%` }} />
+        <div className="storage-usage-seg storage-usage-seg--gallery" style={{ width: `${galleryPct}%` }} />
+        <div className="storage-usage-seg storage-usage-seg--orphan" style={{ width: `${orphanPct}%` }} />
+      </div>
+      <div className="storage-usage-legend">
+        <span><i className="storage-dot storage-dot--trash" />작업완료 {trashOrderCount}건 · {formatBytes(trashBytes)}</span>
+        <span><i className="storage-dot storage-dot--active" />작업중 {formatBytes(activeOrderBytes)}</span>
+        <span><i className="storage-dot storage-dot--gallery" />갤러리 {formatBytes(galleryBytes)}</span>
+        {orphanBytes > 0 && (
+          <span title="DB 에 매칭되는 주문이 없는 R2 파일 — 누수 가능성">
+            <i className="storage-dot storage-dot--orphan" />미매칭 {formatBytes(orphanBytes)}
+          </span>
+        )}
+      </div>
+      {tone !== "ok" && (
+        <div className="storage-usage-hint">
+          {tone === "danger"
+            ? "한도의 90% 를 초과했습니다. [전부 영구삭제] 또는 항목별 [완전 삭제] 로 정리해 주세요."
+            : "한도의 70% 를 넘었습니다. 곧 정리를 권장합니다."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  const fixed = i === 0 ? 0 : v >= 100 ? 0 : v >= 10 ? 1 : 2;
+  return `${v.toFixed(fixed)} ${units[i]}`;
 }

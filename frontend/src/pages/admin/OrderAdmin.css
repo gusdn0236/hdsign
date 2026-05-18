@@ -2586,3 +2586,191 @@
     height: 40px;
   }
 }
+
+/* ── 작업완료 탭 상단: R2 사용량 프로그레스 바 ────────────────────────────── */
+.storage-usage {
+  margin: 8px 0 14px;
+  padding: 12px 14px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #1f2937;
+}
+.storage-usage--warn {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+.storage-usage--danger {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+.storage-usage-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.storage-usage-title {
+  font-weight: 600;
+  color: #0f172a;
+}
+.storage-usage-amount {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: #334155;
+}
+.storage-usage-amount b {
+  color: #0f172a;
+  font-weight: 700;
+}
+.storage-usage-refresh {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid #cbd5f5;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.storage-usage-refresh:hover {
+  background: #eef2f7;
+}
+.storage-usage-track {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 12px;
+  border-radius: 8px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+.storage-usage-seg {
+  height: 100%;
+  transition: width 0.25s ease;
+}
+.storage-usage-seg--trash    { background: #f59e0b; }   /* 작업완료 — 정리 우선 대상이라 눈에 띄는 톤 */
+.storage-usage-seg--active   { background: #0ea5e9; }   /* 작업중 */
+.storage-usage-seg--gallery  { background: #6366f1; }   /* 갤러리 */
+.storage-usage-seg--orphan   { background: #ef4444; }   /* DB 매칭 없음 — 누수 */
+.storage-usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  margin-top: 8px;
+  color: #475569;
+}
+.storage-usage-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.storage-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.storage-dot--trash   { background: #f59e0b; }
+.storage-dot--active  { background: #0ea5e9; }
+.storage-dot--gallery { background: #6366f1; }
+.storage-dot--orphan  { background: #ef4444; }
+.storage-usage-hint {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: #b45309;
+}
+.storage-usage--danger .storage-usage-hint {
+  color: #b91c1c;
+}
+
+/* ── [전부 영구삭제] 확인 모달 ──────────────────────────────────────────── */
+.purge-all-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2200;
+  padding: 20px;
+}
+.purge-all-modal {
+  width: 100%;
+  max-width: 440px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 22px 22px 18px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+}
+.purge-all-title {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 700;
+  color: #b91c1c;
+}
+.purge-all-body {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: #334155;
+  line-height: 1.55;
+}
+.purge-all-prompt {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #1f2937;
+}
+.purge-all-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  font-size: 14px;
+  background: #fff;
+  box-sizing: border-box;
+}
+.purge-all-input:focus {
+  outline: none;
+  border-color: #b91c1c;
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.15);
+}
+.purge-all-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.purge-all-cancel,
+.purge-all-confirm {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.purge-all-cancel {
+  border-color: #cbd5f5;
+  background: #fff;
+  color: #334155;
+}
+.purge-all-cancel:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+.purge-all-confirm {
+  background: #b91c1c;
+  color: #fff;
+}
+.purge-all-confirm:hover:not(:disabled) {
+  background: #991b1b;
+}
+.purge-all-confirm:disabled {
+  background: #fca5a5;
+  cursor: not-allowed;
+}

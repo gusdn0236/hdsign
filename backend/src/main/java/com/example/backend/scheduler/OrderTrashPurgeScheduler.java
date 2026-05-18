@@ -3,6 +3,7 @@ package com.example.backend.scheduler;
 import com.example.backend.entity.Order;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.OrderArchiveService;
+import com.example.backend.service.StorageUsageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,6 +22,7 @@ public class OrderTrashPurgeScheduler {
 
     private final OrderRepository orderRepository;
     private final OrderArchiveService orderArchiveService;
+    private final StorageUsageService storageUsageService;
 
     // 매일 한국시간 새벽 3시: 작업완료(deletedAt) 로 이동된 지 30일 이상 경과한 주문을 완전 삭제.
     // 완전삭제 = R2 의 도안·미리보기·지시서 PDF·order_files 행 + Order 행까지 모두 하드 삭제.
@@ -42,5 +44,7 @@ public class OrderTrashPurgeScheduler {
                 log.warn("[TrashPurge] failed to hard-delete order {}: {}", order.getId(), e.getMessage());
             }
         }
+        // 다음 사용량 조회에서 줄어든 수치가 즉시 반영되도록 캐시 무효화.
+        storageUsageService.invalidateCache();
     }
 }
