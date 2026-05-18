@@ -2459,7 +2459,9 @@
    상단 인라인 검색바와 같은 state(clientSearch)를 공유하므로 어디서 입력해도 즉시 라이브 필터. */
 .order-floating-dock {
   position: fixed;
-  right: 18px;
+  /* 페이지 우측 스크롤바(14px) 가 보이게 되므로 그 안쪽에 놓아 겹치지 않게.
+     스크롤바 + 8px 여유. */
+  right: 22px;
   top: 50%;
   transform: translate(8px, -50%);
   display: flex;
@@ -2585,6 +2587,28 @@
     width: 40px;
     height: 40px;
   }
+}
+
+/* 발주관리 페이지에서는 페이지 스크롤바 노출 — App.css 전역 숨김(>860px) 을 이 페이지에 한해 해제.
+   :has() 로 해당 페이지가 마운트된 동안만 적용되도록 스코프. */
+html:has(.order-admin-page) {
+  scrollbar-width: auto;
+  -ms-overflow-style: auto;
+}
+html:has(.order-admin-page)::-webkit-scrollbar {
+  display: initial;
+  width: 14px;
+}
+html:has(.order-admin-page)::-webkit-scrollbar-track {
+  background: #f4f4f5;
+}
+html:has(.order-admin-page)::-webkit-scrollbar-thumb {
+  background: #c4c4c8;
+  border: 2px solid #f4f4f5;
+  border-radius: 7px;
+}
+html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a6;
 }
 
 /* ── 작업완료 탭 상단: R2 사용량 프로그레스 바 ────────────────────────────── */
