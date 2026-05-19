@@ -939,6 +939,10 @@ export default function WorksheetViewer() {
                         maxScale={PINCH_MAX_SCALE}
                         centerOnInit
                         centerZoomedOut
+                        // 확대 시 지시서 가장자리를 화면 중앙까지 끌어다 볼 수 있도록 패닝 한계 해제.
+                        // 그래도 minScale=1 + centerZoomedOut=true 라 손을 떼고 1x 로 돌아가면
+                        // 라이브러리가 자동으로 가운데로 스냅 — 축소했을 땐 기존대로 PDF 만큼만 표시.
+                        limitToBounds={false}
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
                         onTransform={(_, state) => {
                             // v4 콜백명은 onTransform (onTransformed 아님). 매 변환마다 ref 갱신.
