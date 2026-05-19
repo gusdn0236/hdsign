@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ALL_WORKERS } from '../../data/workers.js';
+import CompletionConfirmModal from '../../components/common/CompletionConfirmModal.jsx';
 import './EvidenceQuickCapture.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -61,6 +62,10 @@ export default function EvidenceQuickCapture() {
 
     const [uploading, setUploading] = useState(false);
     const [result, setResult] = useState(null); // { ok: bool, message: string, thumbUrl?: string }
+    const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
+    const [completing, setCompleting] = useState(false);
+    const [workerCompleted, setWorkerCompleted] = useState(false);
+    const [completeError, setCompleteError] = useState('');
 
     // 주문 요약 prefetch — 페이지 로드와 동시
     useEffect(() => {
@@ -131,6 +136,8 @@ export default function EvidenceQuickCapture() {
             await res.json().catch(() => ({}));
             const company = summary?.companyName || '거래처';
             setResult({ ok: true, message: `${company} 사진 업로드가 완료되었습니다.`, thumbUrl: newUrl });
+            // 작업완료 확인 모달 — 본인이 이미 완료 처리한 경우엔 묻지 않음.
+            if (!workerCompleted) setShowCompleteConfirm(true);
         } catch (err) {
             setResult({ ok: false, message: err.message || '업로드 중 오류가 발생했습니다.' });
         } finally {
@@ -142,6 +149,32 @@ export default function EvidenceQuickCapture() {
         setWorker(name);
         setStoredWorker(name);
         setShowWorkerPicker(false);
+    };
+
+    const handleConfirmComplete = async () => {
+        if (completing) return;
+        setCompleting(true);
+        setCompleteError('');
+        try {
+            const res = await fetch(
+                `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/worker-complete`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ worker }),
+                },
+            );
+            if (!res.ok) {
+                const b = await res.json().catch(() => ({}));
+                throw new Error(b.message || '작업완료 처리에 실패했습니다.');
+            }
+            setWorkerCompleted(true);
+            setShowCompleteConfirm(false);
+        } catch (err) {
+            setCompleteError(err.message || '작업완료 처리 실패');
+        } finally {
+            setCompleting(false);
+        }
     };
 
     return (
@@ -193,6 +226,12 @@ export default function EvidenceQuickCapture() {
                                 {result.thumbUrl && (
                                     <img src={result.thumbUrl} alt="" className="qc-thumb" />
                                 )}
+                                {workerCompleted && (
+                                    <div className="qc-complete-badge">작업완료 처리됨</div>
+                                )}
+                                {completeError && (
+                                    <div className="qc-complete-err">{completeError}</div>
+                                )}
                                 <button type="button" className="qc-again-btn" onClick={openCamera}>
                                     📷 한 장 더 촬영
                                 </button>
@@ -238,6 +277,15 @@ export default function EvidenceQuickCapture() {
                     </div>
                 </div>
             )}
+
+            <CompletionConfirmModal
+                open={showCompleteConfirm}
+                description="사진 업로드가 완료됐어요. 이번 작업을 완료 처리할까요?"
+                busy={completing}
+                onYes={handleConfirmComplete}
+                onNo={() => setShowCompleteConfirm(false)}
+                onClose={() => setShowCompleteConfirm(false)}
+            />
         </div>
     );
 }

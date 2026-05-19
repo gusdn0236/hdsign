@@ -6,6 +6,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './WorksheetViewer.css';
 import { ALL_WORKERS } from '../../data/workers.js';
+import CompletionConfirmModal from '../../components/common/CompletionConfirmModal.jsx';
 import {
     peekDetail,
     rememberDetail,
@@ -181,6 +182,9 @@ export default function WorksheetViewer() {
     // 본인뿐 아니라 같은 슬롯 동료에게서도 사라진다(claim 모델). 멱등 — 이미 완료된 건이면 200.
     const [completing, setCompleting] = useState(false);
     const [completeError, setCompleteError] = useState('');
+    // 작업완료 확인 모달 — window.confirm 대신 사용. null 이면 닫힘.
+    // value: 'upload' (사진 업로드 직후 자동 노출) 또는 'manual' ([작업완료] 버튼 직접 클릭).
+    const [completeConfirmKind, setCompleteConfirmKind] = useState(null);
     // PDF 전환 깜빡임 완화 — 캐시 히트로 빠르게 로드되는 경우(<300ms) "PDF 불러오는 중…"
     // 텍스트가 한 프레임 깜빡 떴다 사라지는 시각적 잡음을 없앤다. 진짜 느린 경우만 텍스트 노출.
     const [showSlowLoading, setShowSlowLoading] = useState(false);
@@ -646,7 +650,13 @@ export default function WorksheetViewer() {
             const body = await res.json();
             queued.forEach((q) => URL.revokeObjectURL(q.previewUrl));
             setQueued([]);
-            setUploadResult({ count: body.count || 0 });
+            const uploadedCount = body.count || 0;
+            setUploadResult({ count: uploadedCount });
+            // 업로드 직후 작업완료 흐름 — 따로 다시 [작업완료] 누르지 않아도 한 번에 끝나도록.
+            // 본인이 이미 완료했거나 직원 미설정이면 묻지 않는다.
+            if (!completedByMe && worker) {
+                setCompleteConfirmKind('upload');
+            }
         } catch (err) {
             setUploadError(err.message || '업로드 중 오류');
         } finally {
@@ -656,6 +666,7 @@ export default function WorksheetViewer() {
 
     // [작업완료] — 본인 작업이 끝났음을 신고. 성공 시 다음 지시서로 자동 이동(검토 흐름 유지).
     // 다음이 없으면 이전, 둘 다 없으면 목록으로. 완료한 건은 siblings 에서 제거해 다시 잡지 않음.
+    // confirm 다이얼로그는 호출 측(CompletionConfirmModal) 에서 처리한다.
     const handleWorkerComplete = async () => {
         if (completing) return;
         if (!worker) {
@@ -975,8 +986,8 @@ export default function WorksheetViewer() {
                     <button
                         type="button"
                         className="wsv-action-btn wsv-action-complete"
-                        onClick={handleWorkerComplete}
-                        onTouchEnd={tapHandler(handleWorkerComplete)}
+                        onClick={() => setCompleteConfirmKind('manual')}
+                        onTouchEnd={tapHandler(() => setCompleteConfirmKind('manual'))}
                         disabled={completing}
                     >
                         <span className="wsv-action-icon" aria-hidden="true">
@@ -1166,6 +1177,21 @@ export default function WorksheetViewer() {
                     </div>
                 </div>
             )}
+
+            <CompletionConfirmModal
+                open={completeConfirmKind !== null}
+                description={completeConfirmKind === 'upload'
+                    ? '사진 업로드가 완료됐어요. 이번 작업을 완료 처리할까요?'
+                    : '이번 작업을 완료 처리할까요?'}
+                busy={completing}
+                onYes={() => {
+                    setCompleteConfirmKind(null);
+                    setSheetOpen(false);
+                    handleWorkerComplete();
+                }}
+                onNo={() => setCompleteConfirmKind(null)}
+                onClose={() => setCompleteConfirmKind(null)}
+            />
         </div>
     );
 }

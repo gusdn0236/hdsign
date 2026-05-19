@@ -428,6 +428,19 @@
     font-variant-numeric: tabular-nums;
     pointer-events: none;
 }
+.evidence-card-size-badge {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    padding: 2px 7px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 10.5px;
+    border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    letter-spacing: 0.02em;
+}
 .evidence-card-tag {
     position: absolute;
     left: 8px;

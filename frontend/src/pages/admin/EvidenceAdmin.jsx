@@ -412,6 +412,9 @@ export default function EvidenceAdmin() {
                                                 decoding="async"
                                             />
                                             <span className="evidence-card-time-badge">{formatTime(it.createdAt)}</span>
+                                            {it.fileSize > 0 && (
+                                                <span className="evidence-card-size-badge">{formatBytes(it.fileSize)}</span>
+                                            )}
                                             {it.tag && (
                                                 <span className={`evidence-card-tag tag-${tagClassName(it.tag)}`}>{it.tag}</span>
                                             )}
