@@ -1,0 +1,253 @@
+.qc-page {
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: #f4f4f6;
+    padding: 24px 16px;
+    padding-top: max(24px, env(safe-area-inset-top));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+}
+
+.qc-card {
+    width: 100%;
+    max-width: 420px;
+    background: #fff;
+    border-radius: 18px;
+    padding: 28px 24px 32px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.qc-company {
+    margin: 4px 0 6px;
+    font-size: 28px;
+    font-weight: 800;
+    color: #111;
+    letter-spacing: -0.5px;
+    word-break: keep-all;
+}
+
+.qc-title {
+    margin: 0 0 10px;
+    font-size: 15px;
+    color: #555;
+    font-weight: 500;
+    word-break: keep-all;
+}
+
+.qc-order-no {
+    margin: 0 0 22px;
+    font-size: 12.5px;
+    color: #999;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+
+.qc-worker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f5f5f7;
+    padding: 10px 14px;
+    border-radius: 999px;
+    margin-bottom: 28px;
+    font-size: 13.5px;
+    color: #666;
+}
+.qc-worker-row strong {
+    color: #111;
+    font-weight: 700;
+}
+.qc-worker-row button {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid #d0d0d4;
+    color: #555;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.qc-worker-row button:hover {
+    background: #eaeaec;
+}
+
+.qc-capture-btn {
+    width: 100%;
+    min-height: 76px;
+    border: none;
+    background: #2563eb;
+    color: #fff;
+    border-radius: 18px;
+    font-size: 22px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.32);
+    transition: background 0.15s ease, transform 0.08s ease, box-shadow 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+.qc-capture-btn:hover:not(:disabled) {
+    background: #1d4ed8;
+}
+.qc-capture-btn:active:not(:disabled) {
+    transform: scale(0.98);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.32);
+}
+.qc-capture-btn:disabled {
+    background: #93c5fd;
+    box-shadow: none;
+    cursor: default;
+}
+
+/* 결과 영역 */
+.qc-result {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 24px 16px 8px;
+}
+.qc-result-icon {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 42px;
+    font-weight: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.qc-result-ok .qc-result-icon {
+    background: #16a34a;
+    box-shadow: 0 6px 18px rgba(22, 163, 74, 0.32);
+}
+.qc-result-fail .qc-result-icon {
+    background: #dc2626;
+    box-shadow: 0 6px 18px rgba(220, 38, 38, 0.32);
+}
+.qc-result-msg {
+    font-size: 16px;
+    font-weight: 700;
+    color: #222;
+    line-height: 1.4;
+    word-break: keep-all;
+}
+.qc-result-fail .qc-result-msg {
+    color: #991b1b;
+}
+.qc-thumb {
+    width: 140px;
+    height: 140px;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 2px solid #e4e4e7;
+}
+
+.qc-again-btn {
+    width: 100%;
+    margin-top: 8px;
+    min-height: 60px;
+    border: none;
+    background: #18181b;
+    color: #fff;
+    border-radius: 14px;
+    font-size: 17px;
+    font-weight: 700;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.qc-again-btn:hover { background: #27272a; }
+.qc-again-btn:active { transform: scale(0.98); }
+
+.qc-error-big {
+    padding: 28px 16px;
+    text-align: center;
+    color: #991b1b;
+    font-size: 15px;
+    font-weight: 600;
+}
+.qc-error-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #dc2626;
+    color: #fff;
+    font-size: 32px;
+    font-weight: 900;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 14px;
+}
+
+/* 담당자 선택 모달 */
+.qc-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 50;
+    padding: 16px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+@media (min-width: 520px) {
+    .qc-picker-backdrop {
+        align-items: center;
+    }
+}
+
+.qc-picker {
+    background: #fff;
+    border-radius: 18px;
+    padding: 24px 20px 26px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.qc-picker h2 {
+    margin: 0 0 8px;
+    font-size: 19px;
+    color: #111;
+    text-align: center;
+}
+.qc-picker-desc {
+    font-size: 13px;
+    color: #666;
+    line-height: 1.55;
+    margin: 0 0 18px;
+    text-align: center;
+}
+.qc-picker-chips {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+.qc-picker-chip {
+    padding: 12px 8px;
+    background: #f4f4f5;
+    border: 1.5px solid transparent;
+    color: #222;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+.qc-picker-chip:hover {
+    background: #e8e8ea;
+}
+.qc-picker-chip.active {
+    background: #2563eb;
+    color: #fff;
+    border-color: #1d4ed8;
+}
