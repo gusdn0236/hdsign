@@ -9,8 +9,18 @@ import { useEffect, useMemo, useState } from 'react'
  *   - 변경 없는 셀:  baseline 가격 (회색)
  *   - 변경 있는 셀:  옛 가격(취소선) + 새 가격(굵게 컬러) + % + 의심 태그
  *   - 셀 클릭 → 적용/유지 토글
+ *   - 컬럼 헤더 클릭 → 그 컬럼 전체 변경 셀 일괄 토글 (가격 시프트 패턴 지원)
  *
  * 적용 클릭 → 확인 다이얼로그 → onApply(decisions).
+ *
+ * 기본 결정 정책 (initialDecisions):
+ *   - 정상 인상       → 'excel' (자동 체크 ON)
+ *   - 의심 셀         → 'baseline' (수동 확인 필요)
+ *   - 신규 사이즈     → 'excel' (자동 체크 ON)
+ *   - 사이즈 제거     → 'excel' (자동 체크 ON, 큰 사이즈 빈칸 = 가격 시프트 결과)
+ *
+ * 사무실 단가표 형식 특징 — parseXlsx.js 상단 주석 참고. 가격이 한 칸씩
+ * 시프트되는 갱신 패턴이라 컬럼 단위 일괄 처리가 핵심.
  */
 
 const CAT_LABELS = {
