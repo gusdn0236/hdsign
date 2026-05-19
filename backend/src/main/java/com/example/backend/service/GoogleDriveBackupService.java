@@ -16,10 +16,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 작업증거 사진을 공용 구글 드라이브에 백업.
@@ -57,6 +61,11 @@ public class GoogleDriveBackupService {
 
     private volatile Drive drive;
     private volatile String rootFolderId;
+
+    // Drive 저장용량 캐시 — about.get 호출은 가볍지만 사용자가 새로고침 연타해도 부담 없게 60초 캐시.
+    private static final Duration USAGE_CACHE_TTL = Duration.ofSeconds(60);
+    private volatile Instant usageCachedAt;
+    private volatile Map<String, Object> cachedUsage;
 
     @PostConstruct
     void init() {
@@ -133,6 +142,55 @@ public class GoogleDriveBackupService {
                     .build();
             return drive;
         }
+    }
+
+    /**
+     * 구글 드라이브 저장용량 — about.get 의 storageQuota 필드.
+     * 결과 키: enabled, limit, usage, usageInDrive, usageInDriveTrash, percent, unlimited.
+     * limit==null 이면 Workspace unlimited 계정 — 그땐 percent 0, unlimited=true.
+     */
+    public Map<String, Object> getStorageUsage() {
+        if (!enabled) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("enabled", false);
+            return m;
+        }
+        Instant at = usageCachedAt;
+        Map<String, Object> cached = cachedUsage;
+        if (at != null && cached != null && Duration.between(at, Instant.now()).compareTo(USAGE_CACHE_TTL) < 0) {
+            return cached;
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("enabled", true);
+        try {
+            Drive d = ensureDrive();
+            com.google.api.services.drive.model.About about = d.about().get()
+                    .setFields("storageQuota,user(emailAddress,displayName)")
+                    .execute();
+            com.google.api.services.drive.model.About.StorageQuota q = about.getStorageQuota();
+            Long limit = q != null ? q.getLimit() : null;
+            Long usage = q != null ? q.getUsage() : null;
+            Long inDrive = q != null ? q.getUsageInDrive() : null;
+            Long inTrash = q != null ? q.getUsageInDriveTrash() : null;
+            boolean unlimited = (limit == null || limit <= 0);
+            double percent = unlimited ? 0.0 : 100.0 * (usage == null ? 0 : usage) / (double) limit;
+            result.put("limit", limit);
+            result.put("usage", usage);
+            result.put("usageInDrive", inDrive);
+            result.put("usageInDriveTrash", inTrash);
+            result.put("unlimited", unlimited);
+            result.put("percent", percent);
+            result.put("rootFolderName", rootFolderName);
+            if (about.getUser() != null) {
+                result.put("accountEmail", about.getUser().getEmailAddress());
+            }
+        } catch (Exception e) {
+            log.warn("Drive 저장용량 조회 실패: {}", e.getMessage());
+            result.put("error", e.getMessage());
+        }
+        cachedUsage = result;
+        usageCachedAt = Instant.now();
+        return result;
     }
 
     private String ensureRootFolder(Drive d) throws Exception {

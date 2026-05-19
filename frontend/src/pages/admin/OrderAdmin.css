@@ -2639,6 +2639,12 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   font-weight: 600;
   color: #0f172a;
 }
+.storage-usage-server {
+  font-weight: 500;
+  color: #71717a;
+  font-size: 12.5px;
+  margin-left: 6px;
+}
 .storage-usage-amount {
   margin-left: auto;
   font-variant-numeric: tabular-nums;

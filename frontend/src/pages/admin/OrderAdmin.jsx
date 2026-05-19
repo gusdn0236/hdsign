@@ -2479,7 +2479,7 @@ function StorageUsageBar({ usage, onRefresh }) {
   return (
     <div className={`storage-usage storage-usage--${tone}`}>
       <div className="storage-usage-head">
-        <span className="storage-usage-title">서버 저장공간</span>
+        <span className="storage-usage-title">서버 저장공간 <span className="storage-usage-server">(Cloudflare R2)</span></span>
         <span className="storage-usage-amount">
           <b>{formatBytes(totalBytes)}</b> / {quotaGb}GB ({percent.toFixed(1)}%)
         </span>

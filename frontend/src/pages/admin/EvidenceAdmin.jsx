@@ -35,6 +35,81 @@ function dateKeyOf(item) {
     return String(item.createdAt).slice(0, 10);
 }
 
+function formatBytes(n) {
+    if (!Number.isFinite(n) || n <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    let v = n;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+    const fixed = i === 0 ? 0 : v >= 100 ? 0 : v >= 10 ? 1 : 2;
+    return `${v.toFixed(fixed)} ${units[i]}`;
+}
+
+function DriveUsageBar({ usage, onRefresh }) {
+    if (!usage || usage.enabled === false) {
+        return (
+            <div className="drive-usage drive-usage--off">
+                <span className="drive-usage-title">구글 드라이브 백업 <span className="drive-usage-server">(Google Drive)</span></span>
+                <span className="drive-usage-msg">백업 비활성화 상태</span>
+            </div>
+        );
+    }
+    if (usage.error) {
+        return (
+            <div className="drive-usage drive-usage--off">
+                <span className="drive-usage-title">구글 드라이브 백업 <span className="drive-usage-server">(Google Drive)</span></span>
+                <span className="drive-usage-msg">사용량 조회 실패</span>
+                <button type="button" className="drive-usage-refresh" onClick={onRefresh}>↻</button>
+            </div>
+        );
+    }
+    const usageBytes = Number(usage.usage ?? 0);
+    const limitBytes = Number(usage.limit ?? 0);
+    const unlimited = Boolean(usage.unlimited);
+    const percent = Math.min(100, Number(usage.percent ?? 0));
+    const tone = percent >= 90 ? 'danger' : percent >= 70 ? 'warn' : 'ok';
+    return (
+        <div className={`drive-usage drive-usage--${tone}`}>
+            <div className="drive-usage-head">
+                <span className="drive-usage-title">
+                    구글 드라이브 백업 <span className="drive-usage-server">(Google Drive)</span>
+                </span>
+                <span className="drive-usage-amount">
+                    <b>{formatBytes(usageBytes)}</b>
+                    {unlimited
+                        ? <> / 무제한</>
+                        : <> / {formatBytes(limitBytes)} ({percent.toFixed(1)}%)</>
+                    }
+                </span>
+                <button
+                    type="button"
+                    className="drive-usage-refresh"
+                    onClick={onRefresh}
+                    title="다시 측정 (60초 캐시)"
+                >↻</button>
+            </div>
+            {!unlimited && (
+                <div className="drive-usage-track" role="progressbar"
+                     aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+                    <div className="drive-usage-fill" style={{ width: `${percent}%` }} />
+                </div>
+            )}
+            {usage.accountEmail && (
+                <div className="drive-usage-foot">
+                    계정: <span>{usage.accountEmail}</span>
+                    {usage.rootFolderName && <> · 폴더: <span>{usage.rootFolderName}</span></>}
+                </div>
+            )}
+            {tone === 'danger' && (
+                <div className="drive-usage-hint">한도의 90% 를 초과했습니다. 드라이브에서 직접 정리하거나 플랜 업그레이드를 고려하세요.</div>
+            )}
+            {tone === 'warn' && (
+                <div className="drive-usage-hint">한도의 70% 를 넘었습니다. 곧 정리를 권장합니다.</div>
+            )}
+        </div>
+    );
+}
+
 export default function EvidenceAdmin() {
     const { token } = useAuth();
     const authHeader = useMemo(
@@ -60,6 +135,16 @@ export default function EvidenceAdmin() {
     const [selectMode, setSelectMode] = useState(false);
     const [selected, setSelected] = useState(() => new Set());
     const [deleting, setDeleting] = useState(false);
+
+    // 드라이브 저장공간
+    const [driveUsage, setDriveUsage] = useState(null);
+    const loadDriveUsage = useCallback(() => {
+        fetch(`${BASE_URL}/api/admin/storage/drive-usage`, { headers: authHeader })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => setDriveUsage(d))
+            .catch(() => setDriveUsage(null));
+    }, [authHeader]);
+    useEffect(() => { loadDriveUsage(); }, [loadDriveUsage]);
 
     const loadPage = useCallback(
         async (targetPage, append) => {
@@ -218,6 +303,8 @@ export default function EvidenceAdmin() {
                     </button>
                 </div>
             </div>
+
+            <DriveUsageBar usage={driveUsage} onRefresh={loadDriveUsage} />
 
             <form className="evidence-admin-toolbar" onSubmit={handleSearchSubmit}>
                 <div className="evidence-search-wrap">

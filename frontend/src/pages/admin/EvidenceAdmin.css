@@ -56,6 +56,103 @@
     color: #fff;
 }
 
+/* 드라이브 저장공간 바 */
+.drive-usage {
+    border: 1px solid #e4e7eb;
+    background: #fff;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.drive-usage--warn { border-color: #f5d68a; background: #fff8e8; }
+.drive-usage--danger { border-color: #f3c0c0; background: #fdecec; }
+.drive-usage--off {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #777;
+    font-size: 13px;
+}
+.drive-usage-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13.5px;
+    color: #333;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+.drive-usage-title {
+    font-weight: 600;
+    color: #0f172a;
+}
+.drive-usage-server {
+    font-weight: 500;
+    color: #71717a;
+    font-size: 12.5px;
+    margin-left: 6px;
+}
+.drive-usage-amount {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    color: #334155;
+}
+.drive-usage-amount b {
+    color: #0f172a;
+    font-weight: 700;
+}
+.drive-usage-refresh {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid #d4d4d8;
+    background: #fff;
+    color: #444;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+}
+.drive-usage-refresh:hover {
+    background: #f4f4f5;
+}
+.drive-usage-track {
+    width: 100%;
+    height: 10px;
+    background: #f1f5f9;
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 6px 0;
+}
+.drive-usage-fill {
+    height: 100%;
+    background: #16a34a;
+    transition: width 0.3s ease;
+}
+.drive-usage--warn .drive-usage-fill { background: #f59e0b; }
+.drive-usage--danger .drive-usage-fill { background: #dc2626; }
+.drive-usage-foot {
+    font-size: 12px;
+    color: #71717a;
+    margin-top: 6px;
+}
+.drive-usage-foot span {
+    color: #3f3f46;
+    font-weight: 600;
+}
+.drive-usage-hint {
+    margin-top: 8px;
+    font-size: 12.5px;
+    color: #92400e;
+    font-weight: 500;
+}
+.drive-usage--danger .drive-usage-hint { color: #991b1b; }
+.drive-usage-msg {
+    color: #71717a;
+    font-size: 13px;
+}
+
 /* Toolbar — 검색 */
 .evidence-admin-toolbar {
     display: flex;
