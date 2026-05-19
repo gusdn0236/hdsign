@@ -32,6 +32,15 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.MemoryCacheImageOutputStream;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
@@ -107,8 +116,12 @@ public class PublicEvidenceController {
                     m.put("fileSize", f.getFileSize());
                     m.put("uploadedDepartment", f.getUploadedDepartment());
                     m.put("createdAt", f.getCreatedAt() != null ? f.getCreatedAt().toString() : null);
-                    m.put("imageUrl", "/api/public/orders/"
-                            + orderNumber + "/evidence/" + f.getId() + "/image");
+                    String base = "/api/public/orders/" + orderNumber
+                            + "/evidence/" + f.getId() + "/image";
+                    m.put("imageUrl", base);
+                    // 사진보기 그리드용 — 같은 엔드포인트의 ?thumb=1 (서버에서 360px JPEG q=0.7).
+                    // 원본보다 5~10배 작아 빠르게 깔리고, 라이트박스에서 원본을 다시 받음.
+                    m.put("thumbnailUrl", base + "?thumb=1");
                     return m;
                 })
                 .toList();
@@ -128,6 +141,9 @@ public class PublicEvidenceController {
     public ResponseEntity<?> proxyEvidenceImage(
             @PathVariable String orderNumber,
             @PathVariable Long fileId,
+            // thumb=1(true) 일 때 ~360px 짜리 가벼운 JPEG 으로 다운스케일.
+            // 사진보기 그리드용 — 화질보다 빠른 로딩 우선(원본은 클릭 시 라이트박스에서).
+            @RequestParam(value = "thumb", required = false) Boolean thumb,
             @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch
     ) {
         OrderFile file = orderFileRepository.findById(fileId).orElse(null);
@@ -141,7 +157,10 @@ public class PublicEvidenceController {
         if (key == null || key.isBlank()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
-        String etag = "\"" + Integer.toHexString(key.hashCode()) + "\"";
+        boolean wantThumb = Boolean.TRUE.equals(thumb);
+        // 썸네일 / 원본은 캐시 키도 ETag 도 분리 — 둘 다 동일한 max-age 로 길게 캐시.
+        String etag = "\"" + Integer.toHexString(key.hashCode())
+                + (wantThumb ? "-t" : "") + "\"";
         if (etag.equals(ifNoneMatch)) {
             HttpHeaders headers = new HttpHeaders();
             headers.setCacheControl("public, max-age=86400");
@@ -149,6 +168,19 @@ public class PublicEvidenceController {
             return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
         }
         try {
+            if (wantThumb) {
+                byte[] thumbBytes = renderEvidenceThumbnail(key);
+                if (thumbBytes != null) {
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.setContentType(MediaType.IMAGE_JPEG);
+                    headers.setContentLength(thumbBytes.length);
+                    headers.setCacheControl("public, max-age=86400");
+                    headers.setETag(etag);
+                    headers.setContentDispositionFormData("inline", "thumb.jpg");
+                    return new ResponseEntity<>(thumbBytes, headers, HttpStatus.OK);
+                }
+                // 썸네일 생성 실패 → 원본으로 폴백(빈 화면보다는 느려도 보이는 게 낫다).
+            }
             ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
                     GetObjectRequest.builder().bucket(bucket).key(key).build()
             );
@@ -167,6 +199,54 @@ public class PublicEvidenceController {
         } catch (Exception e) {
             log.warn("증거사진 프록시 실패 [{}/{}]: {}", orderNumber, fileId, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
+        }
+    }
+
+    /**
+     * R2 의 원본 이미지를 받아 ~360px 짜리 JPEG 으로 다운스케일.
+     * 모바일 사진보기 그리드 셀이 ~120-150px 라 360px(2x DPR 대비) 면 충분히 또렷.
+     * 첫 호출만 느리고(50~100ms), 이후엔 브라우저/CDN 캐시(max-age=86400) 로 사실상 0ms.
+     * 실패 시 null — 호출자가 원본 폴백 처리.
+     */
+    private byte[] renderEvidenceThumbnail(String key) {
+        try (ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
+                GetObjectRequest.builder().bucket(bucket).key(key).build()
+        )) {
+            BufferedImage src = ImageIO.read(stream);
+            if (src == null) return null;
+            final int maxSide = 360;
+            int srcW = src.getWidth();
+            int srcH = src.getHeight();
+            int longest = Math.max(srcW, srcH);
+            double scale = longest > maxSide ? (double) maxSide / longest : 1.0;
+            int dstW = Math.max(1, (int) Math.round(srcW * scale));
+            int dstH = Math.max(1, (int) Math.round(srcH * scale));
+            BufferedImage dst = new BufferedImage(dstW, dstH, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = dst.createGraphics();
+            try {
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                        RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.setRenderingHint(RenderingHints.KEY_RENDERING,
+                        RenderingHints.VALUE_RENDER_QUALITY);
+                g.drawImage(src, 0, 0, dstW, dstH, null);
+            } finally {
+                g.dispose();
+            }
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(32 * 1024);
+            ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
+            try (MemoryCacheImageOutputStream out = new MemoryCacheImageOutputStream(baos)) {
+                writer.setOutput(out);
+                ImageWriteParam param = writer.getDefaultWriteParam();
+                param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                param.setCompressionQuality(0.7f);
+                writer.write(null, new IIOImage(dst, null, null), param);
+            } finally {
+                writer.dispose();
+            }
+            return baos.toByteArray();
+        } catch (Exception e) {
+            log.warn("증거사진 썸네일 렌더 실패 [{}]: {}", key, e.getMessage());
+            return null;
         }
     }
 

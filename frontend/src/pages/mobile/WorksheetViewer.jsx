@@ -1227,9 +1227,10 @@ export default function WorksheetViewer() {
                                         aria-label={`사진 ${idx + 1}장 보기`}
                                     >
                                         <img
-                                            src={`${BASE_URL}${p.imageUrl}`}
+                                            src={`${BASE_URL}${p.thumbnailUrl || p.imageUrl}`}
                                             alt={p.originalName || ''}
                                             loading="lazy"
+                                            decoding="async"
                                         />
                                         {p.uploadedDepartment && (
                                             <span className="wsv-photos-cell-tag">
