@@ -10,7 +10,6 @@ import com.google.api.services.drive.Drive;
 import com.google.api.services.drive.DriveScopes;
 import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
-import com.example.backend.entity.Order;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -76,20 +75,26 @@ public class GoogleDriveBackupService {
     /**
      * 사진 1장을 백업. 비동기 — 호출자는 즉시 리턴.
      *
-     * @param order        주문(거래처/제목/생성일 추출용)
+     * <p>호출자는 반드시 트랜잭션이 살아있는 상태에서 거래처명을 미리 추출해 넘겨야 한다.
+     * Entity(Order/Client)를 그대로 받으면 @Async 별도 스레드에서 lazy proxy 접근 시
+     * "no session" 에러가 발생한다.
+     *
+     * @param orderNumber  주문번호(파일명 prefix + 로그용)
+     * @param companyName  거래처명(파일명 prefix용, 비어있으면 "거래처미상")
      * @param fileName     원본 파일명(중복 시 드라이브가 자동 보정)
      * @param contentType  image/jpeg 등
      * @param data         바이트
      */
     @Async
-    public void uploadEvidenceAsync(Order order, String fileName, String contentType, byte[] data) {
+    public void uploadEvidenceAsync(String orderNumber, String companyName,
+                                    String fileName, String contentType, byte[] data) {
         if (!enabled || data == null || data.length == 0) return;
         try {
             Drive d = ensureDrive();
             String rootId = ensureRootFolder(d);
 
             File metadata = new File()
-                    .setName(buildPrefixedFileName(order, fileName))
+                    .setName(buildPrefixedFileName(orderNumber, companyName, fileName))
                     .setParents(Collections.singletonList(rootId));
 
             ByteArrayContent content = new ByteArrayContent(
@@ -99,10 +104,10 @@ public class GoogleDriveBackupService {
                     .setFields("id,name")
                     .execute();
             log.info("Drive 백업 완료 [{}/{}] -> {}",
-                    order.getOrderNumber(), created.getName(), created.getId());
+                    orderNumber, created.getName(), created.getId());
         } catch (Exception e) {
             log.warn("Drive 백업 실패 [{}/{}]: {}",
-                    order.getOrderNumber(), fileName, e.getMessage());
+                    orderNumber, fileName, e.getMessage());
         }
     }
 
@@ -145,14 +150,13 @@ public class GoogleDriveBackupService {
      * 업로드 시점 날짜 기준(현장에서 사진을 찍은 시점) — 주문 생성일과 다를 수 있음.
      * 길이가 너무 길어지면 원본명을 뒷쪽에서 잘라 200자 이내로 맞춤.
      */
-    private String buildPrefixedFileName(Order order, String originalName) {
+    private String buildPrefixedFileName(String orderNumber, String companyName, String originalName) {
         String date = YYYY_MM_DD.format(LocalDateTime.now());
-        String company = order.getClient() != null ? order.getClient().getCompanyName() : null;
-        if (company == null || company.isBlank()) company = "거래처미상";
+        String company = (companyName == null || companyName.isBlank()) ? "거래처미상" : companyName;
         String safeCompany = sanitizeForFileName(company);
 
-        String orderNumber = order.getOrderNumber() != null ? order.getOrderNumber() : "주문번호없음";
-        String safeOrder = sanitizeForFileName(orderNumber);
+        String safeOrderNumber = (orderNumber == null || orderNumber.isBlank()) ? "주문번호없음" : orderNumber;
+        String safeOrder = sanitizeForFileName(safeOrderNumber);
 
         String prefix = date + "_" + safeCompany + "_" + safeOrder + "_";
         String body = safeFileName(originalName);

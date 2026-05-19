@@ -91,6 +91,11 @@ public class PublicEvidenceController {
         if (dept != null && dept.isEmpty()) dept = null;
         if (dept != null && dept.length() > 100) dept = dept.substring(0, 100);
 
+        // 드라이브 백업 @Async 가 별도 스레드에서 돌면서 lazy fetch 하면 "no session" 에러.
+        // 트랜잭션/세션이 살아있는 지금 미리 추출해 String 으로 넘긴다.
+        String companyName = order.getClient() != null ? order.getClient().getCompanyName() : null;
+        String orderNumberForBackup = order.getOrderNumber();
+
         List<OrderDto.FileInfo> uploaded = new ArrayList<>();
         String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
                 ? ""
@@ -132,7 +137,8 @@ public class PublicEvidenceController {
             }
 
             // R2 성공한 사진만 드라이브에도 백업. 비동기 — 응답 지연 0, 실패해도 흐름 영향 없음.
-            driveBackupService.uploadEvidenceAsync(order, originalName, file.getContentType(), bytes);
+            driveBackupService.uploadEvidenceAsync(
+                    orderNumberForBackup, companyName, originalName, file.getContentType(), bytes);
 
             OrderFile saved = orderFileRepository.save(OrderFile.builder()
                     .order(order)

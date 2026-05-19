@@ -20,5 +20,6 @@ ENV TZ=Asia/Seoul
 # MaxRAMPercentage=75 면 512MB 컨테이너에서 ~384MB, 2GB 컨테이너에서 ~1.5GB 힙.
 # 명시 안 하면 JVM 이 보수적으로 ~25% 만 잡아 OOM 위험이 커짐.
 # OOM 발생 시 힙 덤프를 컨테이너 로그 경로에 남겨 원인 추적 가능.
-ENV JAVA_TOOL_OPTIONS="-Duser.timezone=Asia/Seoul -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp"
+ENV JAVA_TOOL_OPTIONS="-Duser.timezone=Asia/Seoul -Dfile.encoding=UTF-8 -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp"
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 ENTRYPOINT ["java", "-jar", "app.jar"]
