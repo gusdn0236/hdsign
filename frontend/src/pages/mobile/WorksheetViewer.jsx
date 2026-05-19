@@ -1218,27 +1218,37 @@ export default function WorksheetViewer() {
                             </div>
                         ) : (
                             <div className="wsv-photos-grid">
-                                {evidencePhotos.map((p, idx) => (
-                                    <button
-                                        key={p.id}
-                                        type="button"
-                                        className="wsv-photos-cell"
-                                        onClick={() => setLightboxIndex(idx)}
-                                        aria-label={`사진 ${idx + 1}장 보기`}
-                                    >
-                                        <img
-                                            src={`${BASE_URL}${p.thumbnailUrl || p.imageUrl}`}
-                                            alt={p.originalName || ''}
-                                            loading="lazy"
-                                            decoding="async"
-                                        />
-                                        {p.uploadedDepartment && (
-                                            <span className="wsv-photos-cell-tag">
-                                                {p.uploadedDepartment}
-                                            </span>
-                                        )}
-                                    </button>
-                                ))}
+                                {evidencePhotos.map((p, idx) => {
+                                    // thumbnailUrl 은 두 종류:
+                                    //  - 신규 업로드: 미리 만들어둔 R2 public URL(절대 — http... 로 시작)
+                                    //  - 레거시: /api/public/.../image?thumb=1 (상대)
+                                    // 절대 URL 이면 그대로 쓰고, 상대면 BASE_URL 을 붙인다.
+                                    const raw = p.thumbnailUrl || p.imageUrl;
+                                    const src = raw && /^https?:\/\//i.test(raw)
+                                        ? raw
+                                        : `${BASE_URL}${raw}`;
+                                    return (
+                                        <button
+                                            key={p.id}
+                                            type="button"
+                                            className="wsv-photos-cell"
+                                            onClick={() => setLightboxIndex(idx)}
+                                            aria-label={`사진 ${idx + 1}장 보기`}
+                                        >
+                                            <img
+                                                src={src}
+                                                alt={p.originalName || ''}
+                                                loading="lazy"
+                                                decoding="async"
+                                            />
+                                            {p.uploadedDepartment && (
+                                                <span className="wsv-photos-cell-tag">
+                                                    {p.uploadedDepartment}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
