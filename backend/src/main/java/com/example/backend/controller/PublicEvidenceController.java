@@ -222,16 +222,17 @@ public class PublicEvidenceController {
     }
 
     /**
-     * 메모리상의 이미지 바이트 → 한 변 160px JPEG q=0.5. 업로드 시점에서 호출돼
+     * 메모리상의 이미지 바이트 → 한 변 320px JPEG q=0.7. 업로드 시점에서 호출돼
      * R2 에 별도 키로 영구 저장된다 — 이후 그리드 표시는 R2 직접 스트리밍.
-     * "형체만 알아보면 OK" 정책 — 사진 한 장 5-15KB, 5장 그리드 30-75KB 수준.
+     * "적당히" 정책 — 사진 한 장 25-45KB. 미리 생성하므로 사이즈가 로딩 속도에 큰
+     * 영향 없어 화질을 적당히 유지.
      * 실패 시 null.
      */
     private byte[] renderThumbnailBytes(byte[] imageBytes) {
         try {
             BufferedImage source = ImageIO.read(new java.io.ByteArrayInputStream(imageBytes));
             if (source == null) return null;
-            final int maxSide = 160;
+            final int maxSide = 320;
             int srcW = source.getWidth();
             int srcH = source.getHeight();
             int longest = Math.max(srcW, srcH);
@@ -241,20 +242,21 @@ public class PublicEvidenceController {
             BufferedImage dst = new BufferedImage(dstW, dstH, BufferedImage.TYPE_INT_RGB);
             Graphics2D g = dst.createGraphics();
             try {
-                // BILINEAR + 작은 출력 — 빠르고 형체 식별엔 충분.
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                         RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                g.setRenderingHint(RenderingHints.KEY_RENDERING,
+                        RenderingHints.VALUE_RENDER_QUALITY);
                 g.drawImage(source, 0, 0, dstW, dstH, null);
             } finally {
                 g.dispose();
             }
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(16 * 1024);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(32 * 1024);
             ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
             try (MemoryCacheImageOutputStream out = new MemoryCacheImageOutputStream(baos)) {
                 writer.setOutput(out);
                 ImageWriteParam param = writer.getDefaultWriteParam();
                 param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-                param.setCompressionQuality(0.5f);
+                param.setCompressionQuality(0.7f);
                 writer.write(null, new IIOImage(dst, null, null), param);
             } finally {
                 writer.dispose();
