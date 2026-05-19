@@ -1,6 +1,6 @@
 import './App.css'
 import React, { lazy, Suspense } from 'react'
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import Header from './components/common/Header.jsx'
 import Footer from './components/common/Footer.jsx'
 import Home from './pages/Home.jsx'
@@ -120,7 +120,12 @@ const ClientLayout     = lazyWithRetry(() => import('./pages/client/ClientLayout
 const ClientRequest    = lazyWithRetry(() => import('./pages/client/ClientRequest.jsx'))
 const ClientQuoteRequest = lazyWithRetry(() => import('./pages/client/ClientQuoteRequest.jsx'))
 const ClientStatus     = lazyWithRetry(() => import('./pages/client/ClientStatus.jsx'))
-const EvidenceCapture  = lazyWithRetry(() => import('./pages/evidence/EvidenceCapture.jsx'))
+// /p/:orderNumber 는 QR 인식 시 진입하는 옛 경로. 모바일 지시서 뷰어로 그대로 넘긴다 —
+// 워처가 굽는 QR 은 /p/{orderNumber} 그대로 두고, 클라이언트 라우터 단에서 흡수.
+function EvidenceRedirect() {
+    const { orderNumber } = useParams()
+    return <Navigate to={`/m/worksheets/${encodeURIComponent(orderNumber || '')}`} replace />
+}
 const WorksheetList    = lazyWithRetry(() => import('./pages/mobile/WorksheetList.jsx'))
 const WorksheetViewer  = lazyWithRetry(() => import('./pages/mobile/WorksheetViewer.jsx'))
 const FieldViewer      = lazyWithRetry(() => import('./pages/field/FieldViewer.jsx'))
@@ -193,7 +198,7 @@ function App() {
                             <Route path="evidence" element={<EvidenceAdmin />} />
                         </Route>
 
-                        <Route path="/p/:orderNumber" element={<EvidenceCapture />} />
+                        <Route path="/p/:orderNumber" element={<EvidenceRedirect />} />
 
                         <Route path="/m/worksheets" element={<WorksheetList />} />
                         <Route path="/m/worksheets/:orderNumber" element={<WorksheetViewer />} />

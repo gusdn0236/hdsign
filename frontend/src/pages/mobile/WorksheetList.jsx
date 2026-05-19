@@ -43,7 +43,7 @@ function preloadWorksheetViewerChunk(immediate = false) {
     return null;
 }
 
-// 모바일 뷰어 직원 식별 — WorksheetViewer / EvidenceCapture 와 같은 키 공유.
+// 모바일 뷰어 직원 식별 — WorksheetViewer 와 같은 키 공유.
 // 휴대폰 단말 단위로 "이 폰은 누구의 폰" 으로 한 번 설정해두면 자동 적용.
 // 워처 분배함은 부서 기준 그대로 유지하고, 모바일 필터만 직원 기준으로 매칭한다(workers.js 매핑).
 const WORKER_KEY = 'hdsign_uploader_worker';
@@ -51,6 +51,10 @@ const WORKER_KEY = 'hdsign_uploader_worker';
 // "내 지시서만 보기" 를 사용자가 명시적으로 푼 직원 이름. 담당자가 설정되어 있으면 default 는 ON 이지만,
 // 한 번 풀고 나면 다시 켜기 전까지는 OFF 유지(workerName 저장으로 직원이 바뀌면 다시 default ON).
 const MINE_OFF_KEY = 'hdsign_mine_off_worker';
+
+// "내 지시서만 보기 + 작업완료건도 보이기" 토글 — 기본 OFF(=완료건 숨김).
+// mineOnly OFF 일 때는 전체 노출(완료건도 리본만 띄워 보임)이라 이 토글은 mineOnly ON 일 때만 동작.
+const SHOW_COMPLETED_KEY = 'hdsign_show_completed_mine';
 
 function getStoredWorker() {
     try {
@@ -78,6 +82,16 @@ function setStoredMineOffWorker(value) {
     try {
         if (value) localStorage.setItem(MINE_OFF_KEY, value);
         else localStorage.removeItem(MINE_OFF_KEY);
+    } catch { /* ignore */ }
+}
+function getStoredShowCompleted() {
+    try { return localStorage.getItem(SHOW_COMPLETED_KEY) === '1'; }
+    catch { return false; }
+}
+function setStoredShowCompleted(value) {
+    try {
+        if (value) localStorage.setItem(SHOW_COMPLETED_KEY, '1');
+        else localStorage.removeItem(SHOW_COMPLETED_KEY);
     } catch { /* ignore */ }
 }
 
@@ -157,6 +171,8 @@ export default function WorksheetList() {
         if (!w) return false;
         return getStoredMineOffWorker() !== w;
     });
+    // 내 지시서만 보기에서 본인 완료건도 함께 노출할지(완료 리본 그대로) — 기본 OFF.
+    const [showCompleted, setShowCompleted] = useState(() => getStoredShowCompleted());
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
     const [lastSyncedAt, setLastSyncedAt] = useState(() => worksheetListSnapshot.syncedAt);
@@ -223,6 +239,11 @@ export default function WorksheetList() {
         } else {
             setStoredMineOffWorker('');
         }
+    };
+
+    const handleShowCompletedToggle = (next) => {
+        setShowCompleted(next);
+        setStoredShowCompleted(next);
     };
 
     const openWorkerModal = () => {
@@ -386,16 +407,18 @@ export default function WorksheetList() {
     }, [searchFilteredItems, companyFilter]);
 
     // mineOnly 가 true + 직원 설정됨일 때만 슬롯 매칭으로 좁힌다.
-    // 본인이 [작업완료] 누른 건은 본인 리스트에서만 제외(per-worker independent) — 같은 슬롯
-    // 동료에게는 그대로 보임. 슬롯이 비어있는(워처 도입 이전) 지시서는 off 에서만 보여 누락 방지.
+    // 본인이 [작업완료] 누른 건은 기본 제외(per-worker independent) — 같은 슬롯 동료에겐 그대로 보임.
+    // showCompleted ON 이면 완료건도 포함해서 보여주되, 썸네일에 완료 리본이 떠 시각적으로 구분된다.
+    // 슬롯이 비어있는(워처 도입 이전) 지시서는 off 에서만 보여 누락 방지.
     const filtered = useMemo(() => {
         if (!mineOnly || !myWorker) return companyFilteredItems;
         return companyFilteredItems.filter((it) => {
+            if (!matchesWorker(it.departmentSlots, myWorker)) return false;
             const done = Array.isArray(it.workerCompletions)
                 && it.workerCompletions.some((c) => c.worker === myWorker);
-            return !done && matchesWorker(it.departmentSlots, myWorker);
+            return showCompleted || !done;
         });
-    }, [companyFilteredItems, mineOnly, myWorker]);
+    }, [companyFilteredItems, mineOnly, myWorker, showCompleted]);
 
     // 토글 라벨용 카운트(본인 슬롯이 매칭된, 본인이 아직 안 끝낸 지시서 개수).
     const myCount = useMemo(() => {
@@ -474,6 +497,7 @@ export default function WorksheetList() {
             setShowWorkerModal(true);
             return;
         }
+        if (!window.confirm(`선택한 ${selectedNumbers.size}건을 작업완료 처리하시겠습니까?`)) return;
         setBulkCompleting(true);
         setBulkError('');
         const targets = Array.from(selectedNumbers);
@@ -640,6 +664,21 @@ export default function WorksheetList() {
                     </button>
                 </div>
 
+                {/* 내 지시서만 보기 체크 시에만 노출 — 본인 완료건도 함께 보기. 완료건은 리본이 떠 시각 구분. */}
+                {mineOnly && myWorker && (
+                    <div className="ws-personal-sub-row">
+                        <label className="ws-mine-toggle ws-mine-sub">
+                            <input
+                                type="checkbox"
+                                className="ws-mine-checkbox"
+                                checked={showCompleted}
+                                onChange={(e) => handleShowCompletedToggle(e.target.checked)}
+                            />
+                            <span className="ws-mine-text">작업완료건 보이기</span>
+                        </label>
+                    </div>
+                )}
+
                 {/* 다중 선택 모드 — 카드 탭으로 N건 선택해 한 번에 작업완료. 선택 모드 OFF 시 카드는
                     그대로 Link 동작(각각 들어가서 처리). 발주관리 selectMode 와 같은 패턴. */}
                 <div className="ws-action-row">
@@ -687,12 +726,16 @@ export default function WorksheetList() {
                             {list.map((it) => {
                                 const cardBadge = isUploaded ? getDueBadge(it.dueDate) : null;
                                 const isSelected = selectedNumbers.has(it.orderNumber);
+                                const completedByMe = !!myWorker
+                                    && Array.isArray(it.workerCompletions)
+                                    && it.workerCompletions.some((c) => c.worker === myWorker);
                                 const cardClass = `ws-grid-card${selectMode ? ' select-mode' : ''}${isSelected ? ' selected' : ''}`;
                                 const cardContent = (
                                     <>
                                         <WorksheetThumbnail
                                             pdfUrl={it.worksheetPdfUrl}
                                             thumbnailUrl={it.worksheetThumbnailUrl}
+                                            completed={completedByMe}
                                         />
                                         {selectMode && (
                                             <span className={`ws-grid-check ${isSelected ? 'on' : ''}`} aria-hidden="true">
