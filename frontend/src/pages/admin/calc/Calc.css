@@ -1664,6 +1664,40 @@
 .qu-grid-scroll::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 5px; border: 2px solid #f8fafc; }
 .qu-grid-scroll::-webkit-scrollbar-thumb:hover { background: #64748b; }
 
+/* 컬럼 헤더 클릭 시 그 컬럼 일괄 토글 */
+.qu-col-head {
+    cursor: pointer;
+    position: relative;
+    transition: background 0.12s;
+}
+.qu-col-head:hover {
+    background: #cbd5e1 !important;
+}
+.qu-col-head-hint {
+    display: block;
+    font-size: 8px;
+    color: #94a3b8;
+    margin-top: 1px;
+    line-height: 1;
+    opacity: 0.6;
+}
+.qu-col-head:hover .qu-col-head-hint {
+    color: #1e293b;
+    opacity: 1;
+}
+
+/* 빈칸 (사이즈 제거) 셀 */
+.qu-dc-removed {
+    font-size: 10px;
+    color: #92400e;
+    font-weight: 700;
+    font-style: italic;
+}
+.qu-dc.blank .qu-dc-old {
+    text-decoration: line-through;
+    color: #b45309;
+}
+
 
 /* === 에폭시 sub-tables === */
 

@@ -81,8 +81,9 @@ export default function QuickUpload() {
         if (!diff || !baseline || !parsed) return
         setPhase('applying')
         try {
-            // decisions: path → 'excel' | 'baseline'. buildPricesFromDecisions 가 그대로 받음.
-            const newPrices = buildPricesFromDecisions(baseline, parsed, decisions)
+            // decisions: path → 'excel' | 'baseline'. diff 도 같이 넘겨서 빈칸(missing_in_excel)
+            // 셀이 'excel' 결정 시 baseline 의 해당 사이즈 키를 제거하도록 함 (가격 시프트 갱신 지원).
+            const newPrices = buildPricesFromDecisions(baseline, parsed, decisions, diff)
             const res = await fetch(`${BASE_URL}/api/admin/calc-prices/current`, {
                 method: 'PUT',
                 headers: {

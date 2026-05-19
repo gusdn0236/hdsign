@@ -273,8 +273,13 @@ export function computeDiff(baseline, excel) {
  * 사용자 결정({path → 'baseline' | 'excel' | { custom: number }})에 따라
  * 새 prices.json 을 만든다. baseline 을 기반으로 시작하고, 사용자가 'excel' 선택했거나
  * custom 값을 준 셀만 덮어씀.
+ *
+ * diff (선택): 제공되면 missing_in_excel 셀의 path 를 추출해서, 사용자가 그 셀을
+ *   'excel' 로 선택했을 때 baseline 에서 해당 사이즈 키 자체를 삭제한다.
+ *   잔넬 단가표가 가격 시프트로 갱신되는 패턴(작은 사이즈 빈칸 + 큰 사이즈 빈칸 채워짐)을
+ *   지원하기 위함.
  */
-export function buildPricesFromDecisions(baseline, excel, decisions) {
+export function buildPricesFromDecisions(baseline, excel, decisions, diff = null) {
     const result = JSON.parse(JSON.stringify(baseline))
     result._meta = {
         ...result._meta,
@@ -283,8 +288,25 @@ export function buildPricesFromDecisions(baseline, excel, decisions) {
         sourceXlsx: excel._meta?.extractedFrom,
     }
 
+    // 빈칸(엑셀에 없음) 셀 path 집합 — 사용자가 'excel' 결정 시 baseline 에서 제거할 대상
+    const blankPaths = new Set()
+    if (diff) {
+        for (const calc of Object.values(diff.calculators || {})) {
+            for (const item of calc.diffs || []) {
+                if (item.status === 'missing_in_excel') blankPaths.add(item.path)
+            }
+        }
+    }
+
     for (const [path, decision] of Object.entries(decisions)) {
         if (decision === 'baseline' || decision === null) continue
+
+        if (decision === 'excel' && blankPaths.has(path)) {
+            // 사용자가 "엑셀의 빈칸을 그대로 적용" 결정 → baseline 에서 사이즈 키 자체 제거
+            removeCellByPath(result, path)
+            continue
+        }
+
         const value = decision === 'excel'
             ? getCellByPath(excel, path)
             : (decision && typeof decision === 'object' && 'custom' in decision)
@@ -312,6 +334,44 @@ function getCellByPath(root, path) {
     if (calcKey === 'epoxy')  return calc.prices?.[parts[1]]?.[parts[2]]?.[parts[3]]?.[parts[4]] ?? null
     if (calcKey === 'goldSilver') return calc.prices?.[parts[1]]?.[parts[2]]?.[parts[3]]?.[parts[4]] ?? null
     return null
+}
+
+function removeCellByPath(root, path) {
+    const parts = path.split('.')
+    const calcKey = parts[0]
+    const calc = root.calculators?.[calcKey]
+    if (!calc) return
+    if (calcKey === 'channel') {
+        const t = (calc.types || []).find(t => t.key === parts[1])
+        if (!t) return
+        if (parts.length === 4) {
+            const m = t.pricesByLang?.[parts[2]]
+            if (m) delete m[parts[3]]
+        } else {
+            if (t.prices) delete t.prices[parts[2]]
+        }
+        return
+    }
+    if (calcKey === 'gomu') {
+        const m = calc.prices?.[parts[1]]
+        if (m) delete m[parts[2]]
+        return
+    }
+    if (calcKey === 'acryl') {
+        const m = calc.prices?.[parts[1]]?.[parts[2]]
+        if (m) delete m[parts[3]]
+        return
+    }
+    if (calcKey === 'epoxy') {
+        const m = calc.prices?.[parts[1]]?.[parts[2]]?.[parts[3]]
+        if (m) delete m[parts[4]]
+        return
+    }
+    if (calcKey === 'goldSilver') {
+        const m = calc.prices?.[parts[1]]?.[parts[2]]?.[parts[3]]
+        if (m) delete m[parts[4]]
+        return
+    }
 }
 
 function setCellByPath(root, path, value) {
