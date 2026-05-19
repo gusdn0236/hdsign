@@ -259,10 +259,14 @@ export function computeDiff(baseline, excel) {
         calculators: {},
     }
     for (const calcKey of ['channel', 'gomu', 'acryl', 'epoxy', 'goldSilver']) {
+        // parsed(excel) 에 해당 카테고리가 없으면 비교 안 함 — baseline 그대로 유지.
+        // 사용자가 잔넬 시트만 선택했을 때 다른 카테고리(고무·아크릴·...) 가 죄다
+        // missing_in_excel 로 분류되는 문제 방지.
+        if (!excel.calculators?.[calcKey]) continue
         const result = diffCalculator(
             calcKey,
             baseline.calculators?.[calcKey],
-            excel.calculators?.[calcKey],
+            excel.calculators[calcKey],
         )
         if (result) out.calculators[calcKey] = result
     }

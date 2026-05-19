@@ -482,11 +482,13 @@ export async function inspectXlsx(file) {
 
 /**
  * selection 형태별 동작:
- *   • { sheetName, category }  → 그 시트 하나만 해당 카테고리로 파싱 (사용자 선택 모드)
- *   • { channel: '...', gomu: '...', ... } 또는 null
- *                               → legacy: 카테고리별 시트 자동 매칭 (옛 동작)
+ *   • 문자열 (sheetName)         → 그 시트 하나를 시트 이름으로 추정한 카테고리로 파싱.
+ *                                  추정 실패하면 아무것도 파싱 안 함 (안전).
+ *   • { sheetName, category }    → 명시적 시트+카테고리 (테스트/명시 모드)
+ *   • { channel: '...', ... }    → legacy: 카테고리별 시트 자동 매칭
+ *   • null                       → legacy: 워크북의 5개 카테고리 시트 자동 매칭
  *
- * 그 외 카테고리는 calculators 에 들어가지 않으므로 baseline 그대로 유지됨.
+ * 선택된 카테고리 외의 다른 카테고리는 calculators 에 들어가지 않으므로 baseline 그대로 유지.
  */
 export async function parseXlsx(file, baseline, selection = null) {
     const buf = file instanceof ArrayBuffer ? file : await file.arrayBuffer()
@@ -494,7 +496,19 @@ export async function parseXlsx(file, baseline, selection = null) {
     const bcalc = baseline.calculators
     const calculators = {}
 
-    if (selection && selection.sheetName && selection.category) {
+    if (typeof selection === 'string') {
+        // 사용자가 시트 하나만 선택 — 시트 이름으로 카테고리 추정해서 그 파서만 호출.
+        // 잔넬 시트를 선택했으면 잔넬만 비교, 다른 카테고리(고무·아크릴·...) 는 baseline 그대로.
+        const sheetName = selection
+        const ws = wb.Sheets[sheetName]
+        if (ws) {
+            ws['!sheetName'] = sheetName
+            const cat = inferCategoryFromSheetName(sheetName)
+            const parser = cat ? CATEGORY_PARSERS[cat] : null
+            if (parser) calculators[cat] = parser(ws, bcalc[cat])
+        }
+    } else if (selection && selection.sheetName && selection.category) {
+        // 명시적 시트+카테고리
         const parser = CATEGORY_PARSERS[selection.category]
         const ws = wb.Sheets[selection.sheetName]
         if (parser && ws) {
