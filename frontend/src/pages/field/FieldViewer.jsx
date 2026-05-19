@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
+import { getStoredWorker as readWorker, setStoredWorker as writeWorker } from '../../data/workerStorage.js';
 import './FieldViewer.css';
 
 // 현장 PC 사이드바 뷰어 — Chrome --app=https://.../field 로 띄워 화면 한쪽에 박아두는 용도.
@@ -10,20 +11,8 @@ import './FieldViewer.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const AGENT_URL = import.meta.env.VITE_HDSIGN_AGENT_URL || 'http://127.0.0.1:17345';
-// 모바일/현장 공통 — 같은 PC 에서 둘 다 띄울 일이 거의 없지만 키 통일이 일관성에 좋다.
-const WORKER_KEY = 'hdsign_uploader_worker';
 // "내 지시서만 보기" 체크 상태 — 켜면 본인 부서 슬롯에 잡힌 지시서만 보임(미설정 시 기본 켜짐).
 const MYONLY_KEY = 'hdsign_field_myonly';
-
-function readWorker() {
-    try { return (localStorage.getItem(WORKER_KEY) || '').trim(); } catch { return ''; }
-}
-function writeWorker(value) {
-    try {
-        if (value) localStorage.setItem(WORKER_KEY, value);
-        else localStorage.removeItem(WORKER_KEY);
-    } catch { /* ignore */ }
-}
 function readMyOnly() {
     try {
         const v = localStorage.getItem(MYONLY_KEY);

@@ -6,6 +6,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './WorksheetViewer.css';
 import { ALL_WORKERS } from '../../data/workers.js';
+import { getStoredWorker, setStoredWorker } from '../../data/workerStorage.js';
 import CompletionConfirmModal from '../../components/common/CompletionConfirmModal.jsx';
 import {
     peekDetail,
@@ -17,8 +18,6 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-// 모바일 직원 식별 — WorksheetList 와 같은 키 공유. 휴대폰 단말 단위로 본인 이름을 한 번 설정.
-const WORKER_KEY = 'hdsign_uploader_worker';
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
@@ -87,21 +86,6 @@ async function compressImage(file) {
     if (!blob || blob.size >= file.size) return file;
     const baseName = (file.name || 'photo').replace(/\.[^/.]+$/, '') || 'photo';
     return new File([blob], baseName + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
-}
-
-function getStoredWorker() {
-    try {
-        const v = localStorage.getItem(WORKER_KEY);
-        return v ? v.trim() : '';
-    } catch {
-        return '';
-    }
-}
-function setStoredWorker(value) {
-    try {
-        if (value) localStorage.setItem(WORKER_KEY, value);
-        else localStorage.removeItem(WORKER_KEY);
-    } catch { /* ignore */ }
 }
 
 const DELIVERY_LABELS = {

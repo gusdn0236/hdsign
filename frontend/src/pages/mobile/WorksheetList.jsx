@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link } from 'react-router-dom';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
+import { getStoredWorker, setStoredWorker } from '../../data/workerStorage.js';
 import { rememberAllListItems } from './pdfPrefetch.js';
 import './WorksheetList.css';
 
@@ -43,11 +44,6 @@ function preloadWorksheetViewerChunk(immediate = false) {
     return null;
 }
 
-// 모바일 뷰어 직원 식별 — WorksheetViewer 와 같은 키 공유.
-// 휴대폰 단말 단위로 "이 폰은 누구의 폰" 으로 한 번 설정해두면 자동 적용.
-// 워처 분배함은 부서 기준 그대로 유지하고, 모바일 필터만 직원 기준으로 매칭한다(workers.js 매핑).
-const WORKER_KEY = 'hdsign_uploader_worker';
-
 // "내 지시서만 보기" 를 사용자가 명시적으로 푼 직원 이름. 담당자가 설정되어 있으면 default 는 ON 이지만,
 // 한 번 풀고 나면 다시 켜기 전까지는 OFF 유지(workerName 저장으로 직원이 바뀌면 다시 default ON).
 const MINE_OFF_KEY = 'hdsign_mine_off_worker';
@@ -56,20 +52,6 @@ const MINE_OFF_KEY = 'hdsign_mine_off_worker';
 // mineOnly OFF 일 때는 전체 노출(완료건도 리본만 띄워 보임)이라 이 토글은 mineOnly ON 일 때만 동작.
 const SHOW_COMPLETED_KEY = 'hdsign_show_completed_mine';
 
-function getStoredWorker() {
-    try {
-        const v = localStorage.getItem(WORKER_KEY);
-        return v ? v.trim() : '';
-    } catch {
-        return '';
-    }
-}
-function setStoredWorker(value) {
-    try {
-        if (value) localStorage.setItem(WORKER_KEY, value);
-        else localStorage.removeItem(WORKER_KEY);
-    } catch { /* ignore */ }
-}
 function getStoredMineOffWorker() {
     try {
         const v = localStorage.getItem(MINE_OFF_KEY);

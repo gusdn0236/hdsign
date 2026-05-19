@@ -1,25 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ALL_WORKERS } from '../../data/workers.js';
+import { getStoredWorker, setStoredWorker } from '../../data/workerStorage.js';
 import CompletionConfirmModal from '../../components/common/CompletionConfirmModal.jsx';
 import './EvidenceQuickCapture.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-// 모바일 뷰어와 동일한 키 공유 — 이미 모바일에서 본인 이름 골라놓은 폰은 자동.
-const WORKER_KEY = 'hdsign_uploader_worker';
 const COMPRESS_MAX_DIM = 1600;
 const COMPRESS_QUALITY = 0.82;
-
-function getStoredWorker() {
-    try { return (localStorage.getItem(WORKER_KEY) || '').trim(); }
-    catch { return ''; }
-}
-function setStoredWorker(v) {
-    try {
-        if (v) localStorage.setItem(WORKER_KEY, v);
-        else localStorage.removeItem(WORKER_KEY);
-    } catch { /* ignore */ }
-}
 
 async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
