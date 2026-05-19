@@ -19,6 +19,7 @@ const AdminLayout = () => {
         { name: '단가계산기', path: '/admin/prices' },
         { name: '이미지 관리', path: '/admin/gallery-upload' },
         { name: '공지사항 관리', path: '/admin/notices' },
+        { name: '현장증거사진', path: '/admin/evidence' },
     ];
 
     return (

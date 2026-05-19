@@ -108,6 +108,7 @@ const AdminLogin       = lazyWithRetry(() => import('./pages/admin/AdminLogin.js
 const AdminLayout      = lazyWithRetry(() => import('./pages/admin/AdminLayout.jsx'))
 const GalleryUpload    = lazyWithRetry(() => import('./pages/admin/GalleryUpload.jsx'))
 const NoticeAdmin      = lazyWithRetry(() => import('./pages/admin/NoticeAdmin.jsx'))
+const EvidenceAdmin    = lazyWithRetry(() => import('./pages/admin/EvidenceAdmin.jsx'))
 const OrderAdmin       = lazyWithRetry(() => import('./pages/admin/OrderAdmin.jsx'))
 const WorkStatus       = lazyWithRetry(() => import('./pages/admin/WorkStatus.jsx'))
 const ProxyOrder       = lazyWithRetry(() => import('./pages/admin/ProxyOrder.jsx'))
@@ -189,6 +190,7 @@ function App() {
                             <Route path="prices" element={<CalcLayout />} />
                             <Route path="calc/*" element={<Navigate to="/admin/prices" replace />} />
                             <Route path="notices" element={<NoticeAdmin />} />
+                            <Route path="evidence" element={<EvidenceAdmin />} />
                         </Route>
 
                         <Route path="/p/:orderNumber" element={<EvidenceCapture />} />
