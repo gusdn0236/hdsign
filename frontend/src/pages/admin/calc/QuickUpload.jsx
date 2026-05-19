@@ -57,13 +57,14 @@ export default function QuickUpload() {
         }
     }
 
-    async function handleSheetsPicked(sheetMap) {
+    async function handleSheetPicked(selection) {
+        // selection: { sheetName, category }
         if (!inspection || !baseline) return
         setPhase('parsing')
         try {
             // parseXlsx 는 file 또는 buffer 둘 다 받음.
             const fakeFile = { name: inspection.fileName, arrayBuffer: async () => inspection.buffer }
-            const p = await parseXlsx(fakeFile, baseline, sheetMap)
+            const p = await parseXlsx(fakeFile, baseline, selection)
             const d = computeDiff(baseline, p)
             setParsed(p)
             setDiff(d)
@@ -127,14 +128,14 @@ export default function QuickUpload() {
             <aside className="qu-card">
                 <div className="qu-title">단가표 업로드</div>
                 <div className="qu-sub">
-                    {phase === 'idle'       && '엑셀 드롭 → 시트 선택 → 비교'}
+                    {phase === 'idle'       && '엑셀을 올리면 단가가 어떻게 바뀌는지 알려드려요'}
                     {phase === 'inspecting' && '파일 읽는 중...'}
-                    {phase === 'picker'     && '시트 선택 대기 중'}
-                    {phase === 'parsing'    && '파싱 중...'}
-                    {phase === 'review'     && '검토 대기 중'}
-                    {phase === 'applying'   && '저장 중...'}
-                    {phase === 'done'       && '적용됨'}
-                    {phase === 'error'      && '오류'}
+                    {phase === 'picker'     && '시트를 골라주세요'}
+                    {phase === 'parsing'    && '단가 비교하는 중...'}
+                    {phase === 'review'     && '바뀐 곳 확인해주세요'}
+                    {phase === 'applying'   && '단가표에 반영하는 중...'}
+                    {phase === 'done'       && '반영 완료!'}
+                    {phase === 'error'      && '문제가 생겼어요'}
                 </div>
 
                 {(phase === 'idle' || phase === 'error') && (
@@ -150,7 +151,7 @@ export default function QuickUpload() {
                         onClick={() => fileRef.current?.click()}
                     >
                         <div className="qu-drop-icon">↑</div>
-                        <div className="qu-drop-text">.xlsx 파일을<br/>끌어다 놓거나 클릭</div>
+                        <div className="qu-drop-text">새 단가표(.xlsx)를<br/>여기로 끌어다 놓거나 클릭하세요</div>
                         <input
                             ref={fileRef}
                             type="file"
@@ -163,9 +164,9 @@ export default function QuickUpload() {
 
                 {(phase === 'inspecting' || phase === 'parsing' || phase === 'applying') && (
                     <div className="qu-busy">
-                        {phase === 'inspecting' && '파일 분석 중...'}
-                        {phase === 'parsing'    && '파싱 중...'}
-                        {phase === 'applying'   && '저장 중...'}
+                        {phase === 'inspecting' && '파일 읽고 있어요...'}
+                        {phase === 'parsing'    && '단가표 비교하는 중...'}
+                        {phase === 'applying'   && '단가표에 반영하는 중...'}
                     </div>
                 )}
 
@@ -173,7 +174,7 @@ export default function QuickUpload() {
                     <div className="qu-side-progress">
                         <div className="qu-side-progress-file">{fileName}</div>
                         <div className="qu-side-progress-step">
-                            {phase === 'picker' ? '1/2 시트 선택' : '2/2 변경점 검토'}
+                            {phase === 'picker' ? '1단계 · 시트 선택' : '2단계 · 바뀐 곳 확인'}
                         </div>
                         <button type="button" className="qu-btn-cancel" onClick={reset}>처음으로</button>
                     </div>
@@ -182,32 +183,32 @@ export default function QuickUpload() {
                 {phase === 'done' && (
                     <div className="qu-done">
                         <div className="qu-check">✓</div>
-                        <div className="qu-done-title">적용 완료</div>
+                        <div className="qu-done-title">단가표에 잘 반영했어요</div>
                         <div className="qu-done-meta">
                             {new Date().toLocaleTimeString('ko-KR')}<br/>{fileName}
                         </div>
                         <button type="button" className="qu-btn-cancel" onClick={reset} style={{ marginTop: 12 }}>
-                            새로 업로드
+                            다른 단가표 올리기
                         </button>
                     </div>
                 )}
 
                 {phase === 'error' && errorMsg && (
                     <div className="qu-error-block">
-                        <div className="qu-error-title">실패</div>
+                        <div className="qu-error-title">문제가 생겼어요</div>
                         <div className="qu-error-body">{errorMsg}</div>
                         <button type="button" className="qu-btn-cancel" onClick={reset} style={{ marginTop: 8 }}>
-                            다시 시도
+                            처음부터 다시
                         </button>
                     </div>
                 )}
 
                 <div className="qu-current">
-                    <div className="qu-current-label">현재 단가</div>
+                    <div className="qu-current-label">현재 적용 중인 단가</div>
                     <div className="qu-current-meta">
                         {current?._meta?.builtAt
-                            ? `최근 갱신 ${new Date(current._meta.builtAt).toLocaleString('ko-KR')}`
-                            : 'baseline 그대로'}
+                            ? `마지막 갱신: ${new Date(current._meta.builtAt).toLocaleString('ko-KR')}`
+                            : '아직 한 번도 갱신 안 됨 (초기 단가표 사용 중)'}
                     </div>
                 </div>
             </aside>
@@ -216,7 +217,7 @@ export default function QuickUpload() {
                 <SheetPickerModal
                     inspection={inspection}
                     onCancel={reset}
-                    onConfirm={handleSheetsPicked}
+                    onConfirm={handleSheetPicked}
                 />
             )}
 

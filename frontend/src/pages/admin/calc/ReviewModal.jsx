@@ -191,12 +191,12 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
             <div className="qu-modal qu-modal-lg" onClick={e => e.stopPropagation()}>
                 <header className="qu-modal-head">
                     <div>
-                        <div className="qu-modal-eyebrow">단가표 비교 · 변경점 검토</div>
+                        <div className="qu-modal-eyebrow">단계 2 / 2 · 바뀐 곳 확인</div>
                         <h2 className="qu-modal-title">{fileName}</h2>
                         <div className="qu-modal-sub">
-                            총 변경 {stats.total}건 · 적용 예정 <strong>{stats.toApply}</strong>건 · 현재 유지 {stats.toKeep}건
-                            {stats.suspicious > 0 && <> · <span className="qu-text-warn">의심 {stats.suspicious}건</span></>}
-                            {stats.blankCells > 0 && <> · 빈칸 {stats.blankCells}건</>}
+                            바뀐 항목 <strong>{stats.total}</strong>건 중 <strong>{stats.toApply}</strong>건을 새 단가로 바꾸고, {stats.toKeep}건은 그대로 유지할 거예요.
+                            {stats.suspicious > 0 && <> · <span className="qu-text-warn">⚠ 한 번 더 봐줄 항목 {stats.suspicious}건</span></>}
+                            {stats.blankCells > 0 && <> · 엑셀에 빈칸 {stats.blankCells}건</>}
                         </div>
                     </div>
                     <button type="button" className="qu-modal-close" onClick={onCancel} aria-label="닫기">×</button>
@@ -225,7 +225,7 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                         <input
                             type="text"
                             className="qu-search"
-                            placeholder="검색 (예: 갈바, 250)"
+                            placeholder="이름으로 찾기 (예: 갈바, 250)"
                             value={query}
                             onChange={e => setQuery(e.target.value)}
                         />
@@ -235,7 +235,7 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                                 checked={reviewOnly}
                                 onChange={e => setReviewOnly(e.target.checked)}
                             />
-                            검토 필요만
+                            한 번 더 봐줄 항목만 보기
                         </label>
                     </div>
                 </div>
@@ -247,35 +247,35 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                             className="qu-bulk-btn"
                             disabled={filterSelection.blockable === 0}
                             onClick={() => bulkSet(filteredChanges, 'excel')}
-                        >화면 전부 적용</button>
+                        >보이는 항목 전부 체크</button>
                         <button
                             type="button"
                             className="qu-bulk-btn"
                             disabled={filterSelection.blockable === 0}
                             onClick={() => bulkSet(filteredChanges, 'baseline')}
-                        >화면 전부 해제</button>
+                        >보이는 항목 전부 해제</button>
                         <button
                             type="button"
                             className="qu-bulk-btn"
                             onClick={() => bulkSet(filteredChanges.filter(it => !isSuspicious(it)), 'excel')}
-                        >정상만 적용</button>
+                        >정상 인상만 체크</button>
                     </div>
                     <div className="qu-bulk-right">
-                        화면 표시 <strong>{filteredChanges.length}</strong>건
+                        지금 보이는 <strong>{filteredChanges.length}</strong>건
                         {filterSelection.blockable > 0 && (
-                            <> · 선택 <strong>{filterSelection.on}</strong>/{filterSelection.blockable}</>
+                            <> 중 <strong>{filterSelection.on}</strong>건 체크됨</>
                         )}
                     </div>
                 </div>
 
                 <div className="qu-modal-body qu-modal-body-table">
                     {filteredChanges.length === 0 ? (
-                        <div className="qu-empty">표시할 변경점이 없습니다.</div>
+                        <div className="qu-empty">바뀐 곳이 없어요. 다 똑같습니다.</div>
                     ) : (
                         <table className="qu-diff-table">
                             <colgroup>
                                 <col style={{ width: 44 }} />
-                                <col style={{ width: 90 }} />
+                                <col style={{ width: 100 }} />
                                 <col />
                                 <col style={{ width: 120 }} />
                                 <col style={{ width: 120 }} />
@@ -284,11 +284,11 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                             <thead>
                                 <tr>
                                     <th></th>
-                                    <th>분류</th>
+                                    <th>상태</th>
                                     <th>항목</th>
-                                    <th className="num">현재 단가</th>
-                                    <th className="num">엑셀 값</th>
-                                    <th className="num">변화</th>
+                                    <th className="num">지금 단가</th>
+                                    <th className="num">엑셀 단가</th>
+                                    <th className="num">차이</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -348,7 +348,7 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                 </div>
 
                 <footer className="qu-modal-foot">
-                    <button type="button" className="qu-btn-cancel" onClick={onCancel}>취소</button>
+                    <button type="button" className="qu-btn-cancel" onClick={onCancel}>취소하고 처음으로</button>
                     <button
                         type="button"
                         className="qu-btn-apply"
@@ -356,8 +356,8 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                         disabled={stats.toApply === 0}
                     >
                         {stats.toApply === 0
-                            ? '적용할 항목 없음'
-                            : `선택 ${stats.toApply}건 적용`}
+                            ? '체크된 항목이 없어요'
+                            : `체크한 ${stats.toApply}건 단가표에 반영하기`}
                     </button>
                 </footer>
 
@@ -387,28 +387,29 @@ function ConfirmApplyDialog({ toApply, toKeep, suspiciousApplying, onCancel, onC
     return (
         <div className="qu-confirm-backdrop" onClick={onCancel}>
             <div className="qu-confirm" onClick={e => e.stopPropagation()}>
-                <div className="qu-confirm-title">정말 적용하시겠습니까?</div>
+                <div className="qu-confirm-title">정말 단가표에 반영할까요?</div>
                 <div className="qu-confirm-body">
                     <div className="qu-confirm-line">
-                        <strong className="big">{toApply}</strong>건이 엑셀 값으로 덮어쓰여집니다.
+                        <strong className="big">{toApply}</strong>건이 엑셀에 적힌 새 단가로 바뀝니다.
                     </div>
                     {toKeep > 0 && (
                         <div className="qu-confirm-line muted">
-                            나머지 {toKeep}건은 현재 단가 그대로 유지됩니다.
+                            나머지 {toKeep}건은 지금 단가 그대로 유지돼요.
                         </div>
                     )}
                     {suspiciousApplying > 0 && (
                         <div className="qu-confirm-warn">
-                            ⚠ 의심 셀(0누락/이상치 등) 중 <strong>{suspiciousApplying}건</strong>이 포함되어 있습니다.
+                            ⚠ 한 번 더 봐줄 항목(0 빠짐·이상치 등) 중 <strong>{suspiciousApplying}건</strong>이 포함돼 있어요.
+                            정말 이대로 반영해도 괜찮은지 다시 한 번 확인해주세요.
                         </div>
                     )}
                     <div className="qu-confirm-meta">
-                        백엔드에 자동 백업되어 문제 생기면 롤백 가능.
+                        이전 단가표는 자동으로 백업되니, 잘못 반영해도 다시 되돌릴 수 있어요.
                     </div>
                 </div>
                 <div className="qu-confirm-actions">
-                    <button type="button" className="qu-btn-cancel" onClick={onCancel}>다시 검토</button>
-                    <button type="button" className="qu-btn-apply" onClick={onConfirm}>적용</button>
+                    <button type="button" className="qu-btn-cancel" onClick={onCancel}>잠깐, 다시 볼게요</button>
+                    <button type="button" className="qu-btn-apply" onClick={onConfirm}>네, 반영할게요</button>
                 </div>
             </div>
         </div>

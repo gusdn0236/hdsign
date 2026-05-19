@@ -352,11 +352,11 @@ function parseEpoxy(ws, baselineEpoxy) {
 
 /* ---------- main ---------- */
 
-// 각 카테고리별 시트 이름 키워드. 사용자가 직접 시트를 선택하지 않을 때 fallback 으로 사용.
+// 카테고리별 시트 이름 키워드. 시트 이름에서 종류 자동 추정에 사용.
 const CATEGORY_KEYWORDS = {
     channel:    ['잔넬'],
     gomu:       ['스카시'],
-    acryl:      ['아크릴'],
+    acryl:      ['아크릴', '포맥스'],
     goldSilver: ['금은경', '금경', '은경'],
     epoxy:      ['에폭시'],
 }
@@ -378,33 +378,47 @@ const CATEGORY_PARSERS = {
 }
 
 function matchesKeywords(name, keywords) {
-    const norm = name.trim()
+    const norm = (name || '').trim()
     return keywords.some(kw => norm.includes(kw))
 }
 
+/** 시트 이름으로 카테고리 자동 추정 (예: "잔넬26.5인상적용" → 'channel'). 안 맞으면 null. */
+export function inferCategoryFromSheetName(name) {
+    if (!name) return null
+    for (const [cat, kws] of Object.entries(CATEGORY_KEYWORDS)) {
+        if (matchesKeywords(name, kws)) return cat
+    }
+    return null
+}
+
 /**
- * 워크북을 읽어 시트 목록과 카테고리별 자동 추정 후보를 돌려준다.
- * 같은 키워드를 가진 시트가 여러 개면 — 보통 옛 버전이 위에 있고 최신이 아래 —
- * 마지막 매칭을 디폴트로 잡는다.
+ * 워크북을 읽어 시트 목록 + 각 시트의 추정 카테고리를 돌려준다.
+ *
+ * 단가표 파일은 보통 잔넬만 해도 "잔넬24.7인상적용", "잔넬26.5인상적용" 식으로
+ * 옛/새 버전이 섞여있어서 — 사용자가 비교 기준 시트 하나를 골라야 함.
  */
 export async function inspectXlsx(file) {
     const buf = await file.arrayBuffer()
     const wb = XLSX.read(buf, { type: 'array' })
     const sheetNames = wb.SheetNames.slice()
 
-    const candidates = {}    // category → 매칭된 모든 시트 이름 (등장 순)
-    const suggested = {}     // category → 디폴트 추천 (마지막 매칭, 없으면 null)
-    for (const [cat, kws] of Object.entries(CATEGORY_KEYWORDS)) {
-        const hits = sheetNames.filter(n => matchesKeywords(n, kws))
-        candidates[cat] = hits
-        suggested[cat] = hits.length ? hits[hits.length - 1] : null
+    const sheets = sheetNames.map(name => ({
+        name,
+        inferred: inferCategoryFromSheetName(name),
+    }))
+
+    // 디폴트 시트: 가장 마지막 시트 중에 카테고리 추정된 것 (보통 최신 위치).
+    let suggested = null
+    for (let i = sheets.length - 1; i >= 0; i--) {
+        if (sheets[i].inferred) { suggested = sheets[i]; break }
     }
+    if (!suggested && sheets.length) suggested = sheets[sheets.length - 1]
 
     return {
         fileName: file.name,
         buffer: buf,
         sheetNames,
-        candidates,
+        sheets,
         suggested,
         categories: Object.keys(CATEGORY_KEYWORDS),
         categoryLabels: CATEGORY_LABELS,
@@ -412,27 +426,40 @@ export async function inspectXlsx(file) {
 }
 
 /**
- * sheetMap: { channel: '잔넬단가표', gomu: '스카시2024', ... }
- *   각 카테고리에 어떤 시트를 쓸지 명시. null/undefined 이면 해당 카테고리 건너뜀.
- * sheetMap 미제공 시: 키워드 휴리스틱(첫 매칭) 으로 자동 선택 — 기존 동작과 동일.
+ * selection 형태별 동작:
+ *   • { sheetName, category }  → 그 시트 하나만 해당 카테고리로 파싱 (사용자 선택 모드)
+ *   • { channel: '...', gomu: '...', ... } 또는 null
+ *                               → legacy: 카테고리별 시트 자동 매칭 (옛 동작)
+ *
+ * 그 외 카테고리는 calculators 에 들어가지 않으므로 baseline 그대로 유지됨.
  */
-export async function parseXlsx(file, baseline, sheetMap = null) {
+export async function parseXlsx(file, baseline, selection = null) {
     const buf = file instanceof ArrayBuffer ? file : await file.arrayBuffer()
     const wb = XLSX.read(buf, { type: 'array' })
-
-    const calculators = {}
     const bcalc = baseline.calculators
+    const calculators = {}
 
-    for (const [cat, parser] of Object.entries(CATEGORY_PARSERS)) {
-        let sheetName = sheetMap?.[cat] ?? null
-        if (!sheetName) {
-            sheetName = wb.SheetNames.find(n => matchesKeywords(n, CATEGORY_KEYWORDS[cat])) || null
+    if (selection && selection.sheetName && selection.category) {
+        const parser = CATEGORY_PARSERS[selection.category]
+        const ws = wb.Sheets[selection.sheetName]
+        if (parser && ws) {
+            ws['!sheetName'] = selection.sheetName
+            calculators[selection.category] = parser(ws, bcalc[selection.category])
         }
-        if (!sheetName) continue
-        const ws = wb.Sheets[sheetName]
-        if (!ws) continue
-        ws['!sheetName'] = sheetName
-        calculators[cat] = parser(ws, bcalc[cat])
+    } else {
+        // legacy: 카테고리별 자동 매칭 (sheetMap 객체 또는 null)
+        const sheetMap = selection || {}
+        for (const [cat, parser] of Object.entries(CATEGORY_PARSERS)) {
+            let sheetName = sheetMap[cat] ?? null
+            if (!sheetName) {
+                sheetName = wb.SheetNames.find(n => matchesKeywords(n, CATEGORY_KEYWORDS[cat])) || null
+            }
+            if (!sheetName) continue
+            const ws = wb.Sheets[sheetName]
+            if (!ws) continue
+            ws['!sheetName'] = sheetName
+            calculators[cat] = parser(ws, bcalc[cat])
+        }
     }
 
     return {
@@ -441,7 +468,7 @@ export async function parseXlsx(file, baseline, sheetMap = null) {
             extractedFrom: file?.name || '(buffer)',
             extractedAt: new Date().toISOString(),
             extractor: 'browser:parseXlsx',
-            sheetMap: sheetMap || null,
+            selection: selection || null,
         },
         calculators,
     }
