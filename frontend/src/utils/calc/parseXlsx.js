@@ -352,34 +352,86 @@ function parseEpoxy(ws, baselineEpoxy) {
 
 /* ---------- main ---------- */
 
-/**
- * 단가표는 잔넬 한 카테고리만 다루며, 한 시트 안에 갈바후광영문/한글/오사이/캡/일체형/타카/
- * 스텐알미늄캡/스텐오사이/스텐후광/골드스텐 모든 잔넬 종류가 들어있다.
- * 시트는 시기별 버전 ("잔넬24.7월인상적용", "잔넬26.5인상적용") 으로 여러 개 있을 수 있고,
- * 사용자가 최신 시트 하나만 골라 비교한다.
- */
+// 카테고리별 시트 이름 키워드. 시트 이름에서 종류 자동 추정에 사용.
+const CATEGORY_KEYWORDS = {
+    channel:    ['잔넬'],
+    gomu:       ['스카시'],
+    acryl:      ['아크릴', '포맥스'],
+    goldSilver: ['금은경', '금경', '은경'],
+    epoxy:      ['에폭시'],
+}
 
-/** 워크북 시트 목록만 반환 — 카테고리 추정 없음. 가장 마지막 시트를 디폴트로. */
+const CATEGORY_LABELS = {
+    channel:    '잔넬',
+    gomu:       '스카시(고무)',
+    acryl:      '아크릴/포맥스',
+    goldSilver: '금은경',
+    epoxy:      '에폭시',
+}
+
+const CATEGORY_PARSERS = {
+    channel:    parseChannel,
+    gomu:       parseGomu,
+    acryl:      parseAcryl,
+    goldSilver: parseGoldSilver,
+    epoxy:      parseEpoxy,
+}
+
+function matchesKeywords(name, keywords) {
+    const norm = (name || '').trim()
+    return keywords.some(kw => norm.includes(kw))
+}
+
+/** 시트 이름으로 카테고리 자동 추정 (예: "잔넬26.5인상적용" → 'channel'). 안 맞으면 null. */
+export function inferCategoryFromSheetName(name) {
+    if (!name) return null
+    for (const [cat, kws] of Object.entries(CATEGORY_KEYWORDS)) {
+        if (matchesKeywords(name, kws)) return cat
+    }
+    return null
+}
+
+/**
+ * 워크북을 읽어 시트 목록 + 각 시트의 추정 카테고리를 돌려준다.
+ *
+ * 단가표 파일은 보통 잔넬만 해도 "잔넬24.7인상적용", "잔넬26.5인상적용" 식으로
+ * 옛/새 버전이 섞여있어서 — 사용자가 비교 기준 시트 하나를 골라야 함.
+ */
 export async function inspectXlsx(file) {
     const buf = await file.arrayBuffer()
     const wb = XLSX.read(buf, { type: 'array' })
     const sheetNames = wb.SheetNames.slice()
 
+    const sheets = sheetNames.map(name => ({
+        name,
+        inferred: inferCategoryFromSheetName(name),
+    }))
+
+    // 디폴트 시트: 가장 마지막 시트 중에 카테고리 추정된 것 (보통 최신 위치).
+    let suggested = null
+    for (let i = sheets.length - 1; i >= 0; i--) {
+        if (sheets[i].inferred) { suggested = sheets[i]; break }
+    }
+    if (!suggested && sheets.length) suggested = sheets[sheets.length - 1]
+
     return {
         fileName: file.name,
         buffer: buf,
         sheetNames,
-        suggested: sheetNames.length ? sheetNames[sheetNames.length - 1] : null,
+        sheets,
+        suggested,
+        categories: Object.keys(CATEGORY_KEYWORDS),
+        categoryLabels: CATEGORY_LABELS,
     }
 }
 
 /**
- * 지정된 시트 하나에서 모든 카테고리(잔넬·스카시·아크릴·에폭시·금은경) 단가를 파싱한다.
- * 단가표는 한 시트에 모든 종류의 간판 단가가 들어있고, 시트별로 시기 버전이 다른 구조.
+ * selection 형태별 동작:
+ *   • { sheetName, category }  → 그 시트 하나만 해당 카테고리로 파싱 (사용자 선택 모드)
+ *   • { channel: '...', gomu: '...', ... } 또는 null
+ *                               → legacy: 카테고리별 시트 자동 매칭 (옛 동작)
  *
- * 각 파서는 자기 영역의 행/열 가정에 따라 추출 시도 — 시트 구조와 안 맞으면
- * 일부 카테고리가 비어있거나 잘못된 값이 나올 수 있고, 그건 diff 단계에서 사용자가
- * "한 번 더 봐줄 항목" 으로 확인하게 됨.
+ * 그 외 카테고리는 calculators 에 들어가지 않으므로 baseline 그대로 유지됨.
  */
 export async function parseXlsx(file, baseline, selection = null) {
     const buf = file instanceof ArrayBuffer ? file : await file.arrayBuffer()
@@ -387,18 +439,26 @@ export async function parseXlsx(file, baseline, selection = null) {
     const bcalc = baseline.calculators
     const calculators = {}
 
-    const sheetName = typeof selection === 'string' ? selection : selection?.sheetName || null
-    if (sheetName) {
-        const ws = wb.Sheets[sheetName]
-        if (ws) {
+    if (selection && selection.sheetName && selection.category) {
+        const parser = CATEGORY_PARSERS[selection.category]
+        const ws = wb.Sheets[selection.sheetName]
+        if (parser && ws) {
+            ws['!sheetName'] = selection.sheetName
+            calculators[selection.category] = parser(ws, bcalc[selection.category])
+        }
+    } else {
+        // legacy: 카테고리별 자동 매칭 (sheetMap 객체 또는 null)
+        const sheetMap = selection || {}
+        for (const [cat, parser] of Object.entries(CATEGORY_PARSERS)) {
+            let sheetName = sheetMap[cat] ?? null
+            if (!sheetName) {
+                sheetName = wb.SheetNames.find(n => matchesKeywords(n, CATEGORY_KEYWORDS[cat])) || null
+            }
+            if (!sheetName) continue
+            const ws = wb.Sheets[sheetName]
+            if (!ws) continue
             ws['!sheetName'] = sheetName
-            // 모든 카테고리 파서 시도 — 같은 시트에 잔넬·스카시·아크릴·에폭시·금은경 단가가
-            // 모두 들어있는 단가표 형식 가정. 파서 실패 시 해당 카테고리는 skip.
-            tryParse(calculators, 'channel',    () => parseChannel(ws,    bcalc.channel))
-            tryParse(calculators, 'gomu',       () => parseGomu(ws,       bcalc.gomu))
-            tryParse(calculators, 'acryl',      () => parseAcryl(ws,      bcalc.acryl))
-            tryParse(calculators, 'epoxy',      () => parseEpoxy(ws,      bcalc.epoxy))
-            tryParse(calculators, 'goldSilver', () => parseGoldSilver(ws, bcalc.goldSilver))
+            calculators[cat] = parser(ws, bcalc[cat])
         }
     }
 
@@ -411,16 +471,5 @@ export async function parseXlsx(file, baseline, selection = null) {
             selection: selection || null,
         },
         calculators,
-    }
-}
-
-function tryParse(out, key, fn) {
-    try {
-        const result = fn()
-        if (result) out[key] = result
-    } catch (e) {
-        // 한 카테고리 파서 실패해도 다른 카테고리는 계속 시도. 콘솔에만 남김.
-        // eslint-disable-next-line no-console
-        console.warn(`[parseXlsx] ${key} 파싱 실패:`, e)
     }
 }

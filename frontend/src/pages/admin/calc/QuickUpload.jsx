@@ -59,14 +59,14 @@ export default function QuickUpload() {
         }
     }
 
-    async function handleSheetPicked(sheetName) {
-        // sheetName: 사용자가 라디오로 고른 시트 이름 (문자열)
+    async function handleSheetPicked(selection) {
+        // selection: { sheetName, category }
         if (!inspection || !baseline) return
         setPhase('parsing')
         try {
             // parseXlsx 는 file 또는 buffer 둘 다 받음.
             const fakeFile = { name: inspection.fileName, arrayBuffer: async () => inspection.buffer }
-            const p = await parseXlsx(fakeFile, baseline, sheetName)
+            const p = await parseXlsx(fakeFile, baseline, selection)
             const d = computeDiff(baseline, p)
             setParsed(p)
             setDiff(d)
