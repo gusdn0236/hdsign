@@ -21,14 +21,13 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
 /**
  * 작업증거 사진을 공용 구글 드라이브에 백업.
  *
- * <p>구조: <code>HD사인_작업증거 / {거래처명} / {MM-DD제목} / {파일명}</code>
- * <br>워처가 네트워크 거래처 폴더에 쓰는 명명규칙과 동일 — 일관성 위해.
+ * <p>구조: 루트 폴더({@code HD사인_작업증거}) 하나에 평탄하게 저장.
+ * <br>파일명 자동 prefix: <code>{YYYY-MM-DD}_{거래처}_{주문번호}_{원본명}</code>
+ * <br>드라이브 검색/정렬을 위한 단일 폴더 정책 — 거래처/주문 분류는 R2 + DB 메타데이터로.
  *
  * <p>실패는 절대 호출자(=evidence 업로드 응답)를 막지 않는다. 모든 예외는 로그만.
  *
@@ -55,15 +54,10 @@ public class GoogleDriveBackupService {
     private String rootFolderName;
 
     private static final String FOLDER_MIME = "application/vnd.google-apps.folder";
-    private static final DateTimeFormatter MM_DD = DateTimeFormatter.ofPattern("MM-dd");
+    private static final DateTimeFormatter YYYY_MM_DD = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     private volatile Drive drive;
     private volatile String rootFolderId;
-
-    // company 또는 (company|MM-DDtitle) → folderId. 한 번 만든 폴더는 다음 업로드부터 즉시 재사용.
-    // 사용자가 드라이브에서 폴더를 옮기거나 휴지통으로 보내면 캐시가 stale 이 됨 — 그땐 업로드가 한 번
-    // 실패하고 진단이 어려워지지만, 정상 운영 중엔 발생할 일이 거의 없어 일단 단순 캐시로 둠.
-    private final ConcurrentMap<String, String> folderCache = new ConcurrentHashMap<>();
 
     @PostConstruct
     void init() {
@@ -92,11 +86,11 @@ public class GoogleDriveBackupService {
         if (!enabled || data == null || data.length == 0) return;
         try {
             Drive d = ensureDrive();
-            String orderFolderId = ensureOrderFolder(d, order);
+            String rootId = ensureRootFolder(d);
 
             File metadata = new File()
-                    .setName(safeFileName(fileName))
-                    .setParents(Collections.singletonList(orderFolderId));
+                    .setName(buildPrefixedFileName(order, fileName))
+                    .setParents(Collections.singletonList(rootId));
 
             ByteArrayContent content = new ByteArrayContent(
                     contentType != null ? contentType : "image/jpeg", data);
@@ -146,34 +140,45 @@ public class GoogleDriveBackupService {
         }
     }
 
-    private String ensureOrderFolder(Drive d, Order order) throws Exception {
+    /**
+     * 파일명에 자동 prefix 부여: {YYYY-MM-DD}_{거래처}_{주문번호}_{원본명}.
+     * 업로드 시점 날짜 기준(현장에서 사진을 찍은 시점) — 주문 생성일과 다를 수 있음.
+     * 길이가 너무 길어지면 원본명을 뒷쪽에서 잘라 200자 이내로 맞춤.
+     */
+    private String buildPrefixedFileName(Order order, String originalName) {
+        String date = YYYY_MM_DD.format(LocalDateTime.now());
         String company = order.getClient() != null ? order.getClient().getCompanyName() : null;
         if (company == null || company.isBlank()) company = "거래처미상";
-        String safeCompany = sanitizeFolderName(company);
+        String safeCompany = sanitizeForFileName(company);
 
-        String companyKey = "C:" + safeCompany;
-        String companyId = folderCache.get(companyKey);
-        if (companyId == null) {
-            String rootId = ensureRootFolder(d);
-            companyId = findFolder(d, safeCompany, rootId);
-            if (companyId == null) companyId = createFolder(d, safeCompany, rootId);
-            folderCache.put(companyKey, companyId);
+        String orderNumber = order.getOrderNumber() != null ? order.getOrderNumber() : "주문번호없음";
+        String safeOrder = sanitizeForFileName(orderNumber);
+
+        String prefix = date + "_" + safeCompany + "_" + safeOrder + "_";
+        String body = safeFileName(originalName);
+        String combined = prefix + body;
+        if (combined.length() > 200) {
+            int allowedBody = Math.max(20, 200 - prefix.length());
+            int dot = body.lastIndexOf('.');
+            String ext = (dot > 0 && body.length() - dot <= 8) ? body.substring(dot) : "";
+            String stem = ext.isEmpty() ? body : body.substring(0, dot);
+            int stemBudget = allowedBody - ext.length();
+            if (stemBudget < 1) stemBudget = 1;
+            String trimmed = stem.length() > stemBudget ? stem.substring(0, stemBudget) : stem;
+            combined = prefix + trimmed + ext;
         }
+        return combined;
+    }
 
-        // MM-DD제목 — 워처와 동일하게 "공백 없이 결합"
-        LocalDateTime created = order.getCreatedAt() != null ? order.getCreatedAt() : LocalDateTime.now();
-        String title = order.getTitle() != null ? order.getTitle().trim() : "";
-        if (title.isEmpty()) title = "제목없음";
-        String dateTitle = sanitizeFolderName(MM_DD.format(created) + title);
-
-        String orderKey = companyKey + "|O:" + dateTitle;
-        String orderId = folderCache.get(orderKey);
-        if (orderId == null) {
-            orderId = findFolder(d, dateTitle, companyId);
-            if (orderId == null) orderId = createFolder(d, dateTitle, companyId);
-            folderCache.put(orderKey, orderId);
-        }
-        return orderId;
+    private String sanitizeForFileName(String name) {
+        if (name == null) return "";
+        String s = name.trim()
+                .replace('/', '_').replace('\\', '_')
+                .replace(':', '_').replace('*', '_')
+                .replace('?', '_').replace('"', '_')
+                .replace('<', '_').replace('>', '_')
+                .replace('|', '_');
+        return s.isEmpty() ? "_" : s;
     }
 
     private String findFolder(Drive d, String name, String parentId) throws Exception {
@@ -200,13 +205,6 @@ public class GoogleDriveBackupService {
                 .setParents(Collections.singletonList(parentId));
         File created = d.files().create(metadata).setFields("id").execute();
         return created.getId();
-    }
-
-    /** Drive API name 에서 슬래시는 표시는 되지만 검색/표시에서 헷갈리므로 _ 로 치환. */
-    private String sanitizeFolderName(String name) {
-        String s = name.trim().replace('/', '_').replace('\\', '_');
-        if (s.length() > 120) s = s.substring(0, 120);
-        return s.isEmpty() ? "_" : s;
     }
 
     private String safeFileName(String name) {

@@ -132,8 +132,7 @@ public class PublicEvidenceController {
             }
 
             // R2 성공한 사진만 드라이브에도 백업. 비동기 — 응답 지연 0, 실패해도 흐름 영향 없음.
-            // TEMP(2026-05-08): 계정 변경/플랫폼 검토 동안 일시 중지. 결정 후 한 줄 복구.
-            // driveBackupService.uploadEvidenceAsync(order, originalName, file.getContentType(), bytes);
+            driveBackupService.uploadEvidenceAsync(order, originalName, file.getContentType(), bytes);
 
             OrderFile saved = orderFileRepository.save(OrderFile.builder()
                     .order(order)
