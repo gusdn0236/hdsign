@@ -1,7 +1,9 @@
 package com.example.backend.controller;
 
+import com.example.backend.dto.GalleryImageDto;
 import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.OrderFileRepository;
+import com.example.backend.service.GalleryService;
 import com.example.backend.util.WorkerTagMapping;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +16,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,6 +43,7 @@ public class AdminEvidenceController {
 
     private final OrderFileRepository orderFileRepository;
     private final S3Client s3Client;
+    private final GalleryService galleryService;
 
     @Value("${r2.bucket}")
     private String bucket;
@@ -131,6 +136,30 @@ public class AdminEvidenceController {
         resp.put("deletedR2", deletedR2);
         resp.put("skippedNonEvidence", skippedNonEvidence);
         return ResponseEntity.status(HttpStatus.OK).body(resp);
+    }
+
+    /**
+     * 증거사진 한 장을 갤러리로 등록. R2 server-side copy 로 사본을 만들고 gallery_images 행 추가.
+     * 원본 증거사진은 그대로 둔다.
+     * 본문: { "category": "galva", "subCategory": "갈바 전/후광" }
+     */
+    @PostMapping("/{id}/add-to-gallery")
+    public ResponseEntity<?> addToGallery(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        String category = body == null ? null : (body.get("category") instanceof String s ? s.trim() : null);
+        String subCategory = body == null ? null : (body.get("subCategory") instanceof String s ? s.trim() : null);
+        if (category == null || category.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "category 가 필요합니다."));
+        }
+        if (subCategory == null || subCategory.isBlank()) subCategory = "전체";
+        try {
+            GalleryImageDto created = galleryService.addEvidenceToGallery(id, category, subCategory);
+            return ResponseEntity.ok(created);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
+        } catch (Exception e) {
+            log.warn("증거사진 갤러리 등록 실패 [id={}]: {}", id, e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of("message", "갤러리 등록에 실패했습니다."));
+        }
     }
 
     private static Map<String, Object> toItem(OrderFile f) {

@@ -7,6 +7,17 @@ const PAGE_SIZE = 60;
 const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
 const DEFAULT_TAGS = ['완조립', 'LED', 'CNC', '5층아크릴'];
 
+// 갤러리 등록 시 선택할 카테고리 — GalleryUpload 와 동일하게 유지. 추후 GalleryUpload 와
+// 공유 상수로 옮기는 게 좋지만 지금은 두 파일에서만 쓰이고 변경 빈도가 낮아 중복 허용.
+const GALLERY_CATEGORIES = {
+    galva:     { label: '갈바채널',    subCategories: ['갈바 전/후광', '갈바 오사이', '갈바 측광'] },
+    stainless: { label: '스텐채널',    subCategories: ['스텐 전/후광', '스텐 오사이', '스텐 측광', '골드스텐'] },
+    epoxy:     { label: '에폭시채널',   subCategories: ['갈바 에폭시', '스텐에폭시'] },
+    aluminum:  { label: '알미늄채널',   subCategories: ['타카채널', '일체형채널'] },
+    artneon:   { label: '아트네온',    subCategories: ['아크릴네온', '아크릴조각사인'] },
+    special:   { label: '특수/기타 가공물', subCategories: ['프레임간판', '지주간판', '아크릴/포맥스', '고무스카시'] },
+};
+
 function formatTime(s) {
     if (!s) return '';
     try {
@@ -131,6 +142,11 @@ export default function EvidenceAdmin() {
 
     const [lightboxIndex, setLightboxIndex] = useState(-1);
 
+    // 갤러리 등록 패널 — 라이트박스 안에서 열림. 한 번에 한 사진만 등록.
+    const [galleryPanel, setGalleryPanel] = useState(null); // { category, subCategory } | null
+    const [gallerySubmitting, setGallerySubmitting] = useState(false);
+    const [galleryFeedback, setGalleryFeedback] = useState(null); // { type:'success'|'error', msg }
+
     // 선택 모드 + 선택된 ID 셋
     const [selectMode, setSelectMode] = useState(false);
     const [selected, setSelected] = useState(() => new Set());
@@ -200,6 +216,12 @@ export default function EvidenceAdmin() {
         return () => io.disconnect();
     }, [hasNext, loading, page, loadPage]);
 
+    // 라이트박스가 닫히거나 다른 사진으로 이동하면 갤러리 패널/피드백 초기화.
+    useEffect(() => {
+        setGalleryPanel(null);
+        setGalleryFeedback(null);
+    }, [lightboxIndex]);
+
     // 라이트박스 키보드
     useEffect(() => {
         if (lightboxIndex < 0) return;
@@ -266,6 +288,47 @@ export default function EvidenceAdmin() {
             window.alert(e.message);
         } finally {
             setDeleting(false);
+        }
+    };
+
+    const openGalleryPanel = () => {
+        const firstCat = Object.keys(GALLERY_CATEGORIES)[0];
+        setGalleryPanel({
+            category: firstCat,
+            subCategory: GALLERY_CATEGORIES[firstCat].subCategories[0],
+        });
+        setGalleryFeedback(null);
+    };
+    const updateGalleryCategory = (cat) => {
+        setGalleryPanel((prev) => prev ? {
+            category: cat,
+            subCategory: GALLERY_CATEGORIES[cat].subCategories[0],
+        } : prev);
+    };
+    const updateGallerySub = (sub) => {
+        setGalleryPanel((prev) => prev ? { ...prev, subCategory: sub } : prev);
+    };
+    const submitGallery = async (item) => {
+        if (!item || !galleryPanel) return;
+        setGallerySubmitting(true);
+        setGalleryFeedback(null);
+        try {
+            const res = await fetch(`${BASE_URL}/api/admin/evidence/${item.id}/add-to-gallery`, {
+                method: 'POST',
+                headers: { ...authHeader, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category: galleryPanel.category, subCategory: galleryPanel.subCategory }),
+            });
+            if (!res.ok) {
+                const b = await res.json().catch(() => ({}));
+                throw new Error(b.message || '갤러리 등록 실패');
+            }
+            const catLabel = GALLERY_CATEGORIES[galleryPanel.category]?.label || galleryPanel.category;
+            setGalleryFeedback({ type: 'success', msg: `${catLabel} > ${galleryPanel.subCategory} 에 등록되었습니다.` });
+            setGalleryPanel(null);
+        } catch (err) {
+            setGalleryFeedback({ type: 'error', msg: err.message || '갤러리 등록 실패' });
+        } finally {
+            setGallerySubmitting(false);
         }
     };
 
@@ -474,6 +537,66 @@ export default function EvidenceAdmin() {
                             {active.tag && <div>태그: <span className={`evidence-lightbox-tag tag-${tagClassName(active.tag)}`}>{active.tag}</span></div>}
                             <div>{formatDateHeader(dateKeyOf(active))} {formatTime(active.createdAt)}</div>
                             <div className="evidence-lightbox-filename">{active.originalName}</div>
+
+                            {/* 갤러리 등록 영역 */}
+                            <div className="evidence-gallery-section">
+                                {galleryFeedback && (
+                                    <div className={`evidence-gallery-feedback ${galleryFeedback.type}`}>
+                                        {galleryFeedback.type === 'success' ? '✓ ' : '⚠ '}
+                                        {galleryFeedback.msg}
+                                    </div>
+                                )}
+                                {!galleryPanel ? (
+                                    <button
+                                        type="button"
+                                        className="evidence-gallery-open-btn"
+                                        onClick={openGalleryPanel}
+                                    >
+                                        + 갤러리에 추가
+                                    </button>
+                                ) : (
+                                    <div className="evidence-gallery-panel">
+                                        <label className="evidence-gallery-label">
+                                            <span>카테고리</span>
+                                            <select
+                                                value={galleryPanel.category}
+                                                onChange={(e) => updateGalleryCategory(e.target.value)}
+                                                disabled={gallerySubmitting}
+                                            >
+                                                {Object.entries(GALLERY_CATEGORIES).map(([key, val]) => (
+                                                    <option key={key} value={key}>{val.label}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="evidence-gallery-label">
+                                            <span>세부 분류</span>
+                                            <select
+                                                value={galleryPanel.subCategory}
+                                                onChange={(e) => updateGallerySub(e.target.value)}
+                                                disabled={gallerySubmitting}
+                                            >
+                                                {GALLERY_CATEGORIES[galleryPanel.category].subCategories.map((s) => (
+                                                    <option key={s} value={s}>{s}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <div className="evidence-gallery-actions">
+                                            <button
+                                                type="button"
+                                                className="evidence-gallery-cancel"
+                                                onClick={() => setGalleryPanel(null)}
+                                                disabled={gallerySubmitting}
+                                            >취소</button>
+                                            <button
+                                                type="button"
+                                                className="evidence-gallery-confirm"
+                                                onClick={() => submitGallery(active)}
+                                                disabled={gallerySubmitting}
+                                            >{gallerySubmitting ? '등록 중…' : '등록'}</button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>

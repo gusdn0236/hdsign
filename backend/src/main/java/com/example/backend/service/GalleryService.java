@@ -2,13 +2,16 @@ package com.example.backend.service;
 
 import com.example.backend.dto.GalleryImageDto;
 import com.example.backend.entity.GalleryImage;
+import com.example.backend.entity.OrderFile;
 import com.example.backend.repository.GalleryImageRepository;
+import com.example.backend.repository.OrderFileRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import java.io.IOException;
@@ -22,6 +25,7 @@ import java.util.stream.Collectors;
 public class GalleryService {
 
     private final GalleryImageRepository galleryImageRepository;
+    private final OrderFileRepository orderFileRepository;
     private final S3Client s3Client;
 
     @Value("${r2.bucket}")     private String bucket;
@@ -58,6 +62,41 @@ public class GalleryService {
             results.add(GalleryImageDto.from(galleryImageRepository.save(image)));
         }
         return results;
+    }
+
+    /**
+     * 현장 증거사진(OrderFile)을 갤러리로 복사 등록. R2 서버 사이드 CopyObject 로 처리해
+     * 다운로드/재업로드 없이 새 키에 사본을 만들고, gallery_images 행을 추가한다.
+     * 원본 증거사진은 그대로 둔다 — 작업증거로서의 역할은 유지.
+     */
+    public GalleryImageDto addEvidenceToGallery(Long evidenceFileId, String category, String subCategory) {
+        OrderFile src = orderFileRepository.findById(evidenceFileId)
+                .orElseThrow(() -> new IllegalArgumentException("증거사진을 찾을 수 없습니다."));
+        if (!Boolean.TRUE.equals(src.getIsEvidence())) {
+            throw new IllegalArgumentException("증거사진(isEvidence=true) 만 갤러리로 등록할 수 있습니다.");
+        }
+        String srcKey = src.getStoredName();
+        if (srcKey == null || srcKey.isBlank()) {
+            throw new IllegalStateException("원본 R2 키가 비어있습니다.");
+        }
+        String origName = src.getOriginalName();
+        String ext = (origName != null && origName.contains("."))
+                ? origName.substring(origName.lastIndexOf(".")) : "";
+        String destKey = category + "/" + UUID.randomUUID() + ext;
+
+        s3Client.copyObject(CopyObjectRequest.builder()
+                .sourceBucket(bucket).sourceKey(srcKey)
+                .destinationBucket(bucket).destinationKey(destKey)
+                .build());
+
+        String imageUrl = publicUrl + "/" + destKey;
+        GalleryImage image = GalleryImage.builder()
+                .category(category)
+                .subCategory(subCategory)
+                .imageUrl(imageUrl)
+                .originalName(origName)
+                .build();
+        return GalleryImageDto.from(galleryImageRepository.save(image));
     }
 
     public void deleteImage(Long id) throws IOException {
