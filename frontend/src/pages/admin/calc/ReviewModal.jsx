@@ -125,13 +125,15 @@ export default function ReviewModal({ diff, baseline, fileName, onCancel, onAppl
     }
 
     const stats = useMemo(() => {
-        let toApply = 0, toKeep = 0, suspicious = 0
+        let toApply = 0, toKeep = 0, suspicious = 0, blanks = 0
         for (const item of allItems) {
+            // 빈칸(missing_in_excel) 은 baseline 그대로 유지되니 변경 카운트에서 제외
+            if (item.status === 'missing_in_excel') { blanks++; continue }
             if (isSuspicious(item)) suspicious++
             if (decisions[item.path] === 'excel') toApply++
             else toKeep++
         }
-        return { toApply, toKeep, suspicious, total: allItems.length }
+        return { toApply, toKeep, suspicious, blanks, total: allItems.length - blanks }
     }, [allItems, decisions])
 
     const activeCatItems = useMemo(
@@ -152,8 +154,8 @@ export default function ReviewModal({ diff, baseline, fileName, onCancel, onAppl
                             <span className="qu-modal-title-file">· {fileName}</span>
                         </h2>
                         <div className="qu-modal-sub">
-                            바뀐 셀 <strong>{stats.total}</strong>곳 중 <strong className="qu-text-apply">{stats.toApply}</strong>곳을 새 단가로 바꿔요.
-                            {stats.suspicious > 0 && <> · <span className="qu-text-warn">⚠ 한 번 더 봐줄 셀 {stats.suspicious}곳</span></>}
+                            기존 단가표에서 <strong className="qu-text-apply">{stats.toApply}</strong>곳이 변경된 것 같아요.
+                            {stats.suspicious > 0 && <> · <span className="qu-text-warn">⚠ 오타로 의심되는 곳 {stats.suspicious}곳</span></>}
                         </div>
                     </div>
                     <button type="button" className="qu-modal-close" onClick={onCancel} aria-label="닫기">×</button>
@@ -256,7 +258,9 @@ function DiffGrid({ calcKey, baselineCalc, diff, decisions, onToggleCell }) {
 /* ---------- 공통 셀 ---------- */
 
 function DiffCell({ baseValue, item, decisions, onToggleCell }) {
-    if (!item) {
+    // 빈칸(엑셀에 셀 자체가 없는 경우) 은 사용자에게 "변경 없음" 과 동일하게 보임.
+    // baseline 가격 그대로 유지되고, 시각적으로 표시 안 함.
+    if (!item || item.status === 'missing_in_excel') {
         return (
             <td className="qu-dc unchanged num">
                 {baseValue != null ? baseValue.toLocaleString() : <span className="muted">—</span>}
@@ -266,7 +270,6 @@ function DiffCell({ baseValue, item, decisions, onToggleCell }) {
     const susp = item.suspicion ? SUSPICION_META[item.suspicion] : null
     const tone = susp?.tone || 'ok'
     const isOn = decisions[item.path] === 'excel'
-    const isBlank = item.status === 'missing_in_excel'
     const isNew = item.status === 'missing_in_baseline'
 
     const b = item.baselineValue
@@ -275,14 +278,13 @@ function DiffCell({ baseValue, item, decisions, onToggleCell }) {
 
     return (
         <td
-            className={`qu-dc changed tone-${tone} ${isOn ? 'on' : 'off'} ${isBlank ? 'blank' : ''}`}
+            className={`qu-dc changed tone-${tone} ${isOn ? 'on' : 'off'}`}
             onClick={() => onToggleCell(item)}
         >
-            {(susp || isNew || isBlank) && (
+            {(susp || isNew) && (
                 <div className="qu-dc-tags">
                     {susp && <span className={`qu-dc-tag tone-${susp.tone}`}>{susp.label}</span>}
                     {isNew && <span className="qu-dc-tag tone-info">신규</span>}
-                    {isBlank && <span className="qu-dc-tag tone-info">빈칸</span>}
                 </div>
             )}
             {b != null && <div className="qu-dc-old">{b.toLocaleString()}</div>}
@@ -572,7 +574,7 @@ function ConfirmApplyDialog({ toApply, toKeep, suspiciousApplying, onCancel, onC
                     )}
                     {suspiciousApplying > 0 && (
                         <div className="qu-confirm-warn">
-                            ⚠ 한 번 더 봐줄 셀(0누락/이상치 등) 중 <strong>{suspiciousApplying}곳</strong>이 포함돼 있어요.
+                            ⚠ 오타로 의심되는 곳(0누락/이상치 등) 중 <strong>{suspiciousApplying}곳</strong>이 포함돼 있어요.
                         </div>
                     )}
                     <div className="qu-confirm-meta">
