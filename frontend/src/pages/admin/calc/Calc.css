@@ -1455,8 +1455,9 @@
     font-size: 12px;
     color: #0f172a;
     font-variant-numeric: tabular-nums;
-    width: max-content;          /* 자연 폭으로 펴서 부모(qu-grid-scroll)가 가로 스크롤 */
-    table-layout: fixed;
+    width: auto;
+    table-layout: auto;
+    white-space: nowrap;
 }
 
 .qu-grid thead th {
