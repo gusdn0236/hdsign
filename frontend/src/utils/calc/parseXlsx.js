@@ -51,20 +51,38 @@ function parseNumber(v) {
 }
 
 const CHANNEL_LANG_PATTERNS = [
-    { re: /영문기본\s*([\d,]+)/, lang: 'eng' },
-    { re: /한글기본\s*([\d,]+)/, lang: 'kor' },
-    { re: /영문\s+([\d,]+)/,    lang: 'eng' },
-    { re: /한글\s+([\d,]+)/,    lang: 'kor' },
+    // "영문기본 X" / "한글기본 Y" — 셀이 base group 전체에 적용되는 옛 표기.
+    { re: /영문기본\s*([\d,]+)/, lang: 'eng', isBase: true },
+    { re: /한글기본\s*([\d,]+)/, lang: 'kor', isBase: true },
+    // "영문 X" / "한글 Y" — 해당 사이즈 한 줄에만 적용. 한 셀에 둘 다 있을 수 있어
+    //   "영문 53,000\n한글 62,000" 같은 형태도 인식.
+    { re: /영문\s+([\d,]+)/,    lang: 'eng', isBase: false },
+    { re: /한글\s+([\d,]+)/,    lang: 'kor', isBase: false },
 ]
 
+/** 한 셀에서 영문/한글 매칭을 모두 추출. lang 당 첫 매칭만 (영문기본 우선). */
 function parseChannelTextCell(text) {
-    if (typeof text !== 'string') return null
+    if (typeof text !== 'string') return []
     const flat = text.replace(/\n/g, ' ')
-    for (const { re, lang } of CHANNEL_LANG_PATTERNS) {
+    const byLang = {}
+    for (const { re, lang, isBase } of CHANNEL_LANG_PATTERNS) {
+        if (byLang[lang]) continue
         const m = flat.match(re)
-        if (m) return { lang, price: parseInt(m[1].replace(/,/g, ''), 10) }
+        if (m) byLang[lang] = { lang, isBase, price: parseInt(m[1].replace(/,/g, ''), 10) }
     }
-    return null
+    return Object.values(byLang)
+}
+
+/** 채워진 사이즈들이 모두 같은 값이면, baseGroup 의 빈 사이즈에도 그 값을 복사. */
+function backfillBaseGroup(prices, baseGroupSizes) {
+    if (!baseGroupSizes || baseGroupSizes.length === 0) return
+    const filled = baseGroupSizes.filter(s => prices[s] !== undefined)
+    if (filled.length === 0) return
+    const firstValue = prices[filled[0]]
+    if (!filled.every(s => prices[s] === firstValue)) return
+    for (const s of baseGroupSizes) {
+        if (prices[s] === undefined) prices[s] = firstValue
+    }
 }
 
 function findBaseGroup(prices) {
@@ -125,10 +143,18 @@ function parseChannel(ws, baselineChannel) {
                     continue
                 }
                 if (typeof cell === 'string') {
-                    const parsed = parseChannelTextCell(cell)
-                    if (parsed) {
-                        const target = parsed.lang === 'eng' ? eng : kor
-                        for (const bs of baseGroup[parsed.lang]) target[bs] = parsed.price
+                    const matches = parseChannelTextCell(cell)
+                    if (matches.length > 0) {
+                        for (const m of matches) {
+                            const target = m.lang === 'eng' ? eng : kor
+                            if (m.isBase) {
+                                // "영문기본 X" — base group 전체에 적용 (옛 형식)
+                                for (const bs of baseGroup[m.lang]) target[bs] = m.price
+                            } else {
+                                // "영문 X" — 해당 사이즈 한 줄에만 적용 (새 형식)
+                                target[sizeStr] = m.price
+                            }
+                        }
                     } else {
                         const n = parseNumber(cell)
                         if (n !== null) {
@@ -138,6 +164,13 @@ function parseChannel(ws, baselineChannel) {
                     }
                 }
             }
+
+            // 사후 보강: 옛 단가표 형식이 표현 못한 사이즈를 baseline 의 baseGroup 정보로 복원.
+            //   옛 형식은 작은 사이즈의 동일 가격 구간을 보통 첫 셀에 가격을 적고 나머지는 빈칸으로 둠
+            //   (예: R3 = 53000, R4 빈칸, baseline 의 baseGroup.eng = [200, 250] 이면 eng[250] 도 53000).
+            //   채워진 값들이 모두 같을 때만 빈 사이즈를 보강 — 의도적으로 다른 값을 넣은 경우는 그대로 둠.
+            backfillBaseGroup(eng, baseGroup.eng)
+            backfillBaseGroup(kor, baseGroup.kor)
 
             const sortMap = m => Object.fromEntries(
                 Object.entries(m).sort(([a], [b]) => +a - +b)
