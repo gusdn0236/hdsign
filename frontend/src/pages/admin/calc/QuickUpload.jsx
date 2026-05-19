@@ -234,6 +234,7 @@ export default function QuickUpload() {
             {showingReview && (
                 <ReviewModal
                     diff={diff}
+                    baseline={baseline}
                     fileName={fileName}
                     onCancel={reset}
                     onApply={handleApply}

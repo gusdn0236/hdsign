@@ -44,6 +44,13 @@ export default function PricesViewerModal({ prices, onClose }) {
         return () => window.removeEventListener('keydown', onKey)
     }, [onClose])
 
+    // body 스크롤 잠금 — 모달 뒤 페이지 안 움직이게
+    useEffect(() => {
+        const prev = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+        return () => { document.body.style.overflow = prev }
+    }, [])
+
     const meta = prices?._meta
     const calc = calculators[activeCat]
 

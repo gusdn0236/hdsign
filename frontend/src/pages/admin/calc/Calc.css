@@ -704,7 +704,12 @@
     color: #0f172a;
 }
 .qu-modal-sm { max-width: 560px; }
-.qu-modal-lg { max-width: 1180px; max-height: calc(100vh - 32px); }
+.qu-modal-lg {
+    max-width: min(1600px, 95vw);
+    width: 95vw;
+    max-height: calc(100vh - 24px);
+    height: calc(100vh - 24px);
+}
 
 .qu-modal-head {
     display: flex;
@@ -1405,7 +1410,14 @@
 
 .qu-modal-body-grid {
     padding: 0;
-    background: #fafbfc;
+    background: #fff;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.qu-modal-body-grid > * {
+    flex: 1;
+    min-height: 0;
 }
 
 .qu-bulk-bar .qu-bulk-right {
@@ -1432,14 +1444,14 @@
 
 .qu-grid-scroll {
     overflow: auto;
-    max-height: 100%;
+    height: 100%;
     background: #fff;
 }
 
 .qu-grid {
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 12px;
+    font-size: 13px;
     color: #0f172a;
     font-variant-numeric: tabular-nums;
     table-layout: auto;
@@ -1448,114 +1460,132 @@
 .qu-grid thead th {
     position: sticky;
     top: 0;
-    background: #1e293b;
-    color: #fff;
-    padding: 9px 8px;
+    background: #f1f5f9;
+    text-align: center;
     font-size: 11px;
     font-weight: 700;
-    text-align: center;
-    border-right: 1px solid #334155;
-    border-bottom: 1px solid #0f172a;
-    z-index: 2;
+    color: #334155;
+    padding: 10px 8px;
+    border-bottom: 1px solid #cbd5e1;
+    border-right: 1px solid #e5e7eb;
     white-space: nowrap;
-    min-width: 96px;
+    z-index: 2;
+    min-width: 100px;
     letter-spacing: -0.005em;
 }
 .qu-grid thead th small {
     display: block;
-    font-size: 9px;
-    opacity: 0.75;
+    font-size: 10px;
+    color: #64748b;
     font-weight: 600;
     margin-top: 2px;
+    letter-spacing: 0.02em;
 }
 .qu-grid thead th.qu-grid-group {
     background: #0f172a;
+    color: #fff;
+    font-size: 12px;
     border-right: 1px solid #1e293b;
 }
 .qu-grid thead th.qu-grid-row-head {
     left: 0;
     z-index: 3;
-    background: #0f172a;
-    min-width: 80px;
+    background: #1e293b;
+    color: #fff;
+    text-align: left;
+    border-right: 1px solid #0f172a;
+    min-width: 100px;
+    padding-left: 14px;
 }
 
 .qu-grid tbody td.qu-grid-row-head {
     position: sticky;
     left: 0;
-    background: #f1f5f9;
-    color: #0f172a;
-    font-weight: 800;
+    background: #f8fafc;
+    color: #1e293b;
+    font-weight: 700;
     font-size: 13px;
-    text-align: center;
-    border-right: 2px solid #cbd5e1;
-    border-bottom: 1px solid #e5e7eb;
-    padding: 8px 10px;
+    text-align: left;
+    border-right: 1px solid #e5e7eb;
+    border-bottom: 1px solid #f1f5f9;
+    padding: 10px 14px;
     z-index: 1;
+    white-space: nowrap;
 }
-.qu-grid tbody td.qu-grid-row-head small {
-    display: inline-block;
-    font-size: 9px;
-    color: #64748b;
-    margin-left: 2px;
-    font-weight: 600;
+.qu-grid tbody tr:hover td.qu-grid-row-head {
+    background: #dbeafe;
 }
 
-/* === 셀 (diff) === */
+/* === 셀 (변경 없음 / 변경 있음) === */
 
 .qu-grid tbody td.qu-dc {
-    padding: 6px 8px;
     border-right: 1px solid #f1f5f9;
     border-bottom: 1px solid #f1f5f9;
-    text-align: center;
+    text-align: right;
     vertical-align: middle;
     position: relative;
-    min-width: 96px;
-}
-
-/* 변경 없음 — 빈 셀 */
-.qu-dc.unchanged {
-    background: #fafbfc;
-}
-
-/* 변경 셀 - 토대 */
-.qu-dc:not(.unchanged) {
-    cursor: pointer;
+    min-width: 110px;
+    padding: 8px 12px;
     transition: background 0.1s;
-    padding: 8px 8px;
+    font-variant-numeric: tabular-nums;
 }
-.qu-dc:not(.unchanged):hover {
+
+/* 변경 없음 — PricesViewerModal 처럼 baseline 가격 회색 */
+.qu-dc.unchanged {
+    color: #475569;
+    font-weight: 600;
+    font-size: 13px;
+}
+.qu-grid tbody tr:hover td.qu-dc.unchanged {
+    background: #f8fafc;
+}
+.qu-dc.unchanged .muted {
+    color: #cbd5e1;
+    font-weight: 400;
+}
+
+/* 변경 셀 — 토대 */
+.qu-dc.changed {
+    cursor: pointer;
+    text-align: center;
+    padding: 8px;
+}
+.qu-dc.changed:hover {
     filter: brightness(0.96);
 }
 
-/* 톤별 배경 (변경 셀) */
-.qu-dc.tone-neutral { background: #f0f9ff; }
-.qu-dc.tone-ok      { background: #f0fdf4; }
-.qu-dc.tone-medium  { background: #fffbeb; }
-.qu-dc.tone-high    { background: #fef2f2; }
+/* 톤별 배경 (변경 셀, OFF 상태 - 흐림) */
+.qu-dc.changed.tone-ok      { background: #f0fdf4; }
+.qu-dc.changed.tone-medium  { background: #fffbeb; }
+.qu-dc.changed.tone-high    { background: #fef2f2; }
 
 /* 체크된 셀 - 굵은 테두리 + 진한 배경 */
-.qu-dc.on { box-shadow: inset 0 0 0 2px #3b82f6; }
-.qu-dc.on.tone-ok      { background: #dcfce7; box-shadow: inset 0 0 0 2px #16a34a; }
-.qu-dc.on.tone-medium  { background: #fef3c7; box-shadow: inset 0 0 0 2px #f59e0b; }
-.qu-dc.on.tone-high    { background: #fee2e2; box-shadow: inset 0 0 0 2px #ef4444; }
-.qu-dc.on.tone-neutral { background: #dbeafe; box-shadow: inset 0 0 0 2px #3b82f6; }
+.qu-dc.changed.on.tone-ok      { background: #dcfce7; box-shadow: inset 0 0 0 2px #16a34a; }
+.qu-dc.changed.on.tone-medium  { background: #fef3c7; box-shadow: inset 0 0 0 2px #f59e0b; }
+.qu-dc.changed.on.tone-high    { background: #fee2e2; box-shadow: inset 0 0 0 2px #ef4444; }
 
 /* 해제된 셀 - 흐림 */
-.qu-dc.off:not(.blank) { opacity: 0.55; }
+.qu-dc.changed.off:not(.blank) { opacity: 0.55; }
 
 /* 빈칸 — 클릭 불가 */
-.qu-dc.blank { cursor: default; opacity: 0.6; }
+.qu-dc.changed.blank { cursor: default; opacity: 0.6; }
 
-/* 셀 내부 요소 */
+/* 셀 내부 */
+.qu-dc-tags {
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
 .qu-dc-tag {
     display: inline-block;
     font-size: 9px;
     font-weight: 800;
-    padding: 1px 5px;
+    padding: 2px 6px;
     border-radius: 3px;
-    margin-bottom: 3px;
     letter-spacing: 0.02em;
-    line-height: 1.4;
+    line-height: 1.3;
 }
 .qu-dc-tag.tone-high   { background: #fecaca; color: #991b1b; }
 .qu-dc-tag.tone-medium { background: #fde68a; color: #92400e; }
@@ -1563,27 +1593,29 @@
 .qu-dc-tag.tone-info   { background: #bfdbfe; color: #1e40af; }
 
 .qu-dc-old {
-    font-size: 11px;
+    font-size: 12px;
     color: #94a3b8;
     text-decoration: line-through;
     line-height: 1.2;
     font-weight: 600;
 }
 .qu-dc-new {
-    font-size: 15px;
+    font-size: 17px;
     font-weight: 800;
     color: #0f172a;
-    line-height: 1.2;
-    margin-top: 2px;
+    line-height: 1.15;
+    margin-top: 3px;
     letter-spacing: -0.01em;
 }
-.qu-dc.on .qu-dc-new { color: #1d4ed8; }
-.qu-dc.tone-high .qu-dc-new { color: #991b1b; }
-.qu-dc.tone-medium .qu-dc-new { color: #92400e; }
+.qu-dc.changed.on .qu-dc-new          { color: #1e3a8a; }
+.qu-dc.changed.tone-high .qu-dc-new   { color: #991b1b; }
+.qu-dc.changed.tone-medium .qu-dc-new { color: #92400e; }
+.qu-dc.changed.tone-ok.on .qu-dc-new  { color: #14532d; }
+
 .qu-dc-pct {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
-    margin-top: 2px;
+    margin-top: 3px;
     letter-spacing: -0.005em;
 }
 .qu-dc-pct.pos { color: #047857; }
@@ -1591,16 +1623,16 @@
 
 .qu-dc-check {
     position: absolute;
-    top: 3px;
-    right: 4px;
-    color: #1d4ed8;
-    font-size: 13px;
+    top: 4px;
+    right: 6px;
+    font-size: 14px;
     font-weight: 800;
     line-height: 1;
+    color: #1e40af;
 }
 .qu-dc.tone-high.on .qu-dc-check   { color: #991b1b; }
 .qu-dc.tone-medium.on .qu-dc-check { color: #92400e; }
-.qu-dc.tone-ok.on .qu-dc-check     { color: #166534; }
+.qu-dc.tone-ok.on .qu-dc-check     { color: #14532d; }
 
 
 /* === 에폭시 sub-tables === */

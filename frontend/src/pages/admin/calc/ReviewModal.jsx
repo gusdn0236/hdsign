@@ -3,14 +3,12 @@ import { useEffect, useMemo, useState } from 'react'
 /**
  * 변경점 검토 모달.
  *
- * 업로드한 엑셀의 원래 모양(행=사이즈/밴드, 열=type) 그대로 표로 보여주고,
- * 변경된 셀만 시각적으로 강조한다. 사용자가 잔넬만 업로드하면 잔넬 표만 노출.
+ * baseline 의 모든 사이즈/타입을 PricesViewerModal 과 동일한 표 구조로 노출하고,
+ * 변경된 셀만 굵게 강조한다. 행/열 위치는 옛 단가표 엑셀과 같은 모양.
  *
- * 셀 표시:
- *   - 변경 없음:  회색 작은 가격
- *   - 변경 있음:  취소선 옛 가격 + 굵은 새 가격 + 퍼센트 변화
+ *   - 변경 없는 셀:  baseline 가격 (회색)
+ *   - 변경 있는 셀:  옛 가격(취소선) + 새 가격(굵게 컬러) + % + 의심 태그
  *   - 셀 클릭 → 적용/유지 토글
- *   - 의심(0누락/이상치/하락): 배경 톤 + 짧은 태그
  *
  * 적용 클릭 → 확인 다이얼로그 → onApply(decisions).
  */
@@ -23,14 +21,6 @@ const CAT_LABELS = {
     goldSilver: '금은경',
 }
 
-const TYPE_LABELS = {
-    galvaBackEng: '갈바후광 영문', galvaBackKor: '갈바후광 한글',
-    galvaOsai: '갈바오사이',        galvaCap: '갈바캡잔넬',
-    ilcheType: '일체형',            takaType: '타카',
-    stenAlumCap: '스텐알미늄캡',    stenOsai: '스텐오사이',
-    stenBack: '스텐후광',           goldSten: '골드스텐',
-}
-
 const TT_LABELS = {
     korean: '한글', englishNumber: '영문/숫자', '한글': '한글', '영문': '영문',
 }
@@ -40,11 +30,11 @@ const MAT_LABELS = {
 }
 
 const SUSPICION_META = {
-    digit_missing:      { label: '0누락',   tone: 'high' },
-    extra_digit:        { label: '0추가',   tone: 'high' },
-    monotonicity_break: { label: '이상치',  tone: 'medium' },
-    price_decreased:    { label: '하락',    tone: 'medium' },
-    clean_change:       { label: '인상',    tone: 'ok' },
+    digit_missing:      { label: '0누락', tone: 'high' },
+    extra_digit:        { label: '0추가', tone: 'high' },
+    monotonicity_break: { label: '이상치', tone: 'medium' },
+    price_decreased:    { label: '하락',   tone: 'medium' },
+    clean_change:       { label: '인상',   tone: 'ok' },
 }
 
 function isSuspicious(item) {
@@ -61,20 +51,16 @@ function bandSortKey(band) {
     return m ? parseInt(m[1], 10) : 0
 }
 
-export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
-    // 변경점이 있는 카테고리만 노출 (parsed 에 들어있고 변경 셀이 있는 카테고리)
+export default function ReviewModal({ diff, baseline, fileName, onCancel, onApply }) {
+    // 변경 항목이 있는 카테고리만 노출
     const availableCats = useMemo(() => {
         if (!diff) return []
-        return Object.keys(diff.calculators).filter(c => {
-            const calc = diff.calculators[c]
-            return calc.diffs?.length > 0
-        })
+        return Object.keys(diff.calculators).filter(c => diff.calculators[c].diffs?.length > 0)
     }, [diff])
 
     const singleCat = availableCats.length === 1
     const [activeCat, setActiveCat] = useState(availableCats[0] || '')
 
-    // diff items 전부 (모든 카테고리)
     const allItems = useMemo(() => {
         if (!diff) return []
         const out = []
@@ -84,7 +70,6 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
         return out
     }, [diff])
 
-    // 기본 결정: 정상 인상 ON, 의심 OFF, 빈칸 baseline 유지
     const initialDecisions = useMemo(() => {
         const d = {}
         for (const item of allItems) {
@@ -99,6 +84,13 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
     const [confirming, setConfirming] = useState(false)
 
     useEffect(() => { setDecisions(initialDecisions) }, [initialDecisions])
+
+    // body 스크롤 잠금 — 모달 뒤 페이지 안 움직이게
+    useEffect(() => {
+        const prev = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+        return () => { document.body.style.overflow = prev }
+    }, [])
 
     useEffect(() => {
         function onKey(e) {
@@ -116,7 +108,7 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
     }
 
     function toggleCell(item) {
-        if (item.status === 'missing_in_excel') return
+        if (!item || item.status === 'missing_in_excel') return
         const cur = decisions[item.path]
         setDecision(item.path, cur === 'excel' ? 'baseline' : 'excel')
     }
@@ -142,11 +134,12 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
         return { toApply, toKeep, suspicious, total: allItems.length }
     }, [allItems, decisions])
 
-    // 활성 카테고리의 변경 항목 (일괄 액션에 사용)
     const activeCatItems = useMemo(
         () => allItems.filter(it => it.calcKey === activeCat),
         [allItems, activeCat],
     )
+
+    const baselineCalc = baseline?.calculators?.[activeCat]
 
     return (
         <div className="qu-modal-backdrop">
@@ -177,9 +170,7 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                                     onClick={() => setActiveCat(c)}
                                 >
                                     {CAT_LABELS[c]}
-                                    <span className="qu-tab-count">
-                                        {diff.calculators[c].diffs.length}
-                                    </span>
+                                    <span className="qu-tab-count">{diff.calculators[c].diffs.length}</span>
                                 </button>
                             ))}
                         </div>
@@ -188,33 +179,22 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
 
                 <div className="qu-bulk-bar">
                     <div className="qu-bulk-left">
-                        <button
-                            type="button"
-                            className="qu-bulk-btn"
-                            onClick={() => bulkSet(activeCatItems, 'excel')}
-                        >전부 체크</button>
-                        <button
-                            type="button"
-                            className="qu-bulk-btn"
-                            onClick={() => bulkSet(activeCatItems, 'baseline')}
-                        >전부 해제</button>
-                        <button
-                            type="button"
-                            className="qu-bulk-btn"
-                            onClick={() => bulkSet(activeCatItems.filter(it => !isSuspicious(it)), 'excel')}
-                        >정상 인상만 체크</button>
+                        <button type="button" className="qu-bulk-btn" onClick={() => bulkSet(activeCatItems, 'excel')}>전부 체크</button>
+                        <button type="button" className="qu-bulk-btn" onClick={() => bulkSet(activeCatItems, 'baseline')}>전부 해제</button>
+                        <button type="button" className="qu-bulk-btn" onClick={() => bulkSet(activeCatItems.filter(it => !isSuspicious(it)), 'excel')}>정상 인상만 체크</button>
                     </div>
                     <div className="qu-bulk-right">
                         <span className="qu-legend"><i className="qu-legend-dot tone-ok"/> 정상 인상</span>
                         <span className="qu-legend"><i className="qu-legend-dot tone-medium"/> 한번 더 확인</span>
-                        <span className="qu-legend"><i className="qu-legend-dot tone-high"/> 위험 (0 누락 등)</span>
+                        <span className="qu-legend"><i className="qu-legend-dot tone-high"/> 위험 (0누락 등)</span>
                     </div>
                 </div>
 
                 <div className="qu-modal-body qu-modal-body-grid">
-                    {activeCat && (
+                    {activeCat && baselineCalc && (
                         <DiffGrid
                             calcKey={activeCat}
+                            baselineCalc={baselineCalc}
                             diff={diff.calculators[activeCat]}
                             decisions={decisions}
                             onToggleCell={toggleCell}
@@ -230,9 +210,7 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                         onClick={() => setConfirming(true)}
                         disabled={stats.toApply === 0}
                     >
-                        {stats.toApply === 0
-                            ? '체크된 셀이 없어요'
-                            : `체크한 ${stats.toApply}곳 단가표에 반영하기`}
+                        {stats.toApply === 0 ? '체크된 셀이 없어요' : `체크한 ${stats.toApply}곳 단가표에 반영하기`}
                     </button>
                 </footer>
 
@@ -258,31 +236,35 @@ function countSuspiciousApplying(allItems, decisions) {
 
 /* ---------- 카테고리별 표 라우팅 ---------- */
 
-function DiffGrid({ calcKey, diff, decisions, onToggleCell }) {
-    // diff.diffs 를 path 별 map 으로
+function DiffGrid({ calcKey, baselineCalc, diff, decisions, onToggleCell }) {
     const itemByPath = useMemo(() => {
         const m = new Map()
         for (const it of diff.diffs) m.set(it.path, it)
         return m
     }, [diff])
 
-    if (calcKey === 'channel')    return <ChannelGrid    diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
-    if (calcKey === 'gomu')       return <GomuGrid       diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
-    if (calcKey === 'acryl')      return <AcrylGrid      diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
-    if (calcKey === 'epoxy')      return <EpoxyGrid      diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
-    if (calcKey === 'goldSilver') return <GoldSilverGrid diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
+    const common = { baselineCalc, itemByPath, decisions, onToggleCell }
+
+    if (calcKey === 'channel')    return <ChannelGrid    {...common} />
+    if (calcKey === 'gomu')       return <GomuGrid       {...common} />
+    if (calcKey === 'acryl')      return <AcrylGrid      {...common} />
+    if (calcKey === 'epoxy')      return <EpoxyGrid      {...common} />
+    if (calcKey === 'goldSilver') return <GoldSilverGrid {...common} />
     return null
 }
 
 /* ---------- 공통 셀 ---------- */
 
-function DiffCell({ item, decisions, onToggleCell }) {
+function DiffCell({ baseValue, item, decisions, onToggleCell }) {
     if (!item) {
-        // 변경 없음 — diff 에 없는 셀. 공백.
-        return <td className="qu-dc unchanged">&nbsp;</td>
+        return (
+            <td className="qu-dc unchanged num">
+                {baseValue != null ? baseValue.toLocaleString() : <span className="muted">—</span>}
+            </td>
+        )
     }
     const susp = item.suspicion ? SUSPICION_META[item.suspicion] : null
-    const tone = susp?.tone || 'neutral'
+    const tone = susp?.tone || 'ok'
     const isOn = decisions[item.path] === 'excel'
     const isBlank = item.status === 'missing_in_excel'
     const isNew = item.status === 'missing_in_baseline'
@@ -293,19 +275,18 @@ function DiffCell({ item, decisions, onToggleCell }) {
 
     return (
         <td
-            className={`qu-dc tone-${tone} ${isOn ? 'on' : 'off'} ${isBlank ? 'blank' : ''} ${isNew ? 'new' : ''}`}
+            className={`qu-dc changed tone-${tone} ${isOn ? 'on' : 'off'} ${isBlank ? 'blank' : ''}`}
             onClick={() => onToggleCell(item)}
         >
-            {susp && <span className={`qu-dc-tag tone-${susp.tone}`}>{susp.label}</span>}
-            {isNew && <span className="qu-dc-tag tone-info">신규</span>}
-            {isBlank && <span className="qu-dc-tag tone-info">빈칸</span>}
-
-            {b != null && (
-                <div className="qu-dc-old">{b.toLocaleString()}</div>
+            {(susp || isNew || isBlank) && (
+                <div className="qu-dc-tags">
+                    {susp && <span className={`qu-dc-tag tone-${susp.tone}`}>{susp.label}</span>}
+                    {isNew && <span className="qu-dc-tag tone-info">신규</span>}
+                    {isBlank && <span className="qu-dc-tag tone-info">빈칸</span>}
+                </div>
             )}
-            <div className="qu-dc-new">
-                {x != null ? x.toLocaleString() : '—'}
-            </div>
+            {b != null && <div className="qu-dc-old">{b.toLocaleString()}</div>}
+            <div className="qu-dc-new">{x != null ? x.toLocaleString() : '—'}</div>
             {delta && (
                 <div className={`qu-dc-pct ${delta.d >= 0 ? 'pos' : 'neg'}`}>
                     {delta.pct >= 0 ? '+' : ''}{delta.pct.toFixed(1)}%
@@ -316,37 +297,24 @@ function DiffCell({ item, decisions, onToggleCell }) {
     )
 }
 
-/* ---------- 잔넬 표 ---------- */
+/* ---------- 잔넬 ---------- */
 
-const CHANNEL_TYPE_ORDER = [
-    'galvaBackEng', 'galvaBackKor', 'galvaOsai', 'galvaCap', 'ilcheType',
-    'takaType', 'stenAlumCap', 'stenOsai', 'stenBack', 'goldSten',
-]
-
-const CHANNEL_NEEDS_LANG = new Set([
-    'galvaOsai', 'galvaCap', 'stenAlumCap', 'stenOsai', 'stenBack', 'goldSten',
-])
-
-function ChannelGrid({ diff, itemByPath, decisions, onToggleCell }) {
-    // 컬럼: needsLang true 면 영/한 두 컬럼
+function ChannelGrid({ baselineCalc, itemByPath, decisions, onToggleCell }) {
     const columns = []
-    for (const key of CHANNEL_TYPE_ORDER) {
-        if (CHANNEL_NEEDS_LANG.has(key)) {
-            columns.push({ key, lang: 'eng', label: TYPE_LABELS[key], subLabel: '영' })
-            columns.push({ key, lang: 'kor', label: TYPE_LABELS[key], subLabel: '한' })
+    const sizeSet = new Set()
+    for (const t of baselineCalc.types || []) {
+        if (t.needsLang) {
+            for (const lang of ['eng', 'kor']) {
+                const m = t.pricesByLang?.[lang] || {}
+                columns.push({ key: t.key, lang, label: t.label, subLabel: lang === 'eng' ? '영문' : '한글', prices: m })
+                Object.keys(m).forEach(s => sizeSet.add(+s))
+            }
         } else {
-            columns.push({ key, lang: null, label: TYPE_LABELS[key] })
+            const m = t.prices || {}
+            columns.push({ key: t.key, lang: null, label: t.label, prices: m })
+            Object.keys(m).forEach(s => sizeSet.add(+s))
         }
     }
-
-    // 사이즈: diff path 에서 추출
-    const sizeSet = new Set()
-    for (const it of diff.diffs) {
-        const parts = it.path.split('.')
-        const size = parts[parts.length - 1]
-        if (/^\d+$/.test(size)) sizeSet.add(+size)
-    }
-    // baseline 사이즈도 일부 포함하면 좋지만 우선 변경 셀이 있는 사이즈만
     const sizes = [...sizeSet].sort((a, b) => a - b)
 
     return (
@@ -354,10 +322,10 @@ function ChannelGrid({ diff, itemByPath, decisions, onToggleCell }) {
             <table className="qu-grid">
                 <thead>
                     <tr>
-                        <th className="qu-grid-row-head">사이즈</th>
+                        <th className="qu-grid-row-head">사이즈 (mm)</th>
                         {columns.map((c, i) => (
-                            <th key={i}>
-                                <div>{c.label}</div>
+                            <th key={i} className="num">
+                                {c.label}
                                 {c.subLabel && <small>{c.subLabel}</small>}
                             </th>
                         ))}
@@ -366,12 +334,11 @@ function ChannelGrid({ diff, itemByPath, decisions, onToggleCell }) {
                 <tbody>
                     {sizes.map(size => (
                         <tr key={size}>
-                            <td className="qu-grid-row-head">{size}<small>mm</small></td>
+                            <td className="qu-grid-row-head">{size}</td>
                             {columns.map((c, i) => {
-                                const path = c.lang
-                                    ? `channel.${c.key}.${c.lang}.${size}`
-                                    : `channel.${c.key}.${size}`
-                                return <DiffCell key={i} item={itemByPath.get(path)} decisions={decisions} onToggleCell={onToggleCell} />
+                                const baseValue = c.prices[size]
+                                const path = c.lang ? `channel.${c.key}.${c.lang}.${size}` : `channel.${c.key}.${size}`
+                                return <DiffCell key={i} baseValue={baseValue} item={itemByPath.get(path)} decisions={decisions} onToggleCell={onToggleCell} />
                             })}
                         </tr>
                     ))}
@@ -381,15 +348,14 @@ function ChannelGrid({ diff, itemByPath, decisions, onToggleCell }) {
     )
 }
 
-/* ---------- 고무스카시 표 ---------- */
+/* ---------- 고무스카시 ---------- */
 
-const GOMU_THICKNESS_ORDER = ['10T', '10T-금은색', '20,30T', '20,30T-금은색', '50T', '50T-금은색']
-
-function GomuGrid({ diff, itemByPath, decisions, onToggleCell }) {
+function GomuGrid({ baselineCalc, itemByPath, decisions, onToggleCell }) {
+    const prices = baselineCalc.prices || {}
+    const thicknesses = Object.keys(prices)
     const bandSet = new Set()
-    for (const it of diff.diffs) {
-        const parts = it.path.split('.')
-        bandSet.add(parts[parts.length - 1])
+    for (const tk of thicknesses) {
+        Object.keys(prices[tk] || {}).forEach(b => bandSet.add(b))
     }
     const bands = sortBands([...bandSet])
 
@@ -398,17 +364,18 @@ function GomuGrid({ diff, itemByPath, decisions, onToggleCell }) {
             <table className="qu-grid">
                 <thead>
                     <tr>
-                        <th className="qu-grid-row-head">사이즈</th>
-                        {GOMU_THICKNESS_ORDER.map(tk => <th key={tk}>{tk}</th>)}
+                        <th className="qu-grid-row-head">사이즈 (mm)</th>
+                        {thicknesses.map(tk => <th key={tk} className="num">{tk}</th>)}
                     </tr>
                 </thead>
                 <tbody>
                     {bands.map(band => (
                         <tr key={band}>
                             <td className="qu-grid-row-head">{band}</td>
-                            {GOMU_THICKNESS_ORDER.map(tk => (
-                                <DiffCell key={tk} item={itemByPath.get(`gomu.${tk}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
-                            ))}
+                            {thicknesses.map(tk => {
+                                const baseValue = prices[tk]?.[band]
+                                return <DiffCell key={tk} baseValue={baseValue} item={itemByPath.get(`gomu.${tk}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                            })}
                         </tr>
                     ))}
                 </tbody>
@@ -417,22 +384,25 @@ function GomuGrid({ diff, itemByPath, decisions, onToggleCell }) {
     )
 }
 
-/* ---------- 아크릴 표 ---------- */
+/* ---------- 아크릴 ---------- */
 
-const ACRYL_THICKNESSES = ['2T', '3T', '5T', '8T', '10T', '15T', '20T']
-const ACRYL_TT = ['영문', '한글']
-
-function AcrylGrid({ diff, itemByPath, decisions, onToggleCell }) {
+function AcrylGrid({ baselineCalc, itemByPath, decisions, onToggleCell }) {
+    const prices = baselineCalc.prices || {}
+    const thicknesses = Object.keys(prices)
+    const ttSet = new Set()
     const bandSet = new Set()
-    for (const it of diff.diffs) {
-        const parts = it.path.split('.')
-        bandSet.add(parts[parts.length - 1])
+    for (const tk of thicknesses) {
+        for (const tt of Object.keys(prices[tk] || {})) {
+            ttSet.add(tt)
+            for (const b of Object.keys(prices[tk][tt] || {})) bandSet.add(b)
+        }
     }
+    const textTypes = [...ttSet]
     const bands = sortBands([...bandSet])
 
     const columns = []
-    for (const tk of ACRYL_THICKNESSES) {
-        for (const tt of ACRYL_TT) columns.push({ tk, tt })
+    for (const tk of thicknesses) {
+        for (const tt of textTypes) columns.push({ tk, tt })
     }
 
     return (
@@ -440,14 +410,14 @@ function AcrylGrid({ diff, itemByPath, decisions, onToggleCell }) {
             <table className="qu-grid">
                 <thead>
                     <tr>
-                        <th className="qu-grid-row-head" rowSpan={2}>사이즈</th>
-                        {ACRYL_THICKNESSES.map(tk => (
-                            <th key={tk} colSpan={ACRYL_TT.length} className="qu-grid-group">{tk}</th>
+                        <th className="qu-grid-row-head" rowSpan={2}>사이즈 (mm)</th>
+                        {thicknesses.map(tk => (
+                            <th key={tk} className="qu-grid-group" colSpan={textTypes.length}>{tk}</th>
                         ))}
                     </tr>
                     <tr>
                         {columns.map((c, i) => (
-                            <th key={i}><small>{c.tt}</small></th>
+                            <th key={i} className="num"><small>{TT_LABELS[c.tt] || c.tt}</small></th>
                         ))}
                     </tr>
                 </thead>
@@ -455,9 +425,10 @@ function AcrylGrid({ diff, itemByPath, decisions, onToggleCell }) {
                     {bands.map(band => (
                         <tr key={band}>
                             <td className="qu-grid-row-head">{band}</td>
-                            {columns.map((c, i) => (
-                                <DiffCell key={i} item={itemByPath.get(`acryl.${c.tk}.${c.tt}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
-                            ))}
+                            {columns.map((c, i) => {
+                                const baseValue = prices[c.tk]?.[c.tt]?.[band]
+                                return <DiffCell key={i} baseValue={baseValue} item={itemByPath.get(`acryl.${c.tk}.${c.tt}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                            })}
                         </tr>
                     ))}
                 </tbody>
@@ -466,33 +437,32 @@ function AcrylGrid({ diff, itemByPath, decisions, onToggleCell }) {
     )
 }
 
-/* ---------- 에폭시 표 ---------- */
+/* ---------- 에폭시 ---------- */
 
-const EPOXY_STROKES = ['30', '50', '70', '90', '110']
+const EPOXY_STROKES_DEFAULT = ['30', '50', '70', '90', '110']
 
-function EpoxyGrid({ diff, itemByPath, decisions, onToggleCell }) {
-    // diff path: epoxy.<mat>.<tt>.<size>.<stroke>
-    // 재질·텍스트타입별 sub-table
-    const groups = new Map()
-    for (const it of diff.diffs) {
-        const parts = it.path.split('.')
-        const key = `${parts[1]}|${parts[2]}`
-        if (!groups.has(key)) groups.set(key, { mat: parts[1], tt: parts[2], sizes: new Set() })
-        groups.get(key).sizes.add(parts[3])
-    }
+function EpoxyGrid({ baselineCalc, itemByPath, decisions, onToggleCell }) {
+    const prices = baselineCalc.prices || {}
+    const materials = Object.keys(prices)
 
     const blocks = []
-    for (const { mat, tt, sizes } of groups.values()) {
-        const sizeArr = [...sizes].map(Number).sort((a, b) => a - b)
-        blocks.push({ mat, tt, sizes: sizeArr })
+    for (const mat of materials) {
+        for (const tt of Object.keys(prices[mat] || {})) {
+            const sizeMap = prices[mat][tt] || {}
+            const sizes = Object.keys(sizeMap).sort((a, b) => +a - +b)
+            const strokeSet = new Set()
+            for (const s of sizes) Object.keys(sizeMap[s] || {}).forEach(k => strokeSet.add(k))
+            const strokes = [...strokeSet].sort((a, b) => +a - +b)
+            blocks.push({ mat, tt, sizes, strokes, sizeMap })
+        }
     }
 
-    if (blocks.length === 0) return <div className="qu-empty">바뀐 곳이 없어요.</div>
+    if (blocks.length === 0) return <div className="qu-empty">데이터가 없어요.</div>
 
     return (
         <div className="qu-epoxy-blocks">
-            {blocks.map((blk, i) => (
-                <div key={i} className="qu-epoxy-block">
+            {blocks.map((blk, idx) => (
+                <div key={idx} className="qu-epoxy-block">
                     <div className="qu-epoxy-block-title">
                         {MAT_LABELS[blk.mat] || blk.mat} · {TT_LABELS[blk.tt] || blk.tt}
                     </div>
@@ -501,16 +471,19 @@ function EpoxyGrid({ diff, itemByPath, decisions, onToggleCell }) {
                             <thead>
                                 <tr>
                                     <th className="qu-grid-row-head">사이즈</th>
-                                    {EPOXY_STROKES.map(s => <th key={s}>{s}획</th>)}
+                                    {(blk.strokes.length ? blk.strokes : EPOXY_STROKES_DEFAULT).map(st => (
+                                        <th key={st} className="num">{st}획</th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {blk.sizes.map(size => (
                                     <tr key={size}>
                                         <td className="qu-grid-row-head">~{size}</td>
-                                        {EPOXY_STROKES.map(st => (
-                                            <DiffCell key={st} item={itemByPath.get(`epoxy.${blk.mat}.${blk.tt}.${size}.${st}`)} decisions={decisions} onToggleCell={onToggleCell} />
-                                        ))}
+                                        {(blk.strokes.length ? blk.strokes : EPOXY_STROKES_DEFAULT).map(st => {
+                                            const baseValue = blk.sizeMap[size]?.[st]
+                                            return <DiffCell key={st} baseValue={baseValue} item={itemByPath.get(`epoxy.${blk.mat}.${blk.tt}.${size}.${st}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                                        })}
                                     </tr>
                                 ))}
                             </tbody>
@@ -522,27 +495,23 @@ function EpoxyGrid({ diff, itemByPath, decisions, onToggleCell }) {
     )
 }
 
-/* ---------- 금은경 표 ---------- */
+/* ---------- 금은경 ---------- */
 
-function GoldSilverGrid({ diff, itemByPath, decisions, onToggleCell }) {
-    // diff path: goldSilver.<mat>.<tk>.<tt>.<band>
-    // 컬럼/밴드 수집
+function GoldSilverGrid({ baselineCalc, itemByPath, decisions, onToggleCell }) {
+    const prices = baselineCalc.prices || {}
+    const materials = Object.keys(prices)
+    const columns = []
     const bandSet = new Set()
-    const colSet = new Map()  // key: mat|tk|tt → {mat, tk, tt}
-    for (const it of diff.diffs) {
-        const parts = it.path.split('.')
-        bandSet.add(parts[4])
-        const ckey = `${parts[1]}|${parts[2]}|${parts[3]}`
-        if (!colSet.has(ckey)) colSet.set(ckey, { mat: parts[1], tk: parts[2], tt: parts[3] })
+    for (const mat of materials) {
+        for (const tk of Object.keys(prices[mat] || {})) {
+            for (const tt of Object.keys(prices[mat][tk] || {})) {
+                columns.push({ mat, tk, tt })
+                for (const b of Object.keys(prices[mat][tk][tt] || {})) bandSet.add(b)
+            }
+        }
     }
     const bands = sortBands([...bandSet])
-    const columns = [...colSet.values()].sort((a, b) => {
-        if (a.mat !== b.mat) return a.mat === 'gold' ? -1 : 1
-        if (a.tk !== b.tk) return a.tk.localeCompare(b.tk)
-        return a.tt === '영문' ? -1 : 1
-    })
 
-    // material 그룹 헤더
     const matGroups = []
     for (const c of columns) {
         const last = matGroups[matGroups.length - 1]
@@ -555,14 +524,14 @@ function GoldSilverGrid({ diff, itemByPath, decisions, onToggleCell }) {
             <table className="qu-grid">
                 <thead>
                     <tr>
-                        <th className="qu-grid-row-head" rowSpan={2}>사이즈</th>
+                        <th className="qu-grid-row-head" rowSpan={2}>사이즈 (mm)</th>
                         {matGroups.map((g, i) => (
                             <th key={i} colSpan={g.count} className="qu-grid-group">{MAT_LABELS[g.mat] || g.mat}</th>
                         ))}
                     </tr>
                     <tr>
                         {columns.map((c, i) => (
-                            <th key={i}>
+                            <th key={i} className="num">
                                 {c.tk}
                                 <small>{TT_LABELS[c.tt] || c.tt}</small>
                             </th>
@@ -573,9 +542,10 @@ function GoldSilverGrid({ diff, itemByPath, decisions, onToggleCell }) {
                     {bands.map(band => (
                         <tr key={band}>
                             <td className="qu-grid-row-head">{band}</td>
-                            {columns.map((c, i) => (
-                                <DiffCell key={i} item={itemByPath.get(`goldSilver.${c.mat}.${c.tk}.${c.tt}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
-                            ))}
+                            {columns.map((c, i) => {
+                                const baseValue = prices[c.mat]?.[c.tk]?.[c.tt]?.[band]
+                                return <DiffCell key={i} baseValue={baseValue} item={itemByPath.get(`goldSilver.${c.mat}.${c.tk}.${c.tt}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                            })}
                         </tr>
                     ))}
                 </tbody>

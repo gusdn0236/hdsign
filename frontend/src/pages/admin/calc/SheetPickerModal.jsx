@@ -41,6 +41,13 @@ export default function SheetPickerModal({ inspection, onCancel, onConfirm }) {
         return () => window.removeEventListener('keydown', onKey)
     }, [onCancel])
 
+    // body 스크롤 잠금 — 모달 뒤 페이지 안 움직이게
+    useEffect(() => {
+        const prev = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+        return () => { document.body.style.overflow = prev }
+    }, [])
+
     const canConfirm = Boolean(selectedName && category)
     const cta = !selectedName
         ? '먼저 시트를 골라주세요'
