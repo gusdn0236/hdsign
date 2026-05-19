@@ -85,6 +85,24 @@ function backfillBaseGroup(prices, baseGroupSizes) {
     }
 }
 
+/**
+ * "작은 사이즈" 의 빈 셀은 옛 단가표 표기 방식 (영문기본/한글기본 텍스트 + 빈칸) 으로 인한
+ * 표현 한계지 실제 사이즈 제거가 아니다. baseline 값으로 채워서 변경 없는 셀로 처리.
+ *
+ * "큰 사이즈" (= 채워진 최대 사이즈 이후) 의 빈 셀은 가격 시프트로 실제 사이즈가
+ * 제거된 것으로 간주, 빈 상태 유지 → diff 에서 missing_in_excel 로 표시.
+ */
+function backfillSmallMissing(prices, baselinePrices) {
+    if (!baselinePrices) return
+    const filledSizes = Object.keys(prices).map(Number)
+    if (filledSizes.length === 0) return
+    const maxFilled = Math.max(...filledSizes)
+    for (const [s, v] of Object.entries(baselinePrices)) {
+        if (+s >= maxFilled) continue  // 최대 사이즈 이후는 사이즈 제거로 유지
+        if (prices[s] === undefined) prices[s] = v
+    }
+}
+
 function findBaseGroup(prices) {
     if (!prices || Object.keys(prices).length === 0) return []
     const sizes = Object.keys(prices).sort((a, b) => +a - +b)
@@ -165,12 +183,14 @@ function parseChannel(ws, baselineChannel) {
                 }
             }
 
-            // 사후 보강: 옛 단가표 형식이 표현 못한 사이즈를 baseline 의 baseGroup 정보로 복원.
-            //   옛 형식은 작은 사이즈의 동일 가격 구간을 보통 첫 셀에 가격을 적고 나머지는 빈칸으로 둠
-            //   (예: R3 = 53000, R4 빈칸, baseline 의 baseGroup.eng = [200, 250] 이면 eng[250] 도 53000).
-            //   채워진 값들이 모두 같을 때만 빈 사이즈를 보강 — 의도적으로 다른 값을 넣은 경우는 그대로 둠.
+            // 사후 보강 1: baseGroup 사이즈가 일관되게 채워졌으면 빈 base 사이즈에도 복사.
             backfillBaseGroup(eng, baseGroup.eng)
             backfillBaseGroup(kor, baseGroup.kor)
+
+            // 사후 보강 2: 작은 사이즈 빈 셀은 표기 차이일 뿐이라 baseline 값으로 채움.
+            //   최대 채워진 사이즈 이후의 빈 사이즈만 missing_in_excel 로 남겨 "사이즈 제거" 처리.
+            backfillSmallMissing(eng, bt.pricesByLang?.eng)
+            backfillSmallMissing(kor, bt.pricesByLang?.kor)
 
             const sortMap = m => Object.fromEntries(
                 Object.entries(m).sort(([a], [b]) => +a - +b)
@@ -188,6 +208,8 @@ function parseChannel(ws, baselineChannel) {
                 const n = parseNumber(getCell(grid, r, col))
                 if (n !== null) prices[String(sizeCm * 10)] = n
             }
+            // 작은 사이즈 빈 셀은 baseline 값으로 채움 — 최대 사이즈 이후 빈칸만 missing 유지
+            backfillSmallMissing(prices, bt.prices)
             types.push({ key, label, needsLang: false, prices })
         }
     }

@@ -73,7 +73,9 @@ export default function ReviewModal({ diff, baseline, fileName, onCancel, onAppl
     const initialDecisions = useMemo(() => {
         const d = {}
         for (const item of allItems) {
-            if (item.status === 'missing_in_excel')   d[item.path] = 'baseline'
+            // missing_in_excel = 가격 시프트로 큰 사이즈가 빠진 경우 — 자동 체크(인상처럼)
+            //   작은 사이즈 빈칸은 parseXlsx 에서 미리 baseline 값으로 채워서 여기까지 안 옴
+            if (item.status === 'missing_in_excel')   d[item.path] = 'excel'
             else if (isSuspicious(item))              d[item.path] = 'baseline'
             else                                       d[item.path] = 'excel'
         }
@@ -293,8 +295,8 @@ function DiffCell({ baseValue, item, decisions, onToggleCell }) {
     const susp = item.suspicion ? SUSPICION_META[item.suspicion] : null
     const isBlank = item.status === 'missing_in_excel'
     const isNew = item.status === 'missing_in_baseline'
-    // 빈칸은 "사이즈 제거" 의미 — medium 톤으로 강조 (한 번 더 확인 권장)
-    const tone = isBlank ? 'medium' : (susp?.tone || 'ok')
+    // 빈칸 = 가격 시프트로 사이즈가 빠진 경우 — 정상 인상과 같은 ok 톤
+    const tone = isBlank ? 'ok' : (susp?.tone || 'ok')
     const isOn = decisions[item.path] === 'excel'
 
     const b = item.baselineValue
@@ -310,7 +312,7 @@ function DiffCell({ baseValue, item, decisions, onToggleCell }) {
                 <div className="qu-dc-tags">
                     {susp && <span className={`qu-dc-tag tone-${susp.tone}`}>{susp.label}</span>}
                     {isNew && <span className="qu-dc-tag tone-info">신규</span>}
-                    {isBlank && <span className="qu-dc-tag tone-medium">사이즈 제거</span>}
+                    {isBlank && <span className="qu-dc-tag tone-ok">사이즈 제거</span>}
                 </div>
             )}
             {b != null && <div className="qu-dc-old">{b.toLocaleString()}</div>}
