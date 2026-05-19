@@ -119,9 +119,11 @@ public class PublicEvidenceController {
                     String base = "/api/public/orders/" + orderNumber
                             + "/evidence/" + f.getId() + "/image";
                     m.put("imageUrl", base);
-                    // 사진보기 그리드용 — 같은 엔드포인트의 ?thumb=1 (서버에서 360px JPEG q=0.7).
-                    // 원본보다 5~10배 작아 빠르게 깔리고, 라이트박스에서 원본을 다시 받음.
-                    m.put("thumbnailUrl", base + "?thumb=1");
+                    // 사진보기 그리드용 썸네일. 업로드 시 미리 생성해 둔 R2 키가 있으면
+                    // 그 public URL 을 직접 — 서버 거치지 않고 R2/CDN 에서 바로 떨어져 가장 빠름.
+                    // 없으면(레거시) 프록시 ?thumb=1 로 폴백(첫 호출만 느림).
+                    String pre = f.getPreviewUrl();
+                    m.put("thumbnailUrl", (pre != null && !pre.isBlank()) ? pre : (base + "?thumb=1"));
                     return m;
                 })
                 .toList();
@@ -203,20 +205,35 @@ public class PublicEvidenceController {
     }
 
     /**
-     * R2 의 원본 이미지를 받아 ~360px 짜리 JPEG 으로 다운스케일.
-     * 모바일 사진보기 그리드 셀이 ~120-150px 라 360px(2x DPR 대비) 면 충분히 또렷.
-     * 첫 호출만 느리고(50~100ms), 이후엔 브라우저/CDN 캐시(max-age=86400) 로 사실상 0ms.
-     * 실패 시 null — 호출자가 원본 폴백 처리.
+     * R2 의 원본 이미지를 받아 한 변 360px 짜리 JPEG 으로 다운스케일(읽기측 폴백).
+     * 신규 업로드는 업로드 시점에 미리 생성해 둔다(uploadEvidence). 이 메서드는 그것이
+     * 없는 레거시 사진에서만 호출.
      */
     private byte[] renderEvidenceThumbnail(String key) {
         try (ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
                 GetObjectRequest.builder().bucket(bucket).key(key).build()
         )) {
-            BufferedImage src = ImageIO.read(stream);
-            if (src == null) return null;
-            final int maxSide = 360;
-            int srcW = src.getWidth();
-            int srcH = src.getHeight();
+            byte[] src = stream.readAllBytes();
+            return renderThumbnailBytes(src);
+        } catch (Exception e) {
+            log.warn("증거사진 썸네일 렌더 실패 [{}]: {}", key, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 메모리상의 이미지 바이트 → 한 변 160px JPEG q=0.5. 업로드 시점에서 호출돼
+     * R2 에 별도 키로 영구 저장된다 — 이후 그리드 표시는 R2 직접 스트리밍.
+     * "형체만 알아보면 OK" 정책 — 사진 한 장 5-15KB, 5장 그리드 30-75KB 수준.
+     * 실패 시 null.
+     */
+    private byte[] renderThumbnailBytes(byte[] imageBytes) {
+        try {
+            BufferedImage source = ImageIO.read(new java.io.ByteArrayInputStream(imageBytes));
+            if (source == null) return null;
+            final int maxSide = 160;
+            int srcW = source.getWidth();
+            int srcH = source.getHeight();
             int longest = Math.max(srcW, srcH);
             double scale = longest > maxSide ? (double) maxSide / longest : 1.0;
             int dstW = Math.max(1, (int) Math.round(srcW * scale));
@@ -224,28 +241,27 @@ public class PublicEvidenceController {
             BufferedImage dst = new BufferedImage(dstW, dstH, BufferedImage.TYPE_INT_RGB);
             Graphics2D g = dst.createGraphics();
             try {
+                // BILINEAR + 작은 출력 — 빠르고 형체 식별엔 충분.
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                         RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-                g.setRenderingHint(RenderingHints.KEY_RENDERING,
-                        RenderingHints.VALUE_RENDER_QUALITY);
-                g.drawImage(src, 0, 0, dstW, dstH, null);
+                g.drawImage(source, 0, 0, dstW, dstH, null);
             } finally {
                 g.dispose();
             }
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(32 * 1024);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(16 * 1024);
             ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
             try (MemoryCacheImageOutputStream out = new MemoryCacheImageOutputStream(baos)) {
                 writer.setOutput(out);
                 ImageWriteParam param = writer.getDefaultWriteParam();
                 param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-                param.setCompressionQuality(0.7f);
+                param.setCompressionQuality(0.5f);
                 writer.write(null, new IIOImage(dst, null, null), param);
             } finally {
                 writer.dispose();
             }
             return baos.toByteArray();
         } catch (Exception e) {
-            log.warn("증거사진 썸네일 렌더 실패 [{}]: {}", key, e.getMessage());
+            log.warn("증거사진 썸네일 인메모리 렌더 실패: {}", e.getMessage());
             return null;
         }
     }
@@ -314,6 +330,29 @@ public class PublicEvidenceController {
                 continue;
             }
 
+            // 사진보기 그리드용 360px 썸네일을 업로드 시점에 한 번만 만들어 R2 에 별도 키로 보관.
+            // 이후 그리드 표시는 R2 직접 스트리밍 — 서버 CPU 0ms, 라이트박스만큼 빠름.
+            // 실패해도 흐름은 그대로 진행(읽기 측 프록시 ?thumb=1 폴백이 살아있음).
+            String thumbPublicUrl = null;
+            byte[] thumbBytes = renderThumbnailBytes(bytes);
+            if (thumbBytes != null) {
+                String thumbKey = "orders/" + order.getOrderNumber()
+                        + "/evidence-thumbs/" + UUID.randomUUID() + ".jpg";
+                try {
+                    s3Client.putObject(
+                            PutObjectRequest.builder()
+                                    .bucket(bucket)
+                                    .key(thumbKey)
+                                    .contentType("image/jpeg")
+                                    .build(),
+                            RequestBody.fromBytes(thumbBytes)
+                    );
+                    thumbPublicUrl = normalizedPublicUrl + thumbKey;
+                } catch (Exception e) {
+                    log.warn("증거사진 썸네일 업로드 실패 [{}]: {}", thumbKey, e.getMessage());
+                }
+            }
+
             // R2 성공한 사진만 드라이브에도 백업. 비동기 — 응답 지연 0, 실패해도 흐름 영향 없음.
             driveBackupService.uploadEvidenceAsync(
                     orderNumberForBackup, companyName, originalName, file.getContentType(), bytes);
@@ -323,6 +362,9 @@ public class PublicEvidenceController {
                     .originalName(originalName)
                     .storedName(key)
                     .fileUrl(normalizedPublicUrl + key)
+                    // previewUrl 컬럼을 증거사진 썸네일 R2 public URL 보관에 재사용.
+                    // (기존 AI/PDF 변환 썸네일 용도와 충돌 없음 — isEvidence=true 행에서만 이 의미).
+                    .previewUrl(thumbPublicUrl)
                     .fileSize(file.getSize())
                     .contentType(file.getContentType())
                     .isEvidence(true)
