@@ -352,59 +352,96 @@ function parseEpoxy(ws, baselineEpoxy) {
 
 /* ---------- main ---------- */
 
-function findSheet(wb, ...keywords) {
-    for (const name of wb.SheetNames) {
-        const norm = name.trim()
-        for (const kw of keywords) {
-            if (norm.includes(kw)) return { ws: wb.Sheets[name], title: norm }
-        }
-    }
-    return null
+// 각 카테고리별 시트 이름 키워드. 사용자가 직접 시트를 선택하지 않을 때 fallback 으로 사용.
+const CATEGORY_KEYWORDS = {
+    channel:    ['잔넬'],
+    gomu:       ['스카시'],
+    acryl:      ['아크릴'],
+    goldSilver: ['금은경', '금경', '은경'],
+    epoxy:      ['에폭시'],
 }
 
-export async function parseXlsx(file, baseline) {
+const CATEGORY_LABELS = {
+    channel:    '잔넬',
+    gomu:       '스카시(고무)',
+    acryl:      '아크릴/포맥스',
+    goldSilver: '금은경',
+    epoxy:      '에폭시',
+}
+
+const CATEGORY_PARSERS = {
+    channel:    parseChannel,
+    gomu:       parseGomu,
+    acryl:      parseAcryl,
+    goldSilver: parseGoldSilver,
+    epoxy:      parseEpoxy,
+}
+
+function matchesKeywords(name, keywords) {
+    const norm = name.trim()
+    return keywords.some(kw => norm.includes(kw))
+}
+
+/**
+ * 워크북을 읽어 시트 목록과 카테고리별 자동 추정 후보를 돌려준다.
+ * 같은 키워드를 가진 시트가 여러 개면 — 보통 옛 버전이 위에 있고 최신이 아래 —
+ * 마지막 매칭을 디폴트로 잡는다.
+ */
+export async function inspectXlsx(file) {
     const buf = await file.arrayBuffer()
+    const wb = XLSX.read(buf, { type: 'array' })
+    const sheetNames = wb.SheetNames.slice()
+
+    const candidates = {}    // category → 매칭된 모든 시트 이름 (등장 순)
+    const suggested = {}     // category → 디폴트 추천 (마지막 매칭, 없으면 null)
+    for (const [cat, kws] of Object.entries(CATEGORY_KEYWORDS)) {
+        const hits = sheetNames.filter(n => matchesKeywords(n, kws))
+        candidates[cat] = hits
+        suggested[cat] = hits.length ? hits[hits.length - 1] : null
+    }
+
+    return {
+        fileName: file.name,
+        buffer: buf,
+        sheetNames,
+        candidates,
+        suggested,
+        categories: Object.keys(CATEGORY_KEYWORDS),
+        categoryLabels: CATEGORY_LABELS,
+    }
+}
+
+/**
+ * sheetMap: { channel: '잔넬단가표', gomu: '스카시2024', ... }
+ *   각 카테고리에 어떤 시트를 쓸지 명시. null/undefined 이면 해당 카테고리 건너뜀.
+ * sheetMap 미제공 시: 키워드 휴리스틱(첫 매칭) 으로 자동 선택 — 기존 동작과 동일.
+ */
+export async function parseXlsx(file, baseline, sheetMap = null) {
+    const buf = file instanceof ArrayBuffer ? file : await file.arrayBuffer()
     const wb = XLSX.read(buf, { type: 'array' })
 
     const calculators = {}
     const bcalc = baseline.calculators
 
-    const ch = findSheet(wb, '잔넬')
-    if (ch) {
-        ch.ws['!sheetName'] = ch.title
-        calculators.channel = parseChannel(ch.ws, bcalc.channel)
-    }
-
-    const go = findSheet(wb, '스카시')
-    if (go) {
-        go.ws['!sheetName'] = go.title
-        calculators.gomu = parseGomu(go.ws, bcalc.gomu)
-    }
-
-    const ac = findSheet(wb, '아크릴')
-    if (ac) {
-        ac.ws['!sheetName'] = ac.title
-        calculators.acryl = parseAcryl(ac.ws, bcalc.acryl)
-    }
-
-    const gs = findSheet(wb, '금은경', '금경', '은경')
-    if (gs) {
-        gs.ws['!sheetName'] = gs.title
-        calculators.goldSilver = parseGoldSilver(gs.ws, bcalc.goldSilver)
-    }
-
-    const ep = findSheet(wb, '에폭시')
-    if (ep) {
-        ep.ws['!sheetName'] = ep.title
-        calculators.epoxy = parseEpoxy(ep.ws, bcalc.epoxy)
+    for (const [cat, parser] of Object.entries(CATEGORY_PARSERS)) {
+        let sheetName = sheetMap?.[cat] ?? null
+        if (!sheetName) {
+            sheetName = wb.SheetNames.find(n => matchesKeywords(n, CATEGORY_KEYWORDS[cat])) || null
+        }
+        if (!sheetName) continue
+        const ws = wb.Sheets[sheetName]
+        if (!ws) continue
+        ws['!sheetName'] = sheetName
+        calculators[cat] = parser(ws, bcalc[cat])
     }
 
     return {
         _meta: {
             version: 'excel-parsed',
-            extractedFrom: file.name,
+            extractedFrom: file?.name || '(buffer)',
             extractedAt: new Date().toISOString(),
             extractor: 'browser:parseXlsx',
+            sheetMap: sheetMap || null,
         },
         calculators,
     }
