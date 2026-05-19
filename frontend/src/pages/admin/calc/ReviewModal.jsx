@@ -1,12 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
 
-const PATH_LABELS = {
+/**
+ * 변경점 검토 모달.
+ *
+ * 업로드한 엑셀의 원래 모양(행=사이즈/밴드, 열=type) 그대로 표로 보여주고,
+ * 변경된 셀만 시각적으로 강조한다. 사용자가 잔넬만 업로드하면 잔넬 표만 노출.
+ *
+ * 셀 표시:
+ *   - 변경 없음:  회색 작은 가격
+ *   - 변경 있음:  취소선 옛 가격 + 굵은 새 가격 + 퍼센트 변화
+ *   - 셀 클릭 → 적용/유지 토글
+ *   - 의심(0누락/이상치/하락): 배경 톤 + 짧은 태그
+ *
+ * 적용 클릭 → 확인 다이얼로그 → onApply(decisions).
+ */
+
+const CAT_LABELS = {
     channel:    '잔넬',
-    led:        'LED',
-    frame:      '후렘',
+    gomu:       '고무스카시',
+    acryl:      '아크릴/포맥스',
     epoxy:      '에폭시',
-    acryl:      '아크릴',
-    gomu:       '고무',
     goldSilver: '금은경',
 }
 
@@ -16,87 +29,73 @@ const TYPE_LABELS = {
     ilcheType: '일체형',            takaType: '타카',
     stenAlumCap: '스텐알미늄캡',    stenOsai: '스텐오사이',
     stenBack: '스텐후광',           goldSten: '골드스텐',
-    galvalume: '갈바',              stainless: '스텐',
-    korean: '한글',                 englishNumber: '영문/숫자',
-    eng: '영문',                    kor: '한글',
-    gold: '금경',                   silver: '은경',
+}
+
+const TT_LABELS = {
+    korean: '한글', englishNumber: '영문/숫자', '한글': '한글', '영문': '영문',
+}
+
+const MAT_LABELS = {
+    galvalume: '갈바', stainless: '스텐', gold: '금경', silver: '은경',
 }
 
 const SUSPICION_META = {
-    digit_missing:      { label: '0 누락',   tone: 'high' },
-    extra_digit:        { label: '0 추가',   tone: 'high' },
-    monotonicity_break: { label: '이상치',   tone: 'medium' },
-    price_decreased:    { label: '가격 하락', tone: 'medium' },
-    clean_change:       { label: '인상',     tone: 'ok' },
-}
-
-function humanizePath(path) {
-    const parts = path.split('.')
-    const root = PATH_LABELS[parts[0]] || parts[0]
-    const rest = parts.slice(1).map(p => TYPE_LABELS[p] || p).join(' · ')
-    return `${root} · ${rest}`
+    digit_missing:      { label: '0누락',   tone: 'high' },
+    extra_digit:        { label: '0추가',   tone: 'high' },
+    monotonicity_break: { label: '이상치',  tone: 'medium' },
+    price_decreased:    { label: '하락',    tone: 'medium' },
+    clean_change:       { label: '인상',    tone: 'ok' },
 }
 
 function isSuspicious(item) {
     return item.severity === 'high' || item.severity === 'medium'
 }
 
-function severityWeight(s) {
-    return s === 'high' ? 3 : s === 'medium' ? 2 : s === 'info' ? 1 : 0
+function sortBands(bands) {
+    return bands.slice().sort((a, b) => bandSortKey(a) - bandSortKey(b))
+}
+function bandSortKey(band) {
+    const cleaned = String(band).replace(/mm/g, '').replace(/\s/g, '')
+    if (cleaned.startsWith('~')) return parseInt(cleaned.slice(1), 10) || 0
+    const m = cleaned.match(/^(\d+)/)
+    return m ? parseInt(m[1], 10) : 0
 }
 
-function formatDelta(b, x) {
-    if (b == null || x == null) return null
-    const diff = x - b
-    const pct = b ? ((x - b) / b) * 100 : 0
-    return { diff, pct }
-}
-
-/**
- * 변경점 검토 모달.
- *
- * 모든 변경 셀(정상 인상 + 의심 + 신규 + 빈칸)을 표로 보여주고,
- * 사용자가 행별로 [엑셀 적용 / 현재 유지] 결정.
- *
- * 기본값:
- *  - 정상 인상(clean_change)  : 엑셀 적용 (ON)
- *  - 의심 셀 (high / medium)  : 현재 유지 (OFF)
- *  - 신규(missing_in_baseline) clean: 엑셀 적용 (ON), 이상치: OFF
- *  - 빈칸(missing_in_excel)  : 항상 현재 유지 (체크 불가)
- *
- * 적용 클릭 → 확인 다이얼로그 한번 더 → onApply(decisions).
- */
 export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
-    const allChanges = useMemo(() => {
+    // 변경점이 있는 카테고리만 노출 (parsed 에 들어있고 변경 셀이 있는 카테고리)
+    const availableCats = useMemo(() => {
+        if (!diff) return []
+        return Object.keys(diff.calculators).filter(c => {
+            const calc = diff.calculators[c]
+            return calc.diffs?.length > 0
+        })
+    }, [diff])
+
+    const singleCat = availableCats.length === 1
+    const [activeCat, setActiveCat] = useState(availableCats[0] || '')
+
+    // diff items 전부 (모든 카테고리)
+    const allItems = useMemo(() => {
         if (!diff) return []
         const out = []
         for (const [calcKey, calc] of Object.entries(diff.calculators)) {
-            for (const item of calc.diffs) {
-                // unchanged 는 출력 안 함 — 변경 없음
-                out.push({ ...item, calcKey })
-            }
+            for (const item of calc.diffs) out.push({ ...item, calcKey })
         }
         return out
     }, [diff])
 
+    // 기본 결정: 정상 인상 ON, 의심 OFF, 빈칸 baseline 유지
     const initialDecisions = useMemo(() => {
         const d = {}
-        for (const item of allChanges) {
-            if (item.status === 'missing_in_excel') {
-                d[item.path] = 'baseline'             // 빈칸 → 항상 baseline
-            } else if (isSuspicious(item)) {
-                d[item.path] = 'baseline'             // 의심 → 기본 OFF
-            } else {
-                d[item.path] = 'excel'                // 정상 → 기본 ON
-            }
+        for (const item of allItems) {
+            if (item.status === 'missing_in_excel')   d[item.path] = 'baseline'
+            else if (isSuspicious(item))              d[item.path] = 'baseline'
+            else                                       d[item.path] = 'excel'
         }
         return d
-    }, [allChanges])
+    }, [allItems])
 
     const [decisions, setDecisions] = useState(initialDecisions)
-    const [categoryFilter, setCategoryFilter] = useState('all')      // 'all' | calcKey
-    const [reviewOnly, setReviewOnly] = useState(false)
-    const [query, setQuery] = useState('')
     const [confirming, setConfirming] = useState(false)
 
     useEffect(() => { setDecisions(initialDecisions) }, [initialDecisions])
@@ -112,59 +111,14 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
         return () => window.removeEventListener('keydown', onKey)
     }, [onCancel, confirming])
 
-    // 카테고리별 카운트 (탭 배지)
-    const catCounts = useMemo(() => {
-        const c = { all: allChanges.length }
-        for (const item of allChanges) c[item.calcKey] = (c[item.calcKey] || 0) + 1
-        return c
-    }, [allChanges])
-
-    const filteredChanges = useMemo(() => {
-        let arr = allChanges
-        if (categoryFilter !== 'all') arr = arr.filter(it => it.calcKey === categoryFilter)
-        if (reviewOnly) arr = arr.filter(it => isSuspicious(it) || it.status === 'missing_in_excel')
-        if (query.trim()) {
-            const q = query.trim().toLowerCase()
-            arr = arr.filter(it => humanizePath(it.path).toLowerCase().includes(q) || it.path.toLowerCase().includes(q))
-        }
-        // 의심 셀 먼저, 그 다음 정렬은 path 기준
-        const sorted = arr.slice().sort((a, b) => {
-            const sa = severityWeight(a.severity)
-            const sb = severityWeight(b.severity)
-            if (sa !== sb) return sb - sa
-            return a.path.localeCompare(b.path)
-        })
-        return sorted
-    }, [allChanges, categoryFilter, reviewOnly, query])
-
-    // 통계 — 전체 기준
-    const stats = useMemo(() => {
-        let toApply = 0, toKeep = 0, suspicious = 0, newCells = 0, blankCells = 0
-        for (const item of allChanges) {
-            if (item.status === 'missing_in_excel') blankCells++
-            if (item.status === 'missing_in_baseline') newCells++
-            if (isSuspicious(item)) suspicious++
-            const d = decisions[item.path]
-            if (d === 'excel') toApply++
-            else toKeep++
-        }
-        return { toApply, toKeep, suspicious, newCells, blankCells, total: allChanges.length }
-    }, [allChanges, decisions])
-
-    // 현재 필터에 보이는 것들의 선택 상태 (전체 선택 토글에 사용)
-    const filterSelection = useMemo(() => {
-        let on = 0, off = 0, blockable = 0
-        for (const it of filteredChanges) {
-            if (it.status === 'missing_in_excel') continue       // 토글 대상 아님
-            blockable++
-            if (decisions[it.path] === 'excel') on++
-            else off++
-        }
-        return { on, off, blockable, allOn: blockable > 0 && on === blockable, allOff: on === 0 }
-    }, [filteredChanges, decisions])
-
     function setDecision(path, value) {
         setDecisions(d => ({ ...d, [path]: value }))
+    }
+
+    function toggleCell(item) {
+        if (item.status === 'missing_in_excel') return
+        const cur = decisions[item.path]
+        setDecision(item.path, cur === 'excel' ? 'baseline' : 'excel')
     }
 
     function bulkSet(items, value) {
@@ -178,13 +132,21 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
         })
     }
 
-    function handleApplyClick() {
-        setConfirming(true)
-    }
+    const stats = useMemo(() => {
+        let toApply = 0, toKeep = 0, suspicious = 0
+        for (const item of allItems) {
+            if (isSuspicious(item)) suspicious++
+            if (decisions[item.path] === 'excel') toApply++
+            else toKeep++
+        }
+        return { toApply, toKeep, suspicious, total: allItems.length }
+    }, [allItems, decisions])
 
-    function handleConfirmApply() {
-        onApply(decisions)
-    }
+    // 활성 카테고리의 변경 항목 (일괄 액션에 사용)
+    const activeCatItems = useMemo(
+        () => allItems.filter(it => it.calcKey === activeCat),
+        [allItems, activeCat],
+    )
 
     return (
         <div className="qu-modal-backdrop">
@@ -192,158 +154,71 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                 <header className="qu-modal-head">
                     <div>
                         <div className="qu-modal-eyebrow">단계 2 / 2 · 바뀐 곳 확인</div>
-                        <h2 className="qu-modal-title">{fileName}</h2>
+                        <h2 className="qu-modal-title">
+                            {singleCat ? `${CAT_LABELS[availableCats[0]]} 단가표 비교` : '단가표 비교'}
+                            <span className="qu-modal-title-file">· {fileName}</span>
+                        </h2>
                         <div className="qu-modal-sub">
-                            바뀐 항목 <strong>{stats.total}</strong>건 중 <strong>{stats.toApply}</strong>건을 새 단가로 바꾸고, {stats.toKeep}건은 그대로 유지할 거예요.
-                            {stats.suspicious > 0 && <> · <span className="qu-text-warn">⚠ 한 번 더 봐줄 항목 {stats.suspicious}건</span></>}
-                            {stats.blankCells > 0 && <> · 엑셀에 빈칸 {stats.blankCells}건</>}
+                            바뀐 셀 <strong>{stats.total}</strong>곳 중 <strong className="qu-text-apply">{stats.toApply}</strong>곳을 새 단가로 바꿔요.
+                            {stats.suspicious > 0 && <> · <span className="qu-text-warn">⚠ 한 번 더 봐줄 셀 {stats.suspicious}곳</span></>}
                         </div>
                     </div>
                     <button type="button" className="qu-modal-close" onClick={onCancel} aria-label="닫기">×</button>
                 </header>
 
-                <div className="qu-modal-toolbar">
-                    <div className="qu-tabs">
-                        <button
-                            type="button"
-                            className={`qu-tab ${categoryFilter === 'all' ? 'active' : ''}`}
-                            onClick={() => setCategoryFilter('all')}
-                        >전체 <span className="qu-tab-count">{catCounts.all || 0}</span></button>
-                        {['channel', 'gomu', 'acryl', 'epoxy', 'goldSilver'].map(c => (
-                            catCounts[c] ? (
+                {!singleCat && availableCats.length > 1 && (
+                    <div className="qu-modal-toolbar">
+                        <div className="qu-tabs">
+                            {availableCats.map(c => (
                                 <button
                                     key={c}
                                     type="button"
-                                    className={`qu-tab ${categoryFilter === c ? 'active' : ''}`}
-                                    onClick={() => setCategoryFilter(c)}
-                                >{PATH_LABELS[c]} <span className="qu-tab-count">{catCounts[c]}</span></button>
-                            ) : null
-                        ))}
+                                    className={`qu-tab ${activeCat === c ? 'active' : ''}`}
+                                    onClick={() => setActiveCat(c)}
+                                >
+                                    {CAT_LABELS[c]}
+                                    <span className="qu-tab-count">
+                                        {diff.calculators[c].diffs.length}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
                     </div>
-
-                    <div className="qu-toolbar-right">
-                        <input
-                            type="text"
-                            className="qu-search"
-                            placeholder="이름으로 찾기 (예: 갈바, 250)"
-                            value={query}
-                            onChange={e => setQuery(e.target.value)}
-                        />
-                        <label className="qu-toggle">
-                            <input
-                                type="checkbox"
-                                checked={reviewOnly}
-                                onChange={e => setReviewOnly(e.target.checked)}
-                            />
-                            한 번 더 봐줄 항목만 보기
-                        </label>
-                    </div>
-                </div>
+                )}
 
                 <div className="qu-bulk-bar">
                     <div className="qu-bulk-left">
                         <button
                             type="button"
                             className="qu-bulk-btn"
-                            disabled={filterSelection.blockable === 0}
-                            onClick={() => bulkSet(filteredChanges, 'excel')}
-                        >보이는 항목 전부 체크</button>
+                            onClick={() => bulkSet(activeCatItems, 'excel')}
+                        >전부 체크</button>
                         <button
                             type="button"
                             className="qu-bulk-btn"
-                            disabled={filterSelection.blockable === 0}
-                            onClick={() => bulkSet(filteredChanges, 'baseline')}
-                        >보이는 항목 전부 해제</button>
+                            onClick={() => bulkSet(activeCatItems, 'baseline')}
+                        >전부 해제</button>
                         <button
                             type="button"
                             className="qu-bulk-btn"
-                            onClick={() => bulkSet(filteredChanges.filter(it => !isSuspicious(it)), 'excel')}
+                            onClick={() => bulkSet(activeCatItems.filter(it => !isSuspicious(it)), 'excel')}
                         >정상 인상만 체크</button>
                     </div>
                     <div className="qu-bulk-right">
-                        지금 보이는 <strong>{filteredChanges.length}</strong>건
-                        {filterSelection.blockable > 0 && (
-                            <> 중 <strong>{filterSelection.on}</strong>건 체크됨</>
-                        )}
+                        <span className="qu-legend"><i className="qu-legend-dot tone-ok"/> 정상 인상</span>
+                        <span className="qu-legend"><i className="qu-legend-dot tone-medium"/> 한번 더 확인</span>
+                        <span className="qu-legend"><i className="qu-legend-dot tone-high"/> 위험 (0 누락 등)</span>
                     </div>
                 </div>
 
-                <div className="qu-modal-body qu-modal-body-table">
-                    {filteredChanges.length === 0 ? (
-                        <div className="qu-empty">바뀐 곳이 없어요. 다 똑같습니다.</div>
-                    ) : (
-                        <table className="qu-diff-table">
-                            <colgroup>
-                                <col style={{ width: 44 }} />
-                                <col style={{ width: 100 }} />
-                                <col />
-                                <col style={{ width: 120 }} />
-                                <col style={{ width: 120 }} />
-                                <col style={{ width: 110 }} />
-                            </colgroup>
-                            <thead>
-                                <tr>
-                                    <th></th>
-                                    <th>상태</th>
-                                    <th>항목</th>
-                                    <th className="num">지금 단가</th>
-                                    <th className="num">엑셀 단가</th>
-                                    <th className="num">차이</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredChanges.map(item => {
-                                    const susp = item.suspicion ? SUSPICION_META[item.suspicion] : null
-                                    const tone = susp?.tone || 'neutral'
-                                    const isBlank = item.status === 'missing_in_excel'
-                                    const isNew = item.status === 'missing_in_baseline'
-                                    const checked = decisions[item.path] === 'excel'
-                                    const delta = formatDelta(item.baselineValue, item.excelValue)
-                                    return (
-                                        <tr
-                                            key={item.path}
-                                            className={`qu-diff-row tone-${tone} ${checked ? 'on' : 'off'} ${isBlank ? 'blank' : ''}`}
-                                            onClick={() => !isBlank && setDecision(item.path, checked ? 'baseline' : 'excel')}
-                                        >
-                                            <td className="qu-diff-check" onClick={e => e.stopPropagation()}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    disabled={isBlank}
-                                                    onChange={e => setDecision(item.path, e.target.checked ? 'excel' : 'baseline')}
-                                                />
-                                            </td>
-                                            <td>
-                                                <div className="qu-diff-tags">
-                                                    {susp && <span className={`qu-tag tone-${susp.tone}`}>{susp.label}</span>}
-                                                    {isNew && <span className="qu-tag tone-info">신규</span>}
-                                                    {isBlank && <span className="qu-tag tone-info">빈칸</span>}
-                                                    {!susp && !isNew && !isBlank && <span className="qu-tag tone-ok">정상</span>}
-                                                </div>
-                                            </td>
-                                            <td className="qu-diff-path">
-                                                <div className="qu-diff-path-main">{humanizePath(item.path)}</div>
-                                                <div className="qu-diff-path-msg">{item.message}</div>
-                                            </td>
-                                            <td className="num qu-diff-val">
-                                                {item.baselineValue != null ? item.baselineValue.toLocaleString() : '—'}
-                                            </td>
-                                            <td className="num qu-diff-val">
-                                                {item.excelValue != null ? item.excelValue.toLocaleString() : <em>(빈칸)</em>}
-                                            </td>
-                                            <td className="num qu-diff-delta">
-                                                {delta ? (
-                                                    <span className={delta.diff >= 0 ? 'pos' : 'neg'}>
-                                                        {delta.diff >= 0 ? '+' : ''}{delta.diff.toLocaleString()}
-                                                        <small>{delta.pct >= 0 ? '+' : ''}{delta.pct.toFixed(1)}%</small>
-                                                    </span>
-                                                ) : '—'}
-                                            </td>
-                                        </tr>
-                                    )
-                                })}
-                            </tbody>
-                        </table>
+                <div className="qu-modal-body qu-modal-body-grid">
+                    {activeCat && (
+                        <DiffGrid
+                            calcKey={activeCat}
+                            diff={diff.calculators[activeCat]}
+                            decisions={decisions}
+                            onToggleCell={toggleCell}
+                        />
                     )}
                 </div>
 
@@ -352,12 +227,12 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                     <button
                         type="button"
                         className="qu-btn-apply"
-                        onClick={handleApplyClick}
+                        onClick={() => setConfirming(true)}
                         disabled={stats.toApply === 0}
                     >
                         {stats.toApply === 0
-                            ? '체크된 항목이 없어요'
-                            : `체크한 ${stats.toApply}건 단가표에 반영하기`}
+                            ? '체크된 셀이 없어요'
+                            : `체크한 ${stats.toApply}곳 단가표에 반영하기`}
                     </button>
                 </footer>
 
@@ -365,9 +240,9 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
                     <ConfirmApplyDialog
                         toApply={stats.toApply}
                         toKeep={stats.toKeep}
-                        suspiciousApplying={countSuspiciousApplying(allChanges, decisions)}
+                        suspiciousApplying={countSuspiciousApplying(allItems, decisions)}
                         onCancel={() => setConfirming(false)}
-                        onConfirm={handleConfirmApply}
+                        onConfirm={() => onApply(decisions)}
                     />
                 )}
             </div>
@@ -375,13 +250,341 @@ export default function ReviewModal({ diff, fileName, onCancel, onApply }) {
     )
 }
 
-function countSuspiciousApplying(allChanges, decisions) {
+function countSuspiciousApplying(allItems, decisions) {
     let n = 0
-    for (const it of allChanges) {
-        if (isSuspicious(it) && decisions[it.path] === 'excel') n++
-    }
+    for (const it of allItems) if (isSuspicious(it) && decisions[it.path] === 'excel') n++
     return n
 }
+
+/* ---------- 카테고리별 표 라우팅 ---------- */
+
+function DiffGrid({ calcKey, diff, decisions, onToggleCell }) {
+    // diff.diffs 를 path 별 map 으로
+    const itemByPath = useMemo(() => {
+        const m = new Map()
+        for (const it of diff.diffs) m.set(it.path, it)
+        return m
+    }, [diff])
+
+    if (calcKey === 'channel')    return <ChannelGrid    diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
+    if (calcKey === 'gomu')       return <GomuGrid       diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
+    if (calcKey === 'acryl')      return <AcrylGrid      diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
+    if (calcKey === 'epoxy')      return <EpoxyGrid      diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
+    if (calcKey === 'goldSilver') return <GoldSilverGrid diff={diff} itemByPath={itemByPath} decisions={decisions} onToggleCell={onToggleCell} />
+    return null
+}
+
+/* ---------- 공통 셀 ---------- */
+
+function DiffCell({ item, decisions, onToggleCell }) {
+    if (!item) {
+        // 변경 없음 — diff 에 없는 셀. 공백.
+        return <td className="qu-dc unchanged">&nbsp;</td>
+    }
+    const susp = item.suspicion ? SUSPICION_META[item.suspicion] : null
+    const tone = susp?.tone || 'neutral'
+    const isOn = decisions[item.path] === 'excel'
+    const isBlank = item.status === 'missing_in_excel'
+    const isNew = item.status === 'missing_in_baseline'
+
+    const b = item.baselineValue
+    const x = item.excelValue
+    const delta = (b != null && x != null) ? { d: x - b, pct: b ? ((x - b) / b * 100) : 0 } : null
+
+    return (
+        <td
+            className={`qu-dc tone-${tone} ${isOn ? 'on' : 'off'} ${isBlank ? 'blank' : ''} ${isNew ? 'new' : ''}`}
+            onClick={() => onToggleCell(item)}
+        >
+            {susp && <span className={`qu-dc-tag tone-${susp.tone}`}>{susp.label}</span>}
+            {isNew && <span className="qu-dc-tag tone-info">신규</span>}
+            {isBlank && <span className="qu-dc-tag tone-info">빈칸</span>}
+
+            {b != null && (
+                <div className="qu-dc-old">{b.toLocaleString()}</div>
+            )}
+            <div className="qu-dc-new">
+                {x != null ? x.toLocaleString() : '—'}
+            </div>
+            {delta && (
+                <div className={`qu-dc-pct ${delta.d >= 0 ? 'pos' : 'neg'}`}>
+                    {delta.pct >= 0 ? '+' : ''}{delta.pct.toFixed(1)}%
+                </div>
+            )}
+            {isOn && <span className="qu-dc-check">✓</span>}
+        </td>
+    )
+}
+
+/* ---------- 잔넬 표 ---------- */
+
+const CHANNEL_TYPE_ORDER = [
+    'galvaBackEng', 'galvaBackKor', 'galvaOsai', 'galvaCap', 'ilcheType',
+    'takaType', 'stenAlumCap', 'stenOsai', 'stenBack', 'goldSten',
+]
+
+const CHANNEL_NEEDS_LANG = new Set([
+    'galvaOsai', 'galvaCap', 'stenAlumCap', 'stenOsai', 'stenBack', 'goldSten',
+])
+
+function ChannelGrid({ diff, itemByPath, decisions, onToggleCell }) {
+    // 컬럼: needsLang true 면 영/한 두 컬럼
+    const columns = []
+    for (const key of CHANNEL_TYPE_ORDER) {
+        if (CHANNEL_NEEDS_LANG.has(key)) {
+            columns.push({ key, lang: 'eng', label: TYPE_LABELS[key], subLabel: '영' })
+            columns.push({ key, lang: 'kor', label: TYPE_LABELS[key], subLabel: '한' })
+        } else {
+            columns.push({ key, lang: null, label: TYPE_LABELS[key] })
+        }
+    }
+
+    // 사이즈: diff path 에서 추출
+    const sizeSet = new Set()
+    for (const it of diff.diffs) {
+        const parts = it.path.split('.')
+        const size = parts[parts.length - 1]
+        if (/^\d+$/.test(size)) sizeSet.add(+size)
+    }
+    // baseline 사이즈도 일부 포함하면 좋지만 우선 변경 셀이 있는 사이즈만
+    const sizes = [...sizeSet].sort((a, b) => a - b)
+
+    return (
+        <div className="qu-grid-scroll">
+            <table className="qu-grid">
+                <thead>
+                    <tr>
+                        <th className="qu-grid-row-head">사이즈</th>
+                        {columns.map((c, i) => (
+                            <th key={i}>
+                                <div>{c.label}</div>
+                                {c.subLabel && <small>{c.subLabel}</small>}
+                            </th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {sizes.map(size => (
+                        <tr key={size}>
+                            <td className="qu-grid-row-head">{size}<small>mm</small></td>
+                            {columns.map((c, i) => {
+                                const path = c.lang
+                                    ? `channel.${c.key}.${c.lang}.${size}`
+                                    : `channel.${c.key}.${size}`
+                                return <DiffCell key={i} item={itemByPath.get(path)} decisions={decisions} onToggleCell={onToggleCell} />
+                            })}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+/* ---------- 고무스카시 표 ---------- */
+
+const GOMU_THICKNESS_ORDER = ['10T', '10T-금은색', '20,30T', '20,30T-금은색', '50T', '50T-금은색']
+
+function GomuGrid({ diff, itemByPath, decisions, onToggleCell }) {
+    const bandSet = new Set()
+    for (const it of diff.diffs) {
+        const parts = it.path.split('.')
+        bandSet.add(parts[parts.length - 1])
+    }
+    const bands = sortBands([...bandSet])
+
+    return (
+        <div className="qu-grid-scroll">
+            <table className="qu-grid">
+                <thead>
+                    <tr>
+                        <th className="qu-grid-row-head">사이즈</th>
+                        {GOMU_THICKNESS_ORDER.map(tk => <th key={tk}>{tk}</th>)}
+                    </tr>
+                </thead>
+                <tbody>
+                    {bands.map(band => (
+                        <tr key={band}>
+                            <td className="qu-grid-row-head">{band}</td>
+                            {GOMU_THICKNESS_ORDER.map(tk => (
+                                <DiffCell key={tk} item={itemByPath.get(`gomu.${tk}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                            ))}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+/* ---------- 아크릴 표 ---------- */
+
+const ACRYL_THICKNESSES = ['2T', '3T', '5T', '8T', '10T', '15T', '20T']
+const ACRYL_TT = ['영문', '한글']
+
+function AcrylGrid({ diff, itemByPath, decisions, onToggleCell }) {
+    const bandSet = new Set()
+    for (const it of diff.diffs) {
+        const parts = it.path.split('.')
+        bandSet.add(parts[parts.length - 1])
+    }
+    const bands = sortBands([...bandSet])
+
+    const columns = []
+    for (const tk of ACRYL_THICKNESSES) {
+        for (const tt of ACRYL_TT) columns.push({ tk, tt })
+    }
+
+    return (
+        <div className="qu-grid-scroll">
+            <table className="qu-grid">
+                <thead>
+                    <tr>
+                        <th className="qu-grid-row-head" rowSpan={2}>사이즈</th>
+                        {ACRYL_THICKNESSES.map(tk => (
+                            <th key={tk} colSpan={ACRYL_TT.length} className="qu-grid-group">{tk}</th>
+                        ))}
+                    </tr>
+                    <tr>
+                        {columns.map((c, i) => (
+                            <th key={i}><small>{c.tt}</small></th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {bands.map(band => (
+                        <tr key={band}>
+                            <td className="qu-grid-row-head">{band}</td>
+                            {columns.map((c, i) => (
+                                <DiffCell key={i} item={itemByPath.get(`acryl.${c.tk}.${c.tt}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                            ))}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+/* ---------- 에폭시 표 ---------- */
+
+const EPOXY_STROKES = ['30', '50', '70', '90', '110']
+
+function EpoxyGrid({ diff, itemByPath, decisions, onToggleCell }) {
+    // diff path: epoxy.<mat>.<tt>.<size>.<stroke>
+    // 재질·텍스트타입별 sub-table
+    const groups = new Map()
+    for (const it of diff.diffs) {
+        const parts = it.path.split('.')
+        const key = `${parts[1]}|${parts[2]}`
+        if (!groups.has(key)) groups.set(key, { mat: parts[1], tt: parts[2], sizes: new Set() })
+        groups.get(key).sizes.add(parts[3])
+    }
+
+    const blocks = []
+    for (const { mat, tt, sizes } of groups.values()) {
+        const sizeArr = [...sizes].map(Number).sort((a, b) => a - b)
+        blocks.push({ mat, tt, sizes: sizeArr })
+    }
+
+    if (blocks.length === 0) return <div className="qu-empty">바뀐 곳이 없어요.</div>
+
+    return (
+        <div className="qu-epoxy-blocks">
+            {blocks.map((blk, i) => (
+                <div key={i} className="qu-epoxy-block">
+                    <div className="qu-epoxy-block-title">
+                        {MAT_LABELS[blk.mat] || blk.mat} · {TT_LABELS[blk.tt] || blk.tt}
+                    </div>
+                    <div className="qu-grid-scroll">
+                        <table className="qu-grid">
+                            <thead>
+                                <tr>
+                                    <th className="qu-grid-row-head">사이즈</th>
+                                    {EPOXY_STROKES.map(s => <th key={s}>{s}획</th>)}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {blk.sizes.map(size => (
+                                    <tr key={size}>
+                                        <td className="qu-grid-row-head">~{size}</td>
+                                        {EPOXY_STROKES.map(st => (
+                                            <DiffCell key={st} item={itemByPath.get(`epoxy.${blk.mat}.${blk.tt}.${size}.${st}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                                        ))}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            ))}
+        </div>
+    )
+}
+
+/* ---------- 금은경 표 ---------- */
+
+function GoldSilverGrid({ diff, itemByPath, decisions, onToggleCell }) {
+    // diff path: goldSilver.<mat>.<tk>.<tt>.<band>
+    // 컬럼/밴드 수집
+    const bandSet = new Set()
+    const colSet = new Map()  // key: mat|tk|tt → {mat, tk, tt}
+    for (const it of diff.diffs) {
+        const parts = it.path.split('.')
+        bandSet.add(parts[4])
+        const ckey = `${parts[1]}|${parts[2]}|${parts[3]}`
+        if (!colSet.has(ckey)) colSet.set(ckey, { mat: parts[1], tk: parts[2], tt: parts[3] })
+    }
+    const bands = sortBands([...bandSet])
+    const columns = [...colSet.values()].sort((a, b) => {
+        if (a.mat !== b.mat) return a.mat === 'gold' ? -1 : 1
+        if (a.tk !== b.tk) return a.tk.localeCompare(b.tk)
+        return a.tt === '영문' ? -1 : 1
+    })
+
+    // material 그룹 헤더
+    const matGroups = []
+    for (const c of columns) {
+        const last = matGroups[matGroups.length - 1]
+        if (last && last.mat === c.mat) last.count++
+        else matGroups.push({ mat: c.mat, count: 1 })
+    }
+
+    return (
+        <div className="qu-grid-scroll">
+            <table className="qu-grid">
+                <thead>
+                    <tr>
+                        <th className="qu-grid-row-head" rowSpan={2}>사이즈</th>
+                        {matGroups.map((g, i) => (
+                            <th key={i} colSpan={g.count} className="qu-grid-group">{MAT_LABELS[g.mat] || g.mat}</th>
+                        ))}
+                    </tr>
+                    <tr>
+                        {columns.map((c, i) => (
+                            <th key={i}>
+                                {c.tk}
+                                <small>{TT_LABELS[c.tt] || c.tt}</small>
+                            </th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {bands.map(band => (
+                        <tr key={band}>
+                            <td className="qu-grid-row-head">{band}</td>
+                            {columns.map((c, i) => (
+                                <DiffCell key={i} item={itemByPath.get(`goldSilver.${c.mat}.${c.tk}.${c.tt}.${band}`)} decisions={decisions} onToggleCell={onToggleCell} />
+                            ))}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    )
+}
+
+/* ---------- 확인 다이얼로그 ---------- */
 
 function ConfirmApplyDialog({ toApply, toKeep, suspiciousApplying, onCancel, onConfirm }) {
     return (
@@ -390,17 +593,16 @@ function ConfirmApplyDialog({ toApply, toKeep, suspiciousApplying, onCancel, onC
                 <div className="qu-confirm-title">정말 단가표에 반영할까요?</div>
                 <div className="qu-confirm-body">
                     <div className="qu-confirm-line">
-                        <strong className="big">{toApply}</strong>건이 엑셀에 적힌 새 단가로 바뀝니다.
+                        <strong className="big">{toApply}</strong>곳이 새 단가로 바뀝니다.
                     </div>
                     {toKeep > 0 && (
                         <div className="qu-confirm-line muted">
-                            나머지 {toKeep}건은 지금 단가 그대로 유지돼요.
+                            나머지 {toKeep}곳은 지금 단가 그대로 유지돼요.
                         </div>
                     )}
                     {suspiciousApplying > 0 && (
                         <div className="qu-confirm-warn">
-                            ⚠ 한 번 더 봐줄 항목(0 빠짐·이상치 등) 중 <strong>{suspiciousApplying}건</strong>이 포함돼 있어요.
-                            정말 이대로 반영해도 괜찮은지 다시 한 번 확인해주세요.
+                            ⚠ 한 번 더 봐줄 셀(0누락/이상치 등) 중 <strong>{suspiciousApplying}곳</strong>이 포함돼 있어요.
                         </div>
                     )}
                     <div className="qu-confirm-meta">

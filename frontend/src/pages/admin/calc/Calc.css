@@ -1392,6 +1392,245 @@
 
 
 /* ===================================================================
+ * 검토 모달 — 엑셀 모양 표 (행=사이즈, 열=type) + 변경 셀 강조
+ * =================================================================== */
+
+.qu-modal-title-file {
+    font-size: 13px;
+    font-weight: 500;
+    color: #64748b;
+    margin-left: 6px;
+}
+.qu-text-apply { color: #1d4ed8; font-weight: 800; }
+
+.qu-modal-body-grid {
+    padding: 0;
+    background: #fafbfc;
+}
+
+.qu-bulk-bar .qu-bulk-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.qu-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #475569;
+    font-weight: 600;
+}
+.qu-legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 3px;
+    display: inline-block;
+}
+.qu-legend-dot.tone-ok     { background: #dcfce7; border: 1px solid #86efac; }
+.qu-legend-dot.tone-medium { background: #fde68a; border: 1px solid #f59e0b; }
+.qu-legend-dot.tone-high   { background: #fecaca; border: 1px solid #ef4444; }
+
+.qu-grid-scroll {
+    overflow: auto;
+    max-height: 100%;
+    background: #fff;
+}
+
+.qu-grid {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+    color: #0f172a;
+    font-variant-numeric: tabular-nums;
+    table-layout: auto;
+}
+
+.qu-grid thead th {
+    position: sticky;
+    top: 0;
+    background: #1e293b;
+    color: #fff;
+    padding: 9px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    border-right: 1px solid #334155;
+    border-bottom: 1px solid #0f172a;
+    z-index: 2;
+    white-space: nowrap;
+    min-width: 96px;
+    letter-spacing: -0.005em;
+}
+.qu-grid thead th small {
+    display: block;
+    font-size: 9px;
+    opacity: 0.75;
+    font-weight: 600;
+    margin-top: 2px;
+}
+.qu-grid thead th.qu-grid-group {
+    background: #0f172a;
+    border-right: 1px solid #1e293b;
+}
+.qu-grid thead th.qu-grid-row-head {
+    left: 0;
+    z-index: 3;
+    background: #0f172a;
+    min-width: 80px;
+}
+
+.qu-grid tbody td.qu-grid-row-head {
+    position: sticky;
+    left: 0;
+    background: #f1f5f9;
+    color: #0f172a;
+    font-weight: 800;
+    font-size: 13px;
+    text-align: center;
+    border-right: 2px solid #cbd5e1;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 10px;
+    z-index: 1;
+}
+.qu-grid tbody td.qu-grid-row-head small {
+    display: inline-block;
+    font-size: 9px;
+    color: #64748b;
+    margin-left: 2px;
+    font-weight: 600;
+}
+
+/* === 셀 (diff) === */
+
+.qu-grid tbody td.qu-dc {
+    padding: 6px 8px;
+    border-right: 1px solid #f1f5f9;
+    border-bottom: 1px solid #f1f5f9;
+    text-align: center;
+    vertical-align: middle;
+    position: relative;
+    min-width: 96px;
+}
+
+/* 변경 없음 — 빈 셀 */
+.qu-dc.unchanged {
+    background: #fafbfc;
+}
+
+/* 변경 셀 - 토대 */
+.qu-dc:not(.unchanged) {
+    cursor: pointer;
+    transition: background 0.1s;
+    padding: 8px 8px;
+}
+.qu-dc:not(.unchanged):hover {
+    filter: brightness(0.96);
+}
+
+/* 톤별 배경 (변경 셀) */
+.qu-dc.tone-neutral { background: #f0f9ff; }
+.qu-dc.tone-ok      { background: #f0fdf4; }
+.qu-dc.tone-medium  { background: #fffbeb; }
+.qu-dc.tone-high    { background: #fef2f2; }
+
+/* 체크된 셀 - 굵은 테두리 + 진한 배경 */
+.qu-dc.on { box-shadow: inset 0 0 0 2px #3b82f6; }
+.qu-dc.on.tone-ok      { background: #dcfce7; box-shadow: inset 0 0 0 2px #16a34a; }
+.qu-dc.on.tone-medium  { background: #fef3c7; box-shadow: inset 0 0 0 2px #f59e0b; }
+.qu-dc.on.tone-high    { background: #fee2e2; box-shadow: inset 0 0 0 2px #ef4444; }
+.qu-dc.on.tone-neutral { background: #dbeafe; box-shadow: inset 0 0 0 2px #3b82f6; }
+
+/* 해제된 셀 - 흐림 */
+.qu-dc.off:not(.blank) { opacity: 0.55; }
+
+/* 빈칸 — 클릭 불가 */
+.qu-dc.blank { cursor: default; opacity: 0.6; }
+
+/* 셀 내부 요소 */
+.qu-dc-tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-bottom: 3px;
+    letter-spacing: 0.02em;
+    line-height: 1.4;
+}
+.qu-dc-tag.tone-high   { background: #fecaca; color: #991b1b; }
+.qu-dc-tag.tone-medium { background: #fde68a; color: #92400e; }
+.qu-dc-tag.tone-ok     { background: #bbf7d0; color: #166534; }
+.qu-dc-tag.tone-info   { background: #bfdbfe; color: #1e40af; }
+
+.qu-dc-old {
+    font-size: 11px;
+    color: #94a3b8;
+    text-decoration: line-through;
+    line-height: 1.2;
+    font-weight: 600;
+}
+.qu-dc-new {
+    font-size: 15px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.2;
+    margin-top: 2px;
+    letter-spacing: -0.01em;
+}
+.qu-dc.on .qu-dc-new { color: #1d4ed8; }
+.qu-dc.tone-high .qu-dc-new { color: #991b1b; }
+.qu-dc.tone-medium .qu-dc-new { color: #92400e; }
+.qu-dc-pct {
+    font-size: 11px;
+    font-weight: 800;
+    margin-top: 2px;
+    letter-spacing: -0.005em;
+}
+.qu-dc-pct.pos { color: #047857; }
+.qu-dc-pct.neg { color: #b91c1c; }
+
+.qu-dc-check {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    color: #1d4ed8;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+}
+.qu-dc.tone-high.on .qu-dc-check   { color: #991b1b; }
+.qu-dc.tone-medium.on .qu-dc-check { color: #92400e; }
+.qu-dc.tone-ok.on .qu-dc-check     { color: #166534; }
+
+
+/* === 에폭시 sub-tables === */
+
+.qu-epoxy-blocks {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 18px;
+}
+.qu-epoxy-block {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+}
+.qu-epoxy-block-title {
+    padding: 10px 14px;
+    background: #1e293b;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+}
+.qu-epoxy-block .qu-grid-scroll {
+    max-height: none;
+}
+
+
+/* ===================================================================
  * 적용 확인 다이얼로그 (검토 모달 위에 한번 더)
  * =================================================================== */
 
