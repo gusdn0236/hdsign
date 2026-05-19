@@ -29,62 +29,78 @@
     font-size: 16px;
 }
 
+/* Toolbar — 검색 인풋 한 줄 */
 .evidence-admin-toolbar {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 12px;
-    padding: 16px 18px;
-    background: #f7f7f8;
-    border: 1px solid #eaeaec;
-    border-radius: 10px;
-    margin-bottom: 20px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 24px;
 }
 
-.evidence-admin-field {
+.evidence-search-wrap {
+    position: relative;
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 13px;
-    color: #555;
+    align-items: center;
+    flex: 0 1 360px;
+    min-width: 240px;
 }
-.evidence-admin-field span {
-    font-weight: 500;
+.evidence-search-icon {
+    position: absolute;
+    left: 12px;
+    color: #888;
+    pointer-events: none;
 }
-.evidence-admin-field select,
-.evidence-admin-field input {
-    height: 36px;
-    padding: 0 10px;
+.evidence-search-input {
+    width: 100%;
+    height: 40px;
+    padding: 0 36px 0 36px;
     border: 1px solid #d9d9dd;
-    border-radius: 6px;
+    border-radius: 999px;
     background: #fff;
     font-size: 14px;
     color: #222;
-    min-width: 160px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.evidence-admin-field select:focus,
-.evidence-admin-field input:focus {
+.evidence-search-input:focus {
     outline: none;
-    border-color: #888;
+    border-color: #6a6a6e;
+    box-shadow: 0 0 0 3px rgba(120, 120, 120, 0.08);
+}
+.evidence-search-input::placeholder {
+    color: #aaa;
+}
+.evidence-search-clear {
+    position: absolute;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: #eaeaec;
+    color: #666;
+    border-radius: 50%;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.evidence-search-clear:hover {
+    background: #d9d9dd;
+    color: #222;
 }
 
-.evidence-admin-reset {
-    height: 36px;
+.evidence-search-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 32px;
     padding: 0 14px;
-    border: 1px solid #d9d9dd;
-    border-radius: 6px;
-    background: #fff;
-    color: #444;
+    background: #eef3fb;
+    color: #2762c8;
+    border-radius: 999px;
     font-size: 13px;
-    cursor: pointer;
-    margin-left: auto;
-}
-.evidence-admin-reset:hover:not(:disabled) {
-    background: #f0f0f2;
-}
-.evidence-admin-reset:disabled {
-    opacity: 0.5;
-    cursor: default;
+    font-weight: 500;
 }
 
 .evidence-admin-error {
@@ -104,10 +120,48 @@
     font-size: 14px;
 }
 
+/* 날짜 그룹 — 네이버 마이박스 느낌 */
+.evidence-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+}
+
+.evidence-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.evidence-group-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #eaeaec;
+    position: sticky;
+    top: 0;
+    background: #fff;
+    z-index: 2;
+}
+.evidence-group-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #222;
+    letter-spacing: -0.1px;
+}
+.evidence-group-count {
+    font-size: 12.5px;
+    color: #888;
+    font-weight: 500;
+}
+
 .evidence-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
 }
 
 .evidence-card {
@@ -117,18 +171,19 @@
     padding: 0;
     background: #fff;
     border: 1px solid #eaeaec;
-    border-radius: 8px;
+    border-radius: 10px;
     overflow: hidden;
     cursor: pointer;
     text-align: left;
     transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 .evidence-card:hover {
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
     transform: translateY(-2px);
 }
 
 .evidence-card-img-wrap {
+    position: relative;
     aspect-ratio: 4 / 3;
     overflow: hidden;
     background: #f1f1f3;
@@ -141,6 +196,18 @@
     height: 100%;
     object-fit: cover;
     display: block;
+}
+.evidence-card-time-badge {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    padding: 3px 8px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 11.5px;
+    border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
 }
 
 .evidence-card-meta {
@@ -169,11 +236,6 @@
 }
 .evidence-card-dept {
     color: #888;
-}
-.evidence-card-time {
-    color: #999;
-    margin-top: 2px;
-    font-size: 11.5px;
 }
 
 .evidence-sentinel {
@@ -280,8 +342,8 @@
         padding: 16px 12px 60px;
     }
     .evidence-grid {
-        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-        gap: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
     }
     .evidence-card-meta {
         padding: 8px 10px 10px;
@@ -289,6 +351,9 @@
     }
     .evidence-card-company {
         font-size: 12.5px;
+    }
+    .evidence-group-header h3 {
+        font-size: 14.5px;
     }
     .evidence-lightbox-body {
         flex-direction: column;

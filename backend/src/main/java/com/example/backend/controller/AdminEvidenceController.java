@@ -13,9 +13,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,9 +31,7 @@ public class AdminEvidenceController {
 
     @GetMapping
     public ResponseEntity<?> listEvidence(
-            @RequestParam(required = false) Long clientId,
-            @RequestParam(required = false) String from,
-            @RequestParam(required = false) String to,
+            @RequestParam(required = false) String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "60") int size
     ) {
@@ -44,11 +39,9 @@ public class AdminEvidenceController {
         if (size < 1) size = 60;
         if (page < 0) page = 0;
 
-        LocalDateTime fromDt = parseDateStart(from);
-        LocalDateTime toDt = parseDateExclusiveEnd(to);
-
+        String normalized = (q == null || q.isBlank()) ? null : q.trim();
         Pageable pageable = PageRequest.of(page, size);
-        Page<OrderFile> result = orderFileRepository.findEvidence(clientId, fromDt, toDt, pageable);
+        Page<OrderFile> result = orderFileRepository.findEvidence(normalized, pageable);
 
         List<Map<String, Object>> items = result.getContent().stream()
                 .map(AdminEvidenceController::toItem)
@@ -85,22 +78,4 @@ public class AdminEvidenceController {
         return m;
     }
 
-    private static LocalDateTime parseDateStart(String s) {
-        if (s == null || s.isBlank()) return null;
-        try {
-            return LocalDate.parse(s.trim()).atStartOfDay();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** 끝 날짜는 "그 다음 날 00:00"으로 변환해 종일 포함하는 [from, end) 반열린 구간으로. */
-    private static LocalDateTime parseDateExclusiveEnd(String s) {
-        if (s == null || s.isBlank()) return null;
-        try {
-            return LocalDate.parse(s.trim()).plusDays(1).atStartOfDay();
-        } catch (Exception e) {
-            return null;
-        }
-    }
 }
