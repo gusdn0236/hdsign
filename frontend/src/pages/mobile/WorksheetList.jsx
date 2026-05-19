@@ -736,6 +736,7 @@ export default function WorksheetList() {
                                             pdfUrl={it.worksheetPdfUrl}
                                             thumbnailUrl={it.worksheetThumbnailUrl}
                                             completed={completedByMe}
+                                            evidenceCount={it.evidenceCount || 0}
                                         />
                                         {selectMode && (
                                             <span className={`ws-grid-check ${isSelected ? 'on' : ''}`} aria-hidden="true">

@@ -59,3 +59,64 @@
     text-align: center;
     padding: 6px;
 }
+
+/* 본인이 [작업완료] 처리한 지시서 표시 — 대각선 코너 리본 + 본문 살짝 디밍.
+   썸네일 전체를 가리지 않으면서, 카드 그리드를 쭉 훑을 때 완료건이 한눈에
+   걸러져 보이도록 한다(눈으로 스킵 가능한 정도). */
+.ws-thumb-frame.completed > .react-pdf__Document,
+.ws-thumb-frame.completed > .ws-thumb-img {
+    opacity: 0.55;
+    filter: grayscale(50%);
+}
+/* 좌상단 [📷 N장] 배지 — 사진 업로드된 지시서를 한눈에 식별.
+   완료 리본(우상단)과 위치가 겹치지 않도록 반대편 모서리에 배치. */
+.ws-thumb-frame .ws-thumb-photos {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 7px 3px 5px;
+    background: rgba(37, 99, 235, 0.95);
+    color: #ffffff;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.01em;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    user-select: none;
+    z-index: 3;
+}
+.ws-thumb-frame .ws-thumb-photos svg {
+    width: 13px;
+    height: 13px;
+    display: block;
+}
+.ws-thumb-frame .ws-thumb-photos-num {
+    font-feature-settings: 'tnum' 1;
+}
+/* 완료 + 사진 배지 동시 표시 시에도 배지 자체는 디밍/그레이 영향 안 받도록 — 위에서 별도 z-index 로 처리됨.
+   .completed 디밍 룰이 직계 자식만 대상(>)이라 배지엔 영향 없음. 명시는 없음. */
+.ws-thumb-frame .ws-thumb-ribbon {
+    position: absolute;
+    top: 14px;
+    right: -38px;
+    width: 130px;
+    transform: rotate(45deg);
+    transform-origin: center;
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    text-align: center;
+    padding: 4px 0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+    z-index: 3;
+    pointer-events: none;
+    user-select: none;
+}

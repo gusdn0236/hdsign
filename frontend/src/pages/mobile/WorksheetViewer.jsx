@@ -193,23 +193,164 @@ export default function WorksheetViewer() {
     const [qualityScale, setQualityScale] = useState(1);
     const transformRef = useRef(null);
 
+    // 업로드된 증거사진 목록 — [사진보기] 시트 + 라이트박스 + 카톡 공유에 사용.
+    // orderNumber 진입 시 1회 + 업로드 직후/시트 오픈 시 재조회. 인증 없는 공개 API.
+    const [evidencePhotos, setEvidencePhotos] = useState([]);
+    const [photosSheetOpen, setPhotosSheetOpen] = useState(false);
+    const [lightboxIndex, setLightboxIndex] = useState(null);
+    const [sharing, setSharing] = useState(false);
+    const [shareToast, setShareToast] = useState('');
+    // 지시서 자체(현재 페이지) 카톡 공유 — 캔버스를 JPEG 로 만들어 navigator.share files API 로.
+    const [sharingWorksheet, setSharingWorksheet] = useState(false);
+    const [worksheetShareToast, setWorksheetShareToast] = useState('');
+
     const requestPdfQualityForScale = useCallback((scale) => {
         const nextScale = getPdfQualityScale(scale);
         setHighQualityRender(true);
         setQualityScale((prev) => (prev === nextScale ? prev : nextScale));
     }, []);
 
-    const resetPdfView = useCallback((e) => {
-        e?.stopPropagation?.();
-        setQualityScale(1);
-        setHighQualityRender(false);
-        if (transformRef.current?.resetTransform) {
-            transformRef.current.resetTransform(0);
+    // 증거사진 목록 새로고침 — 진입/업로드 후/시트 열기 직전에 호출.
+    const refreshEvidencePhotos = useCallback(async () => {
+        if (!orderNumber) return;
+        try {
+            const res = await fetch(
+                `${BASE_URL}/api/public/orders/${encodeURIComponent(orderNumber)}/evidence?_=${Date.now()}`,
+                { cache: 'no-store' }
+            );
+            if (!res.ok) return;
+            const data = await res.json();
+            setEvidencePhotos(Array.isArray(data?.items) ? data.items : []);
+        } catch {
+            /* 목록은 실패해도 흐름 차단 안 함 */
+        }
+    }, [orderNumber]);
+
+    useEffect(() => {
+        setEvidencePhotos([]);
+        refreshEvidencePhotos();
+    }, [refreshEvidencePhotos]);
+
+    const openPhotosSheet = useCallback(() => {
+        refreshEvidencePhotos();
+        setPhotosSheetOpen(true);
+    }, [refreshEvidencePhotos]);
+
+    const closePhotosSheet = useCallback(() => {
+        setPhotosSheetOpen(false);
+    }, []);
+
+    const closeLightbox = useCallback(() => setLightboxIndex(null), []);
+
+    // 라이트박스에서 사진을 카톡/공유 — Web Share API 우선, files 미지원이면 URL 만 공유.
+    // title/text 는 일부러 넘기지 않는다 — 안드로이드 카톡 공유에서 그 텍스트가 별도 채팅 메시지로
+    // 같이 전송되어 사용자가 "사진만 보내고 싶다" 는 의도를 침해하기 때문(사진만 깔끔하게 전송).
+    // 둘 다 안 되면 새 탭에 띄워 사용자가 길게 눌러 저장하도록 안내.
+    const shareCurrentPhoto = useCallback(async () => {
+        if (lightboxIndex === null) return;
+        const photo = evidencePhotos[lightboxIndex];
+        if (!photo) return;
+        const url = `${BASE_URL}${photo.imageUrl}`;
+        setSharing(true);
+        setShareToast('');
+        try {
+            // 1) files 지원 — 카톡 공유에서 실제 사진이 첨부됨.
+            try {
+                const res = await fetch(url, { cache: 'no-store' });
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const fileName = photo.originalName || 'photo.jpg';
+                    const file = new File([blob], fileName, {
+                        type: blob.type || photo.contentType || 'image/jpeg',
+                    });
+                    if (typeof navigator !== 'undefined'
+                        && navigator.canShare
+                        && navigator.canShare({ files: [file] })) {
+                        await navigator.share({ files: [file] });
+                        return;
+                    }
+                }
+            } catch (err) {
+                if (err?.name === 'AbortError') return;
+            }
+            // 2) URL 만 공유 — 카톡엔 링크가 가고, 받은 사람이 클릭해서 본다.
+            if (typeof navigator !== 'undefined' && navigator.share) {
+                try {
+                    await navigator.share({ url });
+                    return;
+                } catch (err) {
+                    if (err?.name === 'AbortError') return;
+                }
+            }
+            // 3) 최후 폴백 — 새 탭에 띄워 길게 눌러 저장 후 직접 카톡 전송.
+            window.open(url, '_blank', 'noopener');
+            setShareToast('새 창에서 사진을 길게 눌러 저장한 뒤 카톡으로 보내주세요.');
+        } finally {
+            setSharing(false);
+        }
+    }, [evidencePhotos, lightboxIndex]);
+
+    // 지시서 공유 — 현재 화면에 그려진 PDF 페이지 캔버스를 JPEG 로 변환해 카톡 공유.
+    // PDF 자체를 공유하면 카톡 미리보기가 깨지거나 다운로드를 강제하는 단말이 많아 이미지 방식이 가장 호환성 좋다.
+    // 캔버스가 아직 그려지지 않은 상태(초기 로딩/에러) 면 토스트로 안내.
+    const shareWorksheet = useCallback(async () => {
+        if (sharingWorksheet) return;
+        const canvas = stageRef.current?.querySelector('.wsv-page-canvas canvas');
+        if (!canvas || !pdfReady) {
+            setWorksheetShareToast('지시서가 다 열린 다음에 공유해 주세요.');
             return;
         }
-        setPdfReady(false);
-        setPdfViewKey((key) => key + 1);
-    }, []);
+        setSharingWorksheet(true);
+        setWorksheetShareToast('');
+        try {
+            const blob = await new Promise((resolve) => {
+                try {
+                    canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92);
+                } catch {
+                    resolve(null);
+                }
+            });
+            if (!blob) {
+                setWorksheetShareToast('지시서 이미지를 만들지 못했어요.');
+                return;
+            }
+            const safeBase = (detail?.title || orderNumber || 'worksheet')
+                .replace(/[\\/:*?"<>|]/g, '_')
+                .slice(0, 80);
+            const suffix = numPages > 1 ? `_p${currentPage}` : '';
+            const fileName = `${safeBase}${suffix}.jpg`;
+            const file = new File([blob], fileName, { type: 'image/jpeg' });
+            // title/text 는 의도적으로 전달하지 않음 — 안드로이드 카톡 공유에서 그 텍스트가
+            // 별도 채팅 메시지로 같이 전송되어 사용자 의도("사진만 보내기") 를 침해함.
+            if (typeof navigator !== 'undefined'
+                && navigator.canShare
+                && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({ files: [file] });
+                    return;
+                } catch (err) {
+                    if (err?.name === 'AbortError') return;
+                    // files 공유 실패 → 폴백 단계로 이어감
+                }
+            }
+            // 폴백 — 이미지 파일을 다운로드해 사용자가 카톡 [+]→[사진] 으로 첨부.
+            const objectUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = objectUrl;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+            setWorksheetShareToast('지시서를 사진으로 저장했어요. 카톡 [+] → [사진] 으로 전송하세요.');
+        } catch (err) {
+            if (err?.name !== 'AbortError') {
+                setWorksheetShareToast('공유 중 오류가 발생했어요.');
+            }
+        } finally {
+            setSharingWorksheet(false);
+        }
+    }, [currentPage, detail?.title, numPages, orderNumber, pdfReady, sharingWorksheet]);
 
     useEffect(() => () => {
         if (stageTapTimerRef.current) clearTimeout(stageTapTimerRef.current);
@@ -652,6 +793,8 @@ export default function WorksheetViewer() {
             setQueued([]);
             const uploadedCount = body.count || 0;
             setUploadResult({ count: uploadedCount });
+            // 사진보기 시트의 카운트/그리드를 즉시 최신 상태로.
+            refreshEvidencePhotos();
             // 업로드 직후 작업완료 흐름 — 따로 다시 [작업완료] 누르지 않아도 한 번에 끝나도록.
             // 본인이 이미 완료했거나 직원 미설정이면 묻지 않는다.
             if (!completedByMe && worker) {
@@ -764,6 +907,25 @@ export default function WorksheetViewer() {
                         {detail.dueTime ? ` ${detail.dueTime}` : ''}
                     </div>
                 )}
+                <button
+                    type="button"
+                    className="wsv-topbar-share"
+                    onClick={shareWorksheet}
+                    onTouchEnd={tapHandler(shareWorksheet)}
+                    disabled={sharingWorksheet || !pdfReady}
+                    aria-label="지시서 공유"
+                >
+                    {sharingWorksheet ? (
+                        <span className="wsv-topbar-share-spinner" aria-hidden="true" />
+                    ) : (
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <circle cx="5" cy="10" r="2.2" />
+                            <circle cx="15" cy="5" r="2.2" />
+                            <circle cx="15" cy="15" r="2.2" />
+                            <path d="M7 9l6-3M7 11l6 3" />
+                        </svg>
+                    )}
+                </button>
             </header>
 
             {/* stage onClick — PDF 영역 한 번 탭 → 상단/하단 chrome 보임/숨김 토글.
@@ -808,7 +970,7 @@ export default function WorksheetViewer() {
                         }}
                         wheel={{
                             step: 0.18,
-                            excluded: ['wsv-back', 'wsv-action-btn', 'wsv-action-reset',
+                            excluded: ['wsv-back', 'wsv-action-btn', 'wsv-action-photos',
                                        'wsv-action-camera', 'wsv-action-gallery',
                                        'wsv-action-complete', 'wsv-action-completed'],
                         }}
@@ -818,11 +980,11 @@ export default function WorksheetViewer() {
                             // 라이브러리가 window mousedown 을 듣는데, 만에 하나 버튼 영역
                             // 탭이 흘러들어가면 preventDefault 가 click 합성을 막을 수 있음.
                             // 명시적으로 제외해 라이브러리가 절대 가로채지 못하게.
-                            excluded: ['wsv-back', 'wsv-action-btn', 'wsv-action-reset',
+                            excluded: ['wsv-back', 'wsv-action-btn', 'wsv-action-photos',
                                        'wsv-action-camera', 'wsv-action-gallery',
                                        'wsv-action-complete', 'wsv-action-completed',
                                        'wsv-action-icon', 'wsv-action-text',
-                                       'wsv-pager-btn'],
+                                       'wsv-action-badge', 'wsv-pager-btn'],
                         }}
                     >
                         <TransformComponent
@@ -928,19 +1090,23 @@ export default function WorksheetViewer() {
             <div className={`wsv-actionbar${chromeVisible ? '' : ' wsv-actionbar-hidden'}`}>
                 <button
                     type="button"
-                    className="wsv-action-btn wsv-action-reset"
-                    onClick={resetPdfView}
-                    onTouchEnd={tapHandler(resetPdfView)}
+                    className="wsv-action-btn wsv-action-photos"
+                    onClick={openPhotosSheet}
+                    onTouchEnd={tapHandler(openPhotosSheet)}
                 >
                     <span className="wsv-action-icon" aria-hidden="true">
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 7V3h4" />
-                            <path d="M17 7V3h-4" />
-                            <path d="M3 13v4h4" />
-                            <path d="M17 13v4h-4" />
+                        <svg viewBox="0 0 22 22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="4" width="16" height="13" rx="2" />
+                            <circle cx="8" cy="9" r="1.5" />
+                            <path d="M3 14l4.5-4 4 4 3-2.5 4.5 4" />
                         </svg>
+                        {evidencePhotos.length > 0 && (
+                            <span className="wsv-action-badge" aria-hidden="true">
+                                {evidencePhotos.length > 99 ? '99+' : evidencePhotos.length}
+                            </span>
+                        )}
                     </span>
-                    <span className="wsv-action-text">전체보기</span>
+                    <span className="wsv-action-text">사진보기</span>
                 </button>
                 <button
                     type="button"
@@ -1000,6 +1166,14 @@ export default function WorksheetViewer() {
                 )}
             </div>
             {completeError && <div className="wsv-toast error">{completeError}</div>}
+            {worksheetShareToast && (
+                <div
+                    className="wsv-toast"
+                    onClick={() => setWorksheetShareToast('')}
+                >
+                    {worksheetShareToast}
+                </div>
+            )}
             <input
                 ref={cameraInputRef}
                 type="file"
@@ -1016,6 +1190,152 @@ export default function WorksheetViewer() {
                 onChange={handlePickFiles}
                 style={{ display: 'none' }}
             />
+
+            {/* 바닥 시트 — 업로드된 사진 보기(그리드). 탭하면 라이트박스로. */}
+            {photosSheetOpen && (
+                <div className="wsv-sheet-backdrop" onClick={closePhotosSheet}>
+                    <div className="wsv-sheet" onClick={(e) => e.stopPropagation()}>
+                        <div className="wsv-sheet-handle" />
+                        <div className="wsv-sheet-head">
+                            <div>
+                                <div className="wsv-sheet-title">업로드된 작업 사진</div>
+                                <div className="wsv-sheet-sub">
+                                    {evidencePhotos.length > 0
+                                        ? `${evidencePhotos.length}장 · ${orderNumber}`
+                                        : orderNumber}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                className="wsv-sheet-close"
+                                onClick={closePhotosSheet}
+                                aria-label="닫기"
+                            >
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <path d="M4 4l8 8M12 4l-8 8" />
+                                </svg>
+                            </button>
+                        </div>
+                        {evidencePhotos.length === 0 ? (
+                            <div className="wsv-photos-empty">
+                                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <rect x="6" y="10" width="36" height="28" rx="4" />
+                                    <circle cx="16" cy="20" r="3" />
+                                    <path d="M6 32l11-10 9 9 6-5 10 9" />
+                                </svg>
+                                <div className="wsv-photos-empty-title">아직 업로드된 사진이 없어요</div>
+                                <div className="wsv-photos-empty-sub">
+                                    [사진찍기] 또는 [사진선택] 으로 작업 사진을 업로드하면 여기 나타납니다.
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="wsv-photos-grid">
+                                {evidencePhotos.map((p, idx) => (
+                                    <button
+                                        key={p.id}
+                                        type="button"
+                                        className="wsv-photos-cell"
+                                        onClick={() => setLightboxIndex(idx)}
+                                        aria-label={`사진 ${idx + 1}장 보기`}
+                                    >
+                                        <img
+                                            src={`${BASE_URL}${p.imageUrl}`}
+                                            alt={p.originalName || ''}
+                                            loading="lazy"
+                                        />
+                                        {p.uploadedDepartment && (
+                                            <span className="wsv-photos-cell-tag">
+                                                {p.uploadedDepartment}
+                                            </span>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* 라이트박스 — 사진 한 장을 풀스크린으로 + 카톡 공유 버튼 */}
+            {lightboxIndex !== null && evidencePhotos[lightboxIndex] && (
+                <div className="wsv-lightbox" onClick={closeLightbox}>
+                    <div className="wsv-lightbox-bar" onClick={(e) => e.stopPropagation()}>
+                        <button
+                            type="button"
+                            className="wsv-lightbox-btn"
+                            onClick={closeLightbox}
+                            aria-label="닫기"
+                        >
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M4 4l10 10M14 4l-10 10" />
+                            </svg>
+                        </button>
+                        <div className="wsv-lightbox-counter">
+                            {lightboxIndex + 1} / {evidencePhotos.length}
+                        </div>
+                        <button
+                            type="button"
+                            className="wsv-lightbox-btn wsv-lightbox-share"
+                            onClick={shareCurrentPhoto}
+                            disabled={sharing}
+                            aria-label="공유"
+                        >
+                            {sharing ? (
+                                <span className="wsv-lightbox-spinner" aria-hidden="true" />
+                            ) : (
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                    <circle cx="5" cy="10" r="2.2" />
+                                    <circle cx="15" cy="5" r="2.2" />
+                                    <circle cx="15" cy="15" r="2.2" />
+                                    <path d="M7 9l6-3M7 11l6 3" />
+                                </svg>
+                            )}
+                            <span>공유</span>
+                        </button>
+                    </div>
+                    <div
+                        className="wsv-lightbox-stage"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <img
+                            src={`${BASE_URL}${evidencePhotos[lightboxIndex].imageUrl}`}
+                            alt={evidencePhotos[lightboxIndex].originalName || ''}
+                        />
+                    </div>
+                    <div className="wsv-lightbox-pager" onClick={(e) => e.stopPropagation()}>
+                        <button
+                            type="button"
+                            className="wsv-lightbox-nav"
+                            onClick={() => setLightboxIndex((idx) => Math.max(0, idx - 1))}
+                            disabled={lightboxIndex <= 0}
+                            aria-label="이전 사진"
+                        >
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M11 4L6 9l5 5" />
+                            </svg>
+                        </button>
+                        <button
+                            type="button"
+                            className="wsv-lightbox-nav"
+                            onClick={() => setLightboxIndex((idx) => Math.min(evidencePhotos.length - 1, idx + 1))}
+                            disabled={lightboxIndex >= evidencePhotos.length - 1}
+                            aria-label="다음 사진"
+                        >
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M7 4l5 5-5 5" />
+                            </svg>
+                        </button>
+                    </div>
+                    {shareToast && (
+                        <div
+                            className="wsv-lightbox-toast"
+                            onClick={() => setShareToast('')}
+                        >
+                            {shareToast}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* 바닥 시트 — 사진 업로드 */}
             {sheetOpen && (

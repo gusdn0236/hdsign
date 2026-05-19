@@ -57,4 +57,11 @@ public interface OrderFileRepository extends JpaRepository<OrderFile, Long> {
             @Param("q") String q,
             @Param("workers") List<String> workers,
             Pageable pageable);
+
+    /**
+     * 모바일 지시서 목록의 [사진 N장] 배지용 — 주문별 증거사진 건수.
+     * 한 번의 GROUP BY 쿼리로 모든 카운트를 받아 컨트롤러에서 Map 으로 모아 N+1 회피.
+     */
+    @Query("SELECT f.order.id, COUNT(f) FROM OrderFile f WHERE f.isEvidence = true GROUP BY f.order.id")
+    List<Object[]> countEvidenceByOrder();
 }

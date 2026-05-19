@@ -25,6 +25,12 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
   thumbnailUrl,
   rootMargin = DEFAULT_ROOT_MARGIN,
   fallback = null,
+  // 본인이 [작업완료] 처리한 지시서면 true — 코너에 대각선 "완료" 리본을 띄우고
+  // 썸네일 본문은 약간 디밍해서 한눈에 걸러볼 수 있도록.
+  completed = false,
+  // 모바일 카드에 [📷 N장] 배지를 띄울 때 사용 — 0/undefined 이면 안 띄움.
+  // 작업자가 현장 사진을 업로드한 지시서를 목록에서 한눈에 식별 가능.
+  evidenceCount = 0,
 }) {
   const ref = useRef(null);
   const [width, setWidth] = useState(0);
@@ -110,7 +116,7 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
   }, []);
 
   return (
-    <div className="ws-thumb-frame" ref={ref}>
+    <div className={`ws-thumb-frame${completed ? ' completed' : ''}`} ref={ref}>
       {!pdfUrl && !thumbnailUrl && fallback}
       {useImageThumb && (
         <img
@@ -142,6 +148,21 @@ const WorksheetThumbnail = memo(function WorksheetThumbnail({
         </Document>
       )}
       {!useImageThumb && pdfUrl && errored && <div className="ws-thumb-err">미리보기 실패</div>}
+      {evidenceCount > 0 && (
+        <span
+          className="ws-thumb-photos"
+          aria-label={`사진 ${evidenceCount}장 업로드됨`}
+        >
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 6h2.2l1.3-1.6h5l1.3 1.6H15a1.2 1.2 0 0 1 1.2 1.2v6.4a1.2 1.2 0 0 1-1.2 1.2H3A1.2 1.2 0 0 1 1.8 13.6V7.2A1.2 1.2 0 0 1 3 6z" />
+            <circle cx="9" cy="10.6" r="2.5" />
+          </svg>
+          <span className="ws-thumb-photos-num">{evidenceCount > 99 ? '99+' : evidenceCount}</span>
+        </span>
+      )}
+      {completed && (
+        <span className="ws-thumb-ribbon" aria-label="작업완료">완료</span>
+      )}
     </div>
   );
 });

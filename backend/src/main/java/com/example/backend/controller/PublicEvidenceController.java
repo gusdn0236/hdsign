@@ -11,25 +11,34 @@ import com.example.backend.service.WorksheetThumbnailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -70,6 +79,95 @@ public class PublicEvidenceController {
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다.")));
+    }
+
+    /**
+     * 모바일 지시서 뷰어용 — 해당 주문에 업로드된 증거사진 목록.
+     * 인증 없음(업로드와 동일한 보안 수준 — QR 로 주문번호를 안 사람만 접근).
+     * 각 항목의 imageUrl 은 같은 출처의 프록시 URL — 프론트에서 fetch().blob() 로
+     * Web Share API 의 File 객체를 만들 수 있게 한다(R2 공개 URL 은 CORS 미개방).
+     */
+    @GetMapping("/{orderNumber}/evidence")
+    public ResponseEntity<?> listEvidence(@PathVariable String orderNumber) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
+        }
+        List<Map<String, Object>> items = orderFileRepository.findByOrder(order).stream()
+                .filter(f -> Boolean.TRUE.equals(f.getIsEvidence()))
+                .sorted(Comparator.comparing(
+                        OrderFile::getCreatedAt,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(f -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", f.getId());
+                    m.put("originalName", f.getOriginalName());
+                    m.put("contentType", f.getContentType());
+                    m.put("fileSize", f.getFileSize());
+                    m.put("uploadedDepartment", f.getUploadedDepartment());
+                    m.put("createdAt", f.getCreatedAt() != null ? f.getCreatedAt().toString() : null);
+                    m.put("imageUrl", "/api/public/orders/"
+                            + orderNumber + "/evidence/" + f.getId() + "/image");
+                    return m;
+                })
+                .toList();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("orderNumber", orderNumber);
+        body.put("count", items.size());
+        body.put("items", items);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 증거사진 이미지 프록시 — R2 의 사진을 같은 출처(백엔드)로 응답.
+     * 프론트가 fetch().blob() 로 받아 Web Share API 의 File 로 만들기 위함(R2 CORS 우회).
+     * fileId 가 실제로 해당 orderNumber 에 속하는지 확인해 다른 주문 사진 노출 방지.
+     */
+    @GetMapping("/{orderNumber}/evidence/{fileId}/image")
+    public ResponseEntity<?> proxyEvidenceImage(
+            @PathVariable String orderNumber,
+            @PathVariable Long fileId,
+            @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch
+    ) {
+        OrderFile file = orderFileRepository.findById(fileId).orElse(null);
+        if (file == null
+                || !Boolean.TRUE.equals(file.getIsEvidence())
+                || file.getOrder() == null
+                || !orderNumber.equals(file.getOrder().getOrderNumber())) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String key = file.getStoredName();
+        if (key == null || key.isBlank()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String etag = "\"" + Integer.toHexString(key.hashCode()) + "\"";
+        if (etag.equals(ifNoneMatch)) {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setCacheControl("public, max-age=86400");
+            headers.setETag(etag);
+            return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
+        }
+        try {
+            ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
+                    GetObjectRequest.builder().bucket(bucket).key(key).build()
+            );
+            HttpHeaders headers = new HttpHeaders();
+            String contentType = file.getContentType();
+            headers.setContentType(contentType != null && !contentType.isBlank()
+                    ? MediaType.parseMediaType(contentType)
+                    : MediaType.IMAGE_JPEG);
+            headers.setContentLength(stream.response().contentLength());
+            // R2 키가 바뀌지 않는 한 같은 파일이므로 길게 캐시해도 안전.
+            headers.setCacheControl("public, max-age=86400");
+            headers.setETag(etag);
+            headers.setContentDispositionFormData("inline",
+                    file.getOriginalName() != null ? file.getOriginalName() : "photo.jpg");
+            return new ResponseEntity<>(new InputStreamResource(stream), headers, HttpStatus.OK);
+        } catch (Exception e) {
+            log.warn("증거사진 프록시 실패 [{}/{}]: {}", orderNumber, fileId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
+        }
     }
 
     @PostMapping("/{orderNumber}/evidence")

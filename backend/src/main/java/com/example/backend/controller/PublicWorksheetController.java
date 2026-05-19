@@ -2,6 +2,7 @@ package com.example.backend.controller;
 
 import com.example.backend.entity.Order;
 import com.example.backend.entity.WorkerCompletion;
+import com.example.backend.repository.OrderFileRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.repository.WorkerCompletionRepository;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +53,7 @@ import java.util.Map;
 public class PublicWorksheetController {
 
     private final OrderRepository orderRepository;
+    private final OrderFileRepository orderFileRepository;
     private final WorkerCompletionRepository workerCompletionRepository;
     private final S3Client s3Client;
 
@@ -65,6 +67,7 @@ public class PublicWorksheetController {
     public ResponseEntity<?> list() {
         LocalDate today = LocalDate.now();
         List<Map<String, Object>> body = new ArrayList<>();
+        Map<Long, Integer> evidenceCounts = loadEvidenceCounts();
 
         List<Order> all = orderRepository.findByDeletedAtIsNullOrderByCreatedAtDesc();
         all.stream()
@@ -74,9 +77,24 @@ public class PublicWorksheetController {
                         // 납기 임박 순. null 납기는 뒤로.
                         .comparing((Order o) -> o.getDueDate() == null ? LocalDate.MAX : o.getDueDate())
                         .thenComparing(Order::getCreatedAt, Comparator.reverseOrder()))
-                .forEach(o -> body.add(toSummary(o, today)));
+                .forEach(o -> body.add(toSummary(o, today, evidenceCounts)));
 
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 주문별 증거사진 건수를 한 번의 쿼리로 받아 Map 으로 정리 — N+1 회피.
+     * 빈 결과(아직 사진 0건) 는 Map 에 키 자체가 없음 → getOrDefault(0) 로 처리.
+     */
+    private Map<Long, Integer> loadEvidenceCounts() {
+        Map<Long, Integer> counts = new HashMap<>();
+        for (Object[] row : orderFileRepository.countEvidenceByOrder()) {
+            if (row == null || row.length < 2 || row[0] == null || row[1] == null) continue;
+            Long orderId = ((Number) row[0]).longValue();
+            int count = ((Number) row[1]).intValue();
+            counts.put(orderId, count);
+        }
+        return counts;
     }
 
     @GetMapping("/{orderNumber}")
@@ -84,7 +102,7 @@ public class PublicWorksheetController {
         return orderRepository.findByOrderNumber(orderNumber)
                 .filter(o -> o.getDeletedAt() == null)
                 .<ResponseEntity<?>>map(o -> {
-                    Map<String, Object> body = toSummary(o, LocalDate.now());
+                    Map<String, Object> body = toSummary(o, LocalDate.now(), loadEvidenceCounts());
                     body.put("note", o.getNote());
                     body.put("additionalItems", o.getAdditionalItems());
                     body.put("hasSMPS", o.getHasSMPS());
@@ -107,8 +125,9 @@ public class PublicWorksheetController {
     public ResponseEntity<?> completed() {
         LocalDate today = LocalDate.now();
         List<Map<String, Object>> body = new ArrayList<>();
+        Map<Long, Integer> evidenceCounts = loadEvidenceCounts();
         for (Order o : orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()) {
-            Map<String, Object> item = toSummary(o, today);
+            Map<String, Object> item = toSummary(o, today, evidenceCounts);
             item.put("deletedAt", o.getDeletedAt() != null ? o.getDeletedAt().toString() : null);
             body.add(item);
         }
@@ -292,7 +311,7 @@ public class PublicWorksheetController {
         return value;
     }
 
-    private Map<String, Object> toSummary(Order o, LocalDate today) {
+    private Map<String, Object> toSummary(Order o, LocalDate today, Map<Long, Integer> evidenceCounts) {
         Map<String, Object> item = new HashMap<>();
         item.put("orderNumber", o.getOrderNumber());
         item.put("title", o.getTitle());
@@ -307,6 +326,8 @@ public class PublicWorksheetController {
         item.put("status", o.getStatus().name());
         item.put("worksheetUpdatedAt", o.getWorksheetUpdatedAt() != null ? o.getWorksheetUpdatedAt().toString() : null);
         item.put("evidenceLastUploadedAt", o.getEvidenceLastUploadedAt() != null ? o.getEvidenceLastUploadedAt().toString() : null);
+        // 모바일 썸네일 우상단 [사진 N장] 배지용. 0 이면 프론트가 배지 자체를 안 그린다.
+        item.put("evidenceCount", evidenceCounts == null ? 0 : evidenceCounts.getOrDefault(o.getId(), 0));
         // 카드에서 D-day 표시용. 음수면 지난 납기.
         // ChronoUnit.DAYS.between — Period.getDays() 는 "년·월 뺀 나머지 일수" 라
         // 1년 차이가 26일로 표시되던 버그(주문-260506-15: dueDate=2027-05-07 인데
