@@ -20,6 +20,12 @@
     color: #222;
 }
 
+.evidence-admin-header-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
 .evidence-admin-count {
     font-size: 14px;
     color: #666;
@@ -29,13 +35,34 @@
     font-size: 16px;
 }
 
-/* Toolbar — 검색 인풋 한 줄 */
+.evidence-select-toggle {
+    height: 32px;
+    padding: 0 14px;
+    border: 1px solid #d9d9dd;
+    background: #fff;
+    color: #444;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.evidence-select-toggle:hover {
+    background: #f5f5f7;
+}
+.evidence-select-toggle.active {
+    background: #222;
+    border-color: #222;
+    color: #fff;
+}
+
+/* Toolbar — 검색 */
 .evidence-admin-toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 10px;
-    margin-bottom: 24px;
+    margin-bottom: 16px;
 }
 
 .evidence-search-wrap {
@@ -91,16 +118,84 @@
     color: #222;
 }
 
-.evidence-search-chip {
-    display: inline-flex;
-    align-items: center;
+/* 태그 필터 행 */
+.evidence-tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+.evidence-tag-chip {
     height: 32px;
     padding: 0 14px;
-    background: #eef3fb;
-    color: #2762c8;
+    border: 1px solid #d9d9dd;
+    background: #fff;
+    color: #555;
     border-radius: 999px;
     font-size: 13px;
     font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.evidence-tag-chip:hover {
+    background: #f5f5f7;
+}
+.evidence-tag-chip.active {
+    background: #222;
+    border-color: #222;
+    color: #fff;
+}
+/* 활성화 시 각 태그 색상 */
+.evidence-tag-chip.tag-assembly.active { background: #1f6fa7; border-color: #1f6fa7; }
+.evidence-tag-chip.tag-led.active      { background: #c47a00; border-color: #c47a00; }
+.evidence-tag-chip.tag-cnc.active      { background: #2a8c5b; border-color: #2a8c5b; }
+.evidence-tag-chip.tag-acrylic.active  { background: #8a4cb8; border-color: #8a4cb8; }
+
+/* 선택 모드 액션 바 */
+.evidence-select-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #fff8e1;
+    border: 1px solid #f5e29a;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    font-size: 13.5px;
+    color: #5a4500;
+    flex-wrap: wrap;
+}
+.evidence-select-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.evidence-select-actions button {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid #d9d9dd;
+    background: #fff;
+    color: #444;
+    border-radius: 6px;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+.evidence-select-actions button:hover:not(:disabled) {
+    background: #f5f5f7;
+}
+.evidence-select-actions button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.evidence-delete-btn {
+    border-color: #c83030 !important;
+    background: #c83030 !important;
+    color: #fff !important;
+}
+.evidence-delete-btn:hover:not(:disabled) {
+    background: #b22828 !important;
 }
 
 .evidence-admin-error {
@@ -120,19 +215,17 @@
     font-size: 14px;
 }
 
-/* 날짜 그룹 — 네이버 마이박스 느낌 */
+/* 날짜 그룹 */
 .evidence-groups {
     display: flex;
     flex-direction: column;
     gap: 32px;
 }
-
 .evidence-group {
     display: flex;
     flex-direction: column;
     gap: 12px;
 }
-
 .evidence-group-header {
     display: flex;
     align-items: baseline;
@@ -165,6 +258,7 @@
 }
 
 .evidence-card {
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -175,11 +269,39 @@
     overflow: hidden;
     cursor: pointer;
     text-align: left;
-    transition: box-shadow 0.15s ease, transform 0.15s ease;
+    transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
 }
 .evidence-card:hover {
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
     transform: translateY(-2px);
+}
+.evidence-card.selected {
+    border-color: #2762c8;
+    box-shadow: 0 0 0 2px #2762c8;
+}
+
+.evidence-checkbox {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 22px;
+    height: 22px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1.5px solid #999;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: transparent;
+    font-size: 14px;
+    font-weight: 700;
+    z-index: 3;
+    pointer-events: none;
+}
+.evidence-checkbox.checked {
+    background: #2762c8;
+    border-color: #2762c8;
+    color: #fff;
 }
 
 .evidence-card-img-wrap {
@@ -209,6 +331,23 @@
     font-variant-numeric: tabular-nums;
     pointer-events: none;
 }
+.evidence-card-tag {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    padding: 3px 10px;
+    color: #fff;
+    font-size: 11.5px;
+    font-weight: 600;
+    border-radius: 999px;
+    pointer-events: none;
+    letter-spacing: -0.2px;
+}
+.evidence-card-tag.tag-assembly { background: #1f6fa7; }
+.evidence-card-tag.tag-led      { background: #c47a00; }
+.evidence-card-tag.tag-cnc      { background: #2a8c5b; }
+.evidence-card-tag.tag-acrylic  { background: #8a4cb8; }
+.evidence-card-tag.tag-other    { background: #666; }
 
 .evidence-card-meta {
     padding: 10px 12px 12px;
@@ -291,6 +430,19 @@
     font-size: 16px;
     font-weight: 600;
 }
+.evidence-lightbox-tag {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    margin-left: 4px;
+}
+.evidence-lightbox-tag.tag-assembly { background: #1f6fa7; }
+.evidence-lightbox-tag.tag-led      { background: #c47a00; }
+.evidence-lightbox-tag.tag-cnc      { background: #2a8c5b; }
+.evidence-lightbox-tag.tag-acrylic  { background: #8a4cb8; }
 .evidence-lightbox-filename {
     margin-top: 8px;
     padding-top: 8px;

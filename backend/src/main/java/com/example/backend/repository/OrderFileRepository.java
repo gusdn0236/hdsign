@@ -34,4 +34,27 @@ public interface OrderFileRepository extends JpaRepository<OrderFile, Long> {
     Page<OrderFile> findEvidence(
             @Param("q") String q,
             Pageable pageable);
+
+    /**
+     * 작업자 이름 필터를 추가한 버전. workers 가 null/비어있으면 호출하지 말 것 — 빈 IN 절은 JPQL 에서 에러.
+     */
+    @Query(value = """
+            SELECT f FROM OrderFile f
+            JOIN FETCH f.order o
+            JOIN FETCH o.client c
+            WHERE f.isEvidence = true
+              AND (:q IS NULL OR LOWER(c.companyName) LIKE LOWER(CONCAT('%', :q, '%')))
+              AND f.uploadedDepartment IN :workers
+            ORDER BY f.createdAt DESC
+            """,
+            countQuery = """
+            SELECT COUNT(f) FROM OrderFile f
+            WHERE f.isEvidence = true
+              AND (:q IS NULL OR LOWER(f.order.client.companyName) LIKE LOWER(CONCAT('%', :q, '%')))
+              AND f.uploadedDepartment IN :workers
+            """)
+    Page<OrderFile> findEvidenceByWorkers(
+            @Param("q") String q,
+            @Param("workers") List<String> workers,
+            Pageable pageable);
 }

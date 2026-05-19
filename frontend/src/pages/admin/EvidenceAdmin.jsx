@@ -5,6 +5,7 @@ import './EvidenceAdmin.css';
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 const PAGE_SIZE = 60;
 const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
+const DEFAULT_TAGS = ['완조립', 'LED', 'CNC', '5층아크릴'];
 
 function formatTime(s) {
     if (!s) return '';
@@ -38,9 +39,10 @@ export default function EvidenceAdmin() {
         [token],
     );
 
-    // 검색 인풋 (타이핑 중 값) + 실제 적용된 쿼리(엔터 후) 분리
     const [searchInput, setSearchInput] = useState('');
     const [appliedQuery, setAppliedQuery] = useState('');
+    const [activeTag, setActiveTag] = useState('');
+    const [availableTags, setAvailableTags] = useState(DEFAULT_TAGS);
 
     const [items, setItems] = useState([]);
     const [page, setPage] = useState(0);
@@ -51,6 +53,11 @@ export default function EvidenceAdmin() {
 
     const [lightboxIndex, setLightboxIndex] = useState(-1);
 
+    // 선택 모드 + 선택된 ID 셋
+    const [selectMode, setSelectMode] = useState(false);
+    const [selected, setSelected] = useState(() => new Set());
+    const [deleting, setDeleting] = useState(false);
+
     const loadPage = useCallback(
         async (targetPage, append) => {
             setLoading(true);
@@ -60,6 +67,7 @@ export default function EvidenceAdmin() {
                 params.set('page', String(targetPage));
                 params.set('size', String(PAGE_SIZE));
                 if (appliedQuery) params.set('q', appliedQuery);
+                if (activeTag) params.set('tag', activeTag);
                 const res = await fetch(`${BASE_URL}/api/admin/evidence?${params}`, { headers: authHeader });
                 if (!res.ok) throw new Error('사진 목록을 불러오지 못했습니다.');
                 const data = await res.json();
@@ -68,21 +76,25 @@ export default function EvidenceAdmin() {
                 setPage(data.page ?? targetPage);
                 setHasNext(Boolean(data.hasNext));
                 setTotal(data.totalElements ?? 0);
+                if (Array.isArray(data.availableTags) && data.availableTags.length > 0) {
+                    setAvailableTags(data.availableTags);
+                }
             } catch (e) {
                 setError(e.message);
             } finally {
                 setLoading(false);
             }
         },
-        [authHeader, appliedQuery],
+        [authHeader, appliedQuery, activeTag],
     );
 
-    // 적용된 쿼리 바뀌면 첫 페이지부터 다시 로드
+    // 필터(검색/태그) 바뀌면 첫 페이지부터 다시 + 선택 초기화
     useEffect(() => {
         loadPage(0, false);
+        setSelected(new Set());
     }, [loadPage]);
 
-    // 무한스크롤 — IntersectionObserver
+    // 무한스크롤
     const sentinelRef = useRef(null);
     useEffect(() => {
         const el = sentinelRef.current;
@@ -100,7 +112,7 @@ export default function EvidenceAdmin() {
         return () => io.disconnect();
     }, [hasNext, loading, page, loadPage]);
 
-    // 라이트박스 ESC/화살표
+    // 라이트박스 키보드
     useEffect(() => {
         if (lightboxIndex < 0) return;
         const onKey = (e) => {
@@ -116,14 +128,60 @@ export default function EvidenceAdmin() {
         e.preventDefault();
         setAppliedQuery(searchInput.trim());
     };
-
     const handleClearSearch = () => {
         setSearchInput('');
         setAppliedQuery('');
     };
+    const handlePickTag = (tag) => {
+        setActiveTag((prev) => (prev === tag ? '' : tag));
+    };
 
-    // 날짜별 그룹핑 — items 가 createdAt DESC 정렬되어 들어오므로 순서 유지된다.
-    // groups: [{ dateKey, items: [...] }, ...]
+    const toggleSelectMode = () => {
+        setSelectMode((prev) => {
+            if (prev) setSelected(new Set()); // 끄면서 선택 초기화
+            return !prev;
+        });
+    };
+    const toggleSelected = (id) => {
+        setSelected((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    };
+    const selectAllVisible = () => {
+        setSelected(new Set(items.map((it) => it.id)));
+    };
+    const clearSelection = () => setSelected(new Set());
+
+    const handleBulkDelete = async () => {
+        if (selected.size === 0) return;
+        const count = selected.size;
+        const ok = window.confirm(`선택한 ${count}장을 영구 삭제합니다.\n복구할 수 없습니다. 진행하시겠습니까?`);
+        if (!ok) return;
+        setDeleting(true);
+        try {
+            const res = await fetch(`${BASE_URL}/api/admin/evidence`, {
+                method: 'DELETE',
+                headers: { ...authHeader, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: Array.from(selected) }),
+            });
+            if (!res.ok) throw new Error('삭제 실패');
+            const data = await res.json().catch(() => ({}));
+            const deletedIds = new Set(Array.from(selected));
+            setItems((prev) => prev.filter((it) => !deletedIds.has(it.id)));
+            setTotal((prev) => Math.max(0, prev - (data.deletedDb ?? count)));
+            setSelected(new Set());
+            setSelectMode(false);
+        } catch (e) {
+            window.alert(e.message);
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    // 날짜 그룹핑
     const groups = useMemo(() => {
         const result = [];
         let current = null;
@@ -144,8 +202,17 @@ export default function EvidenceAdmin() {
         <div className="evidence-admin-page">
             <div className="evidence-admin-header">
                 <h2 className="evidence-admin-title">현장작업완료사진</h2>
-                <div className="evidence-admin-count">
-                    총 <strong>{total.toLocaleString()}</strong>장
+                <div className="evidence-admin-header-right">
+                    <div className="evidence-admin-count">
+                        총 <strong>{total.toLocaleString()}</strong>장
+                    </div>
+                    <button
+                        type="button"
+                        className={`evidence-select-toggle${selectMode ? ' active' : ''}`}
+                        onClick={toggleSelectMode}
+                    >
+                        {selectMode ? '선택 취소' : '선택'}
+                    </button>
                 </div>
             </div>
 
@@ -170,19 +237,52 @@ export default function EvidenceAdmin() {
                         >×</button>
                     )}
                 </div>
-                {appliedQuery && (
-                    <div className="evidence-search-chip">
-                        <span>‘{appliedQuery}’ 검색 결과</span>
-                    </div>
-                )}
             </form>
+
+            <div className="evidence-tag-row">
+                <button
+                    type="button"
+                    className={`evidence-tag-chip${!activeTag ? ' active' : ''}`}
+                    onClick={() => setActiveTag('')}
+                >전체</button>
+                {availableTags.map((t) => (
+                    <button
+                        key={t}
+                        type="button"
+                        className={`evidence-tag-chip tag-${tagClassName(t)}${activeTag === t ? ' active' : ''}`}
+                        onClick={() => handlePickTag(t)}
+                    >{t}</button>
+                ))}
+            </div>
+
+            {selectMode && (
+                <div className="evidence-select-bar">
+                    <span>{selected.size}장 선택됨</span>
+                    <div className="evidence-select-actions">
+                        <button type="button" onClick={selectAllVisible} disabled={items.length === 0}>
+                            현재 보이는 {items.length}장 모두 선택
+                        </button>
+                        <button type="button" onClick={clearSelection} disabled={selected.size === 0}>
+                            선택 해제
+                        </button>
+                        <button
+                            type="button"
+                            className="evidence-delete-btn"
+                            onClick={handleBulkDelete}
+                            disabled={selected.size === 0 || deleting}
+                        >
+                            {deleting ? '삭제 중…' : `선택 ${selected.size}장 삭제`}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {error && <div className="evidence-admin-error">{error}</div>}
 
             {!loading && items.length === 0 && !error && (
                 <div className="evidence-admin-empty">
-                    {appliedQuery
-                        ? `‘${appliedQuery}’에 해당하는 사진이 없습니다.`
+                    {appliedQuery || activeTag
+                        ? '해당 조건에 맞는 사진이 없습니다.'
                         : '아직 업로드된 작업완료 사진이 없습니다.'}
                 </div>
             )}
@@ -197,13 +297,23 @@ export default function EvidenceAdmin() {
                         <div className="evidence-grid">
                             {group.items.map((it) => {
                                 const idx = items.indexOf(it);
+                                const isChecked = selected.has(it.id);
+                                const handleClick = () => {
+                                    if (selectMode) toggleSelected(it.id);
+                                    else setLightboxIndex(idx);
+                                };
                                 return (
                                     <button
                                         key={it.id}
                                         type="button"
-                                        className="evidence-card"
-                                        onClick={() => setLightboxIndex(idx)}
+                                        className={`evidence-card${isChecked ? ' selected' : ''}`}
+                                        onClick={handleClick}
                                     >
+                                        {selectMode && (
+                                            <span className={`evidence-checkbox${isChecked ? ' checked' : ''}`} aria-hidden="true">
+                                                {isChecked && '✓'}
+                                            </span>
+                                        )}
                                         <div className="evidence-card-img-wrap">
                                             <img
                                                 src={it.fileUrl}
@@ -212,6 +322,9 @@ export default function EvidenceAdmin() {
                                                 decoding="async"
                                             />
                                             <span className="evidence-card-time-badge">{formatTime(it.createdAt)}</span>
+                                            {it.tag && (
+                                                <span className={`evidence-card-tag tag-${tagClassName(it.tag)}`}>{it.tag}</span>
+                                            )}
                                         </div>
                                         <div className="evidence-card-meta">
                                             <div className="evidence-card-company">{it.companyName || '거래처미상'}</div>
@@ -264,7 +377,8 @@ export default function EvidenceAdmin() {
                         <div className="evidence-lightbox-meta">
                             <div><strong>{active.companyName || '거래처미상'}</strong></div>
                             <div>{active.orderNumber} · {active.orderTitle || '제목없음'}</div>
-                            {active.uploadedDepartment && <div>부서: {active.uploadedDepartment}</div>}
+                            {active.uploadedDepartment && <div>작업자: {active.uploadedDepartment}</div>}
+                            {active.tag && <div>태그: <span className={`evidence-lightbox-tag tag-${tagClassName(active.tag)}`}>{active.tag}</span></div>}
                             <div>{formatDateHeader(dateKeyOf(active))} {formatTime(active.createdAt)}</div>
                             <div className="evidence-lightbox-filename">{active.originalName}</div>
                         </div>
@@ -273,4 +387,16 @@ export default function EvidenceAdmin() {
             )}
         </div>
     );
+}
+
+// 태그 이름에서 CSS 클래스 안전한 토큰 생성 — "5층아크릴" 등 한글/숫자 포함.
+function tagClassName(tag) {
+    if (!tag) return 'none';
+    switch (tag) {
+        case '완조립': return 'assembly';
+        case 'LED': return 'led';
+        case 'CNC': return 'cnc';
+        case '5층아크릴': return 'acrylic';
+        default: return 'other';
+    }
 }
