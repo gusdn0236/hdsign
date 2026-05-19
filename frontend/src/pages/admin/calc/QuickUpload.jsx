@@ -4,6 +4,7 @@ import { inspectXlsx, parseXlsx } from '../../../utils/calc/parseXlsx'
 import { computeDiff, buildPricesFromDecisions } from '../../../utils/calc/diffEngine'
 import SheetPickerModal from './SheetPickerModal.jsx'
 import ReviewModal from './ReviewModal.jsx'
+import PricesViewerModal from './PricesViewerModal.jsx'
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 
@@ -27,6 +28,7 @@ export default function QuickUpload() {
     const [inspection, setInspection] = useState(null)
     const [parsed, setParsed] = useState(null)
     const [diff, setDiff] = useState(null)
+    const [viewerOpen, setViewerOpen] = useState(false)
     const fileRef = useRef(null)
 
     useEffect(() => {
@@ -210,6 +212,14 @@ export default function QuickUpload() {
                             ? `마지막 갱신: ${new Date(current._meta.builtAt).toLocaleString('ko-KR')}`
                             : '아직 한 번도 갱신 안 됨 (초기 단가표 사용 중)'}
                     </div>
+                    <button
+                        type="button"
+                        className="qu-view-prices-btn"
+                        onClick={() => setViewerOpen(true)}
+                        disabled={!current}
+                    >
+                        📋 현재 단가표 표로 보기
+                    </button>
                 </div>
             </aside>
 
@@ -227,6 +237,13 @@ export default function QuickUpload() {
                     fileName={fileName}
                     onCancel={reset}
                     onApply={handleApply}
+                />
+            )}
+
+            {viewerOpen && current && (
+                <PricesViewerModal
+                    prices={current}
+                    onClose={() => setViewerOpen(false)}
                 />
             )}
         </>

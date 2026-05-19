@@ -964,6 +964,156 @@
 
 
 /* ===================================================================
+ * 사이드바 — "현재 단가표 표로 보기" 버튼
+ * =================================================================== */
+
+.qu-view-prices-btn {
+    margin-top: 10px;
+    width: 100%;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    padding: 9px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #1e293b;
+    font-weight: 600;
+    transition: all 0.12s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+.qu-view-prices-btn:hover:not(:disabled) {
+    border-color: #3b82f6;
+    color: #1d4ed8;
+    background: #eff6ff;
+}
+.qu-view-prices-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+
+/* ===================================================================
+ * 현재 단가표 보기 모달 — 표
+ * =================================================================== */
+
+.qu-prices-scroll {
+    overflow: auto;
+    max-height: 100%;
+    background: #fff;
+}
+
+.qu-prices-blocks {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 18px 24px 24px;
+}
+.qu-prices-block {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+}
+.qu-prices-block-title {
+    padding: 10px 14px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 13px;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: -0.005em;
+}
+.qu-prices-block .qu-prices-scroll {
+    max-height: none;
+}
+
+.qu-prices-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+    color: #0f172a;
+    font-variant-numeric: tabular-nums;
+}
+.qu-prices-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f1f5f9;
+    text-align: right;
+    font-size: 11px;
+    font-weight: 700;
+    color: #334155;
+    padding: 8px 10px;
+    border-bottom: 1px solid #cbd5e1;
+    border-right: 1px solid #e5e7eb;
+    white-space: nowrap;
+    z-index: 2;
+}
+.qu-prices-table thead th small {
+    display: block;
+    font-size: 9px;
+    font-weight: 600;
+    color: #64748b;
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.qu-prices-table thead th.group-head {
+    text-align: center;
+    background: #0f172a;
+    color: #fff;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    border-right: 1px solid #1e293b;
+}
+.qu-prices-table thead th.sub-head {
+    background: #e2e8f0;
+    text-align: right;
+}
+.qu-prices-table thead th.sticky-col {
+    left: 0;
+    background: #1e293b;
+    color: #fff;
+    text-align: left;
+    z-index: 3;
+    border-right: 1px solid #0f172a;
+    min-width: 110px;
+}
+.qu-prices-table tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    border-right: 1px solid #f8fafc;
+    text-align: right;
+    white-space: nowrap;
+}
+.qu-prices-table tbody td.sticky-col {
+    position: sticky;
+    left: 0;
+    background: #f8fafc;
+    text-align: left;
+    font-weight: 700;
+    color: #1e293b;
+    border-right: 1px solid #e5e7eb;
+    z-index: 1;
+}
+.qu-prices-table tbody tr:hover td {
+    background: #eff6ff;
+}
+.qu-prices-table tbody tr:hover td.sticky-col {
+    background: #dbeafe;
+}
+.qu-prices-table tbody td.size-head {
+    font-variant-numeric: tabular-nums;
+}
+.qu-prices-table .muted {
+    color: #cbd5e1;
+    font-weight: 400;
+}
+
+
+/* ===================================================================
  * 검토 모달 — 툴바, 일괄 액션
  * =================================================================== */
 
