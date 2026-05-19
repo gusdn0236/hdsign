@@ -11,9 +11,12 @@ function formatTime(s) {
     if (!s) return '';
     try {
         const d = new Date(s);
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mi = String(d.getMinutes()).padStart(2, '0');
-        return `${hh}:${mi}`;
+        const h = d.getHours();
+        const mi = d.getMinutes();
+        const period = h < 12 ? '오전' : '오후';
+        // 12시간제 — 0시는 오전 12시, 12시는 오후 12시, 그 외 13~23 은 -12
+        const h12 = h % 12 === 0 ? 12 : h % 12;
+        return `${period} ${h12}시 ${mi}분`;
     } catch {
         return '';
     }
