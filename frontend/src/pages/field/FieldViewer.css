@@ -262,6 +262,7 @@
 }
 
 .fv-card-thumb {
+    position: relative;
     background: #f4f4f5;
     border-right: 1px solid #e4e4e7;
     display: flex;
@@ -269,6 +270,32 @@
     justify-content: center;
     min-height: 150px;
 }
+
+/* 썸네일 위 돋보기 — 마우스를 올리면 우상단에 나타나고, 누르면 작업지시서 확대 보기. */
+.fv-thumb-zoom {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(15, 15, 17, 0.6);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, background 0.12s ease;
+    z-index: 3;
+}
+.fv-card-thumb:hover .fv-thumb-zoom,
+.fv-thumb-zoom:focus-visible {
+    opacity: 1;
+}
+.fv-thumb-zoom:hover { background: rgba(15, 15, 17, 0.85); }
+.fv-thumb-zoom svg { width: 17px; height: 17px; }
 .fv-card-thumb .ws-thumb-frame {
     width: 100%;
     height: 100%;
@@ -513,6 +540,40 @@
 }
 .fv-modal-confirm:hover:not(:disabled) { background: #27272a; }
 .fv-modal-confirm:disabled { opacity: 0.4; cursor: default; }
+
+/* '여시겠습니까?' 확인창 — 라이트박스(z-index 1500) 위에도 떠야 하므로 더 높게. */
+.fv-modal-bg--over { z-index: 1600; }
+
+/* [FS에서 열기]/[폴더열기] 2지선다 — ←/→ 로 선택, 선택된 버튼을 진하게 강조. 기본=FS. */
+.fv-open-choices {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.fv-open-btn {
+    flex: 1;
+    padding: 12px 10px;
+    border-radius: 9px;
+    border: 2px solid #e4e4e7;
+    background: #f4f4f5;
+    color: #3f3f46;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.fv-open-btn:hover { border-color: #a1a1aa; }
+.fv-open-btn.on {
+    border-color: #2563eb;
+    background: #2563eb;
+    color: #fff;
+}
+.fv-open-hint {
+    margin: 0;
+    text-align: center;
+    font-size: 12px;
+    color: #71717a;
+}
 
 /* ── 헤더 우측 액션(새로고침) ──────────────────────────────────────────── */
 .fv-header-actions { display: flex; gap: 6px; align-items: center; }

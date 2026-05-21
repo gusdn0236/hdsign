@@ -1,0 +1,129 @@
+/* 작업지시서 확대 보기 라이트박스 — 현장 뷰어 전용. */
+.wlb-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+.wlb-backdrop:focus { outline: none; }
+
+.wlb-stage {
+    width: min(1180px, 94vw);
+    height: 92vh;
+    display: flex;
+    flex-direction: column;
+    background: #1a1d24;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.wlb-head {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 14px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #f4f4f5;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.wlb-title {
+    font-size: 13px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.wlb-head-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.wlb-counter {
+    font-size: 12px;
+    font-weight: 700;
+    color: #fde68a;
+    font-variant-numeric: tabular-nums;
+}
+.wlb-hint {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.5);
+    letter-spacing: 0.02em;
+}
+
+.wlb-body {
+    flex: 1;
+    min-height: 0;
+}
+/* PdfViewer 가 라이트박스 안을 가득 채우게 — 모서리 라운드는 stage 가 처리. */
+.wlb-body .pv-wrap { border-radius: 0; }
+
+.wlb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #1a1d24;
+    display: block;
+}
+.wlb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #a1a1aa;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.wlb-close {
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+.wlb-close:hover { background: rgba(255, 255, 255, 0.28); }
+
+.wlb-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 46px;
+    height: 46px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.wlb-nav:hover:not(:disabled) { background: rgba(255, 255, 255, 0.28); }
+.wlb-nav:disabled { opacity: 0.3; cursor: default; }
+.wlb-nav-prev { left: 16px; }
+.wlb-nav-next { right: 16px; }
+
+@media (max-width: 720px) {
+    .wlb-backdrop { padding: 10px; }
+    .wlb-stage { width: 96vw; height: 94vh; }
+    .wlb-hint { display: none; }
+    .wlb-nav { width: 40px; height: 40px; font-size: 24px; }
+}

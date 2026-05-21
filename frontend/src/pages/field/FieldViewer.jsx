@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
+import WorksheetLightbox from '../../components/common/WorksheetLightbox.jsx';
 import KakaoShareButton from '../../components/common/KakaoShareButton.jsx';
 import { safeFileName } from '../../utils/shareImage.js';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
@@ -67,6 +68,11 @@ export default function FieldViewer() {
     const [toast, setToast] = useState(null);             // {kind, text}
     const [confirmAction, setConfirmAction] = useState(null); // {message, confirmText, onConfirm}
     const [selectedIndex, setSelectedIndex] = useState(-1);   // 키보드 선택 카드(검색→↓ 로 진입)
+    // 작업지시서 확대 보기 — 돋보기로 연 지시서의 orderNumber(목록 폴링에도 안전).
+    const [lightboxOrder, setLightboxOrder] = useState(null);
+    // '여시겠습니까?' 확인창 — { item }. openChoice 로 [FS에서 열기]/[폴더열기] 중 선택.
+    const [openConfirm, setOpenConfirm] = useState(null);
+    const [openChoice, setOpenChoice] = useState('fs'); // 'fs'=FS에서 열기(기본) | 'folder'=폴더열기
     const aliveRef = useRef(true);
     const cardsRef = useRef(null);
     const searchInputRef = useRef(null);
@@ -377,20 +383,54 @@ export default function FieldViewer() {
         }
     }, [showToast]);
 
-    // 키보드로 선택한 카드 열기 — 1차 Enter: 확인 모달, 2차 Enter: 실제 열기(모달 [열기] 버튼이 autoFocus).
-    const askOpenFs = useCallback((it) => {
+    // 키보드로 지시서 열기 — Enter 로 '여시겠습니까?' 확인창을 띄운다. 확인창에서 ←/→ 로
+    // [FS에서 열기]/[폴더열기] 를 고르고 Enter 로 실행(기본=FS). 카드 키보드 조작과 라이트박스
+    // 양쪽이 같은 함수를 쓴다. 거래처 정보가 없으면 어느 쪽도 폴더를 못 찾으므로 바로
+    // handleOpenFs 가 안내 토스트를 띄운다.
+    const askOpen = useCallback((it) => {
         if (!it) return;
         const fsReady = !!(it.networkFolderName || it.companyName);
-        if (!fsReady) { handleOpenFs(it); return; }  // 거래처 정보 없음 → handleOpenFs 가 안내 토스트
-        setConfirmAction({
-            message: `[${it.title || it.orderNumber}] 작업지시서를 FlexiSIGN 에서 여시겠습니까?`,
-            confirmText: '열기',
-            onConfirm: () => handleOpenFs(it),
-        });
+        if (!fsReady) {
+            // 거래처 정보 없음 → 폴더 자체를 못 찾음. 확대 보기를 닫아 안내 토스트가 보이게 한다.
+            setLightboxOrder(null);
+            handleOpenFs(it);
+            return;
+        }
+        setOpenChoice('fs');
+        setOpenConfirm({ item: it });
     }, [handleOpenFs]);
+
+    // 확인창에서 고른 동작 실행 — 기본 Enter=FS, →+Enter=폴더. 확대 보기도 함께 닫아
+    // 결과 토스트가 가려지지 않게 한다.
+    const runOpenChoice = useCallback((choice) => {
+        const it = openConfirm?.item;
+        setOpenConfirm(null);
+        setLightboxOrder(null);
+        if (!it) return;
+        if (choice === 'folder') handleOpenFolder(it);
+        else handleOpenFs(it);
+    }, [openConfirm, handleOpenFolder, handleOpenFs]);
+
+    const closeLightbox = useCallback(() => setLightboxOrder(null), []);
+
+    // '여시겠습니까?' 확인창 키 처리 — ←/→ 로 선택, Enter 실행, Esc 취소.
+    // 라이트박스가 떠 있어도 이 확인창이 우선이며, 라이트박스 키 핸들러는 confirmActive 로 양보한다.
+    useEffect(() => {
+        if (!openConfirm) return undefined;
+        const onKey = (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); setOpenConfirm(null); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); setOpenChoice('fs'); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); setOpenChoice('folder'); }
+            else if (e.key === 'Enter') { e.preventDefault(); runOpenChoice(openChoice); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [openConfirm, openChoice, runOpenChoice]);
 
     // fv-cards 영역(검색창에서 ↓ 로 진입)에서의 키 처리.
     const handleCardsKeyDown = useCallback((e) => {
+        // 라이트박스나 확인창이 떠 있으면 그쪽 키 핸들러가 처리 — 카드 영역은 양보(중복 방지).
+        if (lightboxOrder || openConfirm) return;
         if (e.key === 'ArrowDown') {
             e.preventDefault();
             setSelectedIndex((i) => Math.min((i < 0 ? -1 : i) + 1, sorted.length - 1));
@@ -403,10 +443,10 @@ export default function FieldViewer() {
         } else if (e.key === 'Enter') {
             if (selectedIndex >= 0 && selectedIndex < sorted.length) {
                 e.preventDefault();
-                askOpenFs(sorted[selectedIndex]);
+                askOpen(sorted[selectedIndex]);
             }
         }
-    }, [sorted, selectedIndex, askOpenFs]);
+    }, [sorted, selectedIndex, askOpen, lightboxOrder, openConfirm]);
 
     const handleComplete = useCallback((it) => {
         if (!worker) {
@@ -684,6 +724,20 @@ export default function FieldViewer() {
                                         pdfUrl={it.worksheetPdfUrl}
                                         thumbnailUrl={it.worksheetThumbnailUrl}
                                     />
+                                    {(it.worksheetPdfUrl || it.worksheetThumbnailUrl) && (
+                                        <button
+                                            type="button"
+                                            className="fv-thumb-zoom"
+                                            onClick={(e) => { e.stopPropagation(); setLightboxOrder(it.orderNumber); }}
+                                            title="크게 보기"
+                                            aria-label="작업지시서 크게 보기"
+                                        >
+                                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                <circle cx="8.5" cy="8.5" r="5.5" />
+                                                <path d="M13 13l4 4" />
+                                            </svg>
+                                        </button>
+                                    )}
                                 </div>
                                 <div className="fv-card-body">
                                     <div className="fv-card-header">
@@ -770,6 +824,43 @@ export default function FieldViewer() {
             {toast && (
                 <div className={`fv-toast fv-toast-${toast.kind}`} role="status">
                     {toast.text}
+                </div>
+            )}
+
+            {lightboxOrder && (
+                <WorksheetLightbox
+                    items={sorted}
+                    orderNumber={lightboxOrder}
+                    onClose={closeLightbox}
+                    onNavigate={setLightboxOrder}
+                    onRequestOpen={askOpen}
+                    confirmActive={!!openConfirm}
+                />
+            )}
+
+            {openConfirm && (
+                <div
+                    className="fv-modal-bg fv-modal-bg--over"
+                    onClick={() => setOpenConfirm(null)}
+                >
+                    <div className="fv-modal" onClick={(e) => e.stopPropagation()}>
+                        <p className="fv-modal-desc" style={{ fontSize: 16, color: '#1f2937' }}>
+                            [{openConfirm.item.title || openConfirm.item.orderNumber}] 작업지시서를 여시겠습니까?
+                        </p>
+                        <div className="fv-open-choices">
+                            <button
+                                type="button"
+                                className={`fv-open-btn${openChoice === 'fs' ? ' on' : ''}`}
+                                onClick={() => runOpenChoice('fs')}
+                            >FS에서 열기</button>
+                            <button
+                                type="button"
+                                className={`fv-open-btn${openChoice === 'folder' ? ' on' : ''}`}
+                                onClick={() => runOpenChoice('folder')}
+                            >폴더열기</button>
+                        </div>
+                        <p className="fv-open-hint">← → 로 선택 · Enter 로 열기 · Esc 취소</p>
+                    </div>
                 </div>
             )}
 
