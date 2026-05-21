@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import KakaoShareButton from './KakaoShareButton.jsx';
+import { safeFileName } from '../../utils/shareImage.js';
 import './PhotoLightbox.css';
 
 /**
@@ -45,6 +47,12 @@ export default function PhotoLightbox({ photos, index, onClose, onIndexChange })
             >
                 ×
             </button>
+
+            <KakaoShareButton
+                className="photo-lightbox-share"
+                getSource={() => ({ type: 'url', url: photo.src })}
+                fileName={() => safeFileName(photo.alt || `작업사진_${index + 1}`)}
+            />
 
             {index > 0 && (
                 <button

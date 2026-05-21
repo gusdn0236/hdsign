@@ -4,6 +4,8 @@ import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import PdfViewer from "../../components/common/PdfViewer.jsx";
 import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
+import KakaoShareButton from "../../components/common/KakaoShareButton.jsx";
+import { safeFileName } from "../../utils/shareImage.js";
 import "./OrderAdmin.css";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -211,6 +213,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
   const [openingFsId, setOpeningFsId] = useState(null);
+  const [openingFolderId, setOpeningFolderId] = useState(null);
   const [bulkPurging, setBulkPurging] = useState(false);
   // 접수·작업중 탭의 다중 선택 → 일괄 휴지통 이동. 선택모드일 땐 카드 클릭이 모달 대신 체크 토글.
   const [bulkSelectMode, setBulkSelectMode] = useState(false);
@@ -458,6 +461,27 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     });
     return slides;
   }, [selectedOrder, selectedFiles.evidence]);
+
+  // 모달 캐러셀의 현재 슬라이드를 카톡 공유용 소스로 변환.
+  // 지시서(PDF) 는 react-pdf 가 그려둔 캔버스를, 작업 사진은 R2 이미지 URL 을 사용.
+  const getCarouselShareSource = useCallback(() => {
+    const slide = carouselSlides[carouselIndex] || carouselSlides[0];
+    if (!slide) return null;
+    if (slide.type === "pdf") {
+      const canvas = document.querySelector(".order-preview-pdf canvas");
+      return canvas && canvas.width > 0 ? { type: "canvas", canvas } : null;
+    }
+    return { type: "url", url: slide.file.fileUrl };
+  }, [carouselSlides, carouselIndex]);
+
+  const getCarouselShareName = useCallback(() => {
+    const slide = carouselSlides[carouselIndex] || carouselSlides[0];
+    if (slide?.type === "pdf") {
+      const base = selectedOrder?.title || selectedOrder?.orderNumber || "지시서";
+      return safeFileName(`${base}_지시서`, "jpg");
+    }
+    return safeFileName(slide?.file?.originalName || "작업사진", "jpg");
+  }, [carouselSlides, carouselIndex, selectedOrder]);
 
   // 모달 열린 상태에서 ←/→ 로 이전·다음 주문 이동. lightbox 가 열려 있으면 lightbox 가 우선 처리하고,
   // input/textarea/select 에 포커스가 있으면 그쪽 키 입력을 방해하지 않는다.
@@ -1266,6 +1290,41 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   }, []);
 
+  // [폴더열기] — 현장 에이전트가 그 지시서의 .fs(찾으면) 가 든 폴더, 못 찾으면 거래처 폴더를
+  // 탐색기로 연다. handleOpenFs 와 같은 에이전트(/open-folder) 를 호출 — 현장 뷰어와 동일 동작.
+  const handleOpenFolder = useCallback(async (e, order) => {
+    e.stopPropagation();
+    setOpeningFolderId(order.id);
+    try {
+      const res = await fetch(`${AGENT_URL}/open-folder`, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "application/json",
+          "X-HDSign-Field": "1",
+        },
+        body: JSON.stringify({ orderNumber: order.orderNumber }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || `에이전트 응답 ${res.status}`);
+      }
+      const body = await res.json();
+      if (body.opened) {
+        setFeedback({ type: "success", msg: body.message || "폴더를 열었습니다." });
+      } else {
+        setFeedback({ type: "error", msg: body.message || "폴더를 열지 못했습니다." });
+      }
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        msg: err.message || "에이전트 연결 실패 — 트레이의 HD사인 작업뷰어 프로그램이 켜져있는지 확인하세요.",
+      });
+    } finally {
+      setOpeningFolderId(null);
+    }
+  }, []);
+
   const requestLabel = (requestType) => REQUEST_TYPE_LABELS[requestType] || "요청";
 
   // 주문 카드 1건 렌더 — 카드 뷰와 달력 뷰(선택 일자 카드 영역) 양쪽에서 동일한 마크업 재사용.
@@ -1279,6 +1338,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const restoring = restoringOrderId === order.id;
     const deleting = deletingOrderId === order.id;
     const openingFs = openingFsId === order.id;
+    const openingFolder = openingFolderId === order.id;
     // FS 버튼은 지시서가 만들어진 카드에만 — RECEIVED(워크시트 없음) 는 자연히 빠진다.
     const fsReady = !!order.worksheetPdfUrl;
     const daysLeft = isTrash ? daysLeftUntilPurge(order.deletedAt) : null;
@@ -1286,7 +1346,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     // (열람해도 사라지지 않게 해달라는 요청 — 한 번 보고 나서도 어느 카드에 사진/변경이 있는지 계속 보여야 함)
     const hasPhotos = !!order.evidenceLastUploadedAt;
     const worksheetChangeNote = (order.worksheetChangeNote || "").trim();
-    const hasWorksheetChange = !!worksheetChangeNote;
+    // 변경 태그 — 지시서가 웹에 두 번째 이상 재반영된 적 있으면(worksheetRevisedAt) 표시.
+    // 한 번 찍히면 재인쇄·열람으로도 안 사라지는 영구 신호. 옛 주문(타임스탬프 없이
+    // 변경 메모만 남은 건) 호환을 위해 메모 존재도 함께 인정.
+    const hasWorksheetChange = !!order.worksheetRevisedAt || !!worksheetChangeNote;
+    const worksheetChangeTitle = worksheetChangeNote
+      ? `지시서 변경 메모: ${worksheetChangeNote}`
+      : "지시서가 변경되었습니다";
     const typeKey = order.requestType === "QUOTE" ? "quote" : "order";
     const isOrderType = order.requestType === "ORDER";
     // 다중 선택 모드 — 접수·작업중 탭은 선택 → 작업완료 이동, 작업완료 탭은 선택 → 완전삭제로 재사용.
@@ -1347,7 +1413,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 <span className="row-badge badge-evidence" title="작업 사진이 등록되어 있습니다">사진</span>
               )}
               {hasWorksheetChange && (
-                <span className="row-badge badge-worksheet" title={`지시서 변경 메모: ${worksheetChangeNote}`}>변경</span>
+                <span className="row-badge badge-worksheet" title={worksheetChangeTitle}>변경</span>
               )}
             </div>
           )}
@@ -1392,6 +1458,26 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               >
                 {openingFs ? "여는 중..." : "FS에서 열기"}
               </button>
+            )}
+            {fsReady && (
+              <button
+                type="button"
+                className="next-status-btn action-folder"
+                onClick={(e) => handleOpenFolder(e, order)}
+                disabled={openingFolder}
+                title="현장 에이전트로 이 지시서 .fs 가 든 폴더(또는 거래처 폴더)를 탐색기로 엽니다"
+              >
+                {openingFolder ? "여는 중..." : "폴더열기"}
+              </button>
+            )}
+            {fsReady && (
+              <KakaoShareButton
+                className="order-card-share"
+                iconOnly
+                label="카톡공유"
+                getSource={() => ({ type: "pdf", url: order.worksheetPdfUrl })}
+                fileName={() => safeFileName(`${order.title || order.orderNumber || "지시서"}_지시서`, "jpg")}
+              />
             )}
             {isTrash ? (
               <>
@@ -1967,6 +2053,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                       {carouselSlides[carouselIndex]?.type === "pdf" ? " · 지시서" : " · 작업 사진"}
                     </div>
                   </>
+                )}
+
+                {carouselSlides.length > 0 && (
+                  <KakaoShareButton
+                    className="order-stage-share"
+                    label={
+                      (carouselSlides[carouselIndex] || carouselSlides[0])?.type === "pdf"
+                        ? "지시서 카톡공유"
+                        : "사진 카톡공유"
+                    }
+                    getSource={getCarouselShareSource}
+                    fileName={getCarouselShareName}
+                  />
                 )}
               </div>
 

@@ -343,11 +343,24 @@
     gap: 6px;
     margin-top: 8px;
 }
-/* [FS에서 열기] · [폴더열기] 는 한 줄에 반반. '완료'/'완료취소'(내 지시서만 보기에서만 등장)는
-   아래 줄 전체폭. */
-.fv-card-actions .fv-btn { flex: 1 1 calc(50% - 3px); min-width: 0; }
+/* [FS에서 열기] · [폴더열기] 는 남는 폭을 반반 — 옆에 카톡공유 아이콘(고정폭)이 붙어도
+   한 줄에 같이 들어간다. '완료'/'완료취소'(내 지시서만 보기에서만 등장)는 아래 줄 전체폭.
+   세로 패딩은 줄여 버튼 높이를 적당히(약 26px) — 카톡공유 아이콘은 height:auto 라 함께 낮아짐. */
+.fv-card-actions .fv-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
 .fv-card-actions .fv-btn-done,
 .fv-card-actions .fv-btn-completed { flex-basis: 100%; }
+
+/* 카톡공유 — 아이콘 전용 콤팩트 버튼. 폭은 고정, 높이는 옆 버튼에 맞춰 늘어나게. */
+.fv-card-actions .fv-btn-share {
+    flex: 0 0 34px;
+    height: auto;
+}
+.fv-card-actions .fv-btn-share svg { width: 16px; height: 16px; }
 
 .fv-btn {
     display: inline-flex;

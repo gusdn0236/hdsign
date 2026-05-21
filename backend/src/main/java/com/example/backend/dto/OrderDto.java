@@ -36,6 +36,7 @@ public class OrderDto {
         private String worksheetThumbnailUrl;
         private LocalDateTime evidenceLastUploadedAt;
         private LocalDateTime worksheetUpdatedAt;
+        private LocalDateTime worksheetRevisedAt;
         private String worksheetChangeNote;
         private LocalDateTime adminViewedAt;
         // per-worker 완료 신고 목록. 같은 지시서를 여러 직원이 각자 따로 처리하면 row 가 여러 개.
@@ -116,6 +117,7 @@ public class OrderDto {
                 .worksheetThumbnailUrl(order.getWorksheetThumbnailUrl())
                 .evidenceLastUploadedAt(order.getEvidenceLastUploadedAt())
                 .worksheetUpdatedAt(order.getWorksheetUpdatedAt())
+                .worksheetRevisedAt(order.getWorksheetRevisedAt())
                 .worksheetChangeNote(order.getWorksheetChangeNote())
                 .adminViewedAt(order.getAdminViewedAt())
                 .workerCompletions(order.getWorkerCompletions().stream()

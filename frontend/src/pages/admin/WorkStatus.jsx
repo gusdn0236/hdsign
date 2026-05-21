@@ -565,7 +565,11 @@ export default function WorkStatus() {
             const dueBadge = getDueBadge(o.dueDate);
             const hasPhotos = !!o.evidenceLastUploadedAt;
             const worksheetChangeNote = (o.worksheetChangeNote || "").trim();
-            const hasWorksheetChange = !!worksheetChangeNote;
+            // 변경 태그 — 영구 신호 worksheetRevisedAt 우선. 옛 주문(메모만 남은 건) 호환.
+            const hasWorksheetChange = !!o.worksheetRevisedAt || !!worksheetChangeNote;
+            const worksheetChangeTitle = worksheetChangeNote
+              ? `지시서 변경 메모: ${worksheetChangeNote}`
+              : "지시서가 변경되었습니다";
             return (
               <div
                 className="ws-status-card"
@@ -597,7 +601,7 @@ export default function WorkStatus() {
                         <span className="row-badge badge-evidence" title="작업 사진이 등록되어 있습니다">사진</span>
                       )}
                       {hasWorksheetChange && (
-                        <span className="row-badge badge-worksheet" title={`지시서 변경 메모: ${worksheetChangeNote}`}>변경</span>
+                        <span className="row-badge badge-worksheet" title={worksheetChangeTitle}>변경</span>
                       )}
                     </div>
                   )}

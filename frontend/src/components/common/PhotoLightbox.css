@@ -1,7 +1,8 @@
 .photo-lightbox-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 80;
+    /* 발주관리 모달(z-index 1200) 안에서 카드 사진을 눌러 열리므로 그 위로 떠야 한다. */
+    z-index: 1400;
     background: rgba(0, 0, 0, 0.88);
     display: flex;
     align-items: center;
@@ -57,6 +58,13 @@
     background: rgba(255, 255, 255, 0.2);
 }
 
+.photo-lightbox-share {
+    position: absolute;
+    top: 16px;
+    left: 20px;
+    z-index: 1;
+}
+
 .photo-lightbox-nav {
     position: absolute;
     top: 50%;
@@ -108,4 +116,5 @@
     .photo-lightbox-nav.prev { left: 8px; }
     .photo-lightbox-nav.next { right: 8px; }
     .photo-lightbox-close { top: 10px; right: 10px; }
+    .photo-lightbox-share { top: 10px; left: 10px; }
 }

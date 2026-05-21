@@ -230,6 +230,10 @@ export default function ClientAdmin() {
                 msg: `등록 ${data.success}건 성공${data.failed > 0 ? ` / ${data.failed}건 실패 (행에 사유 표시)` : ''}`,
             });
             await loadClients();
+            // 전부 성공하면 모달을 닫는다. 실패가 있으면 행별 사유를 봐야 하므로 열어둔다.
+            if (data.failed === 0 && successFolders.size > 0) {
+                closeModal();
+            }
         } catch (err) {
             setFeedback({ type: 'error', msg: err.message });
         } finally {

@@ -595,18 +595,20 @@
   letter-spacing: 0.02em;
 }
 
-/* 사진 태그 — 파란 글씨. 작업 사진이 등록돼 있으면 항상 표시(열람해도 사라지지 않음). */
+/* 사진 태그 — 채도 높은 단색 파랑 채움 + 흰 글씨. 연한 칩보다 멀리서도 또렷하다.
+   작업 사진이 등록돼 있으면 항상 표시(열람해도 사라지지 않음). 크기는 그대로. */
 .row-badge.badge-evidence {
-  color: #1d4ed8;
-  background: #dbeafe;
-  border: 1px solid #bfdbfe;
+  color: #fff;
+  background: #2563eb;
+  border: 1px solid #1d4ed8;
 }
 
-/* 변경 태그 — 빨간 글씨. 지시서 변경 메모가 남아 있으면 항상 표시(열람해도 사라지지 않음). */
+/* 변경 태그 — 단색 빨강 채움 + 흰 글씨. 지시서가 변경된 적 있으면 항상 표시
+   (worksheetRevisedAt 영구 신호 — 재인쇄·메모삭제·열람으로 사라지지 않음). */
 .row-badge.badge-worksheet {
-  color: #b91c1c;
-  background: #fee2e2;
-  border: 1px solid #fecaca;
+  color: #fff;
+  background: #dc2626;
+  border: 1px solid #b91c1c;
 }
 
 .status-badge {
@@ -727,6 +729,15 @@
 
 .next-status-btn.action-fs:hover:not(:disabled) {
   background: #047857;
+}
+
+/* 폴더열기 — FS(초록) 옆 파랑. 현장 뷰어의 [폴더열기] 와 같은 기능. */
+.next-status-btn.action-folder {
+  background: #2563eb;
+}
+
+.next-status-btn.action-folder:hover:not(:disabled) {
+  background: #1d4ed8;
 }
 
 /* 휴지통 탭 옆 [QR 생성] 트리거 + 펼침 패널.
@@ -1109,7 +1120,8 @@
 
 .order-card-thumb-badges .row-badge {
   margin: 0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.10);
+  /* 단색 채움 배지를 썸네일 위에서 띄워 보이게 — 그림자를 진하게. */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
 .order-card-body {
@@ -1196,6 +1208,19 @@
   min-width: 0;
   padding: 7px 10px;
   font-size: 12px;
+}
+
+/* 카드 액션줄의 카톡공유 — 아이콘 전용 콤팩트 버튼. FS·폴더열기 버튼과 한 줄에
+   들어가도록 폭은 고정(36px), 높이는 옆 버튼에 맞춰 늘어나게(height:auto + 부모 stretch). */
+.order-card-actions .order-card-share {
+  flex: 0 0 36px;
+  height: auto;
+  padding: 0;
+  border-radius: 6px;
+}
+.order-card-actions .order-card-share svg {
+  width: 16px;
+  height: 16px;
 }
 
 @media (max-width: 720px) {
@@ -1440,6 +1465,16 @@
   padding: 4px 10px;
   border-radius: 999px;
   z-index: 2;
+}
+
+/* 지시서/작업사진 카톡공유 — 스테이지 우하단 오버레이. 작업사진 하단 메타바
+   위쪽으로 띄워 겹치지 않게 한다. */
+.order-stage-share {
+  position: absolute;
+  right: 16px;
+  bottom: 42px;
+  z-index: 8;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 
 .order-preview-file-fallback {

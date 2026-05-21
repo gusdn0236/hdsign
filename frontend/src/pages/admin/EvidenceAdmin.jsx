@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import KakaoShareButton from '../../components/common/KakaoShareButton.jsx';
+import { safeFileName } from '../../utils/shareImage.js';
 import './EvidenceAdmin.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
@@ -456,11 +458,18 @@ export default function EvidenceAdmin() {
                                     else setLightboxIndex(idx);
                                 };
                                 return (
-                                    <button
+                                    <div
                                         key={it.id}
-                                        type="button"
+                                        role="button"
+                                        tabIndex={0}
                                         className={`evidence-card${isChecked ? ' selected' : ''}`}
                                         onClick={handleClick}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                handleClick();
+                                            }
+                                        }}
                                     >
                                         {selectMode && (
                                             <span className={`evidence-checkbox${isChecked ? ' checked' : ''}`} aria-hidden="true">
@@ -474,6 +483,17 @@ export default function EvidenceAdmin() {
                                                 loading="lazy"
                                                 decoding="async"
                                             />
+                                            {!selectMode && (
+                                                <KakaoShareButton
+                                                    className="evidence-card-share"
+                                                    iconOnly
+                                                    getSource={() => ({ type: 'url', url: it.fileUrl })}
+                                                    fileName={() => safeFileName(
+                                                        it.originalName
+                                                        || `${it.companyName || '현장사진'}_${it.orderNumber || ''}`,
+                                                    )}
+                                                />
+                                            )}
                                             <span className="evidence-card-time-badge">{formatTime(it.createdAt)}</span>
                                             {it.fileSize > 0 && (
                                                 <span className="evidence-card-size-badge">{formatBytes(it.fileSize)}</span>
@@ -491,7 +511,7 @@ export default function EvidenceAdmin() {
                                                 )}
                                             </div>
                                         </div>
-                                    </button>
+                                    </div>
                                 );
                             })}
                         </div>
@@ -537,6 +557,18 @@ export default function EvidenceAdmin() {
                             {active.tag && <div>태그: <span className={`evidence-lightbox-tag tag-${tagClassName(active.tag)}`}>{active.tag}</span></div>}
                             <div>{formatDateHeader(dateKeyOf(active))} {formatTime(active.createdAt)}</div>
                             <div className="evidence-lightbox-filename">{active.originalName}</div>
+
+                            {/* 카카오톡 공유 — PC 는 클립보드 복사, 모바일은 공유 시트 */}
+                            <div className="evidence-lightbox-share-row">
+                                <KakaoShareButton
+                                    className="evidence-lightbox-share"
+                                    getSource={() => ({ type: 'url', url: active.fileUrl })}
+                                    fileName={() => safeFileName(
+                                        active.originalName
+                                        || `${active.companyName || '현장사진'}_${active.orderNumber || ''}`,
+                                    )}
+                                />
+                            </div>
 
                             {/* 갤러리 등록 영역 */}
                             <div className="evidence-gallery-section">

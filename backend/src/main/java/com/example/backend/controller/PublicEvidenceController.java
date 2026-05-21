@@ -651,6 +651,13 @@ public class PublicEvidenceController {
         if (firstAttachment || userMarkedChanged) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
         }
+        // 첫 등록이 아닌 모든 재업로드(웹 재반영)를 '변경 이력'으로 못박는다 — 변경 메모
+        // 입력 여부와 무관. 즉 지시서가 웹에 두 번째 이상 올라오면 곧 '변경'으로 본다.
+        // 한 번 찍히면 이후 재인쇄/열람으로도 비우지 않으므로, 관리자 카드의 '변경' 배지가
+        // 사진 배지처럼 영구 유지된다.
+        if (!firstAttachment) {
+            order.setWorksheetRevisedAt(LocalDateTime.now());
+        }
         // changeNote 처리 분기:
         //   - userMarkedChanged: 새 메모로 갱신 (빈 값이면 null 로 클리어)
         //   - preserveNote: 기존 DB 메모 그대로 유지 — 다음 다이얼로그에서 또 prefill 되도록 영속

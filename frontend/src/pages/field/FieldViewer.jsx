@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
+import KakaoShareButton from '../../components/common/KakaoShareButton.jsx';
+import { safeFileName } from '../../utils/shareImage.js';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
 import { getStoredWorker as readWorker, setStoredWorker as writeWorker } from '../../data/workerStorage.js';
 import './FieldViewer.css';
@@ -68,9 +70,14 @@ export default function FieldViewer() {
     const aliveRef = useRef(true);
     const cardsRef = useRef(null);
     const searchInputRef = useRef(null);
+    // 완료/취소 낙관적 갱신이 일어날 때마다 +1. 백그라운드 폴링 fetch 가 시작 시점의
+    // 값과 응답 시점의 값이 다르면(=폴링이 도는 사이 사용자가 완료/취소를 누름) 그 응답은
+    // 옛 데이터라 버린다 — 방금 누른 [완료]가 폴링 응답에 덮여 되돌아가는 race 방지.
+    const mutationGenRef = useRef(0);
 
-    const fetchList = useCallback(async ({ manual = false } = {}) => {
+    const fetchList = useCallback(async ({ manual = false, silent = false } = {}) => {
         if (manual) setRefreshing(true);
+        const genAtStart = mutationGenRef.current;
         try {
             // 작업중(IN_PROGRESS) + 작업완료(deletedAt != null) 를 병렬 fetch. 각각 별도 엔드포인트.
             const [activeRes, doneRes] = await Promise.all([
@@ -87,12 +94,17 @@ export default function FieldViewer() {
             }
             const [activeData, doneData] = await Promise.all([activeRes.json(), doneRes.json()]);
             if (!aliveRef.current) return;
+            // 백그라운드 폴링이 도는 사이 사용자가 완료/취소를 눌렀으면, 그 낙관적 갱신을
+            // 폴링이 가져온 옛 데이터로 덮어쓰지 않도록 이번 응답은 버린다(다음 폴링이 반영).
+            if (silent && mutationGenRef.current !== genAtStart) return;
             setItems(Array.isArray(activeData) ? activeData : []);
             setCompletedItems(Array.isArray(doneData) ? doneData : []);
             setError('');
         } catch (err) {
             if (!aliveRef.current) return;
-            setError(err.message || '오류가 발생했습니다.');
+            // 백그라운드 폴링 실패는 화면에 노출하지 않는다 — 일시적 네트워크 끊김에
+            // 에러 배너가 깜빡이는 잡음 방지. 마지막 정상 목록을 그대로 두고 다음 폴링이 복구.
+            if (!silent) setError(err.message || '오류가 발생했습니다.');
         } finally {
             if (!aliveRef.current) return;
             setLoading(false);
@@ -132,7 +144,6 @@ export default function FieldViewer() {
         aliveRef.current = true;
         fetchList();
         // 백→포 복귀(작업표시줄 클릭/창 활성화) 시 1회 새로고침 + 검색창 자동 포커스 — 바로 키보드 입력 가능.
-        // 현장 PC 는 항상 켜져 있어 자동 폴링은 불필요.
         // 모달이 떠 있거나 카드를 키보드로 골라둔 상태에서는 포커스를 가로채지 않음(Enter 동작 깨짐 방지).
         const focusSearchSoon = () => {
             // 약간 지연 — 브라우저가 창 활성화 직후 처리하는 native focus 와 충돌하지 않도록.
@@ -154,12 +165,20 @@ export default function FieldViewer() {
         const onWindowFocus = () => focusSearchSoon();
         document.addEventListener('visibilitychange', onVisible);
         window.addEventListener('focus', onWindowFocus);
+        // 현장 PC 는 항상 켜진 데스크톱(데이터 요금 무관) — 모바일 지시서에서 누른 [완료]가
+        // 현장 화면에도 자동으로 반영되도록 주기적으로 목록을 다시 가져온다. 모바일 목록과 달리
+        // 폴링을 켜는 이유. silent: 스피너·에러배너 없이 조용히 갱신. 창이 최소화돼 안 보일
+        // 땐 건너뛰고, 다시 보이면 onVisible 이 즉시 1회 당겨오므로 공백 없이 이어진다.
+        const pollTimer = window.setInterval(() => {
+            if (document.visibilityState === 'visible') fetchList({ silent: true });
+        }, 20000);
         // 초기 마운트에도 1회 포커스 — Chrome --app 으로 띄우자마자 키보드 입력 가능.
         focusSearchSoon();
         return () => {
             aliveRef.current = false;
             document.removeEventListener('visibilitychange', onVisible);
             window.removeEventListener('focus', onWindowFocus);
+            window.clearInterval(pollTimer);
         };
     }, [fetchList]);
 
@@ -253,11 +272,25 @@ export default function FieldViewer() {
     // 검색어가 바뀌면 선택 해제 — 엉뚱한 카드가 강조된 채 남지 않도록.
     useEffect(() => { setSelectedIndex(-1); }, [searchTerm]);
 
-    // 선택된 카드가 보이도록 스크롤.
+    // 선택된 카드가 sticky 헤더에 가려지지 않게 스크롤. scrollIntoView 는 sticky 헤더 높이를
+    // 모르기 때문에 카드가 헤더 뒤에 숨어도 '보인다'고 판단하거나, focus() 가 일으킨 스크롤과
+    // 겹쳐 첫 카드가 헤더 밑으로 들어가던 문제 → 헤더 높이만큼 빼고 직접 스크롤한다.
+    // 이미 다 보이는 위치면 아예 안 움직임(첫 카드 선택 시 불필요한 한 칸 밀림 제거).
     useEffect(() => {
         if (selectedIndex < 0) return;
         const el = cardsRef.current?.querySelector(`[data-card-index="${selectedIndex}"]`);
-        el?.scrollIntoView({ block: 'nearest' });
+        if (!el) return;
+        const header = document.querySelector('.fv-header');
+        const headerH = header ? header.getBoundingClientRect().height : 0;
+        const rect = el.getBoundingClientRect();
+        const margin = 8;
+        if (rect.top < headerH + margin) {
+            // 카드 위쪽이 헤더에 가려짐 → 헤더 바로 아래로 내려오게.
+            window.scrollBy({ top: rect.top - headerH - margin, behavior: 'smooth' });
+        } else if (rect.bottom > window.innerHeight - margin) {
+            // 카드 아래쪽이 화면 밖으로 벗어남 → 위로 끌어올림.
+            window.scrollBy({ top: rect.bottom - window.innerHeight + margin, behavior: 'smooth' });
+        }
     }, [selectedIndex]);
 
     const handleOpenFs = useCallback(async (it) => {
@@ -364,7 +397,7 @@ export default function FieldViewer() {
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
             setSelectedIndex((i) => {
-                if (i <= 0) { searchInputRef.current?.focus(); return -1; }
+                if (i <= 0) { searchInputRef.current?.focus({ preventScroll: true }); return -1; }
                 return i - 1;
             });
         } else if (e.key === 'Enter') {
@@ -401,6 +434,8 @@ export default function FieldViewer() {
                     }
                     // 낙관적 갱신 — 다음 fetch 까지 기다리지 않고 [완료]→[완료취소하기] 로 즉시 토글.
                     // (탭 이동 없음 — 완료 신고는 홈페이지 작업현황 탭만 갱신.)
+                    // gen 을 올려, 진행 중이던 폴링 응답이 이 갱신을 덮어쓰지 못하게 한다.
+                    mutationGenRef.current += 1;
                     const stamp = new Date().toISOString();
                     setItems((prev) => prev.map((p) => p.orderNumber === it.orderNumber
                         ? {
@@ -441,6 +476,8 @@ export default function FieldViewer() {
                         const body = await res.json().catch(() => ({}));
                         throw new Error(body.message || '완료 취소 실패');
                     }
+                    // gen 을 올려, 진행 중이던 폴링 응답이 이 갱신을 덮어쓰지 못하게 한다.
+                    mutationGenRef.current += 1;
                     setItems((prev) => prev.map((p) => p.orderNumber === it.orderNumber
                         ? {
                             ...p,
@@ -568,7 +605,9 @@ export default function FieldViewer() {
                                 e.preventDefault();
                                 if (sorted.length > 0) {
                                     setSelectedIndex(0);
-                                    cardsRef.current?.focus();
+                                    // preventScroll — focus() 기본 동작이 fv-cards 컨테이너를
+                                    // 보이게 하려 페이지를 한 칸 밀어 첫 카드가 헤더에 가려지던 문제 차단.
+                                    cardsRef.current?.focus({ preventScroll: true });
                                 }
                             }
                         }}
@@ -689,6 +728,14 @@ export default function FieldViewer() {
                                         >
                                             {openingDir ? '여는 중…' : '폴더열기'}
                                         </button>
+                                        {it.worksheetPdfUrl && (
+                                            <KakaoShareButton
+                                                className="fv-btn-share"
+                                                iconOnly
+                                                getSource={() => ({ type: 'pdf', url: it.worksheetPdfUrl })}
+                                                fileName={() => safeFileName(`${it.title || it.orderNumber || '지시서'}_지시서`, 'jpg')}
+                                            />
+                                        )}
                                         {/* '완료'/'완료취소' 는 '작업중' 탭의 '내 지시서만 보기' 모드에서만.
                                             완료 신고는 홈페이지 '작업현황' 탭만 갱신하고 탭 분기에는 영향 없음.
                                             완료 탭(=발주관리 작업완료) 카드는 이미 사무실에서 마감된 작업이라 노출 X. */}

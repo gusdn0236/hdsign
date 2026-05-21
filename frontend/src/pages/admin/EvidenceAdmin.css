@@ -410,6 +410,18 @@
     align-items: center;
     justify-content: center;
 }
+
+/* 카드 사진 위 카톡공유 — 좌상단(선택모드 체크박스 자리지만 그땐 버튼을 숨김). */
+.evidence-card-share {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 2;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
 .evidence-card-img-wrap img {
     width: 100%;
     height: 100%;
@@ -560,6 +572,16 @@
     font-size: 12px;
     color: #cfcfcf;
     word-break: break-all;
+}
+
+/* 라이트박스 안 카톡공유 버튼 — 갤러리 등록 버튼과 같은 폭으로. */
+.evidence-lightbox-share-row {
+    margin-top: 14px;
+}
+.evidence-lightbox-share {
+    width: 100%;
+    height: 40px;
+    font-size: 13.5px;
 }
 
 /* 라이트박스 안 갤러리 등록 섹션 */

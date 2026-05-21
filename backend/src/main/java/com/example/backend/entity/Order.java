@@ -157,6 +157,14 @@ public class Order {
     @Column
     private LocalDateTime worksheetUpdatedAt;
 
+    // 지시서 PDF가 웹에 '재반영'된 가장 최근 시각. 첫 등록(최초 부착)은 제외하고
+    // 두 번째 업로드부터 기록한다 — 값이 있으면 "한 번 이상 다시 올라온 지시서".
+    // 변경 메모 입력 여부와 무관하며, 한 번 찍히면 재인쇄/열람으로도 비우지 않으므로
+    // 관리자 카드의 '변경' 배지를 영구 유지하는 신호로 쓴다(사진 배지의
+    // evidenceLastUploadedAt 와 같은 역할).
+    @Column
+    private LocalDateTime worksheetRevisedAt;
+
     // 관리자가 마지막으로 모달을 열어 본 시각. 위 두 시각보다 늦으면 배지가 사라진다.
     @Column
     private LocalDateTime adminViewedAt;
