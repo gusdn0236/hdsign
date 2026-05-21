@@ -815,23 +815,24 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
 
         company = (meta.get("companyName") or "").strip()
         network_folder_name = (meta.get("networkFolderName") or "").strip()
-        if not network_folder_name and not company:
-            return {"opened": False, "message": "거래처 정보가 비어있어 폴더를 찾을 수 없습니다."}
-
         network_base = Path(network_base_str)
-        customer_folder = find_customer_folder(network_base, network_folder_name, company)
-        if customer_folder is None:
-            return {
-                "opened": False,
-                "message": f"거래처 폴더를 찾지 못했습니다: {network_folder_name or company}",
-            }
+        # 거래처 폴더 — 폴백 매칭 + 결과 메시지용. 못 찾아도(None) originalFsPath(절대경로) 직행은 가능.
+        customer_folder = None
+        if network_folder_name or company:
+            customer_folder = find_customer_folder(network_base, network_folder_name, company)
 
-        # .fs 해석 — originalFsPath(워처가 인쇄 시점에 거래처 폴더에서 못 박은 전체 경로) 우선,
-        # 없으면 originalPdfFilename 기반 매칭(정확/유사/PDF24 시각값 ±30분 폴백).
-        # 옛 지시서(둘 다 없음)는 reason 안내와 함께 거래처 폴더만 열어 사용자가 직접 고르게 한다.
+        # .fs 해석 — originalFsPath(워처가 인쇄 시점에 못 박은 전체 경로) 우선, 없으면
+        # originalPdfFilename 기반 매칭(정확/유사/PDF24 시각값 ±30분 폴백). originalFsPath 는
+        # 절대경로라 거래처 폴더 탐색이 실패해도 그 .fs 를 곧장 연다.
         fs_file, reason = resolve_fs_for_order(meta, customer_folder, fuzzy_threshold)
         if fs_file is None:
-            # 폴더 자체를 열어 사용자가 수동으로 선택하게 폴백.
+            # 거래처 폴더라도 찾았으면 그 폴더를 열어 사용자가 직접 .fs 를 고르게 한다.
+            if customer_folder is None:
+                return {
+                    "opened": False,
+                    "message": f"{reason} 거래처 폴더도 찾지 못했습니다 "
+                               f"({network_folder_name or company or '거래처 정보 없음'}).",
+                }
             open_folder_in_explorer(customer_folder)
             return {
                 "opened": False,
@@ -854,7 +855,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             "opened": True,
             "matchedFile": fs_file.name,
             "matchKind": reason,
-            "customerFolder": str(customer_folder),
+            "customerFolder": str(customer_folder) if customer_folder is not None else None,
         }
 
     def process_open_folder(self, order_number: str) -> dict:
@@ -876,24 +877,22 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
 
         company = (meta.get("companyName") or "").strip()
         network_folder_name = (meta.get("networkFolderName") or "").strip()
-        if not network_folder_name and not company:
-            return {"opened": False, "message": "거래처 정보가 비어있어 폴더를 찾을 수 없습니다."}
-
         network_base = Path(network_base_str)
-        customer_folder = find_customer_folder(network_base, network_folder_name, company)
-        if customer_folder is None:
-            return {
-                "opened": False,
-                "message": f"거래처 폴더를 찾지 못했습니다: {network_folder_name or company}",
-            }
+        # 거래처 폴더 — 못 찾아도(None) originalFsPath(절대경로) 로 .fs 가 든 폴더는 열 수 있다.
+        customer_folder = None
+        if network_folder_name or company:
+            customer_folder = find_customer_folder(network_base, network_folder_name, company)
 
-        target = customer_folder
-        matched_file = None
         # originalFsPath(워처가 못 박은 .fs 전체 경로) 우선, 없으면 originalPdfFilename 매칭.
         fs_file, _reason = resolve_fs_for_order(meta, customer_folder, fuzzy_threshold)
-        if fs_file is not None:
-            target = fs_file.parent
-            matched_file = fs_file.name
+        if fs_file is None and customer_folder is None:
+            return {
+                "opened": False,
+                "message": f"거래처 폴더를 찾지 못했습니다: "
+                           f"{network_folder_name or company or '거래처 정보 없음'}",
+            }
+        target = fs_file.parent if fs_file is not None else customer_folder
+        matched_file = fs_file.name if fs_file is not None else None
         open_folder_in_explorer(target)
         logging.info("폴더 열기 [%s] → %s%s", order_number, target,
                      f" (.fs: {matched_file})" if matched_file else "")
@@ -901,7 +900,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             "opened": True,
             "folder": str(target),
             "matchedFile": matched_file,
-            "customerFolder": str(customer_folder),
+            "customerFolder": str(customer_folder) if customer_folder is not None else None,
             "message": (f"{matched_file} 가 든 폴더를 열었습니다." if matched_file
                         else "거래처 폴더를 열었습니다."),
         }
