@@ -536,7 +536,10 @@ public class PublicEvidenceController {
             // true 면 DB 의 기존 worksheetChangeNote 를 건드리지 않는다(다음 다이얼로그 호출 시
             // 동일 메모가 또 prefill 되도록 영속). 미전송/false 면 기존 동작(메모 비우기) 유지 —
             // 구버전 워처 호환.
-            @RequestParam(value = "preserveChangeNote", required = false) Boolean preserveChangeNote
+            @RequestParam(value = "preserveChangeNote", required = false) Boolean preserveChangeNote,
+            // 워처가 인쇄 시점에 확정한 지시서 .fs 의 전체 경로. 현장 뷰어 [FS에서 열기] 가
+            // 이 경로로 .fs 를 곧장 연다. 워처가 경로를 확정하지 못했거나 구버전 워처면 미전송.
+            @RequestParam(value = "originalFsPath", required = false) String originalFsPath
     ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null) {
@@ -635,6 +638,15 @@ public class PublicEvidenceController {
             String basename = slash >= 0 ? uploadedName.substring(slash + 1) : uploadedName;
             if (basename.length() > 255) basename = basename.substring(basename.length() - 255);
             order.setOriginalPdfFilename(basename);
+        }
+        // 워처가 .fs 전체 경로를 확정해 보냈으면 저장 — 현장 [FS에서 열기] 가 이 경로로 직행한다.
+        // 빈 값/미전송이면 기존 값을 건드리지 않는다(직전 인쇄에서 잡아둔 경로를 보존 — 이번 인쇄에서
+        // 못 잡았다고 지우면 오히려 후퇴). 경로가 옮겨졌으면 현장 에이전트가 파일 부재를 보고
+        // originalPdfFilename 매칭으로 폴백한다.
+        if (originalFsPath != null && !originalFsPath.isBlank()) {
+            String fsPath = originalFsPath.trim();
+            if (fsPath.length() > 500) fsPath = fsPath.substring(fsPath.length() - 500);
+            order.setOriginalFsPath(fsPath);
         }
         if (firstAttachment || userMarkedChanged) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());

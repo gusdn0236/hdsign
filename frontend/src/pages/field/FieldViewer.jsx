@@ -621,11 +621,12 @@ export default function FieldViewer() {
                     {sorted.map((it, idx) => {
                         const dueBadge = getDueBadge(it.dueDate);
                         // 거래처 폴더는 networkFolderName 우선·companyName 폴백으로 에이전트가 찾는다.
-                        // 버튼 활성 조건은 그 둘 중 하나만 있으면 OK — originalPdfFilename 이 없는 옛 건은
+                        // 버튼 활성 조건은 그 둘 중 하나만 있으면 OK — .fs 경로/원본 PDF명이 없는 옛 건은
                         // .fs 자동매칭 대신 거래처 폴더만 열림(에이전트가 처리).
                         const fsReady = !!(it.networkFolderName || it.companyName);
-                        // originalPdfFilename 이 없으면(옛 건) 자동매칭 불가 — 버튼은 살리되 안내만 다르게.
-                        const fsAutoMatch = fsReady && !!it.originalPdfFilename;
+                        // originalFsPath(워처가 못 박은 .fs 전체 경로) 나 originalPdfFilename 이 있으면
+                        // 자동매칭 가능 — 둘 다 없는 옛 건은 버튼은 살리되 안내만 다르게(거래처 폴더만 열림).
+                        const fsAutoMatch = fsReady && !!(it.originalFsPath || it.originalPdfFilename);
                         const isCompleted = !!worker
                             && Array.isArray(it.workerCompletions)
                             && it.workerCompletions.some((c) => c.worker === worker);

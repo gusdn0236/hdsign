@@ -4803,6 +4803,58 @@ def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str) -> Path:
         return pdf_path
 
 
+def _resolve_printed_fs_path(order_number: str) -> str:
+    """인쇄된 지시서에 대응하는 .fs 파일의 전체 경로를 거래처 폴더에서 찾아 반환.
+
+    현장 에이전트 [FS에서 열기] 가 이 경로로 .fs 를 곧장 열게 하기 위함 — 파일명 추측·
+    시각값 ±30분 폴백·퍼지매칭이 전부 불필요해지고, 한 폴더에 .fs 가 여럿이어도
+    지시서마다 자기 파일을 못 박아 엉뚱한 .fs 가 열리지 않는다.
+
+    아래를 모두 만족할 때만 경로를 반환, 아니면 "" (현장은 기존 originalPdfFilename 매칭 폴백):
+      - FlexiSIGN 창에 저장된 .fs 가 열려 있어 stem 을 읽을 수 있음
+      - config 의 network_customer_base 가 설정돼 있고 거래처 폴더가 실재
+      - 그 거래처 폴더(하위 포함)에 <stem>.fs 가 유일하게 존재
+    후보가 0개거나 2개 이상이면 모호 → "" 반환(잘못된 .fs 를 여느니 폴백이 낫다).
+
+    어떤 경우에도 예외를 밖으로 던지지 않는다 — 실패 시 "" 반환, 인쇄/업로드 흐름은 그대로 진행.
+    """
+    try:
+        fs_stem = _flexisign_document_stem()
+        if not fs_stem:
+            ui_log("인쇄 .fs 경로 — FlexiSIGN 에서 저장된 .fs stem 을 못 읽음 → 경로 미전송")
+            return ""
+        base_str = (_load_config().get("network_customer_base") or "").strip()
+        if not base_str:
+            return ""
+        detail = fetch_public_worksheet_detail(order_number)
+        if not detail:
+            return ""
+        network_folder = (detail.get("networkFolderName") or "").strip()
+        company = (detail.get("companyName") or "").strip()
+        if not network_folder and not company:
+            return ""
+        customer_folder = resolve_customer_folder(Path(base_str), network_folder, company)
+        if not customer_folder.exists():
+            ui_log(f"인쇄 .fs 경로 — 거래처 폴더 없음({customer_folder}) → 경로 미전송")
+            return ""
+        target = unicodedata.normalize("NFC", fs_stem).casefold()
+        hits = [
+            p for p in customer_folder.rglob("*.fs")
+            if p.is_file() and unicodedata.normalize("NFC", p.stem).casefold() == target
+        ]
+        if len(hits) == 1:
+            ui_log(f"인쇄 .fs 경로 확정: {hits[0]}")
+            return str(hits[0])
+        if len(hits) >= 2:
+            ui_log(f"인쇄 .fs 경로 — '{fs_stem}.fs' 후보 {len(hits)}건(모호) → 경로 미전송, 현장 폴백")
+        else:
+            ui_log(f"인쇄 .fs 경로 — 거래처 폴더에 '{fs_stem}.fs' 없음 → 경로 미전송, 현장 폴백")
+        return ""
+    except Exception as e:
+        ui_log(f"인쇄 .fs 경로 확정 실패: {e}")
+        return ""
+
+
 def _qr_order_from_payload(data: str) -> str | None:
     """QR 페이로드 문자열에서 /p/{orderNumber} 를 추출해 주문번호 반환. 패턴 불일치면 None.
 
@@ -5805,10 +5857,14 @@ def _process_printed_pdf(pdf_path: Path):
     # PDF24 가 시각값 파일명으로 떨궜어도, QR 로 매칭된 주문의 원본 .ai 명을 알면 그 stem 으로
     # 리네임 → 업로드되는 originalPdfFilename 이 깔끔해져 현장에서 .fs 이름 매칭이 정확해진다.
     pdf_path = _rename_printed_pdf_to_original(pdf_path, order_number)
+    # 거래처 폴더에서 이 지시서의 .fs 전체 경로를 확정 — 현장 [FS에서 열기] 가 그 경로로 직행.
+    # 확정 못 하면 "" → 현장은 기존 originalPdfFilename 매칭으로 폴백한다.
+    fs_path = _resolve_printed_fs_path(order_number)
     upload_ok = upload_worksheet_pdf(order_number, pdf_path,
                                      content_changed=bool(sel.get("content_changed", False)),
                                      change_note=sel.get("change_note") or "",
-                                     preserve_note=bool(sel.get("preserve_note", False)))
+                                     preserve_note=bool(sel.get("preserve_note", False)),
+                                     original_fs_path=fs_path)
     # "웹에만 적용하고 인쇄 안 함" 선택 또는 확정 매수 0 인 경우 종이 인쇄 생략.
     print_done = False
     if sel.get("skip_print"):
@@ -6786,7 +6842,8 @@ def compress_pdf_for_upload(src: Path) -> Path:
 def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                          content_changed: bool = False,
                          change_note: str = "",
-                         preserve_note: bool = False) -> bool:
+                         preserve_note: bool = False,
+                         original_fs_path: str = "") -> bool:
     """변환된 PDF를 백엔드에 업로드. 거래처 카드에 노출되는 단일 PDF로 덮어씀.
     업로드 직전 Ghostscript 로 다운샘플링해 용량을 줄인다 (텍스트는 벡터 유지).
     multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음).
@@ -6797,7 +6854,10 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                  content_changed=True 이고 비어있지 않을 때만 폼에 포함한다(빈 문자열은 백엔드에서 클리어).
     preserve_note=True: 다이얼로그에 prefill 된 이전 메모를 그대로 두고 confirm 한 경우.
                  백엔드가 DB 의 worksheetChangeNote 를 건드리지 않아 다음 회차에 또 prefill 되도록 영속.
-                 content_changed 와 동시 True 일 일은 없음(상호 배타) — 다이얼로그가 그렇게 분기."""
+                 content_changed 와 동시 True 일 일은 없음(상호 배타) — 다이얼로그가 그렇게 분기.
+    original_fs_path: 워처가 인쇄 시점에 확정한 지시서 .fs 의 전체 경로. 비어 있지 않으면
+                 originalFsPath 폼 필드로 보내 백엔드에 저장 — 현장 [FS에서 열기] 가 그 경로로
+                 직행한다. 빈 문자열이면 필드를 안 보내 백엔드가 기존 값을 보존."""
     if not order_number or not pdf_path.exists():
         return False
 
@@ -6841,6 +6901,15 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="preserveChangeNote"\r\n\r\n'
             f"true\r\n"
+        ).encode("utf-8")
+
+    # 워처가 확정한 .fs 전체 경로 — 현장 [FS에서 열기] 가 이름 추측 없이 이 경로로 직행한다.
+    # 빈 문자열이면 필드를 안 보내 백엔드가 직전 인쇄에서 잡아둔 경로를 보존한다.
+    if original_fs_path:
+        extra_field += (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="originalFsPath"\r\n\r\n'
+            f"{original_fs_path}\r\n"
         ).encode("utf-8")
 
     file_head = (

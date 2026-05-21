@@ -338,6 +338,42 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
     return None, f"동일 stem 의 .fs 를 찾지 못했습니다: {pdf_stem}.fs (거래처 폴더를 열었습니다)"
 
 
+def resolve_fs_for_order(meta: dict, customer_folder: Path | None,
+                         fuzzy_threshold: float) -> tuple[Path | None, str]:
+    """주문 메타로 .fs 파일을 결정. 반환 (Path 또는 None, 매칭종류/이유 텍스트).
+
+    1순위 — originalFsPath: 워처가 인쇄 시점에 거래처 폴더에서 못 박은 .fs 전체 경로.
+      그 경로가 실재하면 이름 추측·시각값 폴백·퍼지매칭 없이 그대로 연다 — 한 폴더에
+      .fs 가 여럿이어도 지시서마다 자기 파일이 고정돼 엉뚱한 .fs 가 안 열린다.
+      리터럴 경로가 죽었으면(현장 PC 의 드라이브 매핑이 다르거나 파일이 폴더 안에서
+      옮겨짐) 그 .fs 파일명으로 거래처 폴더를 재탐색한다.
+    2순위 — originalPdfFilename: 옛 지시서이거나 워처가 경로를 못 박은 경우. 기존
+      find_fs_file(정확/유사/PDF24 시각값 ±30분 폴백) 매칭으로 폴백.
+    """
+    fs_path = (meta.get("originalFsPath") or "").strip()
+    if fs_path:
+        direct = Path(fs_path)
+        try:
+            is_file = direct.is_file()
+        except OSError:
+            is_file = False
+        if is_file:
+            return direct, "fspath"
+        # 리터럴 경로가 죽음 — .fs 파일명으로 거래처 폴더에서 재탐색.
+        if customer_folder is not None:
+            relocated, _r = find_fs_file(customer_folder, direct.name, fuzzy_threshold)
+            if relocated is not None:
+                return relocated, "fspath-relocated"
+
+    pdf_filename = (meta.get("originalPdfFilename") or "").strip()
+    if not pdf_filename:
+        return None, ("이 지시서엔 .fs 경로도 원본 PDF 파일명도 없어 자동으로 .fs 를 못 찾습니다 "
+                      "(워처가 새로 인쇄·'웹에 적용' 하면 다음부턴 자동).")
+    if customer_folder is None:
+        return None, "거래처 폴더를 찾지 못했습니다."
+    return find_fs_file(customer_folder, pdf_filename, fuzzy_threshold)
+
+
 # ─── FlexiSIGN 실행 ─────────────────────────────────────────────────────
 # 정책: 에이전트는 FlexiSIGN 을 새로 띄우지 않는다. 작업자는 보통 FlexiSIGN 을
 #       켜둔 채로 작업하므로, 이미 떠 있는 인스턴스에서 .fs 만 열려야 한다(os.startfile
@@ -648,9 +684,10 @@ def open_folder_in_explorer(folder: Path) -> None:
 # ─── 백엔드 API ─────────────────────────────────────────────────────────
 
 def fetch_worksheet(api_base: str, order_number: str) -> dict | None:
-    # /locator — 거래처 폴더명(networkFolderName)·원본 PDF 파일명(originalPdfFilename) 만 돌려주는
-    # 가벼운 엔드포인트. /{orderNumber} (detail) 와 달리 휴지통/아카이브 상태를 따지지 않으므로
-    # "옛 지시서 찾기"로 찾아낸, 이미 파일이 정리된 옛 건의 .fs 도 거래처 폴더에서 열 수 있다.
+    # /locator — 거래처 폴더명(networkFolderName)·원본 PDF 파일명(originalPdfFilename)·워처가
+    # 못 박은 .fs 전체 경로(originalFsPath) 를 돌려주는 가벼운 엔드포인트. /{orderNumber} (detail)
+    # 와 달리 휴지통/아카이브 상태를 따지지 않으므로 "옛 지시서 찾기"로 찾아낸, 이미 파일이
+    # 정리된 옛 건의 .fs 도 거래처 폴더에서 열 수 있다.
     url = f"{api_base.rstrip('/')}/api/public/worksheets/{urllib.parse.quote(order_number, safe='')}/locator"
     req = urllib.request.Request(url, method="GET")
     try:
@@ -778,7 +815,6 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
 
         company = (meta.get("companyName") or "").strip()
         network_folder_name = (meta.get("networkFolderName") or "").strip()
-        pdf_filename = (meta.get("originalPdfFilename") or "").strip()
         if not network_folder_name and not company:
             return {"opened": False, "message": "거래처 정보가 비어있어 폴더를 찾을 수 없습니다."}
 
@@ -790,19 +826,10 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
                 "message": f"거래처 폴더를 찾지 못했습니다: {network_folder_name or company}",
             }
 
-        # 옛 지시서(워처가 originalPdfFilename 을 보내기 전에 올라간 건) — 매칭할 PDF 명이
-        # 없으니 .fs 자동 매칭은 불가. 그래도 거래처 폴더는 열어줘서 사용자가 직접 .fs 를
-        # 고르게 한다(버튼이 죽어있는 것보다 낫다 — 일괄 재업로드 불필요).
-        if not pdf_filename:
-            open_folder_in_explorer(customer_folder)
-            return {
-                "opened": False,
-                "message": "이 지시서엔 원본 PDF 파일명이 없어 자동으로 .fs 를 못 찾습니다 "
-                           "(워처가 새로 인쇄·'웹에 적용' 하면 다음부턴 자동). 거래처 폴더를 열었습니다 — .fs 를 직접 골라주세요.",
-                "customerFolder": str(customer_folder),
-            }
-
-        fs_file, reason = find_fs_file(customer_folder, pdf_filename, fuzzy_threshold)
+        # .fs 해석 — originalFsPath(워처가 인쇄 시점에 거래처 폴더에서 못 박은 전체 경로) 우선,
+        # 없으면 originalPdfFilename 기반 매칭(정확/유사/PDF24 시각값 ±30분 폴백).
+        # 옛 지시서(둘 다 없음)는 reason 안내와 함께 거래처 폴더만 열어 사용자가 직접 고르게 한다.
+        fs_file, reason = resolve_fs_for_order(meta, customer_folder, fuzzy_threshold)
         if fs_file is None:
             # 폴더 자체를 열어 사용자가 수동으로 선택하게 폴백.
             open_folder_in_explorer(customer_folder)
@@ -849,7 +876,6 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
 
         company = (meta.get("companyName") or "").strip()
         network_folder_name = (meta.get("networkFolderName") or "").strip()
-        pdf_filename = (meta.get("originalPdfFilename") or "").strip()
         if not network_folder_name and not company:
             return {"opened": False, "message": "거래처 정보가 비어있어 폴더를 찾을 수 없습니다."}
 
@@ -863,11 +889,11 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
 
         target = customer_folder
         matched_file = None
-        if pdf_filename:
-            fs_file, _reason = find_fs_file(customer_folder, pdf_filename, fuzzy_threshold)
-            if fs_file is not None:
-                target = fs_file.parent
-                matched_file = fs_file.name
+        # originalFsPath(워처가 못 박은 .fs 전체 경로) 우선, 없으면 originalPdfFilename 매칭.
+        fs_file, _reason = resolve_fs_for_order(meta, customer_folder, fuzzy_threshold)
+        if fs_file is not None:
+            target = fs_file.parent
+            matched_file = fs_file.name
         open_folder_in_explorer(target)
         logging.info("폴더 열기 [%s] → %s%s", order_number, target,
                      f" (.fs: {matched_file})" if matched_file else "")
