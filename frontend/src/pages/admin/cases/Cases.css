@@ -145,6 +145,41 @@
 .cs-f input:focus,
 .cs-f textarea:focus { outline: 2px solid #bfdbfe; border-color: #2563eb; }
 
+/* 첨부 파일 */
+.cs-files-hint { margin: 0 0 14px; font-size: 12px; color: #94a3b8; line-height: 1.5; }
+.cs-fk { border-top: 1px solid #f1f5f9; padding: 12px 0; }
+.cs-fk:first-of-type { border-top: 0; padding-top: 0; }
+.cs-fk:last-child { padding-bottom: 0; }
+.cs-fk-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.cs-fk-head strong { font-size: 13px; }
+.cs-fk-empty { margin: 0; font-size: 12px; color: #94a3b8; }
+.cs-fk-files { display: flex; flex-wrap: wrap; gap: 10px; }
+.cs-file { position: relative; }
+.cs-file img {
+  width: 124px; height: 92px; object-fit: cover;
+  border: 1px solid #e2e8f0; border-radius: 8px; display: block;
+}
+.cs-file-doc {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 124px; height: 92px; gap: 6px; padding: 6px;
+  border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc;
+  text-decoration: none;
+}
+.cs-file-ext {
+  font-size: 12px; font-weight: 700; color: #2563eb;
+  background: #dbeafe; border-radius: 4px; padding: 2px 8px;
+}
+.cs-file-name {
+  font-size: 11px; color: #475569; text-align: center;
+  max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cs-file-x {
+  position: absolute; top: 4px; right: 4px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(15, 23, 42, 0.78); color: #fff; border: 0;
+  cursor: pointer; font-size: 11px; line-height: 1;
+}
+
 /* 명시적 비용 */
 .cs-costs { display: flex; flex-direction: column; gap: 8px; }
 .cs-cost { display: flex; gap: 8px; align-items: center; }

@@ -5,6 +5,7 @@ import com.example.backend.service.JobCaseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -46,5 +47,23 @@ public class AdminJobCaseController {
     public ResponseEntity<?> delete(@PathVariable Long id) {
         jobCaseService.delete(id);
         return ResponseEntity.ok(Map.of("message", "삭제되었습니다."));
+    }
+
+    // 첨부 파일 — 사례가 저장된 뒤(id 존재) 호출. kind: AI_SOURCE / PRICE / REFERENCE.
+    @PostMapping("/{id}/files")
+    public ResponseEntity<JobCaseDto.Response> addFile(
+            @PathVariable Long id,
+            @RequestParam("kind") String kind,
+            @RequestParam("file") MultipartFile file
+    ) {
+        return ResponseEntity.ok(jobCaseService.addFile(id, kind, file));
+    }
+
+    @DeleteMapping("/{id}/files/{fileId}")
+    public ResponseEntity<JobCaseDto.Response> deleteFile(
+            @PathVariable Long id,
+            @PathVariable Long fileId
+    ) {
+        return ResponseEntity.ok(jobCaseService.deleteFile(id, fileId));
     }
 }

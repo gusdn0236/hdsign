@@ -17,7 +17,8 @@ import java.util.List;
  * "무형의 공정 비용"(인건·노하우·난이도)이 남는다. 이 잔차를 사이즈·재질·공정 설명과
  * 함께 사례로 쌓으면, 비슷한 공정의 새 작업에 비슷한 잔차를 적용해 견적을 낼 수 있다.
  *
- * <p>과거 작업 역입력도 신규 작업도 같은 구조로 기록한다.
+ * <p>과거 작업 역입력도 신규 작업도 같은 구조로 기록한다. 거래처 원본 AI 파일·가격 결정
+ * 이미지·도면을 함께 첨부(JobCaseFile)해 사례를 사람의 "작업 폴더"처럼 완결되게 둔다.
  */
 @Entity
 @Table(name = "job_cases")
@@ -72,6 +73,12 @@ public class JobCase {
     @OrderBy("sortOrder ASC, id ASC")
     @Builder.Default
     private List<JobCaseCost> costs = new ArrayList<>();
+
+    // 첨부 파일 — 거래처 AI 원본 / 가격 결정 이미지 / 도면. R2 저장.
+    @OneToMany(mappedBy = "jobCase", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sortOrder ASC, id ASC")
+    @Builder.Default
+    private List<JobCaseFile> files = new ArrayList<>();
 
     @CreationTimestamp
     private LocalDateTime createdAt;
