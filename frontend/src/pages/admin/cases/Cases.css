@@ -1,0 +1,196 @@
+/* 작업 사례 모듈 — 목록(CasesAdmin) + 에디터(CaseEditor). 슬레이트 팔레트, 액센트 #2563eb. */
+
+.cs-page,
+.cs-editor {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  color: #0f172a;
+  font-size: 14px;
+}
+
+/* ── 목록 ───────────────────────────────── */
+.cs-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.cs-head h2 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+.cs-head p { margin: 0; color: #64748b; font-size: 13px; max-width: 640px; line-height: 1.5; }
+
+.cs-new {
+  flex-shrink: 0;
+  background: #2563eb;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 11px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cs-new:hover { background: #1d4ed8; }
+
+.cs-error {
+  background: #fef2f2; color: #b91c1c;
+  border: 1px solid #fecaca; border-radius: 8px;
+  padding: 10px 14px; margin-bottom: 16px;
+}
+.cs-loading { color: #64748b; padding: 32px 0; text-align: center; }
+.cs-empty {
+  background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px;
+  padding: 48px 24px; text-align: center; color: #64748b;
+}
+
+.cs-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.cs-table th {
+  background: #f8fafc;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  padding: 11px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.cs-table td {
+  padding: 12px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+.cs-table tr:last-child td { border-bottom: 0; }
+.cs-table .num { text-align: right; }
+.cs-title { font-weight: 600; }
+.cs-proc { font-weight: 700; color: #2563eb; }
+
+.cs-actions { white-space: nowrap; }
+.cs-actions button {
+  background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+  padding: 5px 10px; margin-left: 4px; font-size: 12px; cursor: pointer; color: #334155;
+}
+.cs-actions button:hover { background: #f1f5f9; }
+.cs-actions .del { color: #b91c1c; border-color: #fecaca; }
+.cs-actions .del:hover { background: #fef2f2; }
+
+/* ── 에디터 ─────────────────────────────── */
+.cs-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.cs-tt { display: flex; align-items: center; gap: 12px; }
+.cs-tt h2 { margin: 0; font-size: 20px; font-weight: 700; }
+.cs-back {
+  background: none; border: 0; color: #2563eb; cursor: pointer;
+  font-size: 13px; padding: 4px 0;
+}
+
+.cs-btn {
+  border-radius: 8px; padding: 9px 16px; font-size: 13px;
+  font-weight: 600; cursor: pointer; border: 1px solid transparent;
+}
+.cs-btn.primary { background: #2563eb; color: #fff; }
+.cs-btn.primary:hover { background: #1d4ed8; }
+.cs-btn.ghost { background: #fff; color: #334155; border-color: #cbd5e1; }
+.cs-btn.ghost:hover { background: #f1f5f9; }
+.cs-btn.sm { padding: 6px 12px; font-size: 12px; background: #fff; color: #334155; border-color: #cbd5e1; }
+.cs-btn.sm:hover { background: #f1f5f9; }
+.cs-btn:disabled { opacity: 0.5; cursor: default; }
+
+.cs-fb {
+  border-radius: 8px; padding: 9px 14px; margin-bottom: 12px; font-size: 13px;
+}
+.cs-fb.success { background: #dcfce7; color: #15803d; }
+.cs-fb.error   { background: #fef2f2; color: #b91c1c; }
+
+.cs-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 14px;
+}
+.cs-card-head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.cs-card-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+
+.cs-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.cs-grid:last-child { margin-bottom: 0; }
+.cs-f { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 180px; }
+.cs-f.sm { flex: 0 0 180px; }
+.cs-f > span { font-size: 12px; font-weight: 600; color: #64748b; }
+.cs-f > span em { color: #2563eb; font-style: normal; }
+.cs-f input,
+.cs-f textarea {
+  border: 1px solid #cbd5e1; border-radius: 8px; padding: 9px 10px;
+  font-size: 14px; color: #0f172a; background: #fff; font-family: inherit;
+}
+.cs-f textarea { resize: vertical; line-height: 1.5; }
+.cs-f input:focus,
+.cs-f textarea:focus { outline: 2px solid #bfdbfe; border-color: #2563eb; }
+
+/* 명시적 비용 */
+.cs-costs { display: flex; flex-direction: column; gap: 8px; }
+.cs-cost { display: flex; gap: 8px; align-items: center; }
+.cs-cl {
+  flex: 1;
+  border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; font-family: inherit;
+}
+.cs-ca {
+  width: 150px; text-align: right;
+  border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px;
+  font-size: 13px; font-family: inherit;
+}
+.cs-cl:focus, .cs-ca:focus { outline: 2px solid #bfdbfe; border-color: #2563eb; }
+.cs-cx {
+  width: 32px; height: 34px; flex-shrink: 0;
+  border: 1px solid #fecaca; background: #fff; color: #b91c1c;
+  border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.cs-cx:hover { background: #fef2f2; }
+
+/* 합계 */
+.cs-summary { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.cs-final { flex: 0 0 220px; }
+.cs-final input { font-size: 16px; font-weight: 700; text-align: right; }
+.cs-calc {
+  flex: 1; min-width: 240px;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 16px;
+}
+.cs-calc-line {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 4px 0; color: #475569;
+}
+.cs-calc-line.final {
+  margin-top: 4px; padding-top: 10px; border-top: 2px solid #cbd5e1; color: #0f172a;
+}
+.cs-calc-line.final span { font-weight: 700; }
+.cs-calc-line.final b { font-size: 19px; color: #2563eb; }
+.cs-calc-hint { margin: 8px 0 0; font-size: 11.5px; color: #94a3b8; line-height: 1.5; }
+
+.cs-footer {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .cs-f.sm { flex: 1 1 100%; }
+  .cs-summary { flex-direction: column; }
+  .cs-final { flex: 1 1 100%; }
+}

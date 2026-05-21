@@ -14,6 +14,8 @@ const AdminLayout = () => {
         { name: '발주 관리', path: '/admin/orders' },
         { name: '작업 현황', path: '/admin/work-status' },
         { name: '견적 관리', path: '/admin/quotes' },
+        // 견적 프로그램(개발 중) — 메뉴에서 숨김. 라우트는 살아 있어 직접 URL 로만 접근:
+        //   단가 마스터 /admin/rates · 작업 사례 /admin/cases
         { name: '대리 발주', path: '/admin/proxy-order' },
         { name: '거래처 관리', path: '/admin/clients' },
         { name: '단가계산기', path: '/admin/prices' },
