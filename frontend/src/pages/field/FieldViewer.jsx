@@ -76,6 +76,9 @@ export default function FieldViewer() {
     const aliveRef = useRef(true);
     const cardsRef = useRef(null);
     const searchInputRef = useRef(null);
+    // '여시겠습니까?' 확인창 arm 플래그 — 확인창을 띄운 그 키를 한 번 뗀 뒤(keyup)에만
+    // Enter 확정을 허용한다. askOpen 에서 false 로 리셋 → 항상 켜진 keyup 리스너가 true 로.
+    const confirmArmRef = useRef(false);
     // 완료/취소 낙관적 갱신이 일어날 때마다 +1. 백그라운드 폴링 fetch 가 시작 시점의
     // 값과 응답 시점의 값이 다르면(=폴링이 도는 사이 사용자가 완료/취소를 누름) 그 응답은
     // 옛 데이터라 버린다 — 방금 누른 [완료]가 폴링 응답에 덮여 되돌아가는 race 방지.
@@ -156,8 +159,10 @@ export default function FieldViewer() {
             window.setTimeout(() => {
                 const el = searchInputRef.current;
                 if (!el) return;
-                // 확인/담당자 모달이 떠 있으면 포커스 가로채지 않음(Enter 동작 깨짐 방지).
-                if (document.querySelector('.fv-modal-bg')) return;
+                // 확인/담당자 모달이 떠 있거나, 카드를 키보드로 골라둔 상태면 포커스를
+                // 가로채지 않는다 — 검색창으로 끌려가면 ↓/↑ 가 고른 카드가 아니라 맨 위(0번)
+                // 부터 다시 잡힌다(검색창 ArrowDown 이 목록 진입점이므로).
+                if (document.querySelector('.fv-modal-bg, .fv-card.selected')) return;
                 el.focus();
                 el.select?.();
             }, 50);
@@ -399,6 +404,8 @@ export default function FieldViewer() {
             return;
         }
         setOpenChoice(preferChoice === 'folder' ? 'folder' : 'fs');
+        // 확인창을 띄운 그 Enter 로는 확정 못 하게 — 키를 한 번 떼야(keyup) arm 된다.
+        confirmArmRef.current = false;
         setOpenConfirm({ item: it });
     }, [handleOpenFs]);
 
@@ -415,31 +422,65 @@ export default function FieldViewer() {
 
     const closeLightbox = useCallback(() => setLightboxOrder(null), []);
 
+    // 확인창 arm — 마운트 때부터 항상 듣는 keyup 리스너. 확인창을 띄운 키를 떼는 순간을
+    // 절대 놓치지 않으려고 여기서 잡는다(아래 확인창 이펙트의 리스너는 저사양 현장 PC 에서
+    // 늦게 붙어, 확인창을 연 그 Enter 의 keyup 을 지나치곤 했다 → 그래서 Enter 를 두 번
+    // 눌러야 열렸다). askOpen 이 confirmArmRef 를 false 로 리셋 → 키를 한 번 떼면 true.
+    useEffect(() => {
+        const onUp = () => { confirmArmRef.current = true; };
+        window.addEventListener('keyup', onUp);
+        return () => window.removeEventListener('keyup', onUp);
+    }, []);
+
     // '여시겠습니까?' 확인창 키 처리 — ←/→ 로 선택, Enter 실행, Esc 취소.
     // 라이트박스가 떠 있어도 이 확인창이 우선이며, 라이트박스 키 핸들러는 confirmActive 로 양보한다.
-    //
-    // armed: 확인창을 띄운 바로 그 Enter 로는 절대 확정하지 않는다. 카드에서 Enter 를 눌러
-    // 확인창이 뜨는데, 그 keydown 이(이벤트 타이밍에 따라) 방금 붙은 이 리스너에 그대로
-    // 잡히거나 누른 채 오토리피트가 돌면 '물어보지도 않고 바로 열려' 버렸다. Enter 를 한 번
-    // 떼어야(keyup) armed=true 가 되고, 그 뒤 '새로 누른' Enter 에만 실행된다 — 즉
-    // [Enter 로 확인창 열기] → [떼기] → (필요하면 ←/→ 로 선택) → [Enter 로 실행].
+    // Enter 확정 조건 = 새로 누른 Enter(!e.repeat) + confirmArmRef(확인창을 연 키를 한 번 뗐음).
+    // 확인창을 띄운 그 Enter keydown 이 갓 붙은 이 리스너에 그대로 잡히거나 누른 채 오토리피트가
+    // 돌아도 arm 전이라 확정되지 않는다 → 확인창이 떠 있을 땐 Enter 한 번이면 열린다.
     useEffect(() => {
         if (!openConfirm) return undefined;
-        let armed = false;
         const onKey = (e) => {
             if (e.key === 'Escape') { e.preventDefault(); setOpenConfirm(null); }
             else if (e.key === 'ArrowLeft') { e.preventDefault(); setOpenChoice('fs'); }
             else if (e.key === 'ArrowRight') { e.preventDefault(); setOpenChoice('folder'); }
-            else if (e.key === 'Enter') { e.preventDefault(); if (armed) runOpenChoice(openChoice); }
+            else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (!e.repeat && confirmArmRef.current) runOpenChoice(openChoice);
+            }
         };
-        const onKeyUp = (e) => { if (e.key === 'Enter') armed = true; };
         window.addEventListener('keydown', onKey);
-        window.addEventListener('keyup', onKeyUp);
-        return () => {
-            window.removeEventListener('keydown', onKey);
-            window.removeEventListener('keyup', onKeyUp);
-        };
+        return () => window.removeEventListener('keydown', onKey);
     }, [openConfirm, openChoice, runOpenChoice]);
+
+    // 확대 보기를 열면 — 현장 사이드바 창은 폭 420px 라 지시서가 작게 보인다. 그동안만
+    // 브라우저 창을 모니터 중앙의 큰 크기로 키우고, 닫으면 원래 도킹 위치·크기로 되돌린다.
+    // (라이트박스·PdfViewer 는 vw/vh + resize 리스너라 창 크기에 맞춰 자동으로 커진다.)
+    // 의존성을 lightboxOpen(불리언)으로 둬 ←/→ 로 지시서를 넘길 땐 창이 안 흔들리게 한다.
+    const lightboxOpen = lightboxOrder != null;
+    useEffect(() => {
+        if (!lightboxOpen) return undefined;
+        const prev = {
+            x: window.screenX, y: window.screenY,
+            w: window.outerWidth, h: window.outerHeight,
+        };
+        try {
+            const scr = window.screen;
+            const aw = scr.availWidth;
+            const ah = scr.availHeight;
+            const al = scr.availLeft || 0;
+            const at = scr.availTop || 0;
+            const w = Math.min(1280, Math.round(aw * 0.94));
+            const h = Math.round(ah * 0.96);
+            window.resizeTo(w, h);
+            window.moveTo(al + Math.round((aw - w) / 2), at + Math.round((ah - h) / 2));
+        } catch { /* resizeTo/moveTo 가 막힌 환경 — 현재 창 크기 그대로 표시 */ }
+        return () => {
+            try {
+                window.resizeTo(prev.w, prev.h);
+                window.moveTo(prev.x, prev.y);
+            } catch { /* ignore */ }
+        };
+    }, [lightboxOpen]);
 
     // fv-cards 영역(검색창에서 ↓ 로 진입)에서의 키 처리.
     const handleCardsKeyDown = useCallback((e) => {
@@ -658,7 +699,9 @@ export default function FieldViewer() {
                             if (e.key === 'ArrowDown') {
                                 e.preventDefault();
                                 if (sorted.length > 0) {
-                                    setSelectedIndex(0);
+                                    // 이미 키보드로 골라둔 카드가 있으면 그 자리에서 이어서 —
+                                    // 0번(맨 위)으로 되돌리지 않는다.
+                                    setSelectedIndex((i) => (i >= 0 && i < sorted.length ? i : 0));
                                     // preventScroll — focus() 기본 동작이 fv-cards 컨테이너를
                                     // 보이게 하려 페이지를 한 칸 밀어 첫 카드가 헤더에 가려지던 문제 차단.
                                     cardsRef.current?.focus({ preventScroll: true });
