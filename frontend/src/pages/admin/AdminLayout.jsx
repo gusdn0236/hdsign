@@ -6,6 +6,7 @@ import { supportBannerImg } from '../../assets/img';
 import { useAuth } from '../../context/AuthContext';
 import AdminFolderChangeNotice from './AdminFolderChangeNotice.jsx';
 import DemoBanner from '../../components/common/DemoBanner.jsx';
+import DemoButtonLock from '../../components/common/DemoButtonLock.jsx';
 import { isDemoToken } from '../../utils/demoGuard';
 import './AdminLayout.css';
 
@@ -30,6 +31,7 @@ const AdminLayout = () => {
     return (
         <div>
             {isDemo && <DemoBanner />}
+            {isDemo && <DemoButtonLock />}
             <Banner
                 image={supportBannerImg}
                 title="관리자 포털"
