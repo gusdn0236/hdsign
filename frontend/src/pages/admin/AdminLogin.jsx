@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Navigate, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { loginApi } from "../../api/auth";
+import { clientLoginApi } from "../../api/client";
+import { isDemoToken } from "../../utils/demoGuard";
 import "./AdminLogin.css";
 
 export default function AdminLogin() {
@@ -9,7 +11,7 @@ export default function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login, isAdmin } = useAuth();
+  const { login, isAdmin, clientLogin } = useAuth();
   const navigate = useNavigate();
 
   if (isAdmin) {
@@ -22,6 +24,17 @@ export default function AdminLogin() {
     setLoading(true);
     try {
       const { token } = await loginApi(username, password);
+      // 데모 계정이면 거래처 세션도 함께 연다 — 데모 하나로 관리자·거래처 양쪽 둘러보기.
+      if (isDemoToken(token)) {
+        try {
+          const clientData = await clientLoginApi(username, password);
+          clientLogin(clientData.token, {
+            companyName: clientData.companyName,
+            contactName: clientData.contactName,
+            username: clientData.username,
+          });
+        } catch { /* 거래처 데모 계정이 없으면 관리자만 로그인 */ }
+      }
       login(token);
       navigate("/admin/orders");
     } catch (err) {

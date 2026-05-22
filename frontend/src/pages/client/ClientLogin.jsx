@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { clientLoginApi } from '../../api/client';
+import { loginApi } from '../../api/auth';
+import { isDemoToken } from '../../utils/demoGuard';
 import './ClientLogin.css';
 
 const REMEMBER_KEY = 'clientLoginUsername';
 
 export default function ClientLogin() {
-    const { clientUser, clientLogin } = useAuth();
+    const { clientUser, clientLogin, login } = useAuth();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [rememberMe, setRememberMe] = useState(true);
@@ -31,6 +33,15 @@ export default function ClientLogin() {
                 localStorage.setItem(REMEMBER_KEY, username.trim());
             } else {
                 localStorage.removeItem(REMEMBER_KEY);
+            }
+            // 데모 계정이면 관리자 세션도 함께 연다 — 데모 하나로 거래처·관리자 양쪽 둘러보기.
+            // 관리자 토큰을 먼저 확보한 뒤 마지막에 clientLogin 을 호출해, 화면 이동 시점에
+            // 양쪽 토큰이 모두 준비돼 있게 한다.
+            if (isDemoToken(data.token)) {
+                try {
+                    const adminData = await loginApi(username.trim(), password);
+                    login(adminData.token);
+                } catch { /* 관리자 데모 계정이 없으면 거래처만 로그인 */ }
             }
             clientLogin(data.token, {
                 companyName: data.companyName,

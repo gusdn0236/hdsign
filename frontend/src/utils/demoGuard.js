@@ -17,6 +17,11 @@ const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 // 예: 관리자 발주 모달을 열면 자동으로 PUT .../viewed (열람 표시) 가 나간다.
 const SILENT_PATTERNS = [/\/viewed$/];
 
+// 로그인 요청은 데모 세션이 이미 있어도 절대 막지 않는다.
+// 데모 계정 하나로 관리자·거래처 양쪽에 로그인하려면, 한쪽 데모 토큰이
+// 이미 저장된 상태에서도 다른 쪽 로그인 POST 가 통과해야 하기 때문.
+const EXEMPT_PATTERNS = [/\/auth\/login$/];
+
 const TOAST_ID = 'demo-mode-toast';
 const TOAST_MESSAGE = '🔒 데모 계정에서는 사용할 수 없습니다 — 둘러보기 전용입니다';
 
@@ -130,6 +135,10 @@ export function installDemoGuard() {
 
             if (isApiWrite && isDemoSessionActive()) {
                 const path = url.split('?')[0];
+                // 로그인 요청은 그대로 통과 — 데모 하나로 양쪽 로그인 허용.
+                if (EXEMPT_PATTERNS.some((re) => re.test(path))) {
+                    return realFetch(input, init);
+                }
                 const silent = SILENT_PATTERNS.some((re) => re.test(path));
                 if (!silent) showDemoToast();
                 // 페이지 코드가 평범한 실패로 처리하도록 400 응답을 돌려준다.
