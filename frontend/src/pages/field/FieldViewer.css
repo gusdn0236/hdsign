@@ -583,7 +583,7 @@
 .fv-open-btn:not(.on) { opacity: 0.72; }
 .fv-open-btn:hover { border-color: #a1a1aa; opacity: 1; }
 /* 선택된 버튼 = Enter 로 열릴 버튼. 파란 채움에 더해
-   바깥 글로우 링 + 살짝 떠오름 + 은은한 펄스로 '지금 이게 골라져 있다'를 전달. */
+   바깥 글로우 링 + 살짝 떠오름으로 '지금 이게 골라져 있다'를 전달. */
 .fv-open-btn.on {
     z-index: 1;
     border-color: #2563eb;
@@ -593,20 +593,6 @@
     transform: translateY(-1px);
     box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.30),
         0 8px 18px rgba(37, 99, 235, 0.35);
-    animation: fv-open-pulse 1.7s ease-in-out infinite;
-}
-@keyframes fv-open-pulse {
-    0%, 100% {
-        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.30),
-            0 8px 18px rgba(37, 99, 235, 0.35);
-    }
-    50% {
-        box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.14),
-            0 8px 18px rgba(37, 99, 235, 0.35);
-    }
-}
-@media (prefers-reduced-motion: reduce) {
-    .fv-open-btn.on { animation: none; }
 }
 .fv-open-hint {
     margin: 0;
