@@ -52,7 +52,8 @@ export default function WorksheetLightbox({
             if (e.key === 'Escape') { e.preventDefault(); onClose(); }
             else if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
             else if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
-            else if (e.key === 'Enter') { e.preventDefault(); if (item) onRequestOpen(item); }
+            // e.repeat 제외 — Enter 를 누른 채 있어도 확인창이 한 번만, 확실히 뜨도록(오토리피트 무시).
+            else if (e.key === 'Enter') { e.preventDefault(); if (!e.repeat && item) onRequestOpen(item); }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);

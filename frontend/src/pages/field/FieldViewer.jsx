@@ -384,10 +384,12 @@ export default function FieldViewer() {
     }, [showToast]);
 
     // 키보드로 지시서 열기 — Enter 로 '여시겠습니까?' 확인창을 띄운다. 확인창에서 ←/→ 로
-    // [FS에서 열기]/[폴더열기] 를 고르고 Enter 로 실행(기본=FS). 카드 키보드 조작과 라이트박스
-    // 양쪽이 같은 함수를 쓴다. 거래처 정보가 없으면 어느 쪽도 폴더를 못 찾으므로 바로
-    // handleOpenFs 가 안내 토스트를 띄운다.
-    const askOpen = useCallback((it) => {
+    // [FS에서 열기]/[폴더열기] 를 고르고 Enter 로 실행. preferChoice 로 처음 선택을 정한다
+    // (카드 ↓ 선택·라이트박스 = FS, 카드 [폴더열기] 버튼 키보드 활성화 = 폴더). 카드 키보드
+    // 조작·라이트박스·카드 버튼(키보드 활성화)이 모두 같은 함수를 쓴다 — 키보드로 열 땐 늘
+    // 확인창을 거치고, 마우스 클릭만 곧바로 실행. 거래처 정보가 없으면 어느 쪽도 폴더를 못
+    // 찾으므로 바로 handleOpenFs 가 안내 토스트를 띄운다.
+    const askOpen = useCallback((it, preferChoice = 'fs') => {
         if (!it) return;
         const fsReady = !!(it.networkFolderName || it.companyName);
         if (!fsReady) {
@@ -396,7 +398,7 @@ export default function FieldViewer() {
             handleOpenFs(it);
             return;
         }
-        setOpenChoice('fs');
+        setOpenChoice(preferChoice === 'folder' ? 'folder' : 'fs');
         setOpenConfirm({ item: it });
     }, [handleOpenFs]);
 
@@ -415,16 +417,28 @@ export default function FieldViewer() {
 
     // '여시겠습니까?' 확인창 키 처리 — ←/→ 로 선택, Enter 실행, Esc 취소.
     // 라이트박스가 떠 있어도 이 확인창이 우선이며, 라이트박스 키 핸들러는 confirmActive 로 양보한다.
+    //
+    // armed: 확인창을 띄운 바로 그 Enter 로는 절대 확정하지 않는다. 카드에서 Enter 를 눌러
+    // 확인창이 뜨는데, 그 keydown 이(이벤트 타이밍에 따라) 방금 붙은 이 리스너에 그대로
+    // 잡히거나 누른 채 오토리피트가 돌면 '물어보지도 않고 바로 열려' 버렸다. Enter 를 한 번
+    // 떼어야(keyup) armed=true 가 되고, 그 뒤 '새로 누른' Enter 에만 실행된다 — 즉
+    // [Enter 로 확인창 열기] → [떼기] → (필요하면 ←/→ 로 선택) → [Enter 로 실행].
     useEffect(() => {
         if (!openConfirm) return undefined;
+        let armed = false;
         const onKey = (e) => {
             if (e.key === 'Escape') { e.preventDefault(); setOpenConfirm(null); }
             else if (e.key === 'ArrowLeft') { e.preventDefault(); setOpenChoice('fs'); }
             else if (e.key === 'ArrowRight') { e.preventDefault(); setOpenChoice('folder'); }
-            else if (e.key === 'Enter') { e.preventDefault(); runOpenChoice(openChoice); }
+            else if (e.key === 'Enter') { e.preventDefault(); if (armed) runOpenChoice(openChoice); }
         };
+        const onKeyUp = (e) => { if (e.key === 'Enter') armed = true; };
         window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
+        window.addEventListener('keyup', onKeyUp);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            window.removeEventListener('keyup', onKeyUp);
+        };
     }, [openConfirm, openChoice, runOpenChoice]);
 
     // fv-cards 영역(검색창에서 ↓ 로 진입)에서의 키 처리.
@@ -758,10 +772,14 @@ export default function FieldViewer() {
                                         <span className="fv-card-no">{it.orderNumber}</span>
                                     </div>
                                     <div className="fv-card-actions">
+                                        {/* FS·폴더 버튼 — 마우스 클릭(e.detail>0)은 곧바로 실행하고,
+                                            키보드 활성화(버튼에 Tab 포커스 후 Enter/Space → e.detail===0)는
+                                            askOpen 으로 '여시겠습니까?' 확인창을 거친다. 키보드로 조작할 땐
+                                            ↓ 선택·라이트박스와 마찬가지로 늘 한 번 물어보게 통일. */}
                                         <button
                                             type="button"
                                             className="fv-btn fv-btn-fs"
-                                            onClick={() => handleOpenFs(it)}
+                                            onClick={(e) => (e.detail === 0 ? askOpen(it, 'fs') : handleOpenFs(it))}
                                             disabled={!fsReady || opening}
                                             title={!fsReady
                                                 ? '거래처 정보가 비어 있어 폴더를 찾을 수 없습니다'
@@ -774,7 +792,7 @@ export default function FieldViewer() {
                                         <button
                                             type="button"
                                             className="fv-btn fv-btn-folder"
-                                            onClick={() => handleOpenFolder(it)}
+                                            onClick={(e) => (e.detail === 0 ? askOpen(it, 'folder') : handleOpenFolder(it))}
                                             disabled={!fsReady || openingDir}
                                             title={!fsReady
                                                 ? '거래처 정보가 비어 있어 폴더를 찾을 수 없습니다'
