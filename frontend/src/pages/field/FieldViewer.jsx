@@ -153,16 +153,19 @@ export default function FieldViewer() {
         aliveRef.current = true;
         fetchList();
         // 백→포 복귀(작업표시줄 클릭/창 활성화) 시 1회 새로고침 + 검색창 자동 포커스 — 바로 키보드 입력 가능.
-        // 모달이 떠 있거나 카드를 키보드로 골라둔 상태에서는 포커스를 가로채지 않음(Enter 동작 깨짐 방지).
+        // 모달이 떠 있을 때만 양보(모달이 focus 주인). 직전에 거래처를 열어 카드가 선택돼 남아 있어도
+        // 작업표시줄로 다시 켜면 선택을 풀고 검색창에 포커스한다 — 언제 켜도 바로 검색할 수 있도록.
         const focusSearchSoon = () => {
             // 약간 지연 — 브라우저가 창 활성화 직후 처리하는 native focus 와 충돌하지 않도록.
             window.setTimeout(() => {
                 const el = searchInputRef.current;
                 if (!el) return;
-                // 확인/담당자 모달이 떠 있거나, 카드를 키보드로 골라둔 상태면 포커스를
-                // 가로채지 않는다 — 검색창으로 끌려가면 ↓/↑ 가 고른 카드가 아니라 맨 위(0번)
-                // 부터 다시 잡힌다(검색창 ArrowDown 이 목록 진입점이므로).
-                if (document.querySelector('.fv-modal-bg, .fv-card.selected')) return;
+                // 확인/담당자 모달이 떠 있으면 그쪽이 focus 주인 — 가로채지 않는다.
+                if (document.querySelector('.fv-modal-bg')) return;
+                // 직전에 키보드/열기로 골라둔 카드 선택은 해제 — 검색창부터 새로 시작(↓ 가 0번부터,
+                // 엉뚱한 카드가 강조된 채 남지 않음). 이게 없으면 .fv-card.selected 가 남아
+                // 다음번 작업표시줄 클릭 때 포커스가 안 잡혔다.
+                setSelectedIndex(-1);
                 el.focus();
                 el.select?.();
             }, 50);
