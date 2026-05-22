@@ -567,8 +567,9 @@
     margin-bottom: 10px;
 }
 .fv-open-btn {
+    position: relative;
     flex: 1;
-    padding: 12px 10px;
+    padding: 13px 10px;
     border-radius: 9px;
     border: 2px solid #e4e4e7;
     background: #f4f4f5;
@@ -576,13 +577,53 @@
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
-    transition: border-color 0.12s, background 0.12s, color 0.12s;
+    transition: border-color 0.12s, background 0.12s, color 0.12s,
+        box-shadow 0.12s, transform 0.12s, opacity 0.12s;
 }
-.fv-open-btn:hover { border-color: #a1a1aa; }
+/* 안 골라진 쪽은 살짝 가라앉혀 — 두 버튼 대비를 키워 선택된 게 한눈에 도드라지도록. */
+.fv-open-btn:not(.on) { opacity: 0.72; }
+.fv-open-btn:hover { border-color: #a1a1aa; opacity: 1; }
+/* 선택된 버튼 = Enter 로 열릴 버튼. 파란 채움에 더해
+   ① 바깥 글로우 링 ② 살짝 떠오름 ③ 은은한 펄스 ④ 우상단 'Enter' 배지
+   로 '지금 이게 골라져 있고, Enter 를 누르면 된다'를 분명히 전달한다. */
 .fv-open-btn.on {
+    z-index: 1;
     border-color: #2563eb;
     background: #2563eb;
     color: #fff;
+    opacity: 1;
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.30),
+        0 8px 18px rgba(37, 99, 235, 0.35);
+    animation: fv-open-pulse 1.7s ease-in-out infinite;
+}
+@keyframes fv-open-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.30),
+            0 8px 18px rgba(37, 99, 235, 0.35);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.14),
+            0 8px 18px rgba(37, 99, 235, 0.35);
+    }
+}
+/* 우상단 '↵ Enter' 배지 — 이 버튼이 Enter 키와 묶여 있음을 직접 명시. */
+.fv-open-btn.on::after {
+    content: "\21B5  Enter";
+    position: absolute;
+    top: -10px;
+    right: -8px;
+    padding: 2px 8px;
+    background: #fff;
+    color: #2563eb;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+}
+@media (prefers-reduced-motion: reduce) {
+    .fv-open-btn.on { animation: none; }
 }
 .fv-open-hint {
     margin: 0;
