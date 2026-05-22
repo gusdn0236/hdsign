@@ -4,6 +4,8 @@ import Banner from '../../components/common/Banner';
 import SubNav from '../../components/common/SubNav.jsx';
 import { supportBannerImg } from '../../assets/img';
 import { useAuth } from '../../context/AuthContext';
+import DemoBanner from '../../components/common/DemoBanner.jsx';
+import { isDemoToken } from '../../utils/demoGuard';
 import './ClientLayout.css';
 
 const ClientLayout = () => {
@@ -11,6 +13,8 @@ const ClientLayout = () => {
 
     if (clientLoading) return null;
     if (!clientUser || !clientToken) return <Navigate to="/client/login" replace />;
+
+    const isDemo = isDemoToken(clientToken);
 
     const companyName = typeof clientUser === 'object' ? clientUser.companyName?.trim() : '';
     const contactName = typeof clientUser === 'object' ? clientUser.contactName?.trim() : '';
@@ -28,6 +32,7 @@ const ClientLayout = () => {
 
     return (
         <div className="client-layout-shell">
+            {isDemo && <DemoBanner />}
             <Banner
                 image={supportBannerImg}
                 title="거래처 포털"

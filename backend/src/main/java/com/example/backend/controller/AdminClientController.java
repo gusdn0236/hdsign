@@ -5,6 +5,7 @@ import com.example.backend.entity.ClientUser;
 import com.example.backend.repository.ClientUserRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.entity.Order;
+import com.example.backend.security.DemoContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -160,6 +161,13 @@ public class AdminClientController {
         ClientUser user = clientUserRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("계정을 찾을 수 없습니다."));
         Map<String, Object> body = new LinkedHashMap<>();
+        // 데모(둘러보기) 계정에는 실제 아이디/비번을 절대 노출하지 않고 마스킹값만 돌려준다.
+        if (DemoContext.isDemo()) {
+            body.put("username", DemoContext.MASK);
+            body.put("password", DemoContext.MASK);
+            body.put("hasPlaintext", true);
+            return ResponseEntity.ok(body);
+        }
         body.put("username", user.getUsername());
         body.put("password", user.getPasswordPlaintext());
         body.put("hasPlaintext", user.getPasswordPlaintext() != null && !user.getPasswordPlaintext().isBlank());
@@ -447,19 +455,27 @@ public class AdminClientController {
     }
 
     private ClientUserDto.Response toResponse(ClientUser user) {
+        // 데모(둘러보기) 계정에는 거래처 로그인 아이디·전화번호·이메일을 그대로 보여주지 않는다.
+        // 값이 없는 항목(가입대기 행의 username 등)은 가릴 게 없으므로 그대로 둔다.
+        boolean demo = DemoContext.isDemo();
         return new ClientUserDto.Response(
                 user.getId(),
-                user.getUsername(),
+                maskIfDemo(demo, user.getUsername()),
                 user.getCompanyName(),
                 user.getNetworkFolderName(),
                 user.getContactName(),
-                user.getPhone(),
-                user.getEmail(),
+                maskIfDemo(demo, user.getPhone()),
+                maskIfDemo(demo, user.getEmail()),
                 user.getAliases(),
                 user.getIsActive(),
                 user.getStatus(),
                 user.getSignupRequestedAt() != null ? user.getSignupRequestedAt().toString() : null,
                 user.getCreatedAt() != null ? user.getCreatedAt().toString() : null
         );
+    }
+
+    /** 데모 계정이면 값이 있는 항목을 마스킹값으로 치환. 빈 값은 그대로 둔다. */
+    private static String maskIfDemo(boolean demo, String value) {
+        return (demo && value != null && !value.isBlank()) ? DemoContext.MASK : value;
     }
 }

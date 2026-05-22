@@ -2,6 +2,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import {BrowserRouter} from 'react-router-dom';
 import App from './App';
+import {installDemoGuard} from './utils/demoGuard';
+
+// 데모(둘러보기) 계정 가드 — window.fetch 를 감싸 데모 세션의 쓰기 요청을
+// 가로채 안내 토스트를 띄운다. 어떤 컴포넌트보다 먼저 설치되도록 최상단에서 호출.
+installDemoGuard();
 
 // 카톡 인앱브라우저(안드로이드 WebView 일부 빌드)는 svh/dvh 단위 처리가
 // 부정확해 URL바가 들락거릴 때 viewport 단위 기반 풀스크린 섹션이 출렁인다.

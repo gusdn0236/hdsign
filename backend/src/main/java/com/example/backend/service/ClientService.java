@@ -54,6 +54,10 @@ public class ClientService {
     @Value("${r2.public-url}")
     private String publicUrl;
 
+    // 데모(둘러보기) 거래처 아이디 — 이 아이디로 로그인하면 변경 불가 토큰을 발급한다.
+    @Value("${demo.client.username:}")
+    private String demoClientUsername;
+
     public ClientAuthDto.LoginResponse login(String username, String password) {
         ClientUser user = clientUserRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("아이디 또는 비밀번호가 올바르지 않습니다."));
@@ -75,8 +79,13 @@ public class ClientService {
             throw new RuntimeException("아이디 또는 비밀번호가 올바르지 않습니다.");
         }
 
+        boolean demo = demoClientUsername != null
+                && !demoClientUsername.isBlank()
+                && demoClientUsername.equalsIgnoreCase(username);
+
         return new ClientAuthDto.LoginResponse(
-                jwtUtil.generateClientToken(username),
+                demo ? jwtUtil.generateDemoClientToken(username)
+                     : jwtUtil.generateClientToken(username),
                 user.getCompanyName(),
                 user.getContactName(),
                 username

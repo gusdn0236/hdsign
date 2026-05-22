@@ -53,12 +53,39 @@ public class JwtUtil {
         return generateAdminToken(username);
     }
 
+    /** 데모(둘러보기) 관리자 토큰 — role 은 ADMIN 이지만 demo=true 가 박혀
+     *  JwtFilter 가 GET 외 모든 요청을 403 으로 막는다. */
+    public String generateDemoAdminToken(String username) {
+        return generateDemoToken(username, "ADMIN", expirationMs);
+    }
+
+    /** 데모(둘러보기) 거래처 토큰 — role 은 CLIENT, demo=true. */
+    public String generateDemoClientToken(String username) {
+        return generateDemoToken(username, "CLIENT", clientExpirationMs);
+    }
+
+    private String generateDemoToken(String username, String role, long ttlMs) {
+        return Jwts.builder()
+                .subject(username)
+                .claim("role", role)
+                .claim("demo", true)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + ttlMs))
+                .signWith(key)
+                .compact();
+    }
+
     public String extractUsername(String token) {
         return parseClaims(token).getPayload().getSubject();
     }
 
     public String extractRole(String token) {
         return (String) parseClaims(token).getPayload().get("role");
+    }
+
+    /** 데모 계정 토큰이면 true. demo 클레임이 없는 일반 토큰은 false. */
+    public boolean extractDemo(String token) {
+        return Boolean.TRUE.equals(parseClaims(token).getPayload().get("demo"));
     }
 
     public boolean validateToken(String token) {

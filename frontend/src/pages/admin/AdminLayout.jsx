@@ -5,10 +5,13 @@ import SubNav from '../../components/common/SubNav.jsx';
 import { supportBannerImg } from '../../assets/img';
 import { useAuth } from '../../context/AuthContext';
 import AdminFolderChangeNotice from './AdminFolderChangeNotice.jsx';
+import DemoBanner from '../../components/common/DemoBanner.jsx';
+import { isDemoToken } from '../../utils/demoGuard';
 import './AdminLayout.css';
 
 const AdminLayout = () => {
-    const { logout } = useAuth();
+    const { logout, token } = useAuth();
+    const isDemo = isDemoToken(token);
 
     const adminMenu = [
         { name: '발주 관리', path: '/admin/orders' },
@@ -26,6 +29,7 @@ const AdminLayout = () => {
 
     return (
         <div>
+            {isDemo && <DemoBanner />}
             <Banner
                 image={supportBannerImg}
                 title="관리자 포털"
