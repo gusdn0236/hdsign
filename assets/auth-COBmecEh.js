@@ -1,0 +1,1 @@
+const i="https://hdsign-production.up.railway.app";async function s(n,o){const t=await fetch(`${i}/api/auth/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:n,password:o})});if(!t.ok){const a=await t.json().catch(()=>({}));throw new Error(a.message||"로그인에 실패했습니다.")}return t.json()}export{s as l};
