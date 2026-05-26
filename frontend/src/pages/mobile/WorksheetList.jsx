@@ -9,11 +9,14 @@ import './WorksheetList.css';
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 let worksheetListSnapshot = {
     items: null,
+    completedItems: null,
     syncedAt: null,
     scrollY: 0,
     dateFilter: 'all',
     companyFilter: 'ALL',
     companySearch: '',
+    // 'due' = 진행중 지시서를 납기 임박순 그룹.
+    // 'completed' = 발주관리 [작업완료] 탭(=deletedAt != null) 의 마감 건들을 완료일자 그룹으로.
     sortMode: 'due',
 };
 
@@ -91,16 +94,6 @@ function formatDueDateLabel(dateStr) {
     return `${yearPrefix}${md} (${dow})`;
 }
 
-// 카드 보조 라인용 짧은 형식: '5/7'. 올해가 아니면 '2027/5/7' 로 연도 노출.
-function formatShortDate(dateStr) {
-    if (!dateStr) return '';
-    const d = new Date(dateStr + 'T00:00:00');
-    if (Number.isNaN(d.getTime())) return dateStr;
-    const md = `${d.getMonth() + 1}/${d.getDate()}`;
-    return d.getFullYear() !== new Date().getFullYear()
-        ? `${d.getFullYear()}/${md}` : md;
-}
-
 // 납기 상태 배지 — 오늘/내일/지남 만. 일반 미래 일자는 null 반환(헤더 날짜만 보임).
 function getDueBadge(dateStr) {
     if (!dateStr) return null;
@@ -115,34 +108,68 @@ function getDueBadge(dateStr) {
     return null;
 }
 
-// '최근 업로드순' 카드 보조 라인용 상대시간. 7일 넘으면 'M/D' 로 폴백.
-function formatRelativeUpload(iso) {
-    if (!iso) return '';
-    const t = new Date(iso).getTime();
-    if (Number.isNaN(t)) return '';
-    const diff = Math.max(0, (Date.now() - t) / 1000);
-    if (diff < 60) return '방금';
-    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
-    if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}일 전`;
-    const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
 function getGroupKey(dateStr) {
     if (!dateStr) return 'none';
     return dateStr;
 }
 
+// 완료일(timestamp) 그룹 헤더용 — '5월 6일 (수) 완료'. 올해가 아니면 연도 노출.
+function formatCompletedDateLabel(dateStr) {
+    if (!dateStr) return '완료일 미상';
+    const d = new Date(dateStr + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return dateStr;
+    const yearPrefix = d.getFullYear() !== new Date().getFullYear()
+        ? `${d.getFullYear()}년 ` : '';
+    const md = `${d.getMonth() + 1}월 ${d.getDate()}일`;
+    const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+    return `${yearPrefix}${md} (${dow})`;
+}
+
+// '5/14' 형식의 짧은 완료일. 올해가 아니면 'YYYY/M/D'.
+function formatCompletedShort(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const md = `${d.getMonth() + 1}/${d.getDate()}`;
+    return d.getFullYear() !== new Date().getFullYear()
+        ? `${d.getFullYear()}/${md}` : md;
+}
+
+// 완료일 → 'X일 전' 라벨(7일 초과면 날짜 노출). 그룹 헤더 보조 표시용.
+function formatCompletedRelative(iso) {
+    if (!iso) return '';
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return '';
+    const diffDays = Math.floor((Date.now() - t) / 86400000);
+    if (diffDays <= 0) return '오늘';
+    if (diffDays === 1) return '어제';
+    if (diffDays < 7) return `${diffDays}일 전`;
+    return formatCompletedShort(iso);
+}
+
+// ISO timestamp(2026-05-14T12:34:56...) → 그룹 키로 쓸 'YYYY-MM-DD'.
+function getCompletedGroupKey(iso) {
+    if (!iso) return 'none';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'none';
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function WorksheetList() {
     const [items, setItems] = useState(() => worksheetListSnapshot.items || []);
+    // 발주관리 [작업완료] 탭(=deletedAt != null) 의 마감 건들. 30일 후 자동 삭제 전까지 남아 있음.
+    const [completedItems, setCompletedItems] = useState(() => worksheetListSnapshot.completedItems || []);
     const [loading, setLoading] = useState(() => !worksheetListSnapshot.items);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
     const [dateFilter, setDateFilter] = useState(() => worksheetListSnapshot.dateFilter); // 'today' | '3days' | 'all'
     const [companyFilter, setCompanyFilter] = useState(() => worksheetListSnapshot.companyFilter);
     const [companySearch, setCompanySearch] = useState(() => worksheetListSnapshot.companySearch);
-    // 'due' = 납기 임박순(날짜 그룹), 'uploaded' = 최근 업로드순(평탄 리스트, 방금 올린 게 최상단).
+    // 'due' = 진행중 지시서를 납기 임박순 날짜 그룹.
+    // 'completed' = 발주관리 [작업완료] 처리된 작업건들을 완료일자 그룹으로(최신 일자가 위).
     const [sortMode, setSortMode] = useState(() => worksheetListSnapshot.sortMode);
     // 체크 시 본인 슬롯에 매핑된 지시서만 노출 + 본인이 [작업완료] 누른 건 자동 제외(per-worker).
     // 담당자가 있으면 default = ON. 사용자가 직접 풀면 그 직원 이름이 MINE_OFF_KEY 에 저장되어
@@ -258,26 +285,32 @@ export default function WorksheetList() {
     };
 
     // 캐시버스터 + cache: no-store — 모바일/CDN 캐시로 인해 옛 데이터가 보이는 문제 방지.
+    // 진행중(/worksheets) + 완료(/worksheets/completed) 를 병렬 fetch. 완료 fetch 실패는
+    // 진행중 흐름을 막지 않는다(완료작업건 탭은 빈 화면 폴백).
     const fetchList = useCallback(async ({ manual = false } = {}) => {
         if (manual) setRefreshing(true);
         try {
-            const res = await fetch(
-                `${BASE_URL}/api/public/worksheets?_=${Date.now()}`,
-                { cache: 'no-store' },
-            );
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
+            const [activeRes, doneRes] = await Promise.all([
+                fetch(`${BASE_URL}/api/public/worksheets?_=${Date.now()}`, { cache: 'no-store' }),
+                fetch(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`, { cache: 'no-store' }),
+            ]);
+            if (!activeRes.ok) {
+                const body = await activeRes.json().catch(() => ({}));
                 throw new Error(body.message || '목록을 불러오지 못했습니다.');
             }
-            const data = await res.json();
+            const data = await activeRes.json();
+            const doneData = doneRes.ok ? await doneRes.json().catch(() => []) : [];
             if (!aliveRef.current) return;
             const nextItems = Array.isArray(data) ? data : [];
+            const nextCompleted = Array.isArray(doneData) ? doneData : [];
             worksheetListSnapshot = {
                 ...worksheetListSnapshot,
                 items: nextItems,
+                completedItems: nextCompleted,
                 syncedAt: new Date(),
             };
             setItems(nextItems);
+            setCompletedItems(nextCompleted);
             setError('');
             setLastSyncedAt(worksheetListSnapshot.syncedAt);
         } catch (err) {
@@ -325,11 +358,16 @@ export default function WorksheetList() {
     // PDF 자체는 미리 받지 않는다 — sw.js 가 Range 를 우회하므로 byte-range 워밍은
     // 캐시에 못 들어가고 PDF.js 의 실제 fetch 와 경합만 한다. PDF 는 PDF.js + 브라우저
     // HTTP 캐시(?v= long max-age) + SW 의 자연 경로에 맡긴다.
+    // 완료작업건도 동일하게 detail 캐시에 저장 — 완료 카드 탭 시 PDF 뷰어가 빈 화면 없이 즉시 표시.
     useEffect(() => {
-        if (!items || items.length === 0) return;
-        rememberAllListItems(items);
+        const all = [...(items || []), ...(completedItems || [])];
+        if (all.length === 0) return;
+        rememberAllListItems(all);
         preloadWorksheetViewerChunk(false);
-    }, [items]);
+    }, [items, completedItems]);
+
+    // 활성 source — 'due' 는 진행중, 'completed' 는 발주관리 [작업완료] 처리된 마감 건.
+    const activeSource = sortMode === 'completed' ? completedItems : items;
 
     const counts = useMemo(() => {
         let today = 0;
@@ -344,15 +382,16 @@ export default function WorksheetList() {
     }, [items]);
 
     // 날짜 필터까지만 적용한 중간 결과 — 거래처 옵션의 건수도 이걸 기준으로 매김.
+    // 완료작업건 모드는 dueDate 대신 deletedAt 기준이라 '오늘/3일내' 필터를 적용하지 않는다(전체).
     const dateFilteredItems = useMemo(() => {
-        if (dateFilter === 'all') return items;
-        return items.filter((it) => {
+        if (sortMode === 'completed' || dateFilter === 'all') return activeSource;
+        return activeSource.filter((it) => {
             if (typeof it.daysUntilDue !== 'number') return false;
             if (dateFilter === 'today') return it.daysUntilDue === 0;
             if (dateFilter === '3days') return it.daysUntilDue >= 0 && it.daysUntilDue <= 2;
             return true;
         });
-    }, [items, dateFilter]);
+    }, [activeSource, dateFilter, sortMode]);
 
     // 검색어로 한 번 더 좁힌 결과 — 거래처 드롭다운/카운트도 이걸 기준으로 한다.
     const searchFilteredItems = useMemo(() => {
@@ -413,15 +452,25 @@ export default function WorksheetList() {
     }, [companyFilteredItems, myWorker]);
 
     const groups = useMemo(() => {
-        // 최근 업로드순 — 그룹 분리 없이 평탄 리스트. 방금 올린 게 최상단.
-        // worksheetUpdatedAt 이 비어있는(아주 옛날) 항목은 0 으로 가라앉힘.
-        if (sortMode === 'uploaded') {
-            const sorted = [...filtered].sort((a, b) => {
-                const ta = a.worksheetUpdatedAt ? new Date(a.worksheetUpdatedAt).getTime() : 0;
-                const tb = b.worksheetUpdatedAt ? new Date(b.worksheetUpdatedAt).getTime() : 0;
-                return tb - ta;
+        // 완료작업건 — 작업완료 처리일(deletedAt) 기준 일자 그룹, 최신 일자가 위.
+        // 같은 날 안에서는 처리시각 늦은 게 위.
+        if (sortMode === 'completed') {
+            const map = new Map();
+            filtered.forEach((it) => {
+                const key = getCompletedGroupKey(it.deletedAt);
+                if (!map.has(key)) map.set(key, []);
+                map.get(key).push(it);
             });
-            return [['__uploaded__', sorted]];
+            map.forEach((list) => list.sort((a, b) => {
+                const ta = a.deletedAt ? new Date(a.deletedAt).getTime() : 0;
+                const tb = b.deletedAt ? new Date(b.deletedAt).getTime() : 0;
+                return tb - ta;
+            }));
+            return Array.from(map.entries()).sort(([a], [b]) => {
+                if (a === 'none') return 1;
+                if (b === 'none') return -1;
+                return b.localeCompare(a); // 최신 일자가 위.
+            });
         }
         const map = new Map();
         filtered.forEach((it) => {
@@ -558,37 +607,55 @@ export default function WorksheetList() {
                     )}
                 </p>
 
-                <div className="ws-sort-toggle" role="tablist" aria-label="정렬 방식">
+                <div className="ws-sort-toggle" role="tablist" aria-label="목록 모드">
                     <button
                         type="button"
                         role="tab"
                         aria-selected={sortMode === 'due'}
                         className={`ws-sort-tab ${sortMode === 'due' ? 'active' : ''}`}
-                        onClick={() => setSortMode('due')}
+                        onClick={() => {
+                            setSortMode('due');
+                            // 다른 모드의 선택 모드/선택 항목 잔존 방지.
+                            if (selectMode) setSelectMode(false);
+                            setSelectedNumbers(new Set());
+                            setBulkError('');
+                        }}
                     >납기 임박순</button>
                     <button
                         type="button"
                         role="tab"
-                        aria-selected={sortMode === 'uploaded'}
-                        className={`ws-sort-tab ${sortMode === 'uploaded' ? 'active' : ''}`}
-                        onClick={() => setSortMode('uploaded')}
-                    >최근 업로드순</button>
+                        aria-selected={sortMode === 'completed'}
+                        className={`ws-sort-tab ${sortMode === 'completed' ? 'active' : ''}`}
+                        onClick={() => {
+                            setSortMode('completed');
+                            // 완료작업건 모드는 일괄 작업완료가 의미 없음 — 선택 모드 해제.
+                            if (selectMode) setSelectMode(false);
+                            setSelectedNumbers(new Set());
+                            setBulkError('');
+                        }}
+                    >완료작업건</button>
                 </div>
 
                 <form className="ws-filter-form" onSubmit={(e) => e.preventDefault()}>
-                    <label className="ws-filter-field">
-                        <span className="ws-filter-label">납기일자</span>
-                        <select
-                            className="ws-filter-select"
-                            value={dateFilter}
-                            onChange={(e) => setDateFilter(e.target.value)}
-                        >
-                            <option value="today">오늘 ({counts.today})</option>
-                            <option value="3days">3일내 ({counts.threeDays})</option>
-                            <option value="all">전체 ({counts.all})</option>
-                        </select>
-                    </label>
-                    <label className="ws-filter-field">
+                    {/* 완료작업건 모드는 납기(미래) 필터 의미가 없어 거래처 셀렉트를 1단으로 펼침. */}
+                    {sortMode !== 'completed' && (
+                        <label className="ws-filter-field">
+                            <span className="ws-filter-label">납기일자</span>
+                            <select
+                                className="ws-filter-select"
+                                value={dateFilter}
+                                onChange={(e) => setDateFilter(e.target.value)}
+                            >
+                                <option value="today">오늘 ({counts.today})</option>
+                                <option value="3days">3일내 ({counts.threeDays})</option>
+                                <option value="all">전체 ({counts.all})</option>
+                            </select>
+                        </label>
+                    )}
+                    <label
+                        className="ws-filter-field"
+                        style={sortMode === 'completed' ? { gridColumn: '1 / -1' } : undefined}
+                    >
                         <span className="ws-filter-label">거래처</span>
                         <select
                             className="ws-filter-select"
@@ -616,6 +683,14 @@ export default function WorksheetList() {
                         placeholder="거래처 검색"
                         value={companySearch}
                         onChange={(e) => setCompanySearch(e.target.value)}
+                        enterKeyHint="search"
+                        onKeyDown={(e) => {
+                            // 모바일 키패드 '검색/확인' 누르면 키패드 닫기.
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                            }
+                        }}
                     />
                     {companySearch && (
                         <button
@@ -662,36 +737,46 @@ export default function WorksheetList() {
                 )}
 
                 {/* 다중 선택 모드 — 카드 탭으로 N건 선택해 한 번에 작업완료. 선택 모드 OFF 시 카드는
-                    그대로 Link 동작(각각 들어가서 처리). 발주관리 selectMode 와 같은 패턴. */}
-                <div className="ws-action-row">
-                    <button
-                        type="button"
-                        className={`ws-select-toggle ${selectMode ? 'active' : ''}`}
-                        onClick={toggleSelectMode}
-                        disabled={bulkCompleting}
-                    >
-                        {selectMode
-                            ? `선택 모드 끄기${selectedNumbers.size > 0 ? ` · ${selectedNumbers.size}건` : ''}`
-                            : '여러 개 선택해 일괄 완료'}
-                    </button>
-                </div>
+                    그대로 Link 동작(각각 들어가서 처리). 발주관리 selectMode 와 같은 패턴.
+                    완료작업건 모드는 이미 마감된 건들이라 일괄 작업완료 의미 없음 — 토글 숨김. */}
+                {sortMode !== 'completed' && (
+                    <div className="ws-action-row">
+                        <button
+                            type="button"
+                            className={`ws-select-toggle ${selectMode ? 'active' : ''}`}
+                            onClick={toggleSelectMode}
+                            disabled={bulkCompleting}
+                        >
+                            {selectMode
+                                ? `선택 모드 끄기${selectedNumbers.size > 0 ? ` · ${selectedNumbers.size}건` : ''}`
+                                : '여러 개 선택해 일괄 완료'}
+                        </button>
+                    </div>
+                )}
             </header>
 
             {loading && <div className="ws-empty">불러오는 중…</div>}
             {!loading && error && <div className="ws-empty error">{error}</div>}
             {!loading && !error && filtered.length === 0 && (
-                <div className="ws-empty">표시할 지시서가 없습니다.</div>
+                <div className="ws-empty">
+                    {sortMode === 'completed'
+                        ? '표시할 완료 작업건이 없습니다.'
+                        : '표시할 지시서가 없습니다.'}
+                </div>
             )}
 
             {groups.map(([key, list]) => {
-                const isUploaded = key === '__uploaded__';
+                const isCompletedMode = sortMode === 'completed';
                 const isNoDate = key === 'none';
-                const groupBadge = !isUploaded && !isNoDate ? getDueBadge(key) : null;
+                const groupBadge = !isCompletedMode && !isNoDate ? getDueBadge(key) : null;
                 return (
                     <section className="ws-group" key={key}>
                         <h2 className="ws-group-head">
-                            {isUploaded ? (
-                                <span className="ws-group-date">최근 업로드</span>
+                            {isCompletedMode ? (
+                                <>
+                                    <span className="ws-group-badge ws-group-badge--completed">완료</span>
+                                    <span className="ws-group-date">{formatCompletedDateLabel(key)}</span>
+                                </>
                             ) : isNoDate ? (
                                 <span className="ws-group-date">납기 미정</span>
                             ) : (
@@ -706,7 +791,6 @@ export default function WorksheetList() {
                         </h2>
                         <div className="ws-grid">
                             {list.map((it) => {
-                                const cardBadge = isUploaded ? getDueBadge(it.dueDate) : null;
                                 const isSelected = selectedNumbers.has(it.orderNumber);
                                 const completedByMe = !!myWorker
                                     && Array.isArray(it.workerCompletions)
@@ -717,7 +801,7 @@ export default function WorksheetList() {
                                         <WorksheetThumbnail
                                             pdfUrl={it.worksheetPdfUrl}
                                             thumbnailUrl={it.worksheetThumbnailUrl}
-                                            completed={completedByMe}
+                                            completed={isCompletedMode || completedByMe}
                                             evidenceCount={it.evidenceCount || 0}
                                         />
                                         {selectMode && (
@@ -733,16 +817,11 @@ export default function WorksheetList() {
                                             <div className="ws-thumb-company">
                                                 {it.companyName || '거래처 미상'}
                                             </div>
-                                            {isUploaded && (
+                                            {isCompletedMode && it.deletedAt && (
                                                 <div className="ws-thumb-sub">
-                                                    {cardBadge ? (
-                                                        <span className={`ws-thumb-badge ${cardBadge.kind}`}>{cardBadge.text}</span>
-                                                    ) : it.dueDate ? (
-                                                        <span className="ws-thumb-date">{formatShortDate(it.dueDate)}</span>
-                                                    ) : null}
-                                                    {it.worksheetUpdatedAt && (
-                                                        <span className="ws-thumb-uploaded">{formatRelativeUpload(it.worksheetUpdatedAt)}</span>
-                                                    )}
+                                                    <span className="ws-thumb-completed-rel">
+                                                        {formatCompletedRelative(it.deletedAt)} 완료
+                                                    </span>
                                                 </div>
                                             )}
                                         </div>

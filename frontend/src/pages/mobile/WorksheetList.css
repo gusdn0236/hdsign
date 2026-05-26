@@ -223,7 +223,8 @@
     border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 10px;
     color: #fafafa;
-    font-size: 13px;
+    /* 16px 미만이면 iOS Safari 가 포커스 시 화면을 확대함 — 16px 로 고정해 확대 방지. */
+    font-size: 16px;
     font-weight: 600;
     transition: border-color 0.12s ease, background-color 0.12s ease;
 }
@@ -414,6 +415,8 @@
 .ws-group-badge.today { background: #16a34a; }
 .ws-group-badge.tomorrow { background: #f59e0b; }
 .ws-group-badge.overdue { background: #dc2626; }
+/* 완료작업건 그룹 — 회색조로 마감/지난 일임을 시각적으로 분리. */
+.ws-group-badge--completed { background: #71717a; }
 
 .ws-group-count {
     margin-left: auto;
@@ -462,7 +465,7 @@
     letter-spacing: -0.01em;
     max-width: 100%;
 }
-/* 최근 업로드순일 때만 노출되는 카드 보조 라인 — 납기 배지/날짜 + 업로드 상대시간 */
+/* 완료작업건 카드에서만 노출되는 카드 보조 라인 — 'X일 전 완료'. */
 .ws-thumb-sub {
     display: flex;
     align-items: center;
@@ -475,28 +478,9 @@
     overflow: hidden;
     white-space: nowrap;
 }
-.ws-thumb-badge {
-    display: inline-flex;
-    align-items: center;
-    height: 16px;
-    padding: 0 5px;
-    border-radius: 4px;
-    font-size: 10px;
-    font-weight: 800;
-    line-height: 1;
-    color: #fff;
-    flex-shrink: 0;
-}
-.ws-thumb-badge.today { background: #16a34a; }
-.ws-thumb-badge.tomorrow { background: #f59e0b; }
-.ws-thumb-badge.overdue { background: #dc2626; }
-.ws-thumb-date {
-    color: #3f3f46;
-    font-weight: 700;
-}
-.ws-thumb-uploaded {
+.ws-thumb-completed-rel {
     color: #71717a;
-    font-weight: 500;
+    font-weight: 600;
 }
 
 /* 빈 상태 -------------------------------------------------------- */

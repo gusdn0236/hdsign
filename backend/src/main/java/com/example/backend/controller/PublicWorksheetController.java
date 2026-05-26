@@ -99,8 +99,10 @@ public class PublicWorksheetController {
 
     @GetMapping("/{orderNumber}")
     public ResponseEntity<?> detail(@PathVariable String orderNumber) {
+        // deletedAt(=발주관리 [작업완료] 이동) 건도 함께 응답 — 모바일 [완료작업건] 탭에서 진입 시
+        // PDF/세부 정보를 그대로 열어볼 수 있어야 한다. /completed 리스트가 이미 PDF URL/회사명 등을
+        // 노출하고 있어 추가 정보 노출은 없음.
         return orderRepository.findByOrderNumber(orderNumber)
-                .filter(o -> o.getDeletedAt() == null)
                 .<ResponseEntity<?>>map(o -> {
                     Map<String, Object> body = toSummary(o, LocalDate.now(), loadEvidenceCounts());
                     body.put("note", o.getNote());
@@ -109,6 +111,8 @@ public class PublicWorksheetController {
                     // 모바일 뷰어 PDF 한번 탭 시 노출되는 "변경사항 텍스트".
                     // null/빈문자면 모바일에서 추가요청사항(note) 으로 폴백.
                     body.put("worksheetChangeNote", o.getWorksheetChangeNote());
+                    // 완료작업건 진입 시 뷰어가 [작업완료] 버튼/사진 업로드 후 자동 완료 흐름을 차단하기 위함.
+                    body.put("deletedAt", o.getDeletedAt() != null ? o.getDeletedAt().toString() : null);
                     return ResponseEntity.ok(body);
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -167,8 +171,10 @@ public class PublicWorksheetController {
             @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch,
             @RequestHeader(value = "User-Agent", required = false) String userAgent
     ) {
+        // 완료작업건(deletedAt != null)도 PDF 노출 — /completed 리스트가 이미 worksheetPdfUrl 을
+        // 내보내고 있으므로 프록시도 함께 열어둔다(보안 동일).
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
-        if (order == null || order.getDeletedAt() != null) {
+        if (order == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         String pdfUrl = shouldServeOriginalPdf(userAgent)
@@ -245,8 +251,10 @@ public class PublicWorksheetController {
             @RequestParam(value = "v", required = false) String version,
             @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch
     ) {
+        // 완료작업건(deletedAt != null)도 썸네일 노출 — /completed 리스트가 worksheetThumbnailUrl 을
+        // 내보내므로 같은 보안 수준.
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
-        if (order == null || order.getDeletedAt() != null) {
+        if (order == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         String thumbUrl = order.getWorksheetThumbnailUrl();

@@ -780,8 +780,8 @@ export default function WorksheetViewer() {
             // 사진보기 시트의 카운트/그리드를 즉시 최신 상태로.
             refreshEvidencePhotos();
             // 업로드 직후 작업완료 흐름 — 따로 다시 [작업완료] 누르지 않아도 한 번에 끝나도록.
-            // 본인이 이미 완료했거나 직원 미설정이면 묻지 않는다.
-            if (!completedByMe && worker) {
+            // 본인이 이미 완료했거나 직원 미설정이거나 이미 마감된(완료작업건) 건이면 묻지 않는다.
+            if (!completedByMe && worker && !isArchived) {
                 setCompleteConfirmKind('upload');
             }
         } catch (err) {
@@ -854,6 +854,9 @@ export default function WorksheetViewer() {
     const completedByMe = !!worker
         && Array.isArray(detail?.workerCompletions)
         && detail.workerCompletions.some((c) => c.worker === worker);
+    // 발주관리 [작업완료] 탭으로 이동된 건(=마감). 모바일 [완료작업건] 탭에서 진입한 경우 등.
+    // worker-complete 흐름(자동/수동) 자체를 차단해 이미 끝난 작업을 다시 누르는 사고를 막는다.
+    const isArchived = !!detail?.deletedAt || detail?.status === 'COMPLETED';
 
     return (
         <div className="wsv-page">
@@ -1127,7 +1130,16 @@ export default function WorksheetViewer() {
                     </span>
                     <span className="wsv-action-text">사진선택</span>
                 </button>
-                {completedByMe ? (
+                {isArchived ? (
+                    <div className="wsv-action-btn wsv-action-completed" aria-disabled="true" title="발주관리에서 작업완료로 이동된 마감 작업입니다.">
+                        <span className="wsv-action-icon" aria-hidden="true">
+                            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 9l4 4 8-9" />
+                            </svg>
+                        </span>
+                        <span className="wsv-action-text">마감됨</span>
+                    </div>
+                ) : completedByMe ? (
                     <div className="wsv-action-btn wsv-action-completed" aria-disabled="true">
                         <span className="wsv-action-icon" aria-hidden="true">
                             <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
