@@ -2,6 +2,7 @@ package com.example.backend.service;
 
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
 import com.google.api.client.http.ByteArrayContent;
+import com.google.api.client.http.HttpResponseException;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.auth.http.HttpCredentialsAdapter;
@@ -115,9 +116,24 @@ public class GoogleDriveBackupService {
             log.info("Drive 백업 완료 [{}/{}] -> {}",
                     orderNumber, created.getName(), created.getId());
         } catch (Exception e) {
-            log.warn("Drive 백업 실패 [{}/{}]: {}",
-                    orderNumber, fileName, e.getMessage());
+            String detail = extractHttpErrorDetail(e);
+            log.warn("Drive 백업 실패 [{}/{}]: {}{}",
+                    orderNumber, fileName, e.getMessage(),
+                    detail.isEmpty() ? "" : " | body=" + detail);
         }
+    }
+
+    // getMessage()는 status line만 주므로, 진짜 원인이 담긴 응답 본문(예: invalid_grant)을 별도로 꺼낸다.
+    private String extractHttpErrorDetail(Throwable e) {
+        Throwable cur = e;
+        while (cur != null) {
+            if (cur instanceof HttpResponseException hre) {
+                String body = hre.getContent();
+                return body == null ? "" : body.replaceAll("\\s+", " ").trim();
+            }
+            cur = cur.getCause();
+        }
+        return "";
     }
 
     private Drive ensureDrive() throws Exception {
@@ -185,8 +201,10 @@ public class GoogleDriveBackupService {
                 result.put("accountEmail", about.getUser().getEmailAddress());
             }
         } catch (Exception e) {
-            log.warn("Drive 저장용량 조회 실패: {}", e.getMessage());
-            result.put("error", e.getMessage());
+            String detail = extractHttpErrorDetail(e);
+            log.warn("Drive 저장용량 조회 실패: {}{}", e.getMessage(),
+                    detail.isEmpty() ? "" : " | body=" + detail);
+            result.put("error", e.getMessage() + (detail.isEmpty() ? "" : " | " + detail));
         }
         cachedUsage = result;
         usageCachedAt = Instant.now();
