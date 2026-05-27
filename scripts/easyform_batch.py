@@ -262,7 +262,7 @@ def extract_grid(layout: dict) -> tuple[list[dict], str]:
     if empty_streak == 0:
         last_remark = last_row_template[-1]
         rx, ry = last_remark["x"], last_remark["y"]
-        while len(out) < 100:
+        while len(out) < 200:
             if STOP_REQUESTED:
                 return out, "STOPPED"
             wheel_down(rx, ry, 1)
@@ -313,6 +313,7 @@ def main() -> int:
         all_results = []
 
     prev_first_row_sig = None
+    same_streak = 0  # 연속 동일 시그니처 명세서 카운트
     stop_reason = "끝까지"
     started_at = time.time()
 
@@ -330,12 +331,18 @@ def main() -> int:
             stop_reason = f"⚠ Ctrl+Esc 중단 (인덱스 {inv_idx})"
             break
 
-        # 마지막 명세서 감지 — 직전과 행 1 시그니처 동일
-        first_sig = tuple(grid[0].values()) if grid else None
-        if prev_first_row_sig is not None and first_sig == prev_first_row_sig:
-            stop_reason = f"마지막 명세서 도달 (인덱스 {inv_idx-1})"
-            break
-        prev_first_row_sig = first_sig
+        # 마지막 명세서 감지 — 연속 30회 동일 시그니처 (= 31개 명세서 연속 동일) 시 종료
+        # dc 등 자재 텍스트만 같은 연속 명세서 오탐 방지. 안전 마진 크게 잡음.
+        # 진짜 마지막 도달 시 같은 명세서 30번 중복 저장 후 종료 — 후처리 dedup.
+        full_sig = tuple(tuple(c.values()) for c in grid) if grid else None
+        if prev_first_row_sig is not None and full_sig == prev_first_row_sig:
+            same_streak += 1
+            if same_streak >= 30:
+                stop_reason = f"마지막 명세서 도달 (인덱스 {inv_idx}) — 연속 30회 동일"
+                break
+        else:
+            same_streak = 0
+        prev_first_row_sig = full_sig
 
         all_results.append({
             "invoice_idx": inv_idx,
