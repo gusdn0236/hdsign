@@ -258,8 +258,12 @@ SENT = "__SENT__"
 
 
 def copy_cell(x: int, y: int) -> str:
+    # ⚠ 활성화 대기 0.10초는 검증된 안전값. 줄이면 셀 활성화가 마우스를 못 따라가
+    # 직전 셀 텍스트가 다음 칸으로 밀리는 오염 발생 (0.045 테스트에서 248곳 오염 확인).
     set_clipboard(SENT); time.sleep(0.015)
     click(x, y); time.sleep(0.10)
+    if modal_present():       # 클릭하자마자 팝업이 떴으면 더 손대지 않음
+        return ""
     key(VK_C, [VK_CTRL]); time.sleep(0.05)
     v = get_clipboard()
     if v == SENT:
@@ -268,15 +272,15 @@ def copy_cell(x: int, y: int) -> str:
 
 
 def _extract_row(row_cells: list) -> tuple[dict, bool]:
-    """한 행 추출 + 모달 감지(창 기반). 모달이면 (부분결과, True)."""
+    """한 행 추출 + 모달 감지(창 기반). 모달이면 즉시 중단 (부분결과, True).
+    셀 클릭마다 팝업을 확인 — 팝업 떴는데 나머지 셀을 계속 클릭하면 안 되므로."""
     cells = {}
     for cell in row_cells:
         x, y, col_name = cell["x"], cell["y"], cell["col"]
         text = copy_cell(x, y)
+        if modal_present():           # 클릭 직후 팝업 → 즉시 멈춤 (마우스 더 안 움직임)
+            return cells, True
         cells[col_name] = text
-    # 행 추출 직후 최상위 창이 기준과 다르면(=팝업) 모달. 셀 텍스트와 무관.
-    if modal_present():
-        return cells, True
     return cells, False
 
 
@@ -401,13 +405,17 @@ def main() -> int:
             stop_reason = f"⚠ Ctrl+Esc 중단 (인덱스 {inv_idx})"
             break
         if grid_stop == "MODAL":
-            # 셀 텍스트가 아니라 '팝업 창'을 감지한 것 (전자발행 변경불가/클립보드 오류 등).
-            # 멈추지 않고 팝업을 닫은 뒤 이 명세서는 빈 기록으로 스킵하고 계속 진행.
-            key(VK_ENTER); time.sleep(0.4); wait_if_busy()   # OK/확인
+            # 전자발행/전자전송 명세서 — 셀 클릭 시 "변경할 수 없습니다" 팝업.
+            # 사용자 확인 닫기 순서: 엔터 → esc → 엔터 → 엔터 → 엔터 → 목록 화면.
+            # (esc 로 상세를 닫을 때 연쇄 확인 팝업이 떠서 엔터를 여러 번 눌러야 함)
+            key(VK_ENTER); time.sleep(0.5); wait_if_busy()   # 1. 변경불가 팝업 확인
+            key(VK_ESC);   time.sleep(0.5); wait_if_busy()   # 2. 상세 닫기 → 확인 팝업 유발
+            for _ in range(5):                                # 3~. 연쇄 확인 팝업 닫기
+                key(VK_ENTER); time.sleep(0.5); wait_if_busy()
+                if not modal_present():
+                    break
             if modal_present():
-                key(VK_ESC); time.sleep(0.4); wait_if_busy()  # 안 닫히면 한 번 더
-            if modal_present():
-                stop_reason = f"⚠ 팝업이 안 닫힘 — 중단 (인덱스 {inv_idx})"
+                stop_reason = f"⚠ 전자발행 팝업이 안 닫힘 — 중단 (인덱스 {inv_idx})"
                 break
             all_results.append({
                 "invoice_idx": inv_idx, "grid": [], "grid_row_count": 0,
@@ -416,10 +424,10 @@ def main() -> int:
             out_path.write_text(
                 json.dumps({"invoices": all_results, "extracted_at": time.time()},
                            ensure_ascii=False, indent=2), encoding="utf-8")
-            print(f"  [{inv_idx:>4}] 팝업(전자발행 등) 감지 → 스킵하고 계속")
+            print(f"  [{inv_idx:>4}] 전자발행 팝업 감지 → 닫고 스킵, 다음 명세서로")
             same_streak = 0
-            key(VK_ESC); time.sleep(0.3); wait_if_busy()
-            key(VK_DOWN); time.sleep(0.15)
+            # 이미 목록 화면 — 다음 명세서 열기
+            key(VK_DOWN); time.sleep(0.2)
             key(VK_ENTER); time.sleep(1.0); wait_if_busy()
             continue
 
