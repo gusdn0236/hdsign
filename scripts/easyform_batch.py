@@ -69,8 +69,17 @@ CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 
 
+def _open_clipboard(retries: int = 15) -> bool:
+    """이지폼이 클립보드 점유 중일 때 충돌(Cannot open clipboard) 방지 — 재시도."""
+    for _ in range(retries):
+        if user32.OpenClipboard(None):
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def set_clipboard(text: str) -> None:
-    if not user32.OpenClipboard(None): return
+    if not _open_clipboard(): return
     try:
         user32.EmptyClipboard()
         data = (text + "\0").encode("utf-16-le")
@@ -84,7 +93,7 @@ def set_clipboard(text: str) -> None:
 
 
 def get_clipboard() -> str:
-    if not user32.OpenClipboard(None): return ""
+    if not _open_clipboard(): return ""
     try:
         h = user32.GetClipboardData(CF_UNICODETEXT)
         if not h: return ""
@@ -158,6 +167,65 @@ user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
 user32.SetCursorPos.restype = wintypes.BOOL
 
 
+# --- 모달 창 감지 (셀 텍스트 무관 — 최상위 창의 클래스로 판단) ---
+# 셀 내용으로 모달을 판단하면 간판 자재명에 'Information'/'확인' 등이 우연히 들어갈 때
+# 오탐. 그래서 '명세서 상세를 추출하는 정상 상태의 최상위 창 클래스'를 기준으로 잡고,
+# 그와 다른 창이 최상위로 올라오면(전자발행 변경불가/클립보드 오류 등 팝업) 모달로 본다.
+user32.GetForegroundWindow.restype = wintypes.HWND
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClassNameW.restype = ctypes.c_int
+
+BASE_FG_CLASS = None  # 첫 정상 추출 시점의 최상위 창 클래스 (기준)
+
+
+def fg_class_name() -> str:
+    h = user32.GetForegroundWindow()
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(h, buf, 256)
+    return buf.value
+
+
+def modal_present() -> bool:
+    """기준 창과 다른 최상위 창(=팝업)이 떠 있으면 True. 기준 미설정이면 False."""
+    if BASE_FG_CLASS is None:
+        return False
+    return fg_class_name() != BASE_FG_CLASS
+
+
+# --- busy 커서 감지 (이지폼 로딩 중이면 대기) ---
+class _CURSORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD),
+                ("hCursor", wintypes.HANDLE), ("ptScreenPos", wintypes.POINT)]
+
+user32.LoadCursorW.argtypes = [wintypes.HINSTANCE, wintypes.LPVOID]
+user32.LoadCursorW.restype = wintypes.HANDLE
+user32.GetCursorInfo.argtypes = [ctypes.POINTER(_CURSORINFO)]
+user32.GetCursorInfo.restype = wintypes.BOOL
+
+IDC_WAIT = 32514
+IDC_APPSTARTING = 32650
+_WAIT_CURSOR = user32.LoadCursorW(None, IDC_WAIT)
+_APPSTARTING_CURSOR = user32.LoadCursorW(None, IDC_APPSTARTING)
+_BUSY_CURSORS = {_WAIT_CURSOR, _APPSTARTING_CURSOR}
+
+
+def wait_if_busy(timeout: float = 12.0) -> bool:
+    """이지폼이 로딩 커서(대기/도넛) 상태면 끝날 때까지 대기. True=정상, False=타임아웃."""
+    start = time.time()
+    busy_seen = False
+    while time.time() - start < timeout:
+        info = _CURSORINFO()
+        info.cbSize = ctypes.sizeof(_CURSORINFO)
+        if user32.GetCursorInfo(ctypes.byref(info)):
+            if info.hCursor not in _BUSY_CURSORS:
+                if busy_seen:
+                    time.sleep(0.15)  # busy 해제 직후 약간 더 안정화
+                return True
+            busy_seen = True
+        time.sleep(0.05)
+    return False
+
+
 def click(x: int, y: int) -> None:
     user32.SetCursorPos(int(x * DPI_SCALE), int(y * DPI_SCALE))
     time.sleep(0.03)
@@ -187,7 +255,6 @@ def key(vk: int, mods=None):
 
 
 SENT = "__SENT__"
-MODAL_KEYWORDS = ("저장되지", "Information", "Yes   No", "확인하시겠")
 
 
 def copy_cell(x: int, y: int) -> str:
@@ -200,19 +267,16 @@ def copy_cell(x: int, y: int) -> str:
     return v
 
 
-def is_modal(text: str) -> bool:
-    return any(kw in text for kw in MODAL_KEYWORDS)
-
-
 def _extract_row(row_cells: list) -> tuple[dict, bool]:
-    """한 행 추출 + 모달 감지."""
+    """한 행 추출 + 모달 감지(창 기반). 모달이면 (부분결과, True)."""
     cells = {}
     for cell in row_cells:
         x, y, col_name = cell["x"], cell["y"], cell["col"]
         text = copy_cell(x, y)
-        if is_modal(text):
-            return cells, True
         cells[col_name] = text
+    # 행 추출 직후 최상위 창이 기준과 다르면(=팝업) 모달. 셀 텍스트와 무관.
+    if modal_present():
+        return cells, True
     return cells, False
 
 
@@ -267,6 +331,7 @@ def extract_grid(layout: dict) -> tuple[list[dict], str]:
                 return out, "STOPPED"
             wheel_down(rx, ry, 1)
             time.sleep(0.25)
+            wait_if_busy()  # 스크롤 후 로딩 대기 (긴 명세서 busy 모달 방지)
             cells, modal = _extract_row(last_row_template)
             if modal:
                 return out, "MODAL"
@@ -323,13 +388,53 @@ def main() -> int:
             break
 
         t0 = time.time()
+        wait_if_busy()  # 상세 화면 로딩(도넛 커서) 끝날 때까지 대기 후 추출
+
+        # 첫 정상 명세서에서 기준 창 클래스 확정 (이후 이 창과 다르면 모달로 판단)
+        global BASE_FG_CLASS
+        if BASE_FG_CLASS is None and not modal_present():
+            BASE_FG_CLASS = fg_class_name()
+            print(f"기준 창 클래스: {BASE_FG_CLASS!r}")
+
         grid, grid_stop = extract_grid(layout)
-        if grid_stop == "MODAL":
-            stop_reason = f"⚠ 모달 감지 — 중단 (인덱스 {inv_idx})"
-            break
         if grid_stop == "STOPPED":
             stop_reason = f"⚠ Ctrl+Esc 중단 (인덱스 {inv_idx})"
             break
+        if grid_stop == "MODAL":
+            # 셀 텍스트가 아니라 '팝업 창'을 감지한 것 (전자발행 변경불가/클립보드 오류 등).
+            # 멈추지 않고 팝업을 닫은 뒤 이 명세서는 빈 기록으로 스킵하고 계속 진행.
+            key(VK_ENTER); time.sleep(0.4); wait_if_busy()   # OK/확인
+            if modal_present():
+                key(VK_ESC); time.sleep(0.4); wait_if_busy()  # 안 닫히면 한 번 더
+            if modal_present():
+                stop_reason = f"⚠ 팝업이 안 닫힘 — 중단 (인덱스 {inv_idx})"
+                break
+            all_results.append({
+                "invoice_idx": inv_idx, "grid": [], "grid_row_count": 0,
+                "grid_stop_reason": "MODAL_SKIP",
+            })
+            out_path.write_text(
+                json.dumps({"invoices": all_results, "extracted_at": time.time()},
+                           ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"  [{inv_idx:>4}] 팝업(전자발행 등) 감지 → 스킵하고 계속")
+            same_streak = 0
+            key(VK_ESC); time.sleep(0.3); wait_if_busy()
+            key(VK_DOWN); time.sleep(0.15)
+            key(VK_ENTER); time.sleep(1.0); wait_if_busy()
+            continue
+
+        # 빈 그리드 자동 재시도 — 이지폼 DB fetch 지연 (네트워크 느림 등) 대비.
+        # 상세를 닫았다 다시 열고 넉넉히 대기 후 한 번 더. 그래도 비면 진짜 빈 명세서.
+        retry = 0
+        while len(grid) == 0 and grid_stop in ("OK", "DUPLICATE") and retry < 2 and not STOP_REQUESTED:
+            retry += 1
+            key(VK_ESC); time.sleep(0.4)      # 상세 닫기
+            wait_if_busy()
+            key(VK_ENTER); time.sleep(2.5)    # 같은 행 상세 재오픈 + 넉넉한 fetch 대기
+            wait_if_busy()
+            grid, grid_stop = extract_grid(layout)
+        if retry and len(grid) > 0:
+            print(f"  [{inv_idx:>4}] 빈 그리드 재시도 {retry}회 → {len(grid)}행 복구")
 
         # 마지막 명세서 감지 — 연속 30회 동일 시그니처 (= 31개 명세서 연속 동일) 시 종료
         # dc 등 자재 텍스트만 같은 연속 명세서 오탐 방지. 안전 마진 크게 잡음.
@@ -370,8 +475,10 @@ def main() -> int:
 
         # 다음 명세서로
         key(VK_ESC); time.sleep(0.3)
+        wait_if_busy()                  # 상세 닫기 로딩 대기
         key(VK_DOWN); time.sleep(0.15)
         key(VK_ENTER); time.sleep(1.0)
+        wait_if_busy()                  # 새 상세 열기 + DB fetch 로딩 대기
 
     elapsed = time.time() - started_at
     done_count = len(all_results)
@@ -381,7 +488,9 @@ def main() -> int:
     print(f"총 {done_count}건 추출, 소요 {elapsed/60:.1f}분")
     print(f"저장: {out_path}")
     if "중단" in stop_reason or STOP_REQUESTED:
-        next_idx = args.start + done_count
+        # 다음 인덱스 = 저장된 마지막 invoice_idx + 1
+        # (all_results 는 기존 로드분 + 이번 추가분이라 args.start + len 은 틀림)
+        next_idx = (max(i["invoice_idx"] for i in all_results) + 1) if all_results else args.start
         print()
         print("=" * 60)
         print(f" 재개 안내 — 총 {done_count}건 완료, 다음 인덱스 = {next_idx}")
