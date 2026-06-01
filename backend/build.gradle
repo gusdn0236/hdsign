@@ -45,6 +45,11 @@ dependencies {
     implementation 'com.google.api-client:google-api-client:2.7.0'
     implementation 'com.google.oauth-client:google-oauth-client-jetty:1.36.0'
     implementation 'com.google.apis:google-api-services-drive:v3-rev20241027-2.0.0'
+    // @slice-2 자동견적 비전 프록시: 브라우저가 보낸 작업지시서 이미지를 서버에서
+    // Claude(forced tool-use)로 보내 구조화된 라인아이템을 받는다. ANTHROPIC_API_KEY 는
+    // 서버 env 에만 두고 절대 응답/로그로 새지 않는다(IRON LAW). 순수 추가 의존성 —
+    // 기존 데이터소스/마이그레이션/엔티티/슬라이스-1 의존성(h2 등)은 일절 건드리지 않는다.
+    implementation 'com.anthropic:anthropic-java:2.35.0'
 }
 tasks.named('test') {
     useJUnitPlatform()
