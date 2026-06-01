@@ -32,6 +32,9 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // 테스트는 외부 MySQL 없이 인메모리 H2 로 부팅 (test 프로파일, Flyway off + JPA ddl-auto).
     testRuntimeOnly 'com.h2database:h2'
+    // autoquote-it 프로파일(--spring.profiles.active=autoquote-it)로 bootRun 시 운영 MySQL 없이
+    // :8080 부팅. 운영 기본 데이터소스는 MySQL 그대로라 H2 는 그 프로파일에서만 활성화된다(미사용 시 무해).
+    runtimeOnly 'com.h2database:h2'
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'

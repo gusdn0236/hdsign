@@ -29,7 +29,7 @@ test.describe('@slice-1 자동견적 tab + manual engine', () => {
     await page.getByLabel(/카테고리/).selectOption({ label: '채널간판' });
     await page.getByLabel(/가로/).fill('3000');
     await page.getByLabel(/세로/).fill('600');
-    await page.getByLabel(/도수|도장/).fill('2'); // N도 = paint coats
+    await page.getByRole('spinbutton', { name: /도수/ }).fill('2'); // N도 = paint coats
     await page.getByLabel(/수량/).fill('1');
     await page.getByRole('button', { name: /^추가$|견적/ }).click();
 
@@ -50,7 +50,7 @@ test.describe('@slice-1 자동견적 tab + manual engine', () => {
     await page.getByLabel(/가로/).fill('1000');
     await page.getByLabel(/세로/).fill('500');
     // 90 must be interpreted as a bend angle / rejected as coats, NOT 90 paint coats.
-    await page.getByLabel(/도수|도장/).fill('90');
+    await page.getByRole('spinbutton', { name: /도수/ }).fill('90');
     await page.getByRole('button', { name: /^추가$|견적/ }).click();
     const line = page.getByTestId('quote-line').first();
     // Anti-scenario: the price must not balloon as if 90 coats were applied.
