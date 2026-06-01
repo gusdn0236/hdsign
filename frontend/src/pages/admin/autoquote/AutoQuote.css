@@ -363,3 +363,64 @@
 }
 .aq-correct-actions { display: flex; align-items: center; gap: 10px; }
 .aq-correct-err { color: #b00020; font-size: 12px; }
+
+/* @slice-4 로컬 easyform 자동기입 — 에이전트 배지 + 셀 미리보기 + IRON LAW 고지 */
+.aq-agent-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--teal-soft);
+  border: 1px solid var(--teal2);
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 600;
+}
+.aq-easyform { margin-bottom: 16px; }
+.aq-easyform-notice {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--lowconf-soft);
+  border: 1px solid var(--lowconf);
+  color: #5a4500;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.aq-easyform-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.aq-easyform-table th,
+.aq-easyform-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.aq-easyform-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+.aq-easyform-table td:last-child,
+.aq-easyform-table th:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.aq-easyform-done {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--teal);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.aq-easyform-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}

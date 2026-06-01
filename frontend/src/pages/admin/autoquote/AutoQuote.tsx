@@ -12,6 +12,12 @@ import type {
 } from './engine';
 import { loadAutoQuoteData } from './data/corpusClient';
 import { loadCorrections, postCorrection } from './data/correctionsClient';
+import {
+  buildEasyformRows,
+  fillEasyform,
+  probeEasyformAgent,
+} from './data/easyformClient';
+import type { EasyformRow } from './data/easyformClient';
 import { readImageFile, requestVision } from './components/visionClient';
 import { visionToLineInputs } from './components/visionMapping';
 import WorkOrderStage from './components/WorkOrderStage';
@@ -139,6 +145,15 @@ export default function AutoQuote() {
   // 비전이 추가한 라인의 entry id — 이 라인들만 이미지 위 핀으로 오버레이.
   const [visionIds, setVisionIds] = useState<number[]>([]);
 
+  // @slice-4 로컬 easyform 에이전트 — mount 시 feature-detect. 부재 PC 에서는 false 로
+  // 남아 'easyform 자동기입' 액션이 DOM 에 아예 렌더되지 않는다(HIDDEN, not disabled).
+  const [agentPresent, setAgentPresent] = useState(false);
+  // 셀 미리보기 패널 — null 이면 닫힘, 배열이면 매핑된 행을 보여주며 열림.
+  const [easyformRows, setEasyformRows] = useState<EasyformRow[] | null>(null);
+  // 셀 채우기 진행 상태. 'done' → easyform-fill-done 표시(사람이 easyform 에서 확정).
+  const [fillState, setFillState] =
+    useState<'idle' | 'filling' | 'done' | 'error'>('idle');
+
   // 공유 보정을 서버에서 재요청해 상태에 반영(저장 후·다음 견적 시 호출).
   // 실패해도 견적은 계속 동작하므로 조용히 무시(보정만 최신화 안 될 뿐).
   const refetchCorrections = useCallback(async () => {
@@ -183,6 +198,18 @@ export default function AutoQuote() {
     const t = setTimeout(() => setSavedToast(false), 4000);
     return () => clearTimeout(t);
   }, [savedToast]);
+
+  // @slice-4 탭 진입 시 로컬 easyform 에이전트를 한 번 feature-detect.
+  // 성공해야만 'easyform 자동기입' 액션을 렌더한다(부재 PC 에서는 액션이 없음).
+  useEffect(() => {
+    let alive = true;
+    void probeEasyformAgent().then((ok) => {
+      if (alive) setAgentPresent(ok);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 입력된 항목마다 견적엔진을 돌려 가격·근거를 산출.
   const priced: PricedLine[] = useMemo(() => {
@@ -381,6 +408,31 @@ export default function AutoQuote() {
     }
   };
 
+  // @slice-4 'easyform 자동기입' → 승인된 견적 라인을 셀 행으로 매핑해 미리보기를 연다.
+  // (전송은 아직 — 직원이 미리보기를 확인하고 '셀 채우기'를 눌러야 비로소 POST 한다.)
+  const openEasyformPreview = () => {
+    setFillState('idle');
+    setEasyformRows(buildEasyformRows(priced));
+  };
+
+  const closeEasyformPreview = () => {
+    setEasyformRows(null);
+    setFillState('idle');
+  };
+
+  // '셀 채우기' → { rows } 만 로컬 에이전트로 POST(FILL-ONLY). 성공 시 easyform-fill-done.
+  // 저장/Enter/확정은 절대 요청하지 않는다 — 사람이 easyform 에서 직접 확정한다.
+  const runEasyformFill = async () => {
+    if (!easyformRows) return;
+    setFillState('filling');
+    try {
+      await fillEasyform(easyformRows);
+      setFillState('done');
+    } catch {
+      setFillState('error');
+    }
+  };
+
   return (
     <div className="aq">
       {savedToast && (
@@ -422,10 +474,112 @@ export default function AutoQuote() {
         <button type="button" className="aq-btn ghost" disabled title="다음 슬라이스에서 활성화">
           🖼 내보내기
         </button>
-        <button type="button" className="aq-btn ghost" disabled title="다음 슬라이스에서 활성화">
-          🖥 easyform 자동기입
-        </button>
+        {/* @slice-4 로컬 easyform 에이전트가 탐지된 PC 에서만 렌더(부재 시 액션 자체가 없음). */}
+        {agentPresent && (
+          <>
+            <span className="aq-agent-badge" data-testid="easyform-agent-badge">
+              🟢 로컬 에이전트 감지됨
+            </span>
+            <button
+              type="button"
+              className="aq-btn ghost"
+              data-testid="easyform-fill-btn"
+              onClick={openEasyformPreview}
+            >
+              🖥 easyform 자동기입
+            </button>
+          </>
+        )}
       </div>
+
+      {/* @slice-4 easyform 셀 미리보기 — 승인된 라인 → {품목코드·품목·규격·수량·단가}.
+          IRON LAW 고지: 셀 입력까지만, Enter/Save/확정은 전송하지 않는다(사람이 확정). */}
+      {easyformRows && (
+        <section className="aq-card aq-easyform" data-testid="easyform-preview">
+          <h2>
+            easyform 셀 미리보기
+            <span className="aq-seg">{easyformRows.length}개 행 · 로컬 에이전트가 셀만 채웁니다</span>
+          </h2>
+          <div className="aq-body">
+            <div
+              className="aq-easyform-notice"
+              role="note"
+              data-testid="easyform-ironlaw-notice"
+            >
+              🔒 셀 입력까지만 — Enter/Save/확정 키는 전송하지 않습니다 (저장은 사람이 easyform 에서 직접)
+            </div>
+
+            {easyformRows.length === 0 ? (
+              <div className="aq-empty">
+                채울 견적 라인이 없습니다. 항목을 추가하거나 작업지시서를 인식시키세요.
+              </div>
+            ) : (
+              <table className="aq-easyform-table">
+                <thead>
+                  <tr>
+                    <th>품목코드</th>
+                    <th>품목</th>
+                    <th>규격</th>
+                    <th>수량</th>
+                    <th>단가</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {easyformRows.map((r, i) => (
+                    <tr key={i} data-testid="easyform-row">
+                      <td data-testid="ef-item-code">{r.item_code}</td>
+                      <td data-testid="ef-item">{r.item}</td>
+                      <td data-testid="ef-spec">{r.spec}</td>
+                      <td data-testid="ef-qty">{r.qty}</td>
+                      <td data-testid="ef-unit-price">{won(r.unit_price)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {fillState === 'done' && (
+              <div
+                className="aq-easyform-done"
+                role="status"
+                data-testid="easyform-fill-done"
+              >
+                ✓ easyform 셀 채우기 완료 — easyform 화면에서 직접 확인 후 저장하세요.
+              </div>
+            )}
+            {fillState === 'error' && (
+              <div className="aq-correct-err" role="alert">
+                셀 채우기에 실패했습니다. 로컬 에이전트 상태를 확인한 뒤 다시 시도하세요.
+              </div>
+            )}
+
+            <div className="aq-easyform-actions">
+              <button
+                type="button"
+                className="aq-btn"
+                data-testid="easyform-do-fill-btn"
+                disabled={fillState === 'filling'}
+                onClick={() => void runEasyformFill()}
+              >
+                {fillState === 'filling' ? '채우는 중…' : '셀 채우기'}
+              </button>
+              {/* 저장은 잠금 — 사람이 easyform 에서 직접 확정한다(프론트는 절대 저장 요청 안 함). */}
+              <button
+                type="button"
+                className="aq-btn ghost"
+                data-testid="easyform-save-locked"
+                disabled
+                title="저장은 easyform 에서 사람이 직접 확정합니다 (자동 저장 없음)"
+              >
+                🔒 저장 (잠금)
+              </button>
+              <button type="button" className="aq-link" onClick={closeEasyformPreview}>
+                닫기
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="aq-grid">
         {/* LEFT — 수동 항목 입력 + 입력된 항목 */}
