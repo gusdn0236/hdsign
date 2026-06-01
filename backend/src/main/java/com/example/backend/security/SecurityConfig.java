@@ -24,12 +24,15 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtFilter jwtFilter;
+    private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            // 자격(JWT) 없음 → 401. 권한 부족(잘못된 role)은 기본 403 유지.
+            .exceptionHandling(ex -> ex.authenticationEntryPoint(restAuthenticationEntryPoint))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // 공개 엔드포인트 (구체적인 경로 먼저!)
