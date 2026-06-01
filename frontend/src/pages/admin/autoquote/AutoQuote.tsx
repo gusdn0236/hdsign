@@ -423,7 +423,8 @@ export default function AutoQuote() {
   // '셀 채우기' → { rows } 만 로컬 에이전트로 POST(FILL-ONLY). 성공 시 easyform-fill-done.
   // 저장/Enter/확정은 절대 요청하지 않는다 — 사람이 easyform 에서 직접 확정한다.
   const runEasyformFill = async () => {
-    if (!easyformRows) return;
+    // 채울 라인이 없으면 에이전트에 빈 요청을 보내지 않는다(empty no-op 방지).
+    if (!easyformRows || easyformRows.length === 0) return;
     setFillState('filling');
     try {
       await fillEasyform(easyformRows);
@@ -558,7 +559,7 @@ export default function AutoQuote() {
                 type="button"
                 className="aq-btn"
                 data-testid="easyform-do-fill-btn"
-                disabled={fillState === 'filling'}
+                disabled={fillState === 'filling' || easyformRows.length === 0}
                 onClick={() => void runEasyformFill()}
               >
                 {fillState === 'filling' ? '채우는 중…' : '셀 채우기'}

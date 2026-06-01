@@ -40,11 +40,51 @@ export interface PricedLineLike {
 }
 
 /**
- * IRON LAW 가드: 전송 본문 어디에도 Enter/Save/확정/commit 류 토큰이 있으면 거부한다.
- * 셀 데이터에 이런 토큰이 섞일 일은 없지만, 어떤 경로로든 커밋 지시가 본문에 새어들면
- * 전송 자체를 막는 최후의 방어선이다(anti-scenario 7).
+ * easyform 한 행에 허용되는 데이터 필드 — 정확히 이 5개뿐.
+ * 이 집합 밖의 키는 '셀 데이터'가 아니라 '지시(directive)'로 간주해 전송을 거부한다.
  */
-const FORBIDDEN_TOKEN = /VK_RETURN|ENTER|RETURN|SAVE|저장|commit/i;
+const ALLOWED_ROW_KEYS: ReadonlyArray<keyof EasyformRow> = [
+  'item_code',
+  'item',
+  'spec',
+  'qty',
+  'unit_price',
+];
+
+/**
+ * IRON LAW 가드(구조적): 전송 본문은 정확히 `{ rows: EasyformRow[] }` 여야 한다.
+ *
+ * 과거 가드는 직렬화된 본문 전체를 정규식으로 훑어 'ENTER/SAVE/저장/commit' 글자가
+ * 있으면 막았는데, 이는 셀 데이터(spec=brandText)에 자연스레 들어가는 합법적 간판
+ * 텍스트(예: "MEDICAL CENTER"→'enter', "세이브존 SAVEZONE", "저장창고")까지 오탐해
+ * 정상 채우기를 막았다. 막아야 할 것은 '커밋 지시'이지, 셀 값 속 지시처럼 보이는
+ * 글자가 아니다.
+ *
+ * 따라서 자유텍스트 '값'은 절대 검사하지 않고, '구조'만 검증한다 — 최상위에 `rows`
+ * 외의 키가 있거나(예: save/commit/enter/return/keys), 어떤 행에 허용된 5개 데이터
+ * 필드 밖의 키가 있으면 거부한다. buildEasyformRows 는 그 5개 필드만 방출하므로 이
+ * 가드는 콘텐츠 필터가 아니라 심층방어(defense-in-depth)다(anti-scenario 7).
+ */
+export function assertNoCommitDirective(payload: { rows: EasyformRow[] }): void {
+  const topKeys = Object.keys(payload).filter((k) => k !== 'rows');
+  if (topKeys.length > 0) {
+    throw new Error(
+      `IRON LAW 위반: 전송 본문에 허용되지 않은 최상위 지시 필드(${topKeys.join(', ')})가 있습니다.`,
+    );
+  }
+  if (!Array.isArray(payload.rows)) {
+    throw new Error('IRON LAW 위반: rows 는 배열이어야 합니다.');
+  }
+  const allowed = new Set<string>(ALLOWED_ROW_KEYS as readonly string[]);
+  for (const row of payload.rows) {
+    const extra = Object.keys(row).filter((k) => !allowed.has(k));
+    if (extra.length > 0) {
+      throw new Error(
+        `IRON LAW 위반: 행에 허용되지 않은 지시 필드(${extra.join(', ')})가 있습니다.`,
+      );
+    }
+  }
+}
 
 /** 규격 문자열: `${w}x${h}` + (유효 도수 1~7 시 `· N도`) + (브랜드텍스트 식별용). */
 function buildSpec(e: PricedLineLike['entry']): string {
@@ -104,12 +144,10 @@ export async function probeEasyformAgent(): Promise<boolean> {
  * 전송 직전 IRON LAW 가드를 통과해야 하며, 위반 시 네트워크 호출 없이 throw 한다.
  */
 export async function fillEasyform(rows: EasyformRow[]): Promise<void> {
-  const body = JSON.stringify({ rows });
-  if (FORBIDDEN_TOKEN.test(body)) {
-    throw new Error(
-      'IRON LAW 위반: 전송 본문에 Enter/Save/확정/commit 토큰이 포함될 수 없습니다.',
-    );
-  }
+  const payload = { rows };
+  // 네트워크 호출 전에 구조 가드를 통과해야 한다(위반 시 fetch 없이 throw).
+  assertNoCommitDirective(payload);
+  const body = JSON.stringify(payload);
   const res = await fetch(`${AGENT_URL}/easyform/fill`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
