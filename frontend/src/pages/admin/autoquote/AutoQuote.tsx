@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // AuthContext 는 .jsx — 확장자 명시로 vite/vitest 모두 해석되게.
 import { useAuth } from '../../../context/AuthContext.jsx';
-import { estimate, computeTotals } from './engine';
+import { estimate, computeTotals, sizeBucket } from './engine';
 import type {
+  Correction,
   CorpusItem,
   EstimateResult,
   EvidenceRef,
@@ -10,6 +11,7 @@ import type {
   Priors,
 } from './engine';
 import { loadAutoQuoteData } from './data/corpusClient';
+import { loadCorrections, postCorrection } from './data/correctionsClient';
 import { readImageFile, requestVision } from './components/visionClient';
 import { visionToLineInputs } from './components/visionMapping';
 import WorkOrderStage from './components/WorkOrderStage';
@@ -110,6 +112,17 @@ export default function AutoQuote() {
   const [priors, setPriors] = useState<Priors>({});
   const [dataError, setDataError] = useState<string | null>(null);
 
+  // @slice-3 공유 보정(correction) — mount 시 lazy-fetch, 저장/다음견적 시 재요청.
+  // 한 직원의 보정이 모든 직원의 다음 견적에서 TOP prior 로 되살아난다(엔진 findCorrection).
+  const [corrections, setCorrections] = useState<Correction[]>([]);
+  // 인라인 가격수정 폼 상태 — 한 번에 한 라인만 연다(entry.id).
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editPrice, setEditPrice] = useState('');
+  const [editReason, setEditReason] = useState('');
+  const [savingCorrection, setSavingCorrection] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
+
   const [draft, setDraft] = useState(emptyDraft());
   const [entries, setEntries] = useState<Entry[]>([]);
   const nextId = useRef(1);
@@ -126,7 +139,19 @@ export default function AutoQuote() {
   // 비전이 추가한 라인의 entry id — 이 라인들만 이미지 위 핀으로 오버레이.
   const [visionIds, setVisionIds] = useState<number[]>([]);
 
-  // 탭 진입 시 corpus + priors 를 JWT 백엔드에서 lazy-fetch (모듈 캐시).
+  // 공유 보정을 서버에서 재요청해 상태에 반영(저장 후·다음 견적 시 호출).
+  // 실패해도 견적은 계속 동작하므로 조용히 무시(보정만 최신화 안 될 뿐).
+  const refetchCorrections = useCallback(async () => {
+    try {
+      const fresh = await loadCorrections(token);
+      setCorrections(fresh);
+    } catch {
+      /* 보정 로드 실패 — 기존 보정/견적 유지. */
+    }
+  }, [token]);
+
+  // 탭 진입 시 corpus + priors + 공유 보정을 JWT 백엔드에서 lazy-fetch (corpus 는 모듈 캐시).
+  // 보정은 다른 직원이 추가한 최신본까지 매 mount 가져온다 → 한 명의 보정이 모두에게 반영.
   useEffect(() => {
     let alive = true;
     loadAutoQuoteData(token)
@@ -140,19 +165,33 @@ export default function AutoQuote() {
         setDataError(e instanceof Error ? e.message : '데이터 로드 실패');
         setCorpus([]); // 코퍼스 없이도 사이즈곡선 폴백으로 견적은 가능.
       });
+    loadCorrections(token)
+      .then((c) => {
+        if (alive) setCorrections(c);
+      })
+      .catch(() => {
+        /* 보정 로드 실패 — 보정 없이도 견적은 동작. */
+      });
     return () => {
       alive = false;
     };
   }, [token]);
+
+  // 저장 토스트 자동 해제(잠깐 보여주고 사라짐). 새 보정 폼을 열면 즉시 숨긴다.
+  useEffect(() => {
+    if (!savedToast) return;
+    const t = setTimeout(() => setSavedToast(false), 4000);
+    return () => clearTimeout(t);
+  }, [savedToast]);
 
   // 입력된 항목마다 견적엔진을 돌려 가격·근거를 산출.
   const priced: PricedLine[] = useMemo(() => {
     if (corpus == null) return [];
     return entries.map((entry) => ({
       entry,
-      result: estimate(toLineInput(entry), { corpus, priors }),
+      result: estimate(toLineInput(entry), { corpus, priors, corrections }),
     }));
-  }, [entries, corpus, priors]);
+  }, [entries, corpus, priors, corrections]);
 
   const totals = useMemo(
     () => computeTotals(priced.map((p) => ({ amount: p.result.total }))),
@@ -211,6 +250,9 @@ export default function AutoQuote() {
         setEntries((prev) => [...prev, ...detected]);
         setVisionIds(detected.map((e) => e.id));
         setVisionState('ok');
+        // 다음 견적(새 작업지시서)마다 공유 보정을 재요청 — 다른 직원이 방금 올린
+        // 보정까지 이 견적의 TOP prior 로 반영되게 한다.
+        void refetchCorrections();
       } catch {
         // 비전 실패 — 폴백. 수동입력 경로는 계속 동작(엔진이 여전히 가격 산출).
         setVisionState('failed');
@@ -218,7 +260,7 @@ export default function AutoQuote() {
         visionBusy.current = false;
       }
     },
-    [token],
+    [token, refetchCorrections],
   );
 
   // Ctrl+V 클립보드 이미지 붙여넣기 — 탭에 있는 동안 전역 paste 수신.
@@ -279,8 +321,73 @@ export default function AutoQuote() {
 
   const focusForm = () => categoryRef.current?.focus();
 
+  /** 인라인 가격수정 폼 열기/닫기 — 같은 라인을 다시 누르면 닫는다. */
+  const toggleCorrectionForm = (entry: Entry) => {
+    setCorrectionError(null);
+    setSavedToast(false);
+    if (editingId === entry.id) {
+      setEditingId(null);
+      return;
+    }
+    setEditingId(entry.id);
+    setEditPrice('');
+    setEditReason('');
+  };
+
+  /**
+   * 공유 저장: 한 라인의 단가를 수정하고 이유를 적어 보정 API 로 POST 한다.
+   *
+   * featureKey 는 엔진과 동일한 SHARED 계약으로 만든다 —
+   *   `${category}::${sizeBucket({ w, h })}`
+   * (engine `findCorrection` 의 매칭측과 정확히 일치해야 보정이 올바른 사이즈에 적용된다).
+   * author 는 절대 보내지 않는다(서버가 JWT principal 로 박는다).
+   *
+   * ANTI-FLAKY(job8 교훈): 저장이 성공하면 먼저 `correction-saved-toast` 를 띄운 뒤
+   * 보정을 재요청·재견적한다 — save→reload 레이스 없이 토스트가 먼저 보이도록 보장.
+   */
+  const saveCorrection = async (entry: Entry) => {
+    const price = Number(editPrice);
+    if (!Number.isFinite(price) || price <= 0) {
+      setCorrectionError('수정 단가를 숫자로 입력하세요.');
+      return;
+    }
+    if (!editReason.trim()) {
+      setCorrectionError('수정 이유를 적어주세요(모든 직원에게 공유됩니다).');
+      return;
+    }
+    const w = Number(entry.w);
+    const h = Number(entry.h);
+    const featureKey = `${entry.category}::${sizeBucket({
+      w: Number.isFinite(w) ? w : undefined,
+      h: Number.isFinite(h) ? h : undefined,
+    })}`;
+    setSavingCorrection(true);
+    setCorrectionError(null);
+    try {
+      await postCorrection(token, {
+        featureKey,
+        correctedUnitPrice: price,
+        explanation: editReason.trim(),
+      });
+      // 1) 토스트 먼저 — 재요청/재견적 전에 보이도록(레이스 방지).
+      setSavedToast(true);
+      setEditingId(null);
+      // 2) 보정 재요청 → 재견적: 이 라인이 보정 단가를 TOP prior 로 표시.
+      await refetchCorrections();
+    } catch (e: unknown) {
+      setCorrectionError(e instanceof Error ? e.message : '보정 저장 실패');
+    } finally {
+      setSavingCorrection(false);
+    }
+  };
+
   return (
     <div className="aq">
+      {savedToast && (
+        <div className="aq-toast" data-testid="correction-saved-toast" role="status">
+          ✓ 수정 단가를 저장했습니다 — 모든 직원의 다음 견적에 공유됩니다.
+        </div>
+      )}
       <div className="aq-toolbar">
         <button
           type="button"
@@ -527,6 +634,65 @@ export default function AutoQuote() {
                           ))}
                         </ul>
                       </details>
+
+                      {/* @slice-3 인라인 가격 수정 + 이유 적기 → 공유 보정 저장. */}
+                      <div className="aq-correct">
+                        <button
+                          type="button"
+                          className="aq-link"
+                          onClick={() => toggleCorrectionForm(entry)}
+                        >
+                          ✎ 가격 수정 + 이유 적기
+                        </button>
+                        {editingId === entry.id && (
+                          <div className="aq-correct-form">
+                            <label className="aq-correct-row">
+                              <span className="aq-lbl">수정 단가 (₩)</span>
+                              <input
+                                type="number"
+                                min="0"
+                                inputMode="numeric"
+                                data-testid="correction-price"
+                                value={editPrice}
+                                onChange={(e) => setEditPrice(e.target.value)}
+                                placeholder="예: 95000"
+                              />
+                            </label>
+                            <label className="aq-correct-row">
+                              <span className="aq-lbl">수정 이유 (공유됨)</span>
+                              <textarea
+                                data-testid="correction-reason"
+                                value={editReason}
+                                onChange={(e) => setEditReason(e.target.value)}
+                                placeholder="예: 야간 시공 할증 포함"
+                                rows={2}
+                              />
+                            </label>
+                            {correctionError && (
+                              <div className="aq-correct-err" role="alert">
+                                {correctionError}
+                              </div>
+                            )}
+                            <div className="aq-correct-actions">
+                              <button
+                                type="button"
+                                className="aq-btn"
+                                disabled={savingCorrection}
+                                onClick={() => void saveCorrection(entry)}
+                              >
+                                {savingCorrection ? '저장 중…' : '공유 저장'}
+                              </button>
+                              <button
+                                type="button"
+                                className="aq-link"
+                                onClick={() => toggleCorrectionForm(entry)}
+                              >
+                                취소
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -547,7 +713,8 @@ export default function AutoQuote() {
                 <div className="aq-footnote">
                   비전은 hdsign Java 백엔드 프록시(<code>POST /api/admin/autoquote/vision</code>)로 호출되며
                   ANTHROPIC 키는 서버 전용입니다(브라우저는 키를 보관/전송하지 않음). corpus·priors 도 JWT
-                  백엔드에서 lazy-fetch. 공유 보정(가격 수정·이유 저장)은 다음 슬라이스입니다.
+                  백엔드에서 lazy-fetch. 가격을 수정하고 이유를 적어 “공유 저장”하면 모든 직원의
+                  다음 견적에서 보정 단가가 TOP prior 로 적용됩니다.
                 </div>
               </>
             )}
