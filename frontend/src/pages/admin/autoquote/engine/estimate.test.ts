@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { estimate } from './estimate';
+import { sizeBucket } from './normalize';
 import type { CorpusItem, Correction, EstimateContext } from './types';
 
 // Channel-sign size curve for 1000×500 (height 500mm = 50cm):
@@ -211,6 +212,110 @@ describe('estimate — priority-weighted correction selection (boss > peer)', ()
     expect(ev.note).toContain('김부장'); // author cited
     expect(ev.note).toContain('현장 실측 반영'); // explanation carried
     expect(ev.note).toContain('상급자'); // flagged as a shared/boss override
+  });
+});
+
+describe('estimate — featureKey size-bucket compatibility (DO #3)', () => {
+  // The line under test is 3000×600 → size bucket "h600".
+  it('IGNORES a correction whose featureKey size bucket differs (falls to history)', () => {
+    const wrongSize: Correction = {
+      id: 'c-h300',
+      featureKey: '채널간판::h300', // line is h600 → incompatible bucket
+      correctedUnitPrice: 33000,
+      priority: 99, // even a high-priority boss override must not stick at wrong size
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [wrongSize] }),
+    );
+    expect(res.unitPrice).toBe(200000); // tier-① history, NOT the 33000 correction
+    expect(res.evidence[0].type).not.toBe('correction');
+    expect(res.evidence[0].type).toBe('history');
+  });
+
+  it('IGNORES a category correction carrying an incompatible explicit width/height', () => {
+    const wrongDims: Correction = {
+      id: 'c-dims',
+      category: '채널간판',
+      width: 1000,
+      height: 300, // → bucket "h300" ≠ line "h600"
+      correctedUnitPrice: 44000,
+      priority: 50,
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [wrongDims] }),
+    );
+    expect(res.unitPrice).toBe(200000); // history wins; wrong-size correction skipped
+    expect(res.evidence[0].type).not.toBe('correction');
+  });
+
+  it('APPLIES a size-compatible featureKey correction as the top prior over history', () => {
+    const sameSize: Correction = {
+      id: 'c-h600',
+      featureKey: '채널간판::h600', // matches line bucket "h600"
+      correctedUnitPrice: 91000,
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [sameSize] }),
+    );
+    expect(res.unitPrice).toBe(91000); // not history 200000 → correction is top prior
+    expect(res.evidence[0].type).toBe('correction');
+  });
+
+  it('APPLIES a category correction whose explicit size lands in the same bucket', () => {
+    const sameDims: Correction = {
+      id: 'c-dims-ok',
+      category: '채널간판',
+      width: 2900,
+      height: 590, // round(590/100)·100 = 600 → bucket "h600", compatible
+      correctedUnitPrice: 87000,
+    };
+    expect(sizeBucket({ w: 2900, h: 590 })).toBe('h600'); // band tolerance, same bucket
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [sameDims] }),
+    );
+    expect(res.unitPrice).toBe(87000);
+    expect(res.evidence[0].type).toBe('correction');
+  });
+
+  it('prefers a prioritised correction over one with NO priority (locks the ?? 0 default)', () => {
+    const noPriority: Correction = {
+      id: 'c-default',
+      featureKey: '채널간판::h600',
+      correctedUnitPrice: 40000,
+      // priority absent → must default to 0 in the selection sort
+      date: '2026-05-31', // newer, but a 0 default must still lose to priority>0
+    };
+    const prioritised: Correction = {
+      id: 'c-prio',
+      featureKey: '채널간판::h600',
+      correctedUnitPrice: 90000,
+      priority: 2,
+      date: '2026-05-01', // older
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [noPriority, prioritised] }),
+    );
+    expect(res.unitPrice).toBe(90000); // priority 2 beats default-0 despite older date
+    expect(res.evidence[0].invoiceId).toBe('c-prio');
+  });
+});
+
+describe('sizeBucket — shared engine/UI size-bucket token', () => {
+  it('buckets by 100mm height band and is deterministic', () => {
+    expect(sizeBucket({ w: 3000, h: 600 })).toBe('h600');
+    expect(sizeBucket({ w: 1000, h: 620 })).toBe('h600'); // 620 → same band as 600
+    expect(sizeBucket({ h: 300 })).toBe('h300');
+    expect(sizeBucket({ w: 3000, h: 600 })).toBe(sizeBucket({ w: 9999, h: 600 })); // width-independent
+  });
+
+  it('falls back to a width band when height is absent, and "na" when neither is given', () => {
+    expect(sizeBucket({ w: 1200 })).toBe('w1200');
+    expect(sizeBucket({})).toBe('na');
   });
 });
 

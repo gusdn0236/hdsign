@@ -154,3 +154,30 @@ export function dimsFrom(w?: number, h?: number): SpecParse {
   if (out.width != null && out.height != null) out.area = out.width * out.height;
   return out;
 }
+
+/** Size-band width in millimetres for {@link sizeBucket} (100mm bands). */
+export const SIZE_BUCKET_BAND_MM = 100;
+
+/**
+ * Canonical size-bucket token for a line's dimensions.
+ *
+ * This is the SHARED contract between the engine and the corrections UI: a staff
+ * correction's `featureKey` is `${category}::${sizeBucket(line)}`, so the engine's
+ * {@link findCorrection} and the slice-3 corrections UI (which builds the key when
+ * POSTing a correction) MUST compute the token the same way — import this helper
+ * on both sides rather than re-deriving it, or a correction will silently apply to
+ * the wrong size.
+ *
+ * Scheme: a 100mm **height** band (channel/갈바 signs are priced by height — see
+ * the linear size curve in pricing.ts), labelled `h{band}` — e.g. h=600mm → "h600",
+ * h=620 → "h600", h=300 → "h300". When only width is known we fall back to a
+ * width band `w{band}`; when neither dimension is present the bucket is "na"
+ * (size-agnostic). Deterministic: same dimensions always yield the same token.
+ */
+export function sizeBucket(dims: { w?: number; h?: number }): string {
+  const band = (v: number) =>
+    Math.round(v / SIZE_BUCKET_BAND_MM) * SIZE_BUCKET_BAND_MM;
+  if (dims.h != null && Number.isFinite(dims.h)) return `h${band(dims.h)}`;
+  if (dims.w != null && Number.isFinite(dims.w)) return `w${band(dims.w)}`;
+  return 'na';
+}

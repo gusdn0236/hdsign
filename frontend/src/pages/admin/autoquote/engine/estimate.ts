@@ -5,7 +5,7 @@ import type {
   EvidenceRef,
   LineInput,
 } from './types';
-import { dimsFrom, interpretCoats } from './normalize';
+import { dimsFrom, interpretCoats, sizeBucket } from './normalize';
 import {
   breakdownEstimate,
   paintingSurcharge,
@@ -38,18 +38,46 @@ import { isLowConfidence, scoreConfidence } from './confidence';
 /** Minimum similarity score for a corpus match to count as tier-① history. */
 export const HISTORY_MIN_SCORE = 0.45;
 
+/**
+ * The size bucket a correction is scoped to, or `undefined` when it carries no
+ * size information (a category-only correction is size-agnostic and applies to
+ * every size of that category — preserving the original behaviour).
+ *
+ * Two carriers, in priority order: an explicit `${category}::${sizeBucket}`
+ * featureKey segment, or explicit width/height fields. Either way the token is
+ * derived through the shared {@link sizeBucket} helper so it compares apples to
+ * apples with the line's own bucket.
+ */
+function correctionSizeBucket(c: Correction): string | undefined {
+  const seg = c.featureKey?.includes('::')
+    ? c.featureKey.split('::')[1]
+    : undefined;
+  if (seg) return seg;
+  if (c.width != null || c.height != null) {
+    return sizeBucket({ w: c.width, h: c.height });
+  }
+  return undefined;
+}
+
 function findCorrection(
   line: LineInput,
   canon: string | undefined,
   corrections: Correction[],
 ): Correction | undefined {
   const brand = line.brandText ?? '';
+  const lineBucket = sizeBucket({ w: line.w, h: line.h });
   const candidates = corrections.filter((c) => {
     const cCanon =
       resolveCategory(c.category) ??
       (c.featureKey ? resolveCategory(c.featureKey.split('::')[0]) : undefined);
     if (canon && cCanon && cCanon !== canon) return false;
     if (canon && !cCanon && !c.featureKey?.includes(canon)) return false;
+    // Size compatibility (decomposition DO #3): a sized correction applies ONLY
+    // to a line in the same size bucket. Without this, a wrong-size boss override
+    // would be sticky and silently wrong under priority weighting. A correction
+    // with no size info (category-only) stays size-agnostic.
+    const cBucket = correctionSizeBucket(c);
+    if (cBucket !== undefined && cBucket !== lineBucket) return false;
     // brand is an identity filter here too.
     if (brand && (c.brand || c.name)) {
       const ok = brandMatches(brand, {
