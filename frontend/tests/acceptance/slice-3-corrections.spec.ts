@@ -24,7 +24,13 @@ test.describe('@slice-3 shared corrections', () => {
     await expect(page.getByTestId('correction-saved-toast')).toBeVisible();
 
     // Server-side: the correction is the top prior on a fresh fetch (shared across staff).
-    const res = await request.get('/api/admin/autoquote/corrections');
+    // Hit the absolute backend (:8080) — Playwright's use.baseURL is Vite (:5173), which has
+    // no /api proxy and would return BOM-prefixed index.html, breaking res.json(). The
+    // browser app's correctionsClient already uses absolute :8080; mirror that here, and
+    // carry the same admin JWT the spec seeds into sessionStorage so the read-back is authorized.
+    const res = await request.get('http://localhost:8080/api/admin/autoquote/corrections', {
+      headers: { Authorization: `Bearer ${process.env.AQ_TEST_ADMIN_JWT}` },
+    });
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     const top = body.find((c: any) => String(c.featureKey).includes('돌출간판'));
