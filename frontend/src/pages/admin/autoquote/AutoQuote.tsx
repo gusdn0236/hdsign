@@ -113,6 +113,9 @@ export default function AutoQuote() {
   const [draft, setDraft] = useState(emptyDraft());
   const [entries, setEntries] = useState<Entry[]>([]);
   const nextId = useRef(1);
+  // 단일 비행(single-flight) 락 — visionState 는 비동기로 갱신되므로 ref 로 동기 차단.
+  // 처리 중 두 번째 트리거(Ctrl+V 연타·버튼)가 동시 runVision 을 시작하지 못하게 한다.
+  const visionBusy = useRef(false);
   const categoryRef = useRef<HTMLSelectElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -178,6 +181,9 @@ export default function AutoQuote() {
    */
   const runVision = useCallback(
     async (file: Blob) => {
+      // single-flight: 이미 처리 중이면 두 번째 호출은 즉시 무시(중복 /vision·중복 id 방지).
+      if (visionBusy.current) return;
+      visionBusy.current = true;
       setVisionState('loading');
       try {
         const { base64, mediaType } = await readImageFile(file);
@@ -185,7 +191,14 @@ export default function AutoQuote() {
         setImageSrc(`data:${mediaType};base64,${base64}`);
         const items = await requestVision(base64, mediaType, token);
         const lineInputs = visionToLineInputs(items);
+        // id 를 한 번에 원자적으로 할당한다: 읽기(startId)와 쓰기(nextId.current 전진)
+        // 사이에 await 가 없으므로 (락이 뚫리더라도) 두 번째 호출의 continuation 은 별도
+        // 마이크로태스크로 이미 전진된 카운터를 읽어 같은 id 를 재사용하지 못한다 →
+        // 중복 entry id / React key 충돌이 구조적으로 불가능. (이 ids 는 visionIds 에도
+        // 동기적으로 필요하므로 setEntries 업데이터 안이 아니라 여기서 계산한다 — 업데이터는
+        // async continuation 에서 호출 시 지연 실행되어 closure 로 값을 꺼낼 수 없다.)
         const startId = nextId.current;
+        nextId.current = startId + lineInputs.length;
         const detected: Entry[] = lineInputs.map((li, i) => ({
           id: startId + i,
           category: li.category,
@@ -195,13 +208,14 @@ export default function AutoQuote() {
           qty: String(li.qty ?? 1),
           brandText: li.brandText ?? '',
         }));
-        nextId.current = startId + detected.length;
         setEntries((prev) => [...prev, ...detected]);
         setVisionIds(detected.map((e) => e.id));
         setVisionState('ok');
       } catch {
         // 비전 실패 — 폴백. 수동입력 경로는 계속 동작(엔진이 여전히 가격 산출).
         setVisionState('failed');
+      } finally {
+        visionBusy.current = false;
       }
     },
     [token],
@@ -210,6 +224,8 @@ export default function AutoQuote() {
   // Ctrl+V 클립보드 이미지 붙여넣기 — 탭에 있는 동안 전역 paste 수신.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      // 키보드(Ctrl+V) 경로에도 single-flight 가드 — 처리 중이면 새 붙여넣기를 무시한다.
+      if (visionBusy.current) return;
       const items = e.clipboardData?.items;
       if (!items) return;
       for (const it of items) {

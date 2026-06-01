@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuthProvider } from '../../../../context/AuthContext.jsx';
 import AutoQuote from '../AutoQuote';
@@ -109,8 +109,37 @@ const samplePng = (): File =>
     type: 'image/png',
   });
 
+/**
+ * Build a `paste` ClipboardEvent carrying one image file. jsdom doesn't populate
+ * `clipboardData` itself, so we attach a minimal DataTransfer-like shape that the
+ * onPaste handler reads (items[].type + getAsFile()). This exercises the Ctrl+V
+ * code path, distinct from the file-input upload path.
+ */
+function imagePasteEvent(file: File): Event {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { items: [{ type: file.type, getAsFile: () => file }] },
+  });
+  return event;
+}
+
+/** Two detected items: a corpus-backed channel (high/mid conf) + a flat-median 포맥스 (low conf). */
+const MIXED_CONFIDENCE_VISION: VisionItems = {
+  sign_types: ['채널간판', '포맥스'],
+  dimensions: [{ w: 3000, h: 600 }, { w: 500, h: 300 }],
+  qty: [1, 1],
+  brand_text: '투썸',
+};
+
+const mixedVision = (): Response =>
+  new Response(JSON.stringify(MIXED_CONFIDENCE_VISION), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  sessionStorage.clear();
 });
 
 describe('visionToLineInputs (rich-schema → LineInput mapping)', () => {
@@ -192,6 +221,9 @@ describe('AutoQuote — slice 2 vision overlay', () => {
     // non-blocking fallback banner appears, no overlay pins
     expect(await screen.findByTestId('vision-fallback-banner')).toBeVisible();
     expect(screen.queryAllByTestId('price-overlay')).toHaveLength(0);
+    // the staffer's work-order image is NOT silently dropped on failure — it stays
+    // rendered alongside the fallback banner (image is set before the vision call).
+    expect(screen.getByTestId('work-order-image')).toBeInTheDocument();
     // the manual "추가" affordance is still enabled
     expect(screen.getByRole('button', { name: '추가' })).toBeEnabled();
 
@@ -230,5 +262,113 @@ describe('AutoQuote — slice 2 vision overlay', () => {
       expect(body).not.toMatch(/sk-ant/i);
       expect(body).not.toMatch(/x-api-key/i);
     }
+  });
+
+  // deliverable #4 — low-confidence pins are visibly flagged (yellow/.low) while
+  // high-confidence pins are not. Proves the CONDITIONAL flagging works: deleting
+  // the low-conf branch (always-on or always-off) must fail this test.
+  it('flags only the low-confidence detected line with a yellow pin, not the high-confidence one', async () => {
+    installFetch(mixedVision);
+    const user = userEvent.setup();
+    renderTab();
+    await waitForCorpus();
+
+    await user.upload(screen.getByTestId('work-order-upload'), samplePng());
+
+    const pins = await screen.findAllByTestId('price-overlay');
+    expect(pins).toHaveLength(2);
+    // pins are rendered in detection order: [0]=채널간판 (corpus-backed), [1]=포맥스 (flat median).
+    const [channelPin, foamPin] = pins;
+
+    // the weak (flat-median) line carries the low-confidence marker (class + 검토요 tag)…
+    expect(foamPin.className).toMatch(/\blow\b/);
+    expect(foamPin).toHaveTextContent('검토요');
+    // …while the corpus-backed line does NOT.
+    expect(channelPin.className).not.toMatch(/\blow\b/);
+    expect(channelPin).not.toHaveTextContent('검토요');
+
+    // and the quote-line list mirrors it: exactly one low-confidence-flag, on 포맥스.
+    const flags = screen.getAllByTestId('low-confidence-flag');
+    expect(flags).toHaveLength(1);
+  });
+
+  // test-critic #2 — the vision POST must carry the admin JWT as a Bearer token,
+  // sourced from sessionStorage['adminToken'] (AuthContext reads it on mount). A
+  // missing/blank bearer would let an unauthenticated client hit the proxy.
+  it('sends Authorization: Bearer <adminToken> (from sessionStorage) on the vision POST', async () => {
+    sessionStorage.setItem('adminToken', 'admin-jwt-abc123');
+    installFetch(okVision);
+    const user = userEvent.setup();
+    renderTab();
+    await waitForCorpus();
+
+    await user.upload(screen.getByTestId('work-order-upload'), samplePng());
+    await screen.findAllByTestId('price-overlay');
+
+    const visionCall = calls.find((c) => c.url.includes('/api/admin/autoquote/vision'));
+    expect(visionCall).toBeDefined();
+    const headers = (visionCall!.init?.headers ?? {}) as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer admin-jwt-abc123');
+  });
+
+  // Scenario-2 primary trigger — Ctrl+V paste of an image must drive the same
+  // base64 POST + priced overlay as the upload path (distinct clipboard code path).
+  it('a Ctrl+V image paste produces the same base64 POST + priced overlay as the upload path', async () => {
+    installFetch(okVision);
+    renderTab();
+    await waitForCorpus();
+
+    await act(async () => {
+      window.dispatchEvent(imagePasteEvent(samplePng()));
+    });
+
+    // three detected items → three priced pins over the rendered image (same as upload)
+    const pins = await screen.findAllByTestId('price-overlay');
+    expect(pins).toHaveLength(3);
+    expect(screen.getByTestId('work-order-image')).toBeInTheDocument();
+    expect(pins[0]).toHaveTextContent(/₩\s?[1-9][\d,]*/);
+    expect(screen.getAllByTestId('quote-line')).toHaveLength(3);
+
+    // the paste path posts the image base64 + mediaType to the JWT proxy (no Anthropic).
+    const visionCall = calls.find((c) => c.url.includes('/api/admin/autoquote/vision'));
+    expect(visionCall).toBeDefined();
+    expect(visionCall!.init?.method).toBe('POST');
+    const body = JSON.parse(String(visionCall!.init?.body));
+    expect(typeof body.imageBase64).toBe('string');
+    expect(body.imageBase64.length).toBeGreaterThan(0);
+    expect(body.mediaType).toBe('image/png');
+  });
+
+  // covers fix A (single-flight) — two rapid Ctrl+V pastes while the first is still
+  // processing must make exactly ONE /vision call and render exactly 3 pins with
+  // UNIQUE entry ids (no duplicate React keys), never 2 calls / 6 colliding pins.
+  it('is single-flight: two rapid pastes → one /vision call, exactly 3 pins, no duplicate keys', async () => {
+    installFetch(okVision);
+    const keyWarn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderTab();
+    await waitForCorpus();
+
+    // fire two pastes back-to-back: the second arrives while the first is in-flight.
+    await act(async () => {
+      window.dispatchEvent(imagePasteEvent(samplePng()));
+      window.dispatchEvent(imagePasteEvent(samplePng()));
+    });
+
+    const pins = await screen.findAllByTestId('price-overlay');
+    // exactly one vision request — the concurrent second trigger was dropped.
+    expect(calls.filter((c) => c.url.includes('/vision'))).toHaveLength(1);
+    // exactly 3 pins (not 6) and 3 quote-lines (not 6).
+    expect(pins).toHaveLength(3);
+    expect(screen.getAllByTestId('quote-line')).toHaveLength(3);
+
+    // no two pins share a React key / entry id (duplicate ids → colliding keys).
+    const ids = pins.map((p) => p.getAttribute('data-entry-id'));
+    expect(new Set(ids).size).toBe(ids.length);
+    // and React logged no duplicate-key warning.
+    const dupKeyWarning = keyWarn.mock.calls.some((args) =>
+      args.some((a) => String(a).includes('same key')),
+    );
+    expect(dupKeyWarning).toBe(false);
+    keyWarn.mockRestore();
   });
 });

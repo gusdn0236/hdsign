@@ -36,6 +36,7 @@ export default function WorkOrderStage({ imageSrc, pins }: Props) {
           key={p.id}
           className={`aq-pin${p.low ? ' low' : ''}`}
           data-testid="price-overlay"
+          data-entry-id={p.id}
           // 좌표 미제공 → 항목 순서대로 세로 균등 배치, 우측 정렬.
           style={{ top: `${((i + 1) / (pins.length + 1)) * 100}%`, left: '58%' }}
         >
