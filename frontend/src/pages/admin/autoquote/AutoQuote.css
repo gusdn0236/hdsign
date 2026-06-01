@@ -1,0 +1,246 @@
+/*
+ * 자동견적 (Slice 1) — hdsign 어드민 네이티브 톤.
+ * 토큰은 .aq 스코프 CSS 변수로 중앙 관리(하드코딩 색상 금지). Banner/SubNav 크롬은
+ * AdminLayout 이 제공하므로 여기서는 컨텐츠 영역만 스타일링한다.
+ * 참조: .tenet/DESIGN.md (auto-quote) · 목업 ...-01-final-product / ...-02-slice-1.
+ */
+.aq {
+  --teal: #005f73;
+  --teal2: #0a9396;
+  --teal-soft: #e0f0f1;
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --ink: #1f2733;
+  --muted: #6b7785;
+  --line: #e1e6ec;
+  --warn: #bb3e03;
+  --ok: #2a9d8f;
+  --lowconf: #e9a200;
+  --lowconf-soft: #fdf3da;
+  --accent: #9d4edd;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(20, 30, 50, 0.08), 0 1px 2px rgba(20, 30, 50, 0.06);
+
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: 'Pretendard', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+/* toolbar */
+.aq-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.aq-spacer { flex: 1; }
+.aq-seg { font-size: 12px; color: var(--muted); }
+
+.aq-btn {
+  border: 1px solid var(--teal);
+  background: var(--teal);
+  color: #fff;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.aq-btn.ghost { background: #fff; color: var(--teal); }
+.aq-btn.block { margin-top: 12px; width: 100%; }
+.aq-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* layout */
+.aq-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .aq-grid { grid-template-columns: 1fr; }
+}
+
+.aq-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.aq-card h2 {
+  margin: 0;
+  padding: 13px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.aq-body { padding: 14px 16px; }
+
+/* form */
+.aq-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+.aq-form label { display: block; }
+.aq-form label.span2 { grid-column: 1 / 3; }
+.aq-lbl {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.aq-form select,
+.aq-form input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff;
+}
+.aq-form select:focus,
+.aq-form input:focus {
+  outline: none;
+  border-color: var(--teal2);
+  box-shadow: 0 0 0 2px var(--teal-soft);
+}
+
+.aq-entries-head {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* lines (both entered list + priced list) */
+.aq-line {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.aq-line.low { border-color: var(--lowconf); background: var(--lowconf-soft); }
+.aq-line-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.aq-name { font-weight: 600; }
+.aq-price {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--teal);
+}
+.aq-lowflag {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a6300;
+}
+.aq-why {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.aq-link {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.aq-link.warn { color: var(--warn); }
+
+/* evidence chips */
+.aq-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+.aq-chip {
+  display: inline-block;
+  font-size: 11px;
+  border-radius: 6px;
+  padding: 1px 7px;
+}
+.aq-chip.hist { background: var(--teal-soft); color: var(--teal); }
+.aq-chip.size { background: #eef1f5; color: #445; }
+.aq-chip.corr { background: #efe2fb; color: var(--accent); }
+.aq-chip.low { background: var(--lowconf-soft); color: #8a6300; }
+
+.aq-coatwarn {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--warn);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* "왜 이 가격" expander */
+.aq-corr {
+  margin-top: 8px;
+  background: #faf6ff;
+  border: 1px solid #ead9fb;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.aq-corr summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.aq-why-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+/* totals */
+.aq-total {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.aq-total.grand {
+  border-top: 2px solid var(--ink);
+  margin-top: 6px;
+  padding-top: 10px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.aq-flag { font-size: 11px; color: var(--lowconf); font-weight: 600; }
+.aq-empty { color: var(--muted); font-size: 13px; padding: 8px 0; line-height: 1.6; }
+.aq-error {
+  color: var(--warn);
+  font-size: 12px;
+  background: #fde8d8;
+  border: 1px solid #f4c9b0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.aq-footnote {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 14px;
+  line-height: 1.6;
+}
+.aq-footnote code {
+  background: #eef1f5;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+}

@@ -1,18 +1,20 @@
 import type { Page } from '@playwright/test';
 
-// Seeds an admin JWT session for hdsign admin. The scaffold job adapts this to hdsign's
-// AuthContext (token in localStorage) using a test admin credential from the harness env.
-// Keep it real: a broken login must make dependent tests fail, not silently pass.
+// Seeds an admin JWT session for hdsign admin. hdsign's AuthContext restores an admin
+// session from sessionStorage['adminToken'] (see frontend/src/context/AuthContext.jsx),
+// so we seed that key — anything else would leave isAdmin=false and PrivateRoute would
+// bounce to /admin/login. Keep it real: a broken login must make dependent tests fail,
+// not silently pass.
 export async function loginAsAdmin(page: Page): Promise<void> {
   const token = process.env.AQ_TEST_ADMIN_JWT;
   if (token) {
     await page.addInitScript((t) => {
-      window.localStorage.setItem('token', t as string);
+      window.sessionStorage.setItem('adminToken', t as string);
     }, token);
     return;
   }
-  // Fallback: drive the real login form.
-  await page.goto('/login');
+  // Fallback: drive the real admin login form.
+  await page.goto('/admin/login');
   await page.getByLabel(/아이디|이메일|email/i).fill(process.env.AQ_TEST_ADMIN_ID ?? 'admin');
   await page.getByLabel(/비밀번호|password/i).fill(process.env.AQ_TEST_ADMIN_PW ?? 'admin');
   await page.getByRole('button', { name: /로그인|sign in/i }).click();
