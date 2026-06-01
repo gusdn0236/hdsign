@@ -1,0 +1,2 @@
+# Pure, unit-testable estimation engine (normalization, size-parse, pricing, VAT/total,
+# confidence rules). No DOM, no network. Vitest covers >=80% of new code here.

@@ -1,0 +1,2 @@
+# Static, non-confidential data/types for the engine. The confidential corpus and learned
+# priors are NEVER bundled here — they are fetched from the JWT backend at runtime.
