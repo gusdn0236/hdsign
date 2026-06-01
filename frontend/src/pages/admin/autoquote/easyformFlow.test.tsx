@@ -287,33 +287,43 @@ describe('AutoQuote — @slice-4 optional local easyform fill', () => {
     ).not.toThrow();
   });
 
-  // (e) LEGIT-CONTENT regression for FIX 1: a brand like "세이브존" (contains the letters of
-  // SAVE/저장 family) must MAP and FILL normally — the old free-text scan wrongly blocked it.
-  it('(e) does NOT block legitimate brand text ("세이브존") — POSTs and shows fill-done', async () => {
-    const { fetchMock, fills } = makeMock({ agent: true });
-    vi.stubGlobal('fetch', fetchMock);
-    const user = userEvent.setup();
-    renderTab();
+  // (e) LEGIT-CONTENT regression for FIX 1: legitimate sign brand text that the OLD free-text
+  // scan (/VK_RETURN|ENTER|RETURN|SAVE|저장|commit/i over the serialized body) wrongly blocked
+  // must now MAP and FILL normally. Each brand below was a confirmed false-positive of the old
+  // substring guard — '저장창고' contains '저장', 'CENTER' contains 'ENTER', and
+  // '세이브존 SAVEZONE' contains 'SAVE'. Reverting FIX 1 to the substring scan makes every one of
+  // these inputs throw, so this parametrized test FAILS against the old guard and PASSES against
+  // the new structural guard — making it a true regression guard that discriminates the fix.
+  const OLD_GUARD_FALSE_POSITIVES = ['저장창고', 'CENTER', '세이브존 SAVEZONE'];
+  it.each(OLD_GUARD_FALSE_POSITIVES)(
+    '(e) does NOT block legitimate brand text "%s" (a false-positive of the old substring guard) — POSTs and shows fill-done',
+    async (brand) => {
+      const { fetchMock, fills } = makeMock({ agent: true });
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+      renderTab();
 
-    await waitFor(() => expect(easyformBtn()).not.toBeNull());
-    await addManualLine(user, {
-      category: '채널간판',
-      w: '1000',
-      h: '500',
-      qty: '1',
-      brand: '세이브존',
-    });
-    await screen.findByTestId('quote-line');
-    await user.click(easyformBtn()!);
-    await screen.findByTestId('easyform-row');
+      await waitFor(() => expect(easyformBtn()).not.toBeNull());
+      await addManualLine(user, {
+        category: '채널간판',
+        w: '1000',
+        h: '500',
+        qty: '1',
+        brand,
+      });
+      await screen.findByTestId('quote-line');
+      await user.click(easyformBtn()!);
+      await screen.findByTestId('easyform-row');
 
-    await user.click(screen.getByRole('button', { name: /셀 채우기/ }));
-    await screen.findByTestId('easyform-fill-done'); // NO throw, POST succeeded
+      await user.click(screen.getByRole('button', { name: /셀 채우기/ }));
+      await screen.findByTestId('easyform-fill-done'); // NO throw, POST succeeded
 
-    expect(fills).toHaveLength(1);
-    const rows = fills[0].parsed.rows as Array<Record<string, unknown>>;
-    expect(String(rows[0].spec)).toContain('세이브존'); // brand passed through into the cell
-  });
+      // A POST was made and the brand survived into the cell data.
+      expect(fills).toHaveLength(1);
+      const rows = fills[0].parsed.rows as Array<Record<string, unknown>>;
+      expect(String(rows[0].spec)).toContain(brand); // brand passed through into the cell
+    },
+  );
 
   // (f) IRON LAW notice is visible in the preview panel when the agent is present.
   it('(f) shows the IRON LAW notice ("Enter/Save/확정 키는 전송하지 않습니다") in the preview', async () => {
