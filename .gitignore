@@ -69,3 +69,10 @@ CLAUDE.md
 frontend/src/data/calc/prices_excel.json
 frontend/src/data/calc/diff_report.json
 frontend/src/data/calc/*.json.bak
+
+# 자동견적 데이터(명세서/사진/단가표 등) — 회사 기밀, 개인 PC 산출물. git 추적 X.
+auto-quote-data/
+
+# 기밀 corpus/priors 는 classpath 가 아니라 런타임(AUTOQUOTE_DATA_DIR)에서 서빙한다.
+# 실수로 resources 에 다시 떨어뜨려도 PUBLIC repo 로 유출되지 않도록 가드한다.
+backend/src/main/resources/autoquote/*.json
