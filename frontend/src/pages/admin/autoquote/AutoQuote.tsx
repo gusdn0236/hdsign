@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // AuthContext 는 .jsx — 확장자 명시로 vite/vitest 모두 해석되게.
 import { useAuth } from '../../../context/AuthContext.jsx';
 import { estimate, computeTotals } from './engine';
@@ -10,6 +10,10 @@ import type {
   Priors,
 } from './engine';
 import { loadAutoQuoteData } from './data/corpusClient';
+import { readImageFile, requestVision } from './components/visionClient';
+import { visionToLineInputs } from './components/visionMapping';
+import WorkOrderStage from './components/WorkOrderStage';
+import type { OverlayPin } from './components/WorkOrderStage';
 import './AutoQuote.css';
 
 /**
@@ -110,6 +114,14 @@ export default function AutoQuote() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const nextId = useRef(1);
   const categoryRef = useRef<HTMLSelectElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // 비전(작업지시서) 상태. 'failed' → 폴백 배너 + 수동입력 유지(자동 재시도 없음).
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [visionState, setVisionState] =
+    useState<'idle' | 'loading' | 'ok' | 'failed'>('idle');
+  // 비전이 추가한 라인의 entry id — 이 라인들만 이미지 위 핀으로 오버레이.
+  const [visionIds, setVisionIds] = useState<number[]>([]);
 
   // 탭 진입 시 corpus + priors 를 JWT 백엔드에서 lazy-fetch (모듈 캐시).
   useEffect(() => {
@@ -147,6 +159,97 @@ export default function AutoQuote() {
   const lowCount = priced.filter((p) => p.result.lowConfidence).length;
   const loading = corpus == null;
 
+  // 비전이 검출한 라인의 가격 결과 → 이미지 위 오버레이 핀(낮은 신뢰도는 노랑).
+  const visionPins: OverlayPin[] = useMemo(() => {
+    const ids = new Set(visionIds);
+    return priced
+      .filter((p) => ids.has(p.entry.id))
+      .map((p, i) => ({
+        id: p.entry.id,
+        tag: `${i + 1}. ${p.entry.category}${p.result.lowConfidence ? ' · 검토요' : ''}`,
+        price: won(p.result.total),
+        low: p.result.lowConfidence,
+      }));
+  }, [priced, visionIds]);
+
+  /**
+   * 이미지(업로드/붙여넣기) → 백엔드 비전 프록시 → 검출 라인 자동 추가.
+   * 실패 시 폴백 배너만 띄우고 수동입력은 그대로 사용 가능(자동 재시도 없음).
+   */
+  const runVision = useCallback(
+    async (file: Blob) => {
+      setVisionState('loading');
+      try {
+        const { base64, mediaType } = await readImageFile(file);
+        // 이미지는 먼저 표시 — 비전이 실패해도 작업지시서는 화면에 남는다.
+        setImageSrc(`data:${mediaType};base64,${base64}`);
+        const items = await requestVision(base64, mediaType, token);
+        const lineInputs = visionToLineInputs(items);
+        const startId = nextId.current;
+        const detected: Entry[] = lineInputs.map((li, i) => ({
+          id: startId + i,
+          category: li.category,
+          w: li.w != null ? String(li.w) : '',
+          h: li.h != null ? String(li.h) : '',
+          coats: li.coats != null ? String(li.coats) : '',
+          qty: String(li.qty ?? 1),
+          brandText: li.brandText ?? '',
+        }));
+        nextId.current = startId + detected.length;
+        setEntries((prev) => [...prev, ...detected]);
+        setVisionIds(detected.map((e) => e.id));
+        setVisionState('ok');
+      } catch {
+        // 비전 실패 — 폴백. 수동입력 경로는 계속 동작(엔진이 여전히 가격 산출).
+        setVisionState('failed');
+      }
+    },
+    [token],
+  );
+
+  // Ctrl+V 클립보드 이미지 붙여넣기 — 탭에 있는 동안 전역 paste 수신.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const it of items) {
+        if (it.type.startsWith('image/')) {
+          const file = it.getAsFile();
+          if (file) {
+            e.preventDefault();
+            void runVision(file);
+            return;
+          }
+        }
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [runVision]);
+
+  // '이미지 붙여넣기' 버튼 — Clipboard API 로 이미지를 직접 읽기(가능한 환경에서).
+  const pasteFromClipboard = async () => {
+    try {
+      const items = await navigator.clipboard?.read?.();
+      for (const it of items ?? []) {
+        const type = it.types.find((t) => t.startsWith('image/'));
+        if (type) {
+          const blob = await it.getType(type);
+          void runVision(blob);
+          return;
+        }
+      }
+    } catch {
+      // 권한 거부/이미지 없음 — 사용자는 Ctrl+V 또는 파일 업로드로 진행 가능.
+    }
+  };
+
+  const onUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) void runVision(file);
+    e.target.value = ''; // 같은 파일 재선택 허용.
+  };
+
   const update = (patch: Partial<ReturnType<typeof emptyDraft>>) =>
     setDraft((d) => ({ ...d, ...patch }));
 
@@ -163,30 +266,73 @@ export default function AutoQuote() {
   return (
     <div className="aq">
       <div className="aq-toolbar">
-        <button type="button" className="aq-btn" onClick={focusForm}>
+        <button
+          type="button"
+          className="aq-btn"
+          onClick={pasteFromClipboard}
+          disabled={visionState === 'loading'}
+        >
+          📋 이미지 붙여넣기 (Ctrl+V)
+        </button>
+        <button
+          type="button"
+          className="aq-btn ghost"
+          data-testid="work-order-upload-btn"
+          onClick={() => fileRef.current?.click()}
+          disabled={visionState === 'loading'}
+        >
+          ⬆ 파일 업로드
+        </button>
+        <button type="button" className="aq-btn ghost" onClick={focusForm}>
           ＋ 수동 항목 추가
         </button>
-        <button type="button" className="aq-btn ghost" disabled title="다음 슬라이스에서 활성화">
-          📋 이미지 붙여넣기
-        </button>
-        <button type="button" className="aq-btn ghost" disabled title="다음 슬라이스에서 활성화">
-          🖥 easyform 자동기입
-        </button>
+        {/* Playwright/staffer 진입점 — 시각적으로 숨기되 기능은 유지. */}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="aq-file-input"
+          data-testid="work-order-upload"
+          onChange={onUploadChange}
+        />
         <span className="aq-spacer" />
         <button type="button" className="aq-btn ghost" disabled title="다음 슬라이스에서 활성화">
           🖼 내보내기
         </button>
-        <span className="aq-seg">다음 슬라이스에서 활성화</span>
+        <button type="button" className="aq-btn ghost" disabled title="다음 슬라이스에서 활성화">
+          🖥 easyform 자동기입
+        </button>
       </div>
 
       <div className="aq-grid">
         {/* LEFT — 수동 항목 입력 + 입력된 항목 */}
         <section className="aq-card">
           <h2>
-            수동 항목 입력
-            <span className="aq-seg">직접 입력 → 우측에서 자동 산출 (비전 없음)</span>
+            작업지시서 · 수동 입력
+            <span className="aq-seg">붙여넣기/업로드 → 자동검출, 실패 시 수동 입력</span>
           </h2>
           <div className="aq-body">
+            {visionState === 'ok' && (
+              <div className="aq-vstatus" data-testid="vision-status">
+                <span className="aq-dot" />
+                비전 추출 완료 · {visionIds.length}개 항목 검출
+                <span className="aq-vmono">(백엔드 프록시 · forced tool-use)</span>
+              </div>
+            )}
+            {visionState === 'loading' && (
+              <div className="aq-vstatus loading">
+                <span className="aq-dot" />
+                작업지시서 인식 중…
+              </div>
+            )}
+            {visionState === 'failed' && (
+              <div className="aq-vbanner" data-testid="vision-fallback-banner" role="alert">
+                ⚠ 비전 실패 — 수동 입력으로 진행하세요. (자동 재시도 안 함)
+              </div>
+            )}
+
+            {imageSrc && <WorkOrderStage imageSrc={imageSrc} pins={visionPins} />}
+
             <div className="aq-form">
               <label className="span2">
                 <span className="aq-lbl">품목 카테고리</span>
@@ -279,7 +425,8 @@ export default function AutoQuote() {
             )}
 
             <div className="aq-footnote">
-              이 슬라이스는 비전(사진 인식)이 없습니다. 가격 계층: 이력 &gt; 브랜드식별+사이즈 &gt;
+              작업지시서를 붙여넣기(Ctrl+V)/업로드하면 비전이 항목을 검출해 가격을 오버레이합니다.
+              비전 실패 시 위 폼으로 수동 입력하세요. 가격 계층: 이력 &gt; 브랜드식별+사이즈 &gt;
               카테고리+사이즈. “N도 = 도장 칠 횟수(1~7), 절곡 각도 아님.”
             </div>
           </div>
@@ -382,9 +529,9 @@ export default function AutoQuote() {
                 </div>
 
                 <div className="aq-footnote">
-                  corpus·priors 는 JWT 백엔드에서 lazy-fetch — <code>GET /api/admin/autoquote/corpus</code>,{' '}
-                  <code>GET /api/admin/autoquote/priors</code>. 보정 저장(공유 prior)과 비전은 다음
-                  슬라이스에서 활성화됩니다.
+                  비전은 hdsign Java 백엔드 프록시(<code>POST /api/admin/autoquote/vision</code>)로 호출되며
+                  ANTHROPIC 키는 서버 전용입니다(브라우저는 키를 보관/전송하지 않음). corpus·priors 도 JWT
+                  백엔드에서 lazy-fetch. 공유 보정(가격 수정·이유 저장)은 다음 슬라이스입니다.
                 </div>
               </>
             )}
