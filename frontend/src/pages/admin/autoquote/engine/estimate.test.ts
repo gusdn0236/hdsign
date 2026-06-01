@@ -110,6 +110,110 @@ describe('estimate — a staff correction is the top prior (> history)', () => {
   });
 });
 
+describe('estimate — priority-weighted correction selection (boss > peer)', () => {
+  it('a correction beats tier-① history for the same line (S5)', () => {
+    const correction: Correction = {
+      id: 'c-s5',
+      category: '채널간판',
+      correctedUnitPrice: 77000,
+      author: '박과장',
+      explanation: '거래처 단가 협의',
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [correction] }),
+    );
+    expect(res.unitPrice).toBe(77000); // not history 200000
+    expect(res.evidence[0].type).toBe('correction');
+    expect(res.evidence[0].tier).toBe('correction');
+  });
+
+  it('a higher-priority correction beats a lower-priority one (same featureKey)', () => {
+    const peer: Correction = {
+      id: 'c-peer',
+      featureKey: '채널간판::h600',
+      correctedUnitPrice: 60000,
+      priority: 1,
+      author: '직원A',
+      date: '2026-05-30',
+    };
+    const boss: Correction = {
+      id: 'c-boss',
+      featureKey: '채널간판::h600',
+      correctedUnitPrice: 95000,
+      priority: 10,
+      author: '김부장',
+      date: '2026-05-01', // older, but higher priority must still win
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      // order shuffled so selection cannot rely on array position
+      ctx({ corpus: [channelInvoice], corrections: [peer, boss] }),
+    );
+    expect(res.unitPrice).toBe(95000); // boss override wins on priority
+    expect(res.evidence[0].invoiceId).toBe('c-boss');
+  });
+
+  it('tie-breaks by the most-recent date when priority is equal', () => {
+    const older: Correction = {
+      id: 'c-old',
+      featureKey: '채널간판::h600',
+      correctedUnitPrice: 50000,
+      priority: 5,
+      date: '2026-04-01',
+    };
+    const newer: Correction = {
+      id: 'c-new',
+      featureKey: '채널간판::h600',
+      correctedUnitPrice: 82000,
+      priority: 5,
+      date: '2026-05-31',
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [older, newer] }),
+    );
+    expect(res.unitPrice).toBe(82000); // newest date wins the tie
+    expect(res.evidence[0].invoiceId).toBe('c-new');
+  });
+
+  it('ignores a correction whose category does not match the line', () => {
+    const wrongCategory: Correction = {
+      id: 'c-acrylic',
+      category: '아크릴',
+      correctedUnitPrice: 11111,
+      priority: 99,
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [wrongCategory] }),
+    );
+    // different category → correction skipped → tier-① history applies.
+    expect(res.unitPrice).toBe(200000);
+    expect(res.evidence[0].type).toBe('history');
+  });
+
+  it('emits correction evidence citing the author and explanation', () => {
+    const correction: Correction = {
+      id: 'c-note',
+      category: '채널간판',
+      correctedUnitPrice: 70000,
+      priority: 3,
+      author: '김부장',
+      explanation: '현장 실측 반영',
+    };
+    const res = estimate(
+      { category: '채널간판', w: 3000, h: 600, qty: 1 },
+      ctx({ corpus: [channelInvoice], corrections: [correction] }),
+    );
+    const ev = res.evidence[0];
+    expect(ev.type).toBe('correction');
+    expect(ev.note).toContain('김부장'); // author cited
+    expect(ev.note).toContain('현장 실측 반영'); // explanation carried
+    expect(ev.note).toContain('상급자'); // flagged as a shared/boss override
+  });
+});
+
 describe('estimate — brand_text is an IDENTITY FILTER, not a price predictor', () => {
   it('gives the SAME price for different brands at the same category+size', () => {
     const a = estimate(

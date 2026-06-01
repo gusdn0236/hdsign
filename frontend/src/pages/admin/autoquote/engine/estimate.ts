@@ -62,6 +62,16 @@ function findCorrection(
     }
     return true;
   });
+  // When several corrections match one line, pick the strongest prior
+  // deterministically: highest priority first (a boss/shared override outweighs
+  // a peer note), tie-broken by the most-recent date. `??`-defaulting keeps the
+  // sort total even when priority/date are absent.
+  candidates.sort((a, b) => {
+    const pa = a.priority ?? 0;
+    const pb = b.priority ?? 0;
+    if (pb !== pa) return pb - pa; // priority desc
+    return (b.date ?? '').localeCompare(a.date ?? ''); // date desc (newer wins)
+  });
   return candidates[0];
 }
 
@@ -94,9 +104,11 @@ export function estimate(
       type: 'correction',
       invoiceId: correction.id,
       tier: 'correction',
-      note:
-        correction.explanation ??
-        `직원 수정 단가 적용 (${correction.author ?? '직원'})`,
+      // Cite the author and flag this as a shared/boss override so the UI can
+      // explain why it outranks past invoices; append the explanation if given.
+      note: `공유 수정단가(상급자 우선) 적용 · 작성자 ${
+        correction.author ?? '직원'
+      }${correction.explanation ? ` · ${correction.explanation}` : ''}`,
     };
   } else {
     // Tier ①: history. brandText is applied as an identity filter inside search.

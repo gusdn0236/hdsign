@@ -93,6 +93,12 @@ export interface Correction {
   explanation?: string;
   author?: string;
   date?: string;
+  /**
+   * Selection weight when several corrections match one line. A boss/shared
+   * override carries a higher priority than a peer note; among equal
+   * priorities the most-recent {@link Correction.date} wins. Absent ⇒ 0.
+   */
+  priority?: number;
 }
 
 /** Learned static priors served by GET /api/admin/autoquote/priors. */
