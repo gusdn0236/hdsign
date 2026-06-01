@@ -45,6 +45,13 @@ class AdminAutoQuoteControllerTest {
         return new HttpEntity<>(headers);
     }
 
+    /** 유효하지만 권한이 다른(거래처/CLIENT) 토큰 — 인증은 되나 ROLE_ADMIN 이 아니다. */
+    private HttpEntity<Void> clientAuth() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(jwtUtil.generateClientToken("test-client"));
+        return new HttpEntity<>(headers);
+    }
+
     @Test
     void corpus_returns200_withCorpusShape() throws Exception {
         ResponseEntity<String> res = rest.exchange(
@@ -98,6 +105,46 @@ class AdminAutoQuoteControllerTest {
         ResponseEntity<String> res = rest.getForEntity(
                 "/api/admin/autoquote/priors", String.class);
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    // 인증은 됐지만 role 이 ADMIN 이 아닌(CLIENT) 토큰은 403 이어야 한다 — 기밀 코퍼스 유출 방지.
+    // @PreAuthorize 가 any-authenticated 로 약화되면 이 단언이 깨져 누수를 잡아낸다(Anti-Scenario 1).
+
+    @Test
+    void corpus_with_nonAdmin_jwt_returns403() {
+        ResponseEntity<String> res = rest.exchange(
+                "/api/admin/autoquote/corpus", HttpMethod.GET, clientAuth(), String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        // 거부 응답이 코퍼스 본문을 흘리지 않았는지도 확인(엔진 tier ① 필드가 없어야 한다).
+        assertThat(res.getBody() == null || !res.getBody().contains("unitPrice")).isTrue();
+    }
+
+    @Test
+    void priors_with_nonAdmin_jwt_returns403() {
+        ResponseEntity<String> res = rest.exchange(
+                "/api/admin/autoquote/priors", HttpMethod.GET, clientAuth(), String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void corpus_isCacheable_etagThenNotModified() {
+        ResponseEntity<String> first = rest.exchange(
+                "/api/admin/autoquote/corpus", HttpMethod.GET, adminAuth(), String.class);
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        String etag = first.getHeaders().getETag();
+        assertThat(etag).as("ETag header must be present for caching the 4.66MB corpus").isNotBlank();
+        assertThat(etag).startsWith("\"").endsWith("\"");
+
+        // 동일 ETag 로 재요청 → 304 Not Modified, 본문(4.66MB) 재전송 없음.
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(jwtUtil.generateAdminToken("test-admin"));
+        headers.setIfNoneMatch(etag);
+        ResponseEntity<String> second = rest.exchange(
+                "/api/admin/autoquote/corpus", HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.NOT_MODIFIED);
+        assertThat(second.getBody()).isNull();
     }
 
     @Test

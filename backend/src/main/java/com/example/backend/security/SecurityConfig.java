@@ -1,5 +1,6 @@
 package com.example.backend.security;
 
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -31,8 +32,20 @@ public class SecurityConfig {
         http
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            // 자격(JWT) 없음 → 401. 권한 부족(잘못된 role)은 기본 403 유지.
-            .exceptionHandling(ex -> ex.authenticationEntryPoint(restAuthenticationEntryPoint))
+            // 자격(JWT) 없음 → 401(entry point). 권한 부족(잘못된 role) → 403(access denied handler).
+            // 둘 다 응답 본문에 상태를 직접 써 내려준다. 기본 AccessDeniedHandlerImpl 은
+            // response.sendError(403) 을 호출하는데, 그러면 컨테이너가 /error 로 ERROR 디스패치를
+            // 다시 태우고, OncePerRequestFilter 인 JwtFilter 가 그 디스패치에선 인증을 다시 안 달아
+            // /error 가 익명 → anyRequest().authenticated() 에 걸려 401 로 덮여버린다. 직접 상태를
+            // 써서 ERROR 디스패치 자체를 피해 의도한 403 을 그대로 노출한다(401 entry point 와 대칭).
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(restAuthenticationEntryPoint)
+                .accessDeniedHandler((request, response, denied) -> {
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write(
+                        "{\"status\":403,\"message\":\"접근 권한이 없습니다.\"}");
+                }))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 // 공개 엔드포인트 (구체적인 경로 먼저!)
