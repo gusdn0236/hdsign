@@ -2,6 +2,8 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '3.5.3'
     id 'io.spring.dependency-management' version '1.1.7'
+    // @slice-2 신규 코드(특히 AnthropicVisionClient)의 커버리지를 측정 가능하게 만든다(순수 추가).
+    id 'jacoco'
 }
 group = 'com.example'
 version = '0.0.1-SNAPSHOT'
@@ -53,4 +55,18 @@ dependencies {
 }
 tasks.named('test') {
     useJUnitPlatform()
+    finalizedBy jacocoTestReport
+}
+
+jacoco {
+    toolVersion = "0.8.12"
+}
+
+// 신규 비전 코드의 라인/브랜치 커버리지를 XML+HTML 로 산출(추가 의존성·기존 태스크 불변).
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
 }

@@ -119,7 +119,25 @@ public class VisionProxyService {
 
     /** 백오프 + 0~250ms 지터. 인터럽트(타임아웃 취소) 시 즉시 중단 신호를 전파한다. */
     private void sleepWithJitter(long baseMs) throws InterruptedException {
+        Thread.sleep(jitteredDelayMs(baseMs));
+    }
+
+    /**
+     * 백오프 베이스에 0~249ms 지터를 더한 실제 대기 시간(ms). 지터가 "실제로" 적용됨을 단위테스트로
+     * 증명하기 위해 sleep 과 분리했다(스펙: 1s,3s 지수 백오프 + 지터). {@code baseMs<=0} 이면 지터 없음.
+     */
+    long jitteredDelayMs(long baseMs) {
         long jitter = baseMs <= 0 ? 0 : ThreadLocalRandom.current().nextLong(0, 250);
-        Thread.sleep(baseMs + jitter);
+        return baseMs + jitter;
+    }
+
+    /** 스펙 기본 업스트림 예산(기본 60초)을 그대로 보유하는지 검증용 접근자. */
+    long timeoutMs() {
+        return timeoutMs;
+    }
+
+    /** 스펙 기본 rate-limit 백오프 시퀀스(기본 1s,3s)를 그대로 보유하는지 검증용 접근자. */
+    long[] rateLimitBackoffMs() {
+        return rateLimitBackoffMs.clone();
     }
 }

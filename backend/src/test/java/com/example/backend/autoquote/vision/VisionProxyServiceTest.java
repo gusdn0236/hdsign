@@ -102,6 +102,30 @@ class VisionProxyServiceTest {
     }
 
     @Test
+    void jitter_isActuallyApplied_withinSpecBounds_for1sAnd3sBackoff() {
+        // 스펙: 지수 백오프(1s,3s) + 지터. "지터가 실제로 적용됨"을 증명한다 — 단순히 분기만 도는 게 아니라
+        // 베이스에 0~249ms 가 더해져 (a) 베이스를 넘는 값이 나오고 (b) 값이 한 가지로 고정되지 않는지.
+        assertJitterApplied(1000L);
+        assertJitterApplied(3000L);
+
+        // baseMs<=0 이면 지터 없음(정확히 0).
+        assertThat(service.jitteredDelayMs(0L)).isZero();
+    }
+
+    private void assertJitterApplied(long baseMs) {
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        long max = baseMs;
+        for (int i = 0; i < 400; i++) {
+            long d = service.jitteredDelayMs(baseMs);
+            assertThat(d).isGreaterThanOrEqualTo(baseMs).isLessThan(baseMs + 250); // 0~249ms 지터 경계
+            seen.add(d);
+            max = Math.max(max, d);
+        }
+        assertThat(seen.size()).isGreaterThan(1);  // 한 값으로 고정 아님 → 지터 실재
+        assertThat(max).isGreaterThan(baseMs);     // 적어도 한 번은 베이스 초과(지터>0)
+    }
+
+    @Test
     void timeoutBudget_exceeded_throws504() throws Exception {
         when(client.extract(any(), any(), any())).thenAnswer(inv -> {
             Thread.sleep(3000);

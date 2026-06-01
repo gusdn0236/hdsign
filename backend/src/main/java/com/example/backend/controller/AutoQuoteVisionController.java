@@ -59,6 +59,11 @@ public class AutoQuoteVisionController {
                 StreamReadConstraints.builder().maxStringLength(256 * 1024 * 1024).build());
     }
 
+    /** 스펙 기본 디코딩 상한(기본 80MB)을 운영 빈이 그대로 보유하는지 검증용 접근자. */
+    long maxBytes() {
+        return maxBytes;
+    }
+
     @PostMapping("/vision")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> vision(@RequestBody(required = false) byte[] body) {

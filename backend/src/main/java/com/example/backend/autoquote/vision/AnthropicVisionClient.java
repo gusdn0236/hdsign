@@ -16,6 +16,7 @@ import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolUseBlock;
 import com.fasterxml.jackson.core.type.TypeReference;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -57,13 +58,25 @@ public class AnthropicVisionClient implements VisionClient {
     /** 지연 생성된 SDK 클라이언트(키가 있을 때만). */
     private volatile AnthropicClient delegate;
 
+    @Autowired
     public AnthropicVisionClient(
             @Value("${autoquote.vision.api-key:${ANTHROPIC_API_KEY:}}") String apiKey,
             @Value("${autoquote.vision.model:${ANTHROPIC_MODEL:claude-sonnet-4-6}}") String model,
             @Value("${autoquote.vision.timeout-ms:60000}") long perCallTimeoutMs) {
+        this(apiKey, model, perCallTimeoutMs, null);
+    }
+
+    /**
+     * 주입 시드용(테스트 전용) 생성자. 이미 만들어진 SDK {@link AnthropicClient}(예: 목)를 직접 주입하면
+     * {@link #client()} 는 OkHttp 빌드/키를 일절 건드리지 않고 그것을 그대로 쓴다 → 실 키 없이 forced
+     * tool-use·파싱·예외 매핑 전 구간을 결정적으로 단위테스트할 수 있다(스펙 'Vision proxy' 커버리지).
+     * {@code injectedDelegate == null} 이면 운영과 동일하게 첫 호출 시 키로 OkHttp 클라이언트를 지연 생성한다.
+     */
+    AnthropicVisionClient(String apiKey, String model, long perCallTimeoutMs, AnthropicClient injectedDelegate) {
         this.apiKey = apiKey;
         this.model = model;
         this.perCallTimeoutMs = perCallTimeoutMs;
+        this.delegate = injectedDelegate;
     }
 
     @Override
@@ -71,13 +84,7 @@ public class AnthropicVisionClient implements VisionClient {
             throws VisionClientException {
         AnthropicClient anthropic = client();
 
-        MessageCreateParams params = MessageCreateParams.builder()
-                .model(model)
-                .maxTokens(2048)
-                .addTool(extractionTool())
-                .toolToolChoice(TOOL_NAME) // forced tool-use: 반드시 이 도구를 호출
-                .addUserMessageOfBlockParams(buildContent(imageBase64, mediaType, hints))
-                .build();
+        MessageCreateParams params = buildParams(imageBase64, mediaType, hints);
 
         Message message;
         try {
@@ -98,12 +105,26 @@ public class AnthropicVisionClient implements VisionClient {
             throw new VisionClientException.Upstream("anthropic call failed", e);
         }
 
-        return parseToolUse(message);
+        return parseToolUse(message.content());
     }
 
-    /** 응답에서 forced tool_use 블록을 찾아 입력을 Map 으로 변환. 없으면 Unparsable. */
-    private Map<String, Object> parseToolUse(Message message) throws VisionClientException {
-        for (ContentBlock block : message.content()) {
+    /**
+     * forced tool-use 메시지 파라미터를 구성한다(스펙: 단일 추출 도구로 toolChoice 를 <b>강제</b>).
+     * 순수 함수라 실 키 없이 단위테스트로 toolChoice·rich input_schema 를 검증할 수 있다.
+     */
+    MessageCreateParams buildParams(String imageBase64, String mediaType, Map<String, Object> hints) {
+        return MessageCreateParams.builder()
+                .model(model)
+                .maxTokens(2048)
+                .addTool(extractionTool())
+                .toolToolChoice(TOOL_NAME) // forced tool-use: 반드시 이 도구를 호출(auto 아님)
+                .addUserMessageOfBlockParams(buildContent(imageBase64, mediaType, hints))
+                .build();
+    }
+
+    /** 응답 컨텐츠에서 forced tool_use 블록을 찾아 입력을 Map 으로 변환. 없거나 비-object 면 Unparsable. */
+    static Map<String, Object> parseToolUse(List<ContentBlock> content) throws VisionClientException {
+        for (ContentBlock block : content) {
             if (block.toolUse().isEmpty()) {
                 continue;
             }
@@ -124,7 +145,7 @@ public class AnthropicVisionClient implements VisionClient {
         throw new VisionClientException.Unparsable("model returned no tool_use block", null);
     }
 
-    private List<ContentBlockParam> buildContent(String imageBase64, String mediaType, Map<String, Object> hints) {
+    static List<ContentBlockParam> buildContent(String imageBase64, String mediaType, Map<String, Object> hints) {
         ImageBlockParam image = ImageBlockParam.builder()
                 .source(Base64ImageSource.builder()
                         .data(imageBase64)
@@ -142,7 +163,7 @@ public class AnthropicVisionClient implements VisionClient {
                 ContentBlockParam.ofText(TextBlockParam.builder().text(text).build()));
     }
 
-    private static Base64ImageSource.MediaType toMediaType(String normalized) {
+    static Base64ImageSource.MediaType toMediaType(String normalized) {
         return switch (normalized) {
             case "png" -> Base64ImageSource.MediaType.IMAGE_PNG;
             case "jpeg" -> Base64ImageSource.MediaType.IMAGE_JPEG;
@@ -152,7 +173,7 @@ public class AnthropicVisionClient implements VisionClient {
     }
 
     /** rich input_schema (레거시 4-필드를 대체). 모든 필드 optional — 보이는 것만 채운다. */
-    private static Tool extractionTool() {
+    static Tool extractionTool() {
         Tool.InputSchema.Properties properties = Tool.InputSchema.Properties.builder()
                 .putAdditionalProperty("client", str("Ordering client / company name"))
                 .putAdditionalProperty("contact", str("Contact person or phone"))

@@ -25,6 +25,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -131,6 +132,33 @@ class AutoQuoteVisionControllerTest {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
+    // ---- media types: jpeg/webp positive (png positive/gif negative 보완) -----
+
+    @Test
+    void vision_jpegMediaType_accepted_andNormalizedToJpeg() throws Exception {
+        when(visionClient.extract(any(), any(), any())).thenReturn(MOCK_EXTRACTION);
+        org.mockito.ArgumentCaptor<String> media = org.mockito.ArgumentCaptor.forClass(String.class);
+
+        // image/jpg → 정규화 jpeg 로 받아들여 200.
+        ResponseEntity<String> res = postAsAdmin(SMALL_IMAGE_B64, "image/jpg");
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(visionClient).extract(any(), media.capture(), any());
+        assertThat(media.getValue()).isEqualTo("jpeg");
+    }
+
+    @Test
+    void vision_webpMediaType_accepted_andNormalizedToWebp() throws Exception {
+        when(visionClient.extract(any(), any(), any())).thenReturn(MOCK_EXTRACTION);
+        org.mockito.ArgumentCaptor<String> media = org.mockito.ArgumentCaptor.forClass(String.class);
+
+        ResponseEntity<String> res = postAsAdmin(SMALL_IMAGE_B64, "webp");
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(visionClient).extract(any(), media.capture(), any());
+        assertThat(media.getValue()).isEqualTo("webp");
+    }
+
     // ---- auth ------------------------------------------------------------
 
     @Test
@@ -185,7 +213,7 @@ class AutoQuoteVisionControllerTest {
     // ---- resilience mappings (stubbed upstream failures) -----------------
 
     @Test
-    void vision_timeout_returns504() throws Exception {
+    void vision_timeout_returns504_withExactErrorBodyAndNoRetryable() throws Exception {
         // 업스트림 예산(1s) 초과 → 504 vision_timeout.
         when(visionClient.extract(any(), any(), any())).thenAnswer(inv -> {
             Thread.sleep(3000);
@@ -193,7 +221,10 @@ class AutoQuoteVisionControllerTest {
         });
         ResponseEntity<String> res = postAsAdmin(SMALL_IMAGE_B64, "png");
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.GATEWAY_TIMEOUT);
-        assertThat(res.getBody()).contains("vision_timeout");
+        // {error, retryable?} 계약을 JSON 파싱으로 정확히 검증(429 테스트와 동일 엄격도, String.contains 아님).
+        JsonNode body = json.readTree(res.getBody());
+        assertThat(body.get("error").asText()).isEqualTo("vision_timeout");
+        assertThat(body.has("retryable")).isFalse(); // 타임아웃은 retryable 필드 없음
     }
 
     @Test
@@ -222,25 +253,29 @@ class AutoQuoteVisionControllerTest {
     }
 
     @Test
-    void vision_upstreamError_retriesOnce_then502() throws Exception {
+    void vision_upstreamError_retriesOnce_then502_withExactErrorBodyAndNoRetryable() throws Exception {
         when(visionClient.extract(any(), any(), any()))
                 .thenThrow(new VisionClientException.Upstream("5xx", null));
 
         ResponseEntity<String> res = postAsAdmin(SMALL_IMAGE_B64, "png");
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
-        assertThat(res.getBody()).contains("vision_upstream");
+        JsonNode body = json.readTree(res.getBody());
+        assertThat(body.get("error").asText()).isEqualTo("vision_upstream");
+        assertThat(body.has("retryable")).isFalse(); // 502 는 retryable 필드 없음
     }
 
     @Test
-    void vision_unparsable_reasksOnce_then422() throws Exception {
+    void vision_unparsable_reasksOnce_then422_withExactErrorBodyAndNoRetryable() throws Exception {
         when(visionClient.extract(any(), any(), any()))
                 .thenThrow(new VisionClientException.Unparsable("bad tool output", null));
 
         ResponseEntity<String> res = postAsAdmin(SMALL_IMAGE_B64, "png");
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-        assertThat(res.getBody()).contains("vision_unparsable");
+        JsonNode body = json.readTree(res.getBody());
+        assertThat(body.get("error").asText()).isEqualTo("vision_unparsable");
+        assertThat(body.has("retryable")).isFalse(); // 422 는 retryable 필드 없음
     }
 
     // ---- IRON LAW: key never leaks --------------------------------------
