@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 기밀 데이터가 어느 소스에도 프로비저닝되지 않은 경우의 graceful 동작 검증(slice-6: 둘 다 없음):
- *  - {@code autoquote.data-dir} 가 존재하지 않는 디렉터리를 가리키고 {@code r2.bucket} 도 비어 있으면
+ *  - {@code autoquote.data-dir} 가 존재하지 않는 디렉터리를 가리키고 {@code autoquote.r2-bucket} 도 비어 있으면
  *    corpus/priors 는 500/stacktrace 가 아니라 <b>503 {"error":"autoquote_data_unavailable"}</b> 로 응답한다.
  *  - admin JWT 인증은 여전히 통과해야 503 에 도달한다(인증 자체는 깨지지 않음).
  *
@@ -38,13 +38,14 @@ class AdminAutoQuoteUnavailableTest {
 
     private final ObjectMapper json = new ObjectMapper();
 
-    /** 존재하지 않는 디렉터리 + 빈 버킷 → 두 소스 모두 미프로비저닝(네트워크 호출 없음). */
+    /** 존재하지 않는 디렉터리 + 빈 전용 버킷 → 두 소스 모두 미프로비저닝(네트워크 호출 없음). */
     @DynamicPropertySource
     static void noSourceAvailable(DynamicPropertyRegistry registry) {
         registry.add("autoquote.data-dir",
                 () -> "build/__autoquote_missing__/does-not-exist");
-        // 빈 버킷 → R2 소스 비활성. (테스트 기본 r2.bucket=local-dummy-bucket 이라 명시적으로 비운다.)
-        registry.add("r2.bucket", () -> "");
+        // 전용 비공개 버킷 프로퍼티를 명시적으로 비워 R2 소스 비활성(네트워크 호출 없음).
+        // (공유 r2.bucket 은 컨트롤러가 더 이상 읽지 않으므로 건드리지 않는다.)
+        registry.add("autoquote.r2-bucket", () -> "");
     }
 
     private HttpEntity<Void> adminAuth() {

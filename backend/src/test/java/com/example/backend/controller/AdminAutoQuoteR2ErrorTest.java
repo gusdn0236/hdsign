@@ -28,7 +28,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
 
 /**
- * slice-6 R2 오류 graceful 처리: R2 가 켜져 있으나({@code r2.bucket} 설정) 객체가 없거나
+ * slice-6 R2 오류 graceful 처리: R2 가 켜져 있으나(전용 비공개 {@code autoquote.r2-bucket} 설정) 객체가 없거나
  * (NoSuchKey) S3 오류가 나면, 500/stacktrace 가 아니라
  * <b>503 {"error":"autoquote_data_unavailable"}</b> 로 응답해야 한다(미스는 캐시하지 않음).
  *
@@ -53,7 +53,8 @@ class AdminAutoQuoteR2ErrorTest {
     @DynamicPropertySource
     static void r2Only(DynamicPropertyRegistry registry) {
         registry.add("autoquote.data-dir", () -> "");
-        registry.add("r2.bucket", () -> "autoquote-test-bucket");
+        // 전용 비공개 버킷 프로퍼티(autoquote.r2-bucket)만 켠다. 공유 공개 r2.bucket 은 쓰지 않는다.
+        registry.add("autoquote.r2-bucket", () -> "autoquote-test-bucket");
         registry.add("autoquote.r2-prefix", () -> "autoquote/");
     }
 

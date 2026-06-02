@@ -41,16 +41,21 @@ import java.util.concurrent.ConcurrentMap;
  *   <li><b>파일시스템</b> — {@code autoquote.data-dir}(env {@code AUTOQUOTE_DATA_DIR}) 가 설정되어
  *       있고 {@code <dir>/<name>} 이 읽기 가능하면 {@link java.nio.file.Files}로 읽는다.
  *       로컬/통합테스트(e2e)의 기본 경로(예: {@code auto-quote-data/autoquote}, gitignore).</li>
- *   <li><b>Cloudflare R2</b> — data-dir 가 미설정/부재이고 {@code r2.bucket} 이 설정돼 있으면
- *       기존 {@link S3Client} 빈(R2Config)으로 {@code <r2-prefix><name>} 객체를 받아 읽는다.
- *       운영(Railway) 기본 소스: 다른 기능과 같은 {@code R2_*} env 만 있으면 동작.</li>
- *   <li>둘 다 없으면 503 graceful(아래).</li>
+ *   <li><b>Cloudflare R2(전용 비공개 버킷)</b> — data-dir 가 미설정/부재이고
+ *       {@code autoquote.r2-bucket}(env {@code AUTOQUOTE_R2_BUCKET}) 이 설정돼 있으면 기존
+ *       {@link S3Client} 빈(R2Config)으로 {@code <r2-prefix><name>} 객체를 받아 읽는다.
+ *       운영(Railway) 기본 소스. <b>주의:</b> 이 버킷은 공유 공개 갤러리 버킷
+ *       {@code r2.bucket}(hdsign-gallery)이 <i>아니어야</i> 한다 — 그 버킷은 Public Access 가
+ *       켜져 있어 코퍼스가 r2.dev 공개 URL 로 유출된다. Public Access 가 꺼진 별도 비공개 버킷을 쓴다.</li>
+ *   <li>둘 다 없으면 503 graceful(아래). 공개 {@code r2.bucket} 으로의 폴백은 절대 없다.</li>
  * </ol>
  * 프론트/엔진은 그대로 {@code GET /api/admin/autoquote/{corpus,priors}} 를 호출한다(계약 불변).
  *
  * <b>운영(PROD)</b>: {@code AUTOQUOTE_DATA_DIR} 를 <i>설정하지 않고</i>(→ R2 사용),
- * {@code R2_ACCESS_KEY/R2_SECRET_KEY/R2_ENDPOINT/R2_BUCKET}(이미 다른 기능이 쓰는 값)만 두고
- * {@code corpus.json}·{@code priors.json} 을 버킷의 {@code autoquote/} 프리픽스 아래 업로드한다.
+ * Public Access 가 꺼진 <b>전용 비공개</b> 버킷(예: {@code hdsign-autoquote})을 만들어
+ * {@code AUTOQUOTE_R2_BUCKET} 로 지정한다(공개 {@code hdsign-gallery} 금지). R2 API 토큰이 그
+ * 비공개 버킷에 접근 가능한지 확인하고({@code R2_ACCESS_KEY/R2_SECRET_KEY/R2_ENDPOINT} 는 공유),
+ * {@code corpus.json}·{@code priors.json} 을 그 버킷의 {@code autoquote/} 프리픽스 아래 업로드한다.
  * <b>로컬/테스트</b>: {@code autoquote.data-dir} 를 {@code auto-quote-data/autoquote} 로 가리킨다
  * (실 R2 자격증명 없이도 동작 — slice-5 동작 보존).
  *
@@ -78,8 +83,15 @@ public class AdminAutoQuoteController {
     @Value("${autoquote.data-dir:}")
     private String dataDir;
 
-    /** R2 버킷. data-dir 가 없을 때만 사용. 비어 있으면 R2 소스 비활성(→ 503). */
-    @Value("${r2.bucket:}")
+    /**
+     * 자동견적 <b>전용 비공개</b> R2 버킷. data-dir 가 없을 때만 사용. 비어 있으면 R2 소스 비활성(→ 503).
+     *
+     * <b>절대 공유 {@code r2.bucket}(공개 갤러리 버킷 hdsign-gallery)을 쓰지 않는다</b> — 그 버킷은
+     * Public Access 가 켜져 있어 r2.dev 공개 URL 로 객체가 그대로 다운로드된다(기밀 코퍼스 유출).
+     * 운영에서는 Public Access 가 꺼진 별도 비공개 버킷(예: {@code hdsign-autoquote})을
+     * {@code AUTOQUOTE_R2_BUCKET} 로 지정한다. 폴백 없음(미설정이면 R2 비활성 → 503).
+     */
+    @Value("${autoquote.r2-bucket:}")
     private String bucket;
 
     /** R2 객체 키 프리픽스. {@code autoquote/} 아래에 corpus.json/priors.json 을 둔다. */
@@ -147,7 +159,7 @@ public class AdminAutoQuoteController {
      * 두 소스를 순서대로 시도한다(layered):
      * <ol>
      *   <li>파일시스템({@code autoquote.data-dir}) — 설정·읽기 가능하면 거기서 읽는다(slice-5 경로).</li>
-     *   <li>R2({@code r2.bucket} + {@code r2-prefix}) — 위가 안 되고 버킷이 설정돼 있으면 객체를 받는다.</li>
+     *   <li>R2({@code autoquote.r2-bucket} 전용 비공개 버킷 + {@code r2-prefix}) — 위가 안 되고 버킷이 설정돼 있으면 객체를 받는다.</li>
      * </ol>
      * 어느 소스도 사용할 수 없거나 읽기에 실패하면 {@code null} 을 돌려 호출부가 503 으로 graceful
      * 처리하게 한다(예외/500 없음, 미스는 캐시하지 않음).

@@ -31,8 +31,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 /**
- * slice-6 R2 소스 검증: {@code autoquote.data-dir} 가 미설정이고 {@code r2.bucket} 이 설정된
- * 운영 모드에서, 컨트롤러가 R2(S3 호환) 객체를 받아 corpus/priors 를 서빙하는지 본다.
+ * slice-6 R2 소스 검증: {@code autoquote.data-dir} 가 미설정이고 전용 비공개 버킷
+ * {@code autoquote.r2-bucket} 이 설정된 운영 모드에서, 컨트롤러가 R2(S3 호환) 객체를 받아
+ * corpus/priors 를 서빙하는지 본다.
  *
  * <b>실제 R2 네트워크는 절대 호출하지 않는다.</b> {@link S3Client} 빈을 {@code @MockBean} 으로
  * 대체하고 {@code getObject} 가 {@code autoquote-fixtures} 의 작은 가짜 바이트를 돌려주게 한다.
@@ -53,11 +54,12 @@ class AdminAutoQuoteR2SourceTest {
 
     private final ObjectMapper json = new ObjectMapper();
 
-    /** 파일시스템 소스는 끄고(blank) R2 버킷만 켜서 R2 경로를 강제한다. */
+    /** 파일시스템 소스는 끄고(blank) 전용 비공개 R2 버킷만 켜서 R2 경로를 강제한다. */
     @DynamicPropertySource
     static void r2Only(DynamicPropertyRegistry registry) {
         registry.add("autoquote.data-dir", () -> "");
-        registry.add("r2.bucket", () -> "autoquote-test-bucket");
+        // 전용 비공개 버킷 프로퍼티(autoquote.r2-bucket)만 켠다. 공유 공개 r2.bucket 은 쓰지 않는다.
+        registry.add("autoquote.r2-bucket", () -> "autoquote-test-bucket");
         registry.add("autoquote.r2-prefix", () -> "autoquote/");
     }
 
