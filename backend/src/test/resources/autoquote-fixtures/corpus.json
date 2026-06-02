@@ -1,0 +1,7 @@
+{
+  "_meta": { "source": "test-fixture", "note": "tiny fake corpus — NOT real confidential data" },
+  "lines": [
+    { "category": "채널간판", "unitPrice": 120000 },
+    { "category": "후렉스", "unitPrice": 35000 }
+  ]
+}

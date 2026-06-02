@@ -1,0 +1,11 @@
+{
+  "bridges": {},
+  "reorderPairs": [],
+  "sizeBuckets": {
+    "채널간판": [
+      { "maxHeight": 600, "unitPrice": 120000 },
+      { "maxHeight": 1200, "unitPrice": 95000 }
+    ]
+  },
+  "synthDigest": { "lineCount": 2 }
+}
