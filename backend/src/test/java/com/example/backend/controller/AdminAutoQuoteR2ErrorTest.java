@@ -93,5 +93,7 @@ class AdminAutoQuoteR2ErrorTest {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         JsonNode body = json.readTree(res.getBody());
         assertThat(body.get("error").asText()).isEqualTo("autoquote_data_unavailable");
+        // 503 본문에 S3 예외 메시지/버킷 등 내부 정보가 새지 않아야 한다(corpus no-leak 단언과 대칭).
+        assertThat(res.getBody()).doesNotContain("boom").doesNotContain("autoquote-test-bucket");
     }
 }
