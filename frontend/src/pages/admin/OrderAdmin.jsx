@@ -1345,8 +1345,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const nextStatus = getNextStatus(order.status);
     const updating = statusUpdatingId === order.id;
     const trashing = trashingOrderId === order.id;
-    const restoring = restoringOrderId === order.id;
-    const deleting = deletingOrderId === order.id;
     const openingFs = openingFsId === order.id;
     const openingFolder = openingFolderId === order.id;
     // FS 버튼은 지시서가 만들어진 카드에만 — RECEIVED(워크시트 없음) 는 자연히 빠진다.
@@ -1510,26 +1508,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               <span>명세서</span>
             </button>
             </div>
-            {isTrash ? (
-              <div className="order-card-statusrow">
-                <button
-                  type="button"
-                  className="next-status-btn action-restore"
-                  onClick={() => restoreFromTrash(order)}
-                  disabled={restoring || deleting}
-                >
-                  {restoring ? "복원 중..." : "복원"}
-                </button>
-                <button
-                  type="button"
-                  className="next-status-btn action-delete"
-                  onClick={() => deletePermanently(order)}
-                  disabled={deleting || restoring}
-                >
-                  {deleting ? "삭제 중..." : "영구삭제"}
-                </button>
-              </div>
-            ) : (
+            {/* 작업완료(휴지통) 카드는 복원/영구삭제를 카드에 안 띄운다 — 카드 클릭 시 상세모달에서 처리.
+                카드엔 작업중 탭과 똑같이 도구 4개만 노출. */}
+            {!isTrash && (
               <div className="order-card-statusrow">
                 {/* 새 워크플로우: 작업완료 / 다음 단계 버튼 제거. IN_PROGRESS 카드는 납기가 지나면
                     자동으로 [완료 검토] 버튼만 노출. RECEIVED 는 지시서 자동작성(파일 있는 ORDER) 또는
