@@ -1,5 +1,5 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import PdfViewer from "../../components/common/PdfViewer.jsx";
@@ -7,6 +7,9 @@ import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import KakaoShareButton from "../../components/common/KakaoShareButton.jsx";
 import { safeFileName } from "../../utils/shareImage.js";
 import "./OrderAdmin.css";
+
+// 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
+const AutoQuote = lazy(() => import("./autoquote/AutoQuote.tsx"));
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 // 현장 작업뷰어 에이전트(127.0.0.1) — 트레이에 떠 있을 때만 동작. 폴링 없이 클릭 시 한 번만 호출.
@@ -194,8 +197,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
   const [activeFilter, setActiveFilter] = useState("IN_PROGRESS");
   const [selectedOrderId, setSelectedOrderId] = useState(null);
-  // 자동견적 명세서작성 화면(/admin/autoquote)으로 주문 컨텍스트와 함께 이동할 때 사용.
-  const navigate = useNavigate();
+  // 자동견적 명세서작성 모달 — 열린 주문 id(없으면 닫힘). 별도 탭이 아니라 OrderAdmin 안 모달로 띄운다.
+  const [estimateOrderId, setEstimateOrderId] = useState(null);
+  // 저장 성공 시 해당 주문의 "명세서" 배지를 즉시 점등(재요청 없이 목록/모달 동기).
+  const markEstimateSaved = useCallback((id) => {
+    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
+    setTrashOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
+  }, []);
   // 작업현황 등 다른 화면에서 `?order=<id>` 로 넘어오면 그 주문 상세 모달을 바로 연다.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -1490,6 +1498,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 fileName={() => safeFileName(`${order.title || order.orderNumber || "지시서"}_지시서`, "jpg")}
               />
             )}
+            <button
+              type="button"
+              className="next-status-btn action-estimate"
+              onClick={() => setEstimateOrderId(order.id)}
+              title="이 지시서로 명세서를 작성/수정합니다"
+            >
+              {order.hasEstimate ? "명세서 수정" : "명세서작성"}
+            </button>
             {isTrash ? (
               <>
                 <button
@@ -2162,12 +2178,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </span>
                 )}
                 <div className="modal-status-actions">
-                  {/* 자동견적 명세서작성 — 작업중/작업완료 공용(상태 무관). 이 지시서 컨텍스트(order=id)로
-                      /admin/autoquote 이동. 이미 명세서가 있으면 "명세서 수정". */}
+                  {/* 자동견적 명세서작성 — 작업중/작업완료 공용(상태 무관). 별도 탭이 아니라 모달로 띄운다.
+                      이미 명세서가 있으면 "명세서 수정". */}
                   <button
                     type="button"
                     className="next-status-btn action-estimate"
-                    onClick={() => navigate(`/admin/autoquote?order=${selectedOrder.id}`)}
+                    onClick={() => setEstimateOrderId(selectedOrder.id)}
                     title="이 지시서로 자동견적 명세서를 작성/수정합니다"
                   >
                     {selectedOrder.hasEstimate ? "명세서 수정" : "명세서작성"}
@@ -2583,6 +2599,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 자동견적 명세서작성 모달 — 별도 탭 대신 여기서 전체화면 오버레이로. ✕ 또는 저장 후 닫기. */}
+      {estimateOrderId != null && (
+        <div className="aq-modal-overlay" role="dialog" aria-modal="true">
+          <Suspense fallback={<div className="aq-modal-loading">명세서 작성기를 불러오는 중…</div>}>
+            <AutoQuote
+              orderId={estimateOrderId}
+              onClose={() => setEstimateOrderId(null)}
+              onSaved={() => markEstimateSaved(estimateOrderId)}
+            />
+          </Suspense>
         </div>
       )}
     </div>
