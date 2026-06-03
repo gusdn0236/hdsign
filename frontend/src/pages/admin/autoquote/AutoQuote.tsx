@@ -390,7 +390,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       setSelPin(null);
       return;
     }
-    if (activeRef.current !== null) return;
+    // 입력 중인 핀이 있어도 사진의 다른 곳을 클릭/드래그하면 새 핀을 만든다(기존 핀은 입력한 만큼 유지).
     e.preventDefault();
     const st = stageRef.current?.getBoundingClientRect();
     drag.current = { ax: e.clientX - (st?.left ?? 0), ay: e.clientY - (st?.top ?? 0), moved: false };
