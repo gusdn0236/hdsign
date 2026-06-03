@@ -239,6 +239,12 @@
   text-overflow: ellipsis;
   cursor: move;
 }
+/* 아직 입력 전 빈 말풍선 — 흐린 안내 텍스트. */
+.aq-pintag.empty {
+  opacity: 0.85;
+  font-weight: 500;
+  font-style: italic;
+}
 .aq-pinrow {
   display: flex;
   gap: 5px;
