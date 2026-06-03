@@ -1225,72 +1225,78 @@
   text-overflow: ellipsis;
 }
 
+/* 카드 액션 — 두 줄: (위) 도구 FS·폴더·공유·명세서, (아래) 상태 버튼(복원/영구삭제 등). */
 .order-card-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
   margin-top: auto;
   padding-top: 4px;
 }
-
-.order-card-actions .next-status-btn {
-  flex: 1 1 auto;
+.order-card-toolrow,
+.order-card-statusrow {
+  display: flex;
+  gap: 6px;
+}
+/* 비어 있는 상태줄(예: 작업중 비-지연 카드)은 자리 차지 안 하게 숨김. */
+.order-card-statusrow:empty {
+  display: none;
+}
+.order-card-statusrow .next-status-btn {
+  flex: 1 1 0;
   min-width: 0;
   padding: 7px 10px;
   font-size: 12px;
 }
 
-/* 카드 액션줄의 카톡공유 — 아이콘 전용 콤팩트 버튼. FS·폴더열기 버튼과 한 줄에
-   들어가도록 폭은 고정(36px), 높이는 옆 버튼에 맞춰 늘어나게(height:auto + 부모 stretch). */
-.order-card-actions .order-card-share {
-  flex: 0 0 36px;
-  height: auto;
-  padding: 0;
-  border-radius: 6px;
-}
-.order-card-actions .order-card-share svg {
-  width: 16px;
-  height: 16px;
-}
-
-/* 카드 도구 버튼 — FS·폴더·명세서를 아이콘 전용 콤팩트 버튼으로(텍스트 제거, 툴팁 유지).
-   상태 변경 버튼(다음단계/작업완료로/복원/영구삭제)만 라벨 텍스트를 유지해 카드가 깔끔해진다. */
-.order-card-actions .order-card-tool {
+/* 카드 도구 버튼 — FS·폴더·공유·명세서. 아이콘 + 짧은 글씨, 한 줄에 균등 분할. */
+.order-card-toolrow .order-card-tool {
   position: relative;
-  flex: 0 0 34px;
-  height: 34px;
-  padding: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 6px;
   border: none;
   border-radius: 6px;
   background: #f1f3f5;
   color: #334155;
-  font-size: 15px;
+  font-size: 11.5px;
+  font-weight: 700;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
 }
-.order-card-actions .order-card-tool:hover:not(:disabled) {
+.order-card-toolrow .order-card-tool > span:first-child {
+  font-size: 14px;
+}
+.order-card-toolrow .order-card-tool svg {
+  width: 14px;
+  height: 14px;
+}
+.order-card-toolrow .order-card-tool:hover:not(:disabled) {
   background: #e2e8f0;
 }
-.order-card-actions .order-card-tool:disabled {
+.order-card-toolrow .order-card-tool:disabled {
   opacity: 0.5;
   cursor: default;
 }
 /* 명세서작성 — teal 강조(주 기능). 이미 작성됐으면 우상단 점 표시. */
-.order-card-actions .order-card-tool.action-estimate {
+.order-card-toolrow .order-card-tool.action-estimate {
   background: #e0f0f1;
   color: #005f73;
 }
-.order-card-actions .order-card-tool.action-estimate:hover:not(:disabled) {
+.order-card-toolrow .order-card-tool.action-estimate:hover:not(:disabled) {
   background: #c6e6e8;
 }
-.order-card-actions .order-card-tool.action-estimate.has::after {
+.order-card-toolrow .order-card-tool.action-estimate.has::after {
   content: "";
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 3px;
+  right: 3px;
   width: 6px;
   height: 6px;
   border-radius: 50%;

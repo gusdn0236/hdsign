@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { pdfjs } from 'react-pdf';
+// @ts-expect-error - Vite ?url 자산 임포트(타입 선언 없음). 앱 다른 곳(PdfViewer)과 동일 패턴.
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 // AuthContext 는 .jsx — 확장자 명시로 vite/vitest 모두 해석되게.
 import { useAuth } from '../../../context/AuthContext.jsx';
 import {
@@ -21,6 +24,29 @@ import {
   type OrderContext,
 } from './annot/api';
 import './AutoQuote.css';
+
+// 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
+// 데이터가 fetch(ArrayBuffer) 라 캔버스가 taint 되지 않아 [공유하기] 합성도 막히지 않는다.
+// (모바일 WorksheetViewer 가 같은 R2 PDF 를 react-pdf 로 로드하므로 CORS 는 이미 허용됨.)
+pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+async function renderPdfFirstPage(url: string): Promise<string> {
+  const pdf = await pdfjs.getDocument(url).promise;
+  try {
+    const page = await pdf.getPage(1);
+    const base = page.getViewport({ scale: 1 });
+    const scale = Math.min(3, Math.max(1, 1600 / base.width));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('no 2d context');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    return canvas.toDataURL('image/jpeg', 0.92);
+  } finally {
+    pdf.cleanup?.();
+  }
+}
 
 /**
  * HD사인 자동견적 — slice-13: 주석입력(annotation) 흐름.
@@ -146,12 +172,30 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         const o = await getOrder(token, id);
         if (!alive || !o) return;
         setOrder(o);
-        const url = o.worksheetThumbnailUrl || o.worksheetPdfUrl || null;
-        if (url && !/\.pdf($|\?)/i.test(url)) {
-          setImgSrc(url);
-          setStatus(`${o.clientCompanyName || ''} · ${o.title || o.orderNumber} — 지시서 자동 로드됨`);
+        const label = `${o.clientCompanyName || ''} · ${o.title || o.orderNumber}`;
+        if (o.worksheetPdfUrl) {
+          // 화질 우선: 업로드 PDF 1페이지를 고해상 렌더. 실패(CORS 등) 시 썸네일 폴백.
+          setStatus(`${label} — 지시서 PDF 고해상 변환 중…`);
+          try {
+            const dataUrl = await renderPdfFirstPage(o.worksheetPdfUrl);
+            if (alive) {
+              setImgSrc(dataUrl);
+              setStatus(`${label} — 지시서 로드됨`);
+            }
+          } catch (err) {
+            console.error('PDF 렌더 실패 — 썸네일 폴백', err);
+            if (alive && o.worksheetThumbnailUrl) {
+              setImgSrc(o.worksheetThumbnailUrl);
+              setStatus(`${label} — 지시서 로드됨(썸네일)`);
+            } else if (alive) {
+              setStatus(`${label} — 지시서 이미지를 붙여넣으세요`);
+            }
+          }
+        } else if (o.worksheetThumbnailUrl) {
+          setImgSrc(o.worksheetThumbnailUrl);
+          setStatus(`${label} — 지시서 로드됨`);
         } else {
-          setStatus(`${o.clientCompanyName || ''} · ${o.orderNumber} — 지시서 이미지를 붙여넣으세요 (PDF는 캡쳐 붙여넣기)`);
+          setStatus(`${label} — 지시서 이미지를 붙여넣으세요`);
         }
         // 기존 명세서가 있으면 grid 를 핀(앵커 없는 grid 행)으로 복원.
         const est = await getEstimate(token, id);

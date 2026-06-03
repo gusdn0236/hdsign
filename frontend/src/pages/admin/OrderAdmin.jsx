@@ -1467,16 +1467,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
           {!selecting && (
           <div className="order-card-actions" onClick={(e) => e.stopPropagation()}>
+            <div className="order-card-toolrow">
             {fsReady && (
               <button
                 type="button"
                 className="order-card-tool action-fs"
                 onClick={(e) => handleOpenFs(e, order)}
                 disabled={openingFs}
-                title="FS에서 열기 (FlexiSIGN)"
-                aria-label="FS에서 열기"
+                title="현장 에이전트로 .fs 를 FlexiSIGN 에서 엽니다"
               >
-                {openingFs ? "⏳" : "🖥️"}
+                <span aria-hidden="true">{openingFs ? "⏳" : "🖥️"}</span>
+                <span>FS</span>
               </button>
             )}
             {fsReady && (
@@ -1485,17 +1486,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 className="order-card-tool action-folder"
                 onClick={(e) => handleOpenFolder(e, order)}
                 disabled={openingFolder}
-                title="폴더열기 (거래처/지시서 폴더)"
-                aria-label="폴더열기"
+                title="거래처/지시서 폴더를 탐색기로 엽니다"
               >
-                {openingFolder ? "⏳" : "📁"}
+                <span aria-hidden="true">{openingFolder ? "⏳" : "📁"}</span>
+                <span>폴더</span>
               </button>
             )}
             {fsReady && (
               <KakaoShareButton
-                className="order-card-share"
-                iconOnly
-                label="카톡공유"
+                className="order-card-tool order-card-share"
+                label="공유"
                 getSource={() => ({ type: "pdf", url: order.worksheetPdfUrl })}
                 fileName={() => safeFileName(`${order.title || order.orderNumber || "지시서"}_지시서`, "jpg")}
               />
@@ -1505,12 +1505,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               className={`order-card-tool action-estimate${order.hasEstimate ? " has" : ""}`}
               onClick={() => setEstimateOrderId(order.id)}
               title={order.hasEstimate ? "명세서 수정 (작성됨)" : "명세서작성"}
-              aria-label={order.hasEstimate ? "명세서 수정" : "명세서작성"}
             >
-              📝
+              <span aria-hidden="true">📝</span>
+              <span>명세서</span>
             </button>
+            </div>
             {isTrash ? (
-              <>
+              <div className="order-card-statusrow">
                 <button
                   type="button"
                   className="next-status-btn action-restore"
@@ -1527,9 +1528,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 >
                   {deleting ? "삭제 중..." : "영구삭제"}
                 </button>
-              </>
+              </div>
             ) : (
-              <>
+              <div className="order-card-statusrow">
                 {/* 새 워크플로우: 작업완료 / 다음 단계 버튼 제거. IN_PROGRESS 카드는 납기가 지나면
                     자동으로 [완료 검토] 버튼만 노출. RECEIVED 는 지시서 자동작성(파일 있는 ORDER) 또는
                     수동 [다음 단계] (QUOTE/QR-only) 만 유지. COMPLETED 는 검토 누락분 휴지통으로. */}
@@ -1566,7 +1567,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     {trashing ? "이동 중..." : "작업완료로"}
                   </button>
                 )}
-              </>
+              </div>
             )}
           </div>
           )}
