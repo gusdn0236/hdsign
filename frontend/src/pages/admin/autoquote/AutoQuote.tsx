@@ -868,16 +868,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode('cursor')}
               >
-                🖱️
+                <svg viewBox="0 0 320 512" width="14" height="14" fill="currentColor" aria-hidden="true">
+                  <path d="M0 55.2V426c0 12.2 9.9 22 22 22 6.3 0 12.4-2.7 16.6-7.5L121.2 346l58.1 116.3c7.9 15.8 27.1 22.2 42.9 14.3s22.2-27.1 14.3-42.9L179.8 320H297c12.2 0 22-9.9 22-22 0-6.4-2.8-12.5-7.7-16.6L38.6 38.6C34.4 35.1 29.2 33 23.5 33 10.5 33 0 43.5 0 56.5z" />
+                </svg>
               </button>
               <button
                 type="button"
                 className={'aq-toolbtn' + (mode === 'hand' ? ' on' : '')}
-                title="손바닥 — 드래그로 사진 이동(확대 시)"
+                title="이동 — 드래그로 사진 이동(확대 시)"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode('hand')}
               >
-                ✋
+                <svg viewBox="0 0 512 512" width="15" height="15" fill="currentColor" aria-hidden="true">
+                  <path d="M352.2 425.8l-79.2 79.2c-9.4 9.4-24.6 9.4-33.9 0l-79.2-79.2c-15.1-15.1-4.4-41 17-41h51.2V284H127.2v51.2c0 21.4-25.9 32.1-41 17L7 272.9c-9.4-9.4-9.4-24.6 0-33.9L86.2 159.8c15.1-15.1 41-4.4 41 17V228H228V127.2h-51.2c-21.4 0-32.1-25.9-17-41L239 7c9.4-9.4 24.6-9.4 33.9 0l79.2 79.2c15.1 15.1 4.4 41-17 41h-51.2V228h100.8v-51.2c0-21.4 25.9-32.1 41-17l79.2 79.2c9.4 9.4 9.4 24.6 0 33.9l-79.2 79.2c-15.1 15.1-41 4.4-41-17V284H284v100.8h51.2c21.4 0 32.1 25.9 17 41z" />
+                </svg>
               </button>
             </div>
           )}
