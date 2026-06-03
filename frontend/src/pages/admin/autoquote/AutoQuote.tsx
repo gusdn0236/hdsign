@@ -69,8 +69,6 @@ interface Pin {
   ly: number;
   dragged: boolean;
   vals: Record<string, string>;
-  fi: number;
-  splitPending?: boolean;
 }
 
 interface DialogButton {
@@ -99,18 +97,21 @@ function pinColor(i: number): string {
   return PIN_COLORS[i % PIN_COLORS.length];
 }
 
+// 칩 한 칸 표시값: 수량→"N개", 단가→"15,000원", 그 외 원문.
+function formatChip(f: string, v: string): string {
+  if (f === '수량') return v + '개';
+  if (f === '단가') {
+    const n = num(v);
+    return (n != null ? n.toLocaleString() : v) + '원';
+  }
+  return v;
+}
+// 공유 이미지용 한 줄 라벨 — 채워진 필드만 " / " 로 join.
 function pinLabel(p: Pin): string {
-  return FIELDS.slice(0, p.fi)
-    .map((f) => {
-      const v = p.vals[f];
-      if (v == null || v === '') return null;
-      if (f === '수량') return v + '개';
-      if (f === '단가') {
-        const n = num(v);
-        return (n != null ? n.toLocaleString() : v) + '원';
-      }
-      return v;
-    })
+  return FIELDS.map((f) => {
+    const v = p.vals[f];
+    return v ? formatChip(f, v) : null;
+  })
     .filter(Boolean)
     .join(' / ');
 }
@@ -137,6 +138,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [active, setActive] = useState<number | null>(null);
   const [selPin, setSelPin] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
+  const [editingField, setEditingField] = useState<string | null>(null); // 편집 중인 칩(필드).
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭 — 말풍선이 우측 경계 넘치면 왼쪽으로 뒤집기 위함.
   const [order, setOrder] = useState<OrderContext | null>(null);
@@ -215,7 +217,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             lx: 30,
             ly: 30 + i * 30,
             dragged: false,
-            fi: FIELDS.length,
             vals: {
               월일: g['월일'] || '',
               품목코드: g['품목코드'] || '',
@@ -311,11 +312,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         setGhost(null);
         drag.current = null;
         setSelPin(null);
-        setPins((prev) => {
-          const next = [...prev, { ax, ay, lx, ly, dragged: dr, vals: {}, fi: 0 }];
-          setActive(next.length - 1);
-          return next;
-        });
+        // 새 핀은 빈 칩으로 생성만 — 자동 입력칸 X. 칩을 더블클릭해야 편집 입력이 열린다.
+        setPins((prev) => [...prev, { ax, ay, lx, ly, dragged: dr, vals: {} }]);
+        setActive(null);
+        setEditingField(null);
         setDraft('');
       } else if (pinDrag.current) {
         const pd = pinDrag.current;
@@ -335,12 +335,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     };
   }, []);
 
-  // active 핀이 "바뀔 때만" 입력 포커스. (deps 에 pins 를 넣으면 우측 grid 편집 → pins 변경마다
-  //  사진 위 입력칸으로 포커스를 빼앗아, grid 에서 글씨가 안 써지고 포커스가 튀던 버그가 있었음.)
+  // 칩 편집을 열면(active+editingField) 입력칸 포커스 + 전체 선택 → 타자 즉시 교체.
+  // (deps 에 pins 를 넣으면 우측 grid 편집마다 포커스를 빼앗는 버그가 있어 제외.)
   useEffect(() => {
-    if (active != null) inputRef.current?.focus();
+    if (active != null && editingField) {
+      const el = inputRef.current;
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
+  }, [active, editingField]);
 
   // 창 크기 변경 시 표시 이미지 폭 갱신(말풍선 flip 판정용).
   useEffect(() => {
@@ -372,29 +378,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   const closeActive = () => {
-    if (active == null) return;
-    setPins((prev) => (prev[active] && prev[active].fi === 0 ? prev.filter((_, i) => i !== active) : prev));
     setActive(null);
+    setEditingField(null);
     setDraft('');
   };
 
+  // 현재 편집 중인 칩(editingField) 한 칸을 커밋하고 닫는다.
   const commitDraft = () => {
-    if (active == null) return;
+    if (active == null || !editingField) return;
     const val = draft.trim();
-    setPins((prev) => {
-      const next = prev.map((p, i) => {
-        if (i !== active) return p;
-        const np = { ...p, vals: { ...p.vals, [FIELDS[p.fi]]: val }, fi: p.fi + 1 };
-        if (np.splitPending && FIELDS[np.fi - 1] === '품목') {
-          np.fi = FIELDS.indexOf('단가');
-          np.splitPending = false;
-        }
-        return np;
-      });
-      const ap = next[active];
-      if (ap && ap.fi >= FIELDS.length) setActive(null);
-      return next;
-    });
+    const f = editingField;
+    setPins((prev) => prev.map((p, i) => (i === active ? { ...p, vals: { ...p.vals, [f]: val } } : p)));
+    setActive(null);
+    setEditingField(null);
     setDraft('');
   };
 
@@ -413,11 +409,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     setSelPin(null);
   };
 
-  const resumePin = (i: number) => {
-    if (activeRef.current !== null) return;
+  // 칩 더블클릭 → 그 필드 편집. 기존 값을 입력칸에 넣고 전체 선택(포커스) → 타자 즉시 교체.
+  const startEdit = (i: number, f: string) => {
     setSelPin(null);
     setActive(i);
-    setDraft('');
+    setEditingField(f);
+    setDraft(pins[i]?.vals[f] || '');
   };
 
   // ---- grid 편집 -------------------------------------------------------
@@ -425,7 +422,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     setPins((prev) => {
       const next = [...prev];
       if (!next[i]) {
-        next[i] = { ax: 30, ay: 30 + i * 30, lx: 30, ly: 30 + i * 30, dragged: false, vals: {}, fi: FIELDS.length };
+        next[i] = { ax: 30, ay: 30 + i * 30, lx: 30, ly: 30 + i * 30, dragged: false, vals: {} };
       }
       next[i] = { ...next[i], vals: { ...next[i].vals, [key]: value } };
       return next;
@@ -438,11 +435,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const applyResult = (unit: number, qty: number, desc: string) => {
     if (active == null) return;
     setPins((prev) =>
-      prev.map((p, i) =>
-        i === active ? { ...p, vals: { ...p.vals, 수량: String(qty), 단가: String(unit) }, fi: FIELDS.length } : p,
-      ),
+      prev.map((p, i) => (i === active ? { ...p, vals: { ...p.vals, 수량: String(qty), 단가: String(unit) } } : p)),
     );
     setActive(null);
+    setEditingField(null);
     setDraft('');
     cdlg(
       `${desc}<br><b>${unit.toLocaleString()}원</b> × ${qty}자 = <b>${(unit * qty).toLocaleString()}원</b><br>` +
@@ -453,10 +449,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   const splitMixed = (p: Pin, item: string) => {
     const ko = item.replace(/[^가-힣\s]/g, '').replace(/\s+/g, ' ').trim();
+    const idx = active!;
     setPins((prev) => {
-      const idx = active!;
       const cur = { ...prev[idx], vals: { ...prev[idx].vals } };
-      if (ko) cur.vals['품목'] = ko;
+      if (ko) cur.vals['품목'] = ko; // 현재 핀 = 한글만
       const np: Pin = {
         ax: p.ax,
         ay: p.ay,
@@ -464,15 +460,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         ly: p.ly + (p.dragged ? 46 : 36),
         dragged: p.dragged,
         vals: { 품목코드: p.vals['품목코드'] || '', 규격: p.vals['규격'] || '' },
-        fi: 1,
-        splitPending: true,
       };
       const next = [...prev];
       next[idx] = cur;
       next.splice(idx + 1, 0, np);
       return next;
     });
-    setActive((a) => (a == null ? a : a + 1));
+    // 새(영문) 핀의 품목 편집 열기.
+    setActive(idx + 1);
+    setEditingField('품목');
     setDraft('');
   };
 
@@ -796,58 +792,75 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {/* 말풍선 + 입력 */}
               {pins.map((p, i) => {
                 const isActive = i === active;
-                const label = pinLabel(p) + (p.fi < FIELDS.length && isActive ? ' /' : '');
-                const bubbleW = isActive ? 360 : Math.min(320, label.length * 8 + 36);
+                const editing = isActive && !!editingField;
+                // 칩 라벨 길이로 폭 추정(편집 중이면 입력칸 폭 가산) — 우측 넘침 판정용.
+                const labelLen = FIELDS.reduce(
+                  (s, f) => s + ((p.vals[f] ? formatChip(f, p.vals[f]).length : f.length) + 2),
+                  0,
+                );
+                const bubbleW = editing ? labelLen * 7 + 150 : Math.min(420, labelLen * 7 + 40);
                 const overflow = stageW > 0 && p.lx + bubbleW > stageW;
-                // 우측을 넘치는 드래그 말풍선: 박스 오른쪽 끝을 사진 우측 경계에 딱 붙임(✕가 맨 우측,
-                // 리더선은 드롭 지점 lx 에 닿아 박스 중앙쯤에서 만남). 제자리 말풍선은 왼쪽으로 열어 화면 안.
                 const pinRight = overflow && p.dragged;
                 const flipUp = overflow && !p.dragged;
                 const cls =
                   'aq-lbl' + (p.dragged ? '' : ' up') + (pinRight ? ' pinright' : '') + (flipUp ? ' flip' : '');
                 return (
-                  <div
-                    key={'lbl' + i}
-                    className={cls}
-                    style={{ left: pinRight ? stageW : p.lx, top: p.ly, cursor: !isActive && p.fi < FIELDS.length ? 'pointer' : undefined }}
-                    onClick={!isActive && p.fi < FIELDS.length ? () => resumePin(i) : undefined}
-                  >
-                    {label && (
-                      <div
-                        className="aq-pintag"
-                        style={{ background: pinColor(i) }}
-                        title="드래그해서 말풍선 이동"
-                        onMouseDown={(e) => startBubbleDrag(e, i)}
-                      >
-                        {label}
-                      </div>
-                    )}
-                    {i === active && (
-                      <>
-                        <div className="aq-pinrow">
+                  <div key={'lbl' + i} className={cls} style={{ left: pinRight ? stageW : p.lx, top: p.ly }}>
+                    {/* 태그(칩) 행 — 드래그=이동, 칩 더블클릭=그 필드 수정. */}
+                    <div
+                      className="aq-chips"
+                      style={{ ['--pin']: pinColor(i) } as React.CSSProperties}
+                      title="드래그=이동 · 칩 더블클릭=수정"
+                      onMouseDown={(e) => startBubbleDrag(e, i)}
+                    >
+                      {FIELDS.map((f) =>
+                        isActive && editingField === f ? (
                           <input
+                            key={f}
                             ref={inputRef}
+                            className="aq-chipinput"
                             value={draft}
-                            placeholder={`${FIELDS[p.fi]} 입력 후 Enter`}
+                            placeholder={f}
                             autoComplete="off"
                             onChange={(e) => setDraft(e.target.value)}
                             onKeyDown={onInputKey}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onDoubleClick={(e) => e.stopPropagation()}
                           />
-                          <button className="aq-pinx" onClick={closeActive} title="닫기">
-                            ✕
-                          </button>
-                        </div>
-                        {FIELDS[p.fi] === '단가' && (
-                          <div className="aq-lkrow">
-                            <button className="aq-lookup" onClick={openLookup}>
-                              🔎 단가 찾아보기
-                            </button>
-                            <button className="aq-lookup calc" onClick={runCalc}>
-                              🧮 계산기
-                            </button>
-                          </div>
-                        )}
-                      </>
+                        ) : (
+                          <span
+                            key={f}
+                            className={'aq-chip' + (p.vals[f] ? '' : ' empty')}
+                            title={`${f} — 더블클릭하여 수정`}
+                            onDoubleClick={(e) => {
+                              e.stopPropagation();
+                              startEdit(i, f);
+                            }}
+                          >
+                            {p.vals[f] ? formatChip(f, p.vals[f]) : f}
+                          </span>
+                        ),
+                      )}
+                      {isActive && (
+                        <button
+                          className="aq-chipx"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={closeActive}
+                          title="닫기"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    {isActive && editingField === '단가' && (
+                      <div className="aq-lkrow">
+                        <button className="aq-lookup" onMouseDown={(e) => e.stopPropagation()} onClick={openLookup}>
+                          🔎 단가 찾아보기
+                        </button>
+                        <button className="aq-lookup calc" onMouseDown={(e) => e.stopPropagation()} onClick={runCalc}>
+                          🧮 계산기
+                        </button>
+                      </div>
                     )}
                   </div>
                 );
@@ -859,12 +872,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   const gpr = stageW > 0 && ghost.x + 360 > stageW;
                   return (
                     <div className={'aq-lbl ghost' + (gpr ? ' pinright' : '')} style={{ left: gpr ? stageW : ghost.x, top: ghost.y }}>
-                      <div className="aq-pintag">여기에 입력</div>
-                      <div className="aq-pinrow">
-                        <input placeholder="품목코드 입력 후 Enter" readOnly disabled />
-                        <button className="aq-pinx" disabled>
-                          ✕
-                        </button>
+                      <div className="aq-chips" style={{ ['--pin']: '#0a7d8c' } as React.CSSProperties}>
+                        {FIELDS.map((f) => (
+                          <span key={f} className="aq-chip empty">
+                            {f}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   );
