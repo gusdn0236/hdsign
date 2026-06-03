@@ -63,7 +63,7 @@
   min-height: 0;
 }
 .aq-stagewrap {
-  flex: 1;
+  flex: 2 1 0; /* 사진이 가로의 약 2/3 차지 */
   min-width: 0;
   position: relative;
   overflow: hidden;
@@ -319,8 +319,8 @@
 }
 
 .aq-side {
-  width: 720px;
-  flex: none;
+  flex: 1 1 0; /* 명세서가 가로의 약 1/3 차지(나머지) */
+  min-width: 340px;
   background: #fff;
   border-left: 1px solid var(--line);
   display: flex;
