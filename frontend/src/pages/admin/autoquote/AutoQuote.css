@@ -85,6 +85,38 @@
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   cursor: crosshair;
 }
+/* 좌상단 커서/손바닥 모드 토글. */
+.aq-tools {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 6;
+  display: flex;
+  gap: 4px;
+  background: rgba(15, 22, 32, 0.7);
+  border-radius: 8px;
+  padding: 3px;
+}
+.aq-toolbtn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.aq-toolbtn.on {
+  background: var(--teal2);
+}
+/* 손바닥 모드 — 사진 위 커서를 손모양으로(확대 시 드래그=이동). */
+.aq-stagewrap.aq-hand .aq-stage img {
+  cursor: grab;
+}
 .aq-empty {
   color: #7a8aa0;
   text-align: center;
