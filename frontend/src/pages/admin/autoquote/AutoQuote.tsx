@@ -93,6 +93,12 @@ interface LookupRef {
 
 const ROWS = 10;
 
+// 핀 색상 — 은은하고 보기 편한 중채도 팔레트. 핀 순서대로 순환(점·리더선·말풍선 동일색).
+const PIN_COLORS = ['#0a7d8c', '#4f8a5b', '#b07d3a', '#8a5a7d', '#c06a52', '#5a73a8', '#6b8e4e', '#4a8c8c'];
+function pinColor(i: number): string {
+  return PIN_COLORS[i % PIN_COLORS.length];
+}
+
 function pinLabel(p: Pin): string {
   return FIELDS.slice(0, p.fi)
     .map((f) => {
@@ -132,6 +138,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [selPin, setSelPin] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
   const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [stageW, setStageW] = useState(0); // 표시 이미지 폭 — 말풍선이 우측 경계 넘치면 왼쪽으로 뒤집기 위함.
   const [order, setOrder] = useState<OrderContext | null>(null);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
@@ -316,6 +323,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   useEffect(() => {
     if (active != null) inputRef.current?.focus();
   }, [active, pins]);
+
+  // 창 크기 변경 시 표시 이미지 폭 갱신(말풍선 flip 판정용).
+  useEffect(() => {
+    const onResize = () => setStageW(imgRef.current?.clientWidth || 0);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const startStageDrag = (e: React.MouseEvent) => {
     if (activeRef.current !== null) return;
@@ -600,9 +614,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const fs = Math.max(13, Math.round(13 * sx));
     ctx.font = '700 ' + fs + 'px sans-serif';
     ctx.textBaseline = 'middle';
-    pins.forEach((p) => {
+    pins.forEach((p, i) => {
       const t = pinLabel(p);
       if (!t) return;
+      const c = pinColor(i);
       const ax = p.ax * sx,
         ay = p.ay * sy,
         lx = p.lx * sx,
@@ -615,7 +630,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       if (p.dragged) {
         bx = lx + 10 * sx;
         by = ly - h / 2;
-        ctx.strokeStyle = '#005f73';
+        ctx.strokeStyle = c;
         ctx.lineWidth = fs * 0.16;
         ctx.beginPath();
         ctx.moveTo(ax, ay);
@@ -625,7 +640,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         bx = ax - 10 * sx;
         by = ay - 9 * sx - h;
       }
-      ctx.fillStyle = '#005f73';
+      // 말풍선이 캔버스 우측을 넘으면 안쪽으로 당겨 그린다(편집 화면 flip 과 일관).
+      if (bx + w > cv.width - 2) bx = cv.width - w - 2;
+      if (bx < 2) bx = 2;
+      ctx.fillStyle = c;
       ctx.beginPath();
       ctx.moveTo(bx + r, by);
       ctx.arcTo(bx + w, by, bx + w, by + h, r);
@@ -636,7 +654,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       ctx.fill();
       ctx.fillStyle = '#fff';
       ctx.fillText(t, bx + padx, by + h / 2);
-      ctx.fillStyle = '#005f73';
+      ctx.fillStyle = c;
       ctx.beginPath();
       ctx.arc(ax, ay, fs * 0.35, 0, 7);
       ctx.fill();
@@ -709,12 +727,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 src={imgSrc}
                 alt="작업지시서"
                 onMouseDown={startStageDrag}
+                onLoad={() => setStageW(imgRef.current?.clientWidth || 0)}
                 draggable={false}
               />
               <svg className="aq-lines">
                 {pins.map((p, i) =>
                   p.dragged ? (
-                    <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke="#005f73" strokeWidth={2} />
+                    <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke={pinColor(i)} strokeWidth={2} />
                   ) : null,
                 )}
                 {ghost && <line x1={ghost.ax} y1={ghost.ay} x2={ghost.x} y2={ghost.y} stroke="#0a9396" strokeWidth={2} strokeDasharray="5 4" />}
@@ -725,7 +744,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 <div
                   key={'dot' + i}
                   className="aq-dot"
-                  style={{ left: p.ax, top: p.ay }}
+                  style={{ left: p.ax, top: p.ay, background: pinColor(i) }}
                   title={`드래그=이동 · 클릭=삭제 (${i + 1}번 행)`}
                   onMouseDown={(e) => startPinDrag(e, i)}
                 >
@@ -750,16 +769,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
               {/* 말풍선 + 입력 */}
               {pins.map((p, i) => {
-                const label = pinLabel(p) + (p.fi < FIELDS.length && i === active ? ' /' : '');
-                const cls = 'aq-lbl' + (p.dragged ? '' : ' up');
+                const isActive = i === active;
+                const label = pinLabel(p) + (p.fi < FIELDS.length && isActive ? ' /' : '');
+                // 말풍선 예상 폭(활성=입력칸+버튼). 우측 경계를 넘치면 flip(왼쪽으로 열기) → ✕까지 화면 안.
+                const bubbleW = isActive ? 360 : Math.min(320, label.length * 8 + 36);
+                const flip = stageW > 0 && p.lx + bubbleW > stageW;
+                const cls = 'aq-lbl' + (p.dragged ? '' : ' up') + (flip ? ' flip' : '');
                 return (
                   <div
                     key={'lbl' + i}
                     className={cls}
-                    style={{ left: p.lx, top: p.ly, cursor: i !== active && p.fi < FIELDS.length ? 'pointer' : undefined }}
-                    onClick={i !== active && p.fi < FIELDS.length ? () => resumePin(i) : undefined}
+                    style={{ left: p.lx, top: p.ly, cursor: !isActive && p.fi < FIELDS.length ? 'pointer' : undefined }}
+                    onClick={!isActive && p.fi < FIELDS.length ? () => resumePin(i) : undefined}
                   >
-                    {label && <div className="aq-pintag">{label}</div>}
+                    {label && <div className="aq-pintag" style={{ background: pinColor(i) }}>{label}</div>}
                     {i === active && (
                       <>
                         <div className="aq-pinrow">
