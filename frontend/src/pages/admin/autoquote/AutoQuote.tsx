@@ -145,6 +145,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [pins, setPins] = useState<Pin[]>([]);
   const [active, setActive] = useState<number | null>(null);
   const [selPin, setSelPin] = useState<number | null>(null);
+  const [selectedPin, setSelectedPin] = useState<number | null>(null); // 복사용으로 클릭 선택된 말풍선.
   const [draft, setDraft] = useState('');
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
@@ -171,9 +172,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const activeRef = useRef(active);
   const selPinRef = useRef(selPin);
   const draftRef = useRef(draft);
+  const selectedPinRef = useRef<number | null>(null);
+  const copyBufRef = useRef<Record<string, string> | null>(null); // Ctrl+C 로 복사한 말풍선 값.
   pinsRef.current = pins;
   activeRef.current = active;
   selPinRef.current = selPin;
+  selectedPinRef.current = selectedPin;
   draftRef.current = draft;
 
   // 전역(stage 밖) 드래그 상태 — 렌더와 무관한 transient.
@@ -357,6 +361,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         }
         pinDrag.current = null;
       } else if (bubbleDrag.current) {
+        if (!bubbleDrag.current.moved) setSelectedPin(bubbleDrag.current.i); // 클릭=복사용 선택
         bubbleDrag.current = null;
       }
     };
@@ -425,6 +430,39 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [imgSrc]);
+
+  // 말풍선 복사/붙여넣기 — 말풍선 클릭(선택) 후 Ctrl+C 로 값 복사, 다른 말풍선(선택/활성)에서 Ctrl+V 로 붙여넣기.
+  // grid 등 다른 입력칸(텍스트박스)에서는 기본 복사/붙여넣기 동작을 유지.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'c' && k !== 'v') return;
+      const ae = document.activeElement as HTMLElement | null;
+      const isPinInput = ae === inputRef.current;
+      const isOtherInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !isPinInput;
+      if (isOtherInput) return; // grid 등은 기본 복붙.
+      if (k === 'c') {
+        const src = activeRef.current != null ? activeRef.current : selectedPinRef.current;
+        const p = src != null ? pinsRef.current[src] : null;
+        if (p) {
+          copyBufRef.current = { ...p.vals };
+          e.preventDefault();
+        }
+      } else {
+        const target = activeRef.current != null ? activeRef.current : selectedPinRef.current;
+        if (copyBufRef.current && target != null) {
+          e.preventDefault();
+          const buf = copyBufRef.current;
+          setPins((prev) => prev.map((p, idx) => (idx === target ? { ...p, vals: { ...buf }, fi: FIELDS.length } : p)));
+          setActive(null);
+          setDraft('');
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // 삭제버튼(selPin)이 열린 상태에서 점/삭제버튼 외 다른 곳을 누르면 닫는다.
   // 점·삭제버튼은 onMouseDown 에서 stopPropagation 하므로 이 window 리스너에 안 잡힌다.
@@ -980,7 +1018,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   transformOrigin: '50% 50%',
                 };
                 return (
-                  <div key={'lbl' + i} className="aq-lbl" style={lblStyle}>
+                  <div key={'lbl' + i} className={'aq-lbl' + (i === selectedPin ? ' sel' : '')} style={lblStyle}>
                     {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
                       className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
