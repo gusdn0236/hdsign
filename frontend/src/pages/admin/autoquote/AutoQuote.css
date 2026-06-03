@@ -245,6 +245,22 @@
   font-weight: 500;
   font-style: italic;
 }
+/* 입력 중 현재 필드 안내 / 완료 2줄(품목·규격 / 단가·수량·합계). */
+.aq-pin-guide {
+  white-space: nowrap;
+  font-style: italic;
+  opacity: 0.95;
+}
+.aq-pin-l1 {
+  white-space: nowrap;
+  font-weight: 700;
+}
+.aq-pin-l2 {
+  white-space: nowrap;
+  font-size: 11px;
+  opacity: 0.95;
+  margin-top: 2px;
+}
 .aq-pinrow {
   display: flex;
   gap: 5px;

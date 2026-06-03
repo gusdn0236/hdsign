@@ -114,14 +114,13 @@ function formatChip(f: string, v: string): string {
   }
   return v;
 }
-// 공유 이미지용 한 줄 라벨 — 채워진 필드만 " / " 로 join.
+// 공유 이미지용 한 줄 라벨 — "품목 규격 / 단가원 ×수량개 = 합계원".
 function pinLabel(p: Pin): string {
-  return FIELDS.map((f) => {
-    const v = p.vals[f];
-    return v ? formatChip(f, v) : null;
-  })
-    .filter(Boolean)
-    .join(' / ');
+  const top = [p.vals['품목'], p.vals['규격']].filter(Boolean).join(' ');
+  const dp = num(p.vals['단가']);
+  const qty = num(p.vals['수량']) || 1;
+  const priceLine = dp != null ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원` : '';
+  return [top, priceLine].filter(Boolean).join(' / ');
 }
 
 function todayMD(): string {
@@ -838,8 +837,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {/* 말풍선 + 입력 */}
               {pins.map((p, i) => {
                 const isActive = i === active;
-                const label = pinLabel(p); // 채워진 값 전체를 " / " 로
-                const bubbleW = isActive ? 360 : Math.min(360, label.length * 8 + 60);
+                // 입력 중에는 현재 필드명만 안내. 끝나면 2줄: (위) 품목 규격, (아래) 단가원 ×수량개 = 합계원.
+                const top = [p.vals['품목'], p.vals['규격']].filter(Boolean).join(' ');
+                const dp = num(p.vals['단가']);
+                const qty = num(p.vals['수량']) || 1;
+                const priceLine =
+                  dp != null ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원` : '';
+                const hasContent = !!(top || priceLine);
+                const estW = isActive ? 150 : Math.max(top.length, priceLine.length) * 8 + 60;
+                const bubbleW = Math.min(420, estW);
                 const overflow = stageW > 0 && p.lx + bubbleW > stageW;
                 const pinRight = overflow && p.dragged;
                 const flipUp = overflow && !p.dragged;
@@ -847,9 +853,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   'aq-lbl' + (p.dragged ? '' : ' up') + (pinRight ? ' pinright' : '') + (flipUp ? ' flip' : '');
                 return (
                   <div key={'lbl' + i} className={cls} style={{ left: pinRight ? stageW : p.lx, top: p.ly }}>
-                    {/* 말풍선 태그 — 드래그=이동, 더블클릭=품목코드부터 입력/수정. */}
+                    {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
-                      className={'aq-pintag' + (label ? '' : ' empty')}
+                      className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
                       style={{ background: pinColor(i) }}
                       title="드래그=이동 · 더블클릭=처음부터 입력/수정"
                       onMouseDown={(e) => startBubbleDrag(e, i)}
@@ -858,7 +864,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                         startEdit(i);
                       }}
                     >
-                      {label || '✎ 더블클릭하여 입력'}
+                      {isActive ? (
+                        <span className="aq-pin-guide">{FIELDS[p.fi] ?? ''}</span>
+                      ) : hasContent ? (
+                        <>
+                          {top && <div className="aq-pin-l1">{top}</div>}
+                          {priceLine && <div className="aq-pin-l2">{priceLine}</div>}
+                        </>
+                      ) : (
+                        '✎ 더블클릭하여 입력'
+                      )}
                     </div>
                     {isActive && (
                       <>
