@@ -147,8 +147,13 @@
 .aq-lbl.up {
   transform: translate(-10px, calc(-100% - 9px));
 }
-.aq-lbl:not(.up) {
-  transform: translate(-50%, -50%); /* 리더선이 말풍선 정중앙에 닿도록 드롭 지점을 박스 중앙에 둔다 */
+/* 클릭(제자리) 말풍선이 사진 위쪽에 붙어 위로 못 열 때 아래로 연다. */
+.aq-lbl.down {
+  transform: translate(-10px, 9px);
+}
+/* 드래그 말풍선 — 리더선이 정중앙에 닿도록 드롭 지점을 박스 중앙에 둔다. */
+.aq-lbl.drag {
+  transform: translate(-50%, -50%);
 }
 /* 우측 경계를 넘는 말풍선은 왼쪽으로 열어 입력칸·닫기(✕)까지 화면 안에 들어오게.
    align-items:flex-end 로 내용을 앵커(리더선) 쪽으로 우측 정렬. */

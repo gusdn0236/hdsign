@@ -846,15 +846,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 const hasContent = !!(top || priceLine);
                 const estW = isActive ? 150 : Math.max(top.length, priceLine.length) * 8 + 60;
                 const bubbleW = Math.min(420, estW);
-                // 드래그 말풍선은 드롭 지점을 정중앙에 두므로 오른쪽 절반(bubbleW/2)만 넘침 판정.
-                const rightExtent = p.dragged ? p.lx + bubbleW / 2 : p.lx + bubbleW;
-                const overflow = stageW > 0 && rightExtent > stageW;
-                const pinRight = overflow && p.dragged;
-                const flipUp = overflow && !p.dragged;
-                const cls =
-                  'aq-lbl' + (p.dragged ? '' : ' up') + (pinRight ? ' pinright' : '') + (flipUp ? ' flip' : '');
+                let cls = 'aq-lbl';
+                let leftPx = p.lx;
+                if (p.dragged) {
+                  // 드래그: 드롭 지점을 박스 중앙에. 우측 절반이 넘치면 박스 오른쪽 끝을 사진 경계에 붙임.
+                  const pinRight = stageW > 0 && p.lx + bubbleW / 2 > stageW;
+                  cls += ' drag' + (pinRight ? ' pinright' : '');
+                  leftPx = pinRight ? stageW : p.lx;
+                } else {
+                  // 클릭(제자리): 기본 위로 열되, 좌우는 사진 안으로 클램프 / 위 공간 부족하면 아래로.
+                  const maxLeft = Math.max(10, stageW - bubbleW + 10);
+                  leftPx = stageW > 0 ? Math.min(Math.max(p.lx, 10), maxLeft) : p.lx;
+                  cls += p.ly < 72 ? ' down' : ' up';
+                }
                 return (
-                  <div key={'lbl' + i} className={cls} style={{ left: pinRight ? stageW : p.lx, top: p.ly }}>
+                  <div key={'lbl' + i} className={cls} style={{ left: leftPx, top: p.ly }}>
                     {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
                       className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
@@ -918,9 +924,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {/* 드래그하는 동안 반투명 미리보기 말풍선 — 떼면 여기에 실제 입력칸이 생긴다. */}
               {ghost &&
                 (() => {
-                  const gpr = stageW > 0 && ghost.x + 360 > stageW;
+                  const gpr = stageW > 0 && ghost.x + 180 > stageW;
                   return (
-                    <div className={'aq-lbl ghost' + (gpr ? ' pinright' : '')} style={{ left: gpr ? stageW : ghost.x, top: ghost.y }}>
+                    <div className={'aq-lbl ghost drag' + (gpr ? ' pinright' : '')} style={{ left: gpr ? stageW : ghost.x, top: ghost.y }}>
                       <div className="aq-pintag">여기에 입력</div>
                       <div className="aq-pinrow">
                         <input placeholder="품목코드 입력 후 Enter" readOnly disabled />
