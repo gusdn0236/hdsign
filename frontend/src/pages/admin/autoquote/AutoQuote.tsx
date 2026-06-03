@@ -34,7 +34,8 @@ async function renderPdfFirstPage(url: string): Promise<string> {
   try {
     const page = await pdf.getPage(1);
     const base = page.getViewport({ scale: 1 });
-    const scale = Math.min(3, Math.max(1, 1600 / base.width));
+    // 고해상 렌더(확대해도 선명) — 가로 ~3200px 목표.
+    const scale = Math.min(4.5, Math.max(1, 3200 / base.width));
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(viewport.width);
@@ -42,7 +43,7 @@ async function renderPdfFirstPage(url: string): Promise<string> {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('no 2d context');
     await page.render({ canvasContext: ctx, viewport }).promise;
-    return canvas.toDataURL('image/jpeg', 0.92);
+    return canvas.toDataURL('image/jpeg', 0.95);
   } finally {
     pdf.cleanup?.();
   }
@@ -148,6 +149,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
   const [stageH, setStageH] = useState(0);
+  const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~5). 핀 좌표는 zoom 으로 나눠 변환.
+  const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
   const [order, setOrder] = useState<OrderContext | null>(null);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
@@ -156,8 +159,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string } | null>(null);
 
   const stageRef = useRef<HTMLDivElement>(null);
+  const stagewrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const zoomRef = useRef(1);
+  zoomRef.current = zoom;
 
   // window 마우스 핸들러가 최신 상태를 읽도록 ref 미러.
   const pinsRef = useRef(pins);
@@ -269,19 +275,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   // ---- 전역 마우스 무브/업 (스테이지 드래그 + 핀 드래그) ------------------
   useEffect(() => {
+    // 콘텐츠(이미지) 좌표 — 확대(zoom) 중이면 화면 px 를 zoom 으로 나눠 원본 좌표로 환산.
     const localXY = (e: MouseEvent) => {
       const st = stageRef.current?.getBoundingClientRect();
-      return { x: e.clientX - (st?.left ?? 0), y: e.clientY - (st?.top ?? 0) };
+      const z = zoomRef.current || 1;
+      return { x: (e.clientX - (st?.left ?? 0)) / z, y: (e.clientY - (st?.top ?? 0)) / z };
     };
     const onMove = (e: MouseEvent) => {
+      const z = zoomRef.current || 1;
       if (drag.current) {
         const { x, y } = localXY(e);
         if (Math.abs(x - drag.current.ax) > 4 || Math.abs(y - drag.current.ay) > 4) drag.current.moved = true;
         if (drag.current.moved) setGhost({ x, y, ax: drag.current.ax, ay: drag.current.ay });
         else setGhost(null);
       } else if (pinDrag.current) {
-        const dx = e.clientX - pinDrag.current.mx;
-        const dy = e.clientY - pinDrag.current.my;
+        const dx = (e.clientX - pinDrag.current.mx) / z;
+        const dy = (e.clientY - pinDrag.current.my) / z;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) pinDrag.current.moved = true;
         const pd = pinDrag.current;
         setPins((prev) =>
@@ -297,8 +306,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         );
       } else if (bubbleDrag.current) {
         const bd = bubbleDrag.current;
-        const dx = e.clientX - bd.mx;
-        const dy = e.clientY - bd.my;
+        const dx = (e.clientX - bd.mx) / z;
+        const dy = (e.clientY - bd.my) / z;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) bd.moved = true;
         setPins((prev) =>
           prev.map((p, idx) => {
@@ -377,6 +386,34 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // 새 이미지 로드 시 줌/이동 초기화.
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [imgSrc]);
+
+  // 휠 = 포커스 확대/축소(커서 지점 고정). 핀 드래그는 그대로(좌표는 zoom 으로 변환).
+  useEffect(() => {
+    const el = stagewrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!imgSrc) return;
+      e.preventDefault();
+      const rect = stageRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const z = zoomRef.current;
+      const cux = (e.clientX - rect.left) / z; // 커서 아래 콘텐츠 좌표
+      const cuy = (e.clientY - rect.top) / z;
+      const z2 = Math.max(1, Math.min(5, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      if (z2 === z) return;
+      if (z2 === 1) setPan({ x: 0, y: 0 });
+      else setPan((prev) => ({ x: prev.x + cux * (z - z2), y: prev.y + cuy * (z - z2) }));
+      setZoom(z2);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [imgSrc]);
+
   // 삭제버튼(selPin)이 열린 상태에서 점/삭제버튼 외 다른 곳을 누르면 닫는다.
   // 점·삭제버튼은 onMouseDown 에서 stopPropagation 하므로 이 window 리스너에 안 잡힌다.
   useEffect(() => {
@@ -399,7 +436,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     // 입력 중인 핀이 있어도 사진의 다른 곳을 클릭/드래그하면 새 핀을 만든다(기존 핀은 입력한 만큼 유지).
     e.preventDefault();
     const st = stageRef.current?.getBoundingClientRect();
-    drag.current = { ax: e.clientX - (st?.left ?? 0), ay: e.clientY - (st?.top ?? 0), moved: false };
+    const z = zoomRef.current || 1;
+    drag.current = { ax: (e.clientX - (st?.left ?? 0)) / z, ay: (e.clientY - (st?.top ?? 0)) / z, moved: false };
   };
 
   const startPinDrag = (e: React.MouseEvent, i: number) => {
@@ -762,6 +800,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         <b>자동견적</b>
         <span className="aq-hint">{status}</span>
         <span className="aq-sp" />
+        {imgSrc && <span className="aq-hint" style={{ marginRight: 4 }}>휠로 확대 · {Math.round(zoom * 100)}%</span>}
+        {zoom !== 1 && (
+          <button
+            className="aq-x"
+            title="원래 크기"
+            onClick={() => {
+              setZoom(1);
+              setPan({ x: 0, y: 0 });
+            }}
+          >
+            ⤢
+          </button>
+        )}
         <button
           className="aq-x"
           title="초기화"
@@ -781,7 +832,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       </div>
 
       <div className="aq-wrap">
-        <div className="aq-stagewrap">
+        <div className="aq-stagewrap" ref={stagewrapRef}>
           {!imgSrc ? (
             <div className="aq-empty">
               📋
@@ -791,7 +842,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <span style={{ fontSize: 12 }}>Ctrl + V</span>
             </div>
           ) : (
-            <div className="aq-stage" ref={stageRef}>
+            <div
+              className="aq-stage"
+              ref={stageRef}
+              style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0' }}
+            >
               {/* crossOrigin 미설정 — R2 공개 URL 이 CORS 헤더를 안 줘서 anonymous 면 이미지가 깨진다.
                   로드 우선. 공유 캔버스가 taint 로 막히면 PNG 다운로드로 폴백한다. */}
               <img
