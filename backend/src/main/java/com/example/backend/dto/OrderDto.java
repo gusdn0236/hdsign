@@ -45,6 +45,10 @@ public class OrderDto {
         private List<WorkerCompletionInfo> workerCompletions;
         // 워처가 분배함에서 클릭한 슬롯 라벨 — 작업현황에서 "이 지시서가 어느 직원들에게 배정됐었는가" 표시용.
         private List<String> departmentSlots;
+        // 자동견적 — 이 주문에 명세서가 작성·저장되었는지(배지 "명세서").
+        private Boolean hasEstimate;
+        // 자동견적 — 명세서가 이지폼에 업로드된 시각(배지 "이지폼"). 미업로드면 null.
+        private LocalDateTime easyformUploadedAt;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
@@ -83,6 +87,13 @@ public class OrderDto {
     }
 
     public static Response toResponse(Order order) {
+        return toResponse(order, null);
+    }
+
+    // 자동견적 명세서가 함께 주어지면 배지 플래그(hasEstimate/easyformUploadedAt)를 채운다.
+    // 목록/상세 엔드포인트에서 estimate 를 배치 조회해 넘긴다. 그 외 호출은 toResponse(order)
+    // 로 들어와 플래그가 기본값(hasEstimate=false, easyformUploadedAt=null)으로 남는다.
+    public static Response toResponse(Order order, com.example.backend.entity.AutoQuoteEstimate estimate) {
         List<FileInfo> files = order.getFiles().stream()
                 .map(file -> FileInfo.builder()
                         .id(file.getId())
@@ -127,6 +138,8 @@ public class OrderDto {
                                 .build())
                         .toList())
                 .departmentSlots(splitCsv(order.getDepartmentSlots()))
+                .hasEstimate(estimate != null)
+                .easyformUploadedAt(estimate != null ? estimate.getEasyformUploadedAt() : null)
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .deletedAt(order.getDeletedAt())

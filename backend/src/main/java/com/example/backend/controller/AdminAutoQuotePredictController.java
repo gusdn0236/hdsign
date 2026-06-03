@@ -1,0 +1,89 @@
+package com.example.backend.controller;
+
+import com.example.backend.autoquote.predict.InvoiceEvidenceService;
+import com.example.backend.autoquote.predict.PricePredictor;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 자동견적 <b>가격예측 + 근거 서빙</b> admin 전용 백엔드.
+ *
+ * <ul>
+ *   <li>{@code POST /api/admin/autoquote/predict} — 거래처 + 품목들 → 과거 단가 기반 예측가/근거.
+ *       {@link PricePredictor}(priced_index.json 코퍼스, build_learn_corpus.py 포팅) 사용.</li>
+ *   <li>{@code GET  /api/admin/autoquote/evidence/{invoiceIdx}?file=easyform_...json} — 예측에
+ *       쓰인 과거 명세서 grid(+가능하면 작업지시서 사진). {@link InvoiceEvidenceService} 사용.</li>
+ * </ul>
+ *
+ * <p><b>Iron Law</b>: priced_index/명세서/사진 = 회사 기밀 → admin JWT only(공개 Pages 금지).
+ * 클래스가 {@code /api/admin/**} 아래라 SecurityConfig 가 ROLE_ADMIN 을 요구하고,
+ * {@link PreAuthorize} 로 다시 못 박는다(JWT 없으면 401, 비-admin 이면 403). 코퍼스/명세서
+ * 미프로비저닝 시 스택트레이스 대신 503/404 의 안정된 JSON 계약으로 graceful 응답한다.
+ */
+@RestController
+@RequestMapping("/api/admin/autoquote")
+@RequiredArgsConstructor
+public class AdminAutoQuotePredictController {
+
+    private final PricePredictor predictor;
+    private final InvoiceEvidenceService evidenceService;
+
+    /** 예측 요청 본문. items 각 줄은 {text, material, size, qty}. */
+    public record PredictRequest(String client, List<ItemRequest> items) {
+    }
+
+    public record ItemRequest(String text, String material, String size, String qty) {
+    }
+
+    @PostMapping(value = "/predict", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> predict(@RequestBody(required = false) PredictRequest req) {
+        if (req == null || req.items() == null || req.items().isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "missing_field",
+                            "message", "client 와 items(최소 1개)는 필수입니다."));
+        }
+        List<PricePredictor.Item> items = req.items().stream()
+                .map(i -> new PricePredictor.Item(i.text(), i.material(), i.size(), i.qty()))
+                .toList();
+
+        List<PricePredictor.Prediction> out = predictor.predict(req.client(), items);
+        if (out == null) {
+            // priced_index 미프로비저닝 → graceful 503(기밀 누수 없음).
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("error", "autoquote_data_unavailable"));
+        }
+        return ResponseEntity.ok(out);
+    }
+
+    @GetMapping("/evidence/{invoiceIdx}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> evidence(@PathVariable("invoiceIdx") String invoiceIdx,
+                                      @RequestParam("file") String file) {
+        if (!evidenceService.isValidFile(file)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "invalid_file",
+                            "message", "file 은 easyform_*_*.json 형식이어야 합니다."));
+        }
+        InvoiceEvidenceService.Evidence ev = evidenceService.find(file, invoiceIdx);
+        if (ev == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "evidence_not_found",
+                            "message", "해당 명세서를 찾지 못했습니다."));
+        }
+        return ResponseEntity.ok(ev);
+    }
+}

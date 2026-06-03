@@ -1,15 +1,18 @@
 package com.example.backend.controller;
 
 import com.example.backend.dto.OrderDto;
+import com.example.backend.entity.AutoQuoteEstimate;
 import com.example.backend.entity.ClientUser;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
+import com.example.backend.repository.AutoQuoteEstimateRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
 import com.example.backend.service.OrderArchiveService;
 import com.example.backend.service.StorageUsageService;
 import com.example.backend.service.WorksheetFlattenService;
 import com.example.backend.service.WorksheetThumbnailService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +38,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +53,7 @@ import java.util.zip.ZipOutputStream;
 public class AdminOrderController {
 
     private final OrderRepository orderRepository;
+    private final AutoQuoteEstimateRepository estimateRepository;
     private final ClientService clientService;
     private final S3Client s3Client;
     private final WorksheetThumbnailService thumbnailService;
@@ -140,21 +145,39 @@ public class AdminOrderController {
     // 전체 작업 목록 조회 (휴지통 제외, 최신순)
     @GetMapping
     public ResponseEntity<List<OrderDto.Response>> getAllOrders() {
-        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNullOrderByCreatedAtDesc()
-                .stream()
-                .map(OrderDto::toResponse)
-                .toList();
-        return ResponseEntity.ok(orders);
+        return ResponseEntity.ok(toResponsesWithEstimates(
+                orderRepository.findByDeletedAtIsNullOrderByCreatedAtDesc()));
     }
 
     // 작업완료(휴지통) 목록 — 30일 후 자동 완전삭제 대상.
     @GetMapping("/trash")
     public ResponseEntity<List<OrderDto.Response>> getTrash() {
-        List<OrderDto.Response> orders = orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()
-                .stream()
-                .map(OrderDto::toResponse)
+        return ResponseEntity.ok(toResponsesWithEstimates(
+                orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()));
+    }
+
+    // 주문 목록 → 응답 변환 + 자동견적 명세서(estimate) 배지 플래그 enrich.
+    // 목록의 order_id 들로 estimate 를 한 번에 배치 조회해 N+1 을 피한다.
+    private List<OrderDto.Response> toResponsesWithEstimates(List<Order> orders) {
+        if (orders.isEmpty()) return List.of();
+        List<Long> ids = orders.stream().map(Order::getId).toList();
+        Map<Long, AutoQuoteEstimate> byOrderId = new HashMap<>();
+        for (AutoQuoteEstimate est : estimateRepository.findByOrderIdIn(ids)) {
+            byOrderId.put(est.getOrderId(), est);
+        }
+        return orders.stream()
+                .map(o -> OrderDto.toResponse(o, byOrderId.get(o.getId())))
                 .toList();
-        return ResponseEntity.ok(orders);
+    }
+
+    // 주문 단건 조회 — 자동견적 명세서작성 화면(/admin/autoquote?order=id)이 지시서 이미지·거래처
+    // 컨텍스트 + 명세서 배지 플래그를 얻는 데 사용. (목록 전체를 받지 않도록 단건 제공.)
+    @GetMapping("/{id}")
+    public ResponseEntity<OrderDto.Response> getOne(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(id).orElse(null);
+        return ResponseEntity.ok(OrderDto.toResponse(order, est));
     }
 
     // 관리자가 모달을 열면 "본 시각" 갱신 → 행 배지(신규 사진/지시서 변경) 클리어.
@@ -165,6 +188,65 @@ public class AdminOrderController {
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
         order.setAdminViewedAt(LocalDateTime.now());
         return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
+    }
+
+    // ===== 자동견적 명세서(estimate) — slice-12 (ADDITIVE) =====
+    // 주문 상세모달 "명세서작성" → /admin/autoquote 에서 작성한 명세서를 주문당 1건 저장/조회.
+    // 작업중/작업완료 공용. 명세서 본문(grid 등)은 JSON 그대로 보관한다.
+
+    // 명세서 저장(upsert) — 주문당 1건. body = 명세서 JSON(grid + 메타) 전체.
+    @PutMapping("/{id}/estimate")
+    public ResponseEntity<?> putEstimate(@PathVariable Long id, @RequestBody(required = false) JsonNode body) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        if (body == null || body.isNull()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "명세서 본문이 비어 있습니다."));
+        }
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(order.getId())
+                .orElseGet(() -> AutoQuoteEstimate.builder().orderId(order.getId()).build());
+        est.setGridJson(body.toString());
+        est.setSavedAt(LocalDateTime.now());
+        return ResponseEntity.ok(estimateResponse(estimateRepository.save(est)));
+    }
+
+    // 명세서 조회 — 없으면 404(프론트는 "신규 작성"으로 처리).
+    @GetMapping("/{id}/estimate")
+    public ResponseEntity<?> getEstimate(@PathVariable Long id) {
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(id).orElse(null);
+        if (est == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "estimate_not_found"));
+        }
+        return ResponseEntity.ok(estimateResponse(est));
+    }
+
+    // 이지폼 업로드 완료 표시(slice-14 매크로가 호출) → "이지폼" 배지. 명세서 선행 필수.
+    @PostMapping("/{id}/estimate/easyform-uploaded")
+    public ResponseEntity<?> markEasyformUploaded(@PathVariable Long id) {
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(id).orElse(null);
+        if (est == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "estimate_not_found",
+                            "message", "먼저 명세서를 저장해야 합니다."));
+        }
+        est.setEasyformUploadedAt(LocalDateTime.now());
+        return ResponseEntity.ok(estimateResponse(estimateRepository.save(est)));
+    }
+
+    // estimate 응답 — gridJson 을 다시 JSON 으로 파싱해 estimate 필드로 돌려준다.
+    private Map<String, Object> estimateResponse(AutoQuoteEstimate est) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("orderId", est.getOrderId());
+        body.put("hasEstimate", true);
+        body.put("savedAt", est.getSavedAt() != null ? est.getSavedAt().toString() : null);
+        body.put("easyformUploadedAt",
+                est.getEasyformUploadedAt() != null ? est.getEasyformUploadedAt().toString() : null);
+        try {
+            body.put("estimate", new ObjectMapper().readTree(est.getGridJson()));
+        } catch (Exception e) {
+            body.put("estimate", null);
+        }
+        return body;
     }
 
     // 상태 변경
