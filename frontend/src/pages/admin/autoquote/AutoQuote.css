@@ -171,6 +171,60 @@
   opacity: 0.45;
   pointer-events: none;
 }
+
+/* 말풍선 = 핀 색 알약(칩) 행. 칩이 다닥 이어붙음. 드래그=이동(.aq-chips), 칩 더블클릭=그 필드 수정. */
+.aq-chips {
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--pin, var(--teal));
+  border-radius: 7px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  cursor: move;
+  max-width: 460px;
+}
+.aq-chip {
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  border-right: 1px solid rgba(255, 255, 255, 0.28);
+  cursor: text;
+  user-select: none;
+}
+.aq-chip:last-of-type {
+  border-right: none;
+}
+.aq-chip.empty {
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 500;
+}
+.aq-chips .aq-chipinput {
+  border: none;
+  outline: none;
+  padding: 5px 8px;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  width: 130px;
+  min-width: 90px;
+  background: #fff;
+  color: #1f2733;
+  box-shadow: inset 0 0 0 2px var(--teal2);
+}
+.aq-chipx {
+  border: none;
+  background: rgba(0, 0, 0, 0.18);
+  color: #fff;
+  width: 26px;
+  flex: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+.aq-chipx:hover {
+  background: rgba(0, 0, 0, 0.32);
+}
 .aq-pintag {
   background: var(--teal);
   color: #fff;
