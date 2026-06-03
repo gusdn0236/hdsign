@@ -151,6 +151,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [stageH, setStageH] = useState(0);
   const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~5). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
+  const [mode, setMode] = useState<'cursor' | 'hand'>('cursor'); // 커서=핀 작성 / 손바닥=화면 이동
   const [order, setOrder] = useState<OrderContext | null>(null);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
@@ -182,6 +183,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   >(null);
   // 말풍선(텍스트박스) 자체를 잡아서 이동 — 태그를 핸들로. 점(앵커)은 고정, 말풍선 위치(lx,ly)만 이동.
   const bubbleDrag = useRef<{ i: number; mx: number; my: number; lx: number; ly: number; moved: boolean } | null>(null);
+  // 화면 이동(팬) — 가운데 버튼 드래그 또는 손바닥 모드. 시작 시점 pan(px) 캡처.
+  const panDrag = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; ax: number; ay: number } | null>(null);
 
   const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
@@ -283,6 +286,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     };
     const onMove = (e: MouseEvent) => {
       const z = zoomRef.current || 1;
+      if (panDrag.current) {
+        const pd = panDrag.current;
+        setPan({ x: pd.px + (e.clientX - pd.sx), y: pd.py + (e.clientY - pd.sy) });
+        return;
+      }
       if (drag.current) {
         const { x, y } = localXY(e);
         if (Math.abs(x - drag.current.ax) > 4 || Math.abs(y - drag.current.ay) > 4) drag.current.moved = true;
@@ -319,6 +327,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
     };
     const onUp = (e: MouseEvent) => {
+      if (panDrag.current) {
+        panDrag.current = null;
+        return;
+      }
       if (drag.current) {
         const { x, y } = localXY(e);
         const dr = drag.current.moved;
@@ -428,6 +440,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   }, []);
 
   const startStageDrag = (e: React.MouseEvent) => {
+    if (!imgSrc) return;
+    // 가운데(휠) 버튼 드래그 또는 손바닥 모드 = 화면 이동(팬). 확대 상태에서만.
+    if (e.button === 1 || mode === 'hand') {
+      if (zoomRef.current > 1) {
+        e.preventDefault();
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+      }
+      return;
+    }
+    if (e.button !== 0) return;
     // 삭제버튼(selPin)이 열려 있으면 사진 클릭은 "삭제버튼 닫기"로만 — 새 핀은 안 만든다.
     if (selPinRef.current != null) {
       setSelPin(null);
@@ -832,7 +854,33 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       </div>
 
       <div className="aq-wrap">
-        <div className="aq-stagewrap" ref={stagewrapRef}>
+        <div
+          className={`aq-stagewrap${mode === 'hand' ? ' aq-hand' : ''}`}
+          ref={stagewrapRef}
+          onMouseDown={startStageDrag}
+        >
+          {imgSrc && (
+            <div className="aq-tools">
+              <button
+                type="button"
+                className={'aq-toolbtn' + (mode === 'cursor' ? ' on' : '')}
+                title="커서 — 드래그로 말풍선 작성"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setMode('cursor')}
+              >
+                🖱️
+              </button>
+              <button
+                type="button"
+                className={'aq-toolbtn' + (mode === 'hand' ? ' on' : '')}
+                title="손바닥 — 드래그로 사진 이동(확대 시)"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setMode('hand')}
+              >
+                ✋
+              </button>
+            </div>
+          )}
           {!imgSrc ? (
             <div className="aq-empty">
               📋
@@ -853,7 +901,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 ref={imgRef}
                 src={imgSrc}
                 alt="작업지시서"
-                onMouseDown={startStageDrag}
                 onLoad={() => {
                   setStageW(imgRef.current?.clientWidth || 0);
                   setStageH(imgRef.current?.clientHeight || 0);
@@ -874,7 +921,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 <div
                   key={'dot' + i}
                   className="aq-dot"
-                  style={{ left: p.ax, top: p.ay, background: pinColor(i) }}
+                  style={{
+                    left: p.ax - 10.5 / zoom,
+                    top: p.ay - 10.5 / zoom,
+                    background: pinColor(i),
+                    transform: `scale(${1 / zoom})`,
+                    transformOrigin: '0 0',
+                  }}
                   title={`드래그=이동 · 클릭=삭제 (${i + 1}번 행)`}
                   onMouseDown={(e) => startPinDrag(e, i)}
                 >
@@ -886,7 +939,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {selPin != null && selPin !== active && pins[selPin] && (
                 <button
                   className="aq-pindel"
-                  style={{ left: pins[selPin].ax, top: pins[selPin].ay }}
+                  style={{
+                    left: pins[selPin].ax + 14 / zoom,
+                    top: pins[selPin].ay - 16 / zoom,
+                    transform: `scale(${1 / zoom})`,
+                    transformOrigin: '0 0',
+                  }}
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -907,26 +965,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 const priceLine =
                   dp != null ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원` : '';
                 const hasContent = !!(top || priceLine);
-                // 활성(입력 중)이면 입력칸 때문에 박스가 ~360px 까지 넓어진다 → 그 폭으로 경계 판정해야 ✕가 안 잘림.
-                const estW = isActive ? 360 : Math.max(top.length, priceLine.length) * 8 + 60;
-                const bubbleW = Math.min(440, estW);
-                const bubbleH = isActive ? 96 : 46;
-                let cls = 'aq-lbl';
-                let leftPx = p.lx;
-                let transform; // 드래그 말풍선은 드롭 지점에 코너를 붙이고, 경계 넘치면 그 코너 기준 뒤집기.
-                if (p.dragged) {
-                  const flipX = stageW > 0 && p.lx + bubbleW > stageW;
-                  const flipY = stageH > 0 && p.ly + bubbleH > stageH;
-                  cls += ' drag' + (flipX ? ' alignr' : '');
-                  transform = `translate(${flipX ? '-100%' : '0'}, ${flipY ? '-100%' : '0'})`;
-                } else {
-                  // 저장본 복원(제자리) 말풍선: 위로 열되 좌우 클램프 / 위 공간 부족하면 아래로.
-                  const maxLeft = Math.max(10, stageW - bubbleW + 10);
-                  leftPx = stageW > 0 ? Math.min(Math.max(p.lx, 10), maxLeft) : p.lx;
-                  cls += p.ly < 72 ? ' down' : ' up';
-                }
+                // 말풍선은 확대해도 원래 크기 유지(scale 1/zoom). 드롭 지점에 코너를 붙이고,
+                // 사진 경계를 넘치면 그 코너 기준으로 뒤집어(우→좌, 아래→위) 화면 안에 들어오게 한다.
+                // 박스가 차지하는 화면폭(~360px)을 zoom 으로 나눈 만큼이 콘텐츠 폭 — 그것으로 경계 판정.
+                const estWpx = isActive ? 360 : Math.max(top.length, priceLine.length) * 8 + 60;
+                const bubbleWc = Math.min(440, estWpx) / zoom;
+                const bubbleHc = (isActive ? 96 : 46) / zoom;
+                const flipX = stageW > 0 && p.lx + bubbleWc > stageW;
+                const flipY = stageH > 0 && p.ly + bubbleHc > stageH;
+                const lblStyle: React.CSSProperties = {
+                  transform: `scale(${1 / zoom})`,
+                  transformOrigin: `${flipX ? '100%' : '0'} ${flipY ? '100%' : '0'}`,
+                };
+                if (flipX) lblStyle.right = stageW - p.lx;
+                else lblStyle.left = p.lx;
+                if (flipY) lblStyle.bottom = stageH - p.ly;
+                else lblStyle.top = p.ly;
+                const cls = 'aq-lbl' + (flipX ? ' alignr' : '');
                 return (
-                  <div key={'lbl' + i} className={cls} style={{ left: leftPx, top: p.ly, transform }}>
+                  <div key={'lbl' + i} className={cls} style={lblStyle}>
                     {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
                       className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
@@ -990,11 +1047,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {/* 드래그하는 동안 반투명 미리보기 말풍선 — 떼면 여기에 실제 입력칸이 생긴다. */}
               {ghost &&
                 (() => {
-                  const gflipX = stageW > 0 && ghost.x + 150 > stageW;
+                  const gflipX = stageW > 0 && ghost.x + 150 / zoom > stageW;
+                  const gstyle: React.CSSProperties = {
+                    transform: `scale(${1 / zoom})`,
+                    transformOrigin: `${gflipX ? '100%' : '0'} 0`,
+                    top: ghost.y,
+                  };
+                  if (gflipX) gstyle.right = stageW - ghost.x;
+                  else gstyle.left = ghost.x;
                   return (
-                    <div
-                      className={'aq-lbl ghost drag' + (gflipX ? ' alignr' : '')}
-                      style={{ left: ghost.x, top: ghost.y, transform: `translate(${gflipX ? '-100%' : '0'}, 0)` }}
+                    <div className={'aq-lbl ghost' + (gflipX ? ' alignr' : '')} style={gstyle}
                     >
                       <div className="aq-pintag">여기에 입력</div>
                       <div className="aq-pinrow">
