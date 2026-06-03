@@ -116,7 +116,6 @@ const ClientAdmin      = lazyWithRetry(() => import('./pages/admin/ClientAdmin.j
 const RatesAdmin       = lazyWithRetry(() => import('./pages/admin/RatesAdmin.jsx'))
 const CasesAdmin       = lazyWithRetry(() => import('./pages/admin/CasesAdmin.jsx'))
 const CalcLayout       = lazyWithRetry(() => import('./pages/admin/calc/CalcLayout.jsx'))
-const AutoQuote        = lazyWithRetry(() => import('./pages/admin/autoquote/AutoQuote.tsx'))
 const ClientLogin      = lazyWithRetry(() => import('./pages/client/ClientLogin.jsx'))
 const ClientSignup     = lazyWithRetry(() => import('./pages/client/ClientSignup.jsx'))
 const ClientLayout     = lazyWithRetry(() => import('./pages/client/ClientLayout.jsx'))
@@ -193,7 +192,6 @@ function App() {
                             <Route path="proxy-order" element={<ProxyOrder />} />
                             <Route path="clients" element={<ClientAdmin />} />
                             <Route path="prices" element={<CalcLayout />} />
-                            <Route path="autoquote" element={<AutoQuote />} />
                             <Route path="calc/*" element={<Navigate to="/admin/prices" replace />} />
                             <Route path="notices" element={<NoticeAdmin />} />
                             <Route path="evidence" element={<EvidenceAdmin />} />

@@ -546,3 +546,33 @@
   border: 1.5px solid var(--line);
   color: var(--mut);
 }
+
+/* 주문 상세에서 모달로 띄울 때 — 전체화면 오버레이 안에서 aq-root 가 꽉 차게. */
+.aq-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #0e1620;
+}
+.aq-modal-overlay > .aq-root {
+  height: 100vh;
+  min-height: 0;
+  border-radius: 0;
+}
+.aq-modal-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0e1620;
+  color: #aeb6c2;
+  font-size: 15px;
+}
+.aq-close {
+  background: #e6394633 !important;
+}
+.aq-close:hover {
+  background: #e63946 !important;
+}

@@ -88,7 +88,16 @@ function todayMD(): string {
   return ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
 }
 
-export default function AutoQuote() {
+interface AutoQuoteProps {
+  /** 모달 모드: 부모(주문 상세)가 주문 id 를 직접 주입. 없으면 ?order= 쿼리에서 읽음. */
+  orderId?: number;
+  /** 모달 닫기(상단 ✕). 주어지면 닫기 버튼 노출. */
+  onClose?: () => void;
+  /** 저장 성공 시 호출 — 부모가 주문 목록의 명세서 배지를 즉시 갱신. */
+  onSaved?: () => void;
+}
+
+export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: AutoQuoteProps = {}) {
   const { token } = useAuth();
   const [searchParams] = useSearchParams();
 
@@ -129,9 +138,7 @@ export default function AutoQuote() {
 
   // ---- ?order=ID 진입 시 지시서 이미지 + 저장된 명세서 자동 로드 -----------
   useEffect(() => {
-    const raw = searchParams.get('order');
-    if (!raw) return;
-    const id = Number(raw);
+    const id = orderIdProp ?? Number(searchParams.get('order'));
     if (!Number.isFinite(id) || id <= 0) return;
     let alive = true;
     (async () => {
@@ -174,7 +181,7 @@ export default function AutoQuote() {
     return () => {
       alive = false;
     };
-  }, [searchParams, token]);
+  }, [orderIdProp, searchParams, token]);
 
   // ---- 붙여넣기 ---------------------------------------------------------
   useEffect(() => {
@@ -512,6 +519,7 @@ export default function AutoQuote() {
     try {
       await putEstimate(token, order.id, { grid: buildGrid(), total, savedFrom: 'autoquote' });
       setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
+      onSaved?.();
       cdlg('명세서가 저장됐어요. 주문 카드/모달에 “명세서” 배지가 표시됩니다.', [{ label: '확인' }]);
     } catch (e) {
       console.error(e);
@@ -631,6 +639,11 @@ export default function AutoQuote() {
         >
           ↺
         </button>
+        {onClose && (
+          <button className="aq-x aq-close" title="닫기" onClick={onClose}>
+            ✕
+          </button>
+        )}
       </div>
 
       <div className="aq-wrap">
@@ -645,10 +658,11 @@ export default function AutoQuote() {
             </div>
           ) : (
             <div className="aq-stage" ref={stageRef}>
+              {/* crossOrigin 미설정 — R2 공개 URL 이 CORS 헤더를 안 줘서 anonymous 면 이미지가 깨진다.
+                  로드 우선. 공유 캔버스가 taint 로 막히면 PNG 다운로드로 폴백한다. */}
               <img
                 ref={imgRef}
                 src={imgSrc}
-                crossOrigin={/^https?:/.test(imgSrc) ? 'anonymous' : undefined}
                 alt="작업지시서"
                 onMouseDown={startStageDrag}
                 draggable={false}

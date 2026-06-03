@@ -23,7 +23,6 @@ const AdminLayout = () => {
         { name: '대리 발주', path: '/admin/proxy-order' },
         { name: '거래처 관리', path: '/admin/clients' },
         { name: '단가계산기', path: '/admin/prices' },
-        { name: '자동견적', path: '/admin/autoquote' },
         { name: '이미지 관리', path: '/admin/gallery-upload' },
         { name: '공지사항 관리', path: '/admin/notices' },
         { name: '현장작업완료사진', path: '/admin/evidence' },
