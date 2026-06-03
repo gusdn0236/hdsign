@@ -314,9 +314,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         setGhost(null);
         drag.current = null;
         setSelPin(null);
-        // 새 핀은 빈 말풍선으로 생성만 — 자동 입력칸 X. 말풍선을 더블클릭해야 입력이 열린다.
-        setPins((prev) => [...prev, { ax, ay, lx, ly, dragged: dr, vals: {}, fi: 0 }]);
-        setActive(null);
+        // 생성 즉시 입력칸 열기(품목코드부터). 이후 말풍선 더블클릭으로 다시 편집 가능.
+        setPins((prev) => {
+          const next = [...prev, { ax, ay, lx, ly, dragged: dr, vals: {}, fi: 0 }];
+          setActive(next.length - 1);
+          return next;
+        });
         setDraft('');
       } else if (pinDrag.current) {
         const pd = pinDrag.current;
