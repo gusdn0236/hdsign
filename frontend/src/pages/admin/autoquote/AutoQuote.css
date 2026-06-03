@@ -559,10 +559,12 @@
 }
 
 /* 주문 상세에서 모달로 띄울 때 — 전체화면 오버레이 안에서 aq-root 가 꽉 차게. */
+/* 주문 상세모달(z-index:1200) 위에 떠야 — 상세모달을 띄운 채 명세서작성을 눌러도 바로 보이게.
+   내부 단가찾기(.aq-modal 1200)·다이얼로그(.aq-cdlg 1300)는 이 오버레이의 stacking context 안이라 함께 위로 뜬다. */
 .aq-modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 1500;
   background: #0e1620;
 }
 .aq-modal-overlay > .aq-root {
@@ -573,7 +575,7 @@
 .aq-modal-loading {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 1500;
   display: flex;
   align-items: center;
   justify-content: center;
