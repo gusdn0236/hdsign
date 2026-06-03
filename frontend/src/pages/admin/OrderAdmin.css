@@ -1034,8 +1034,8 @@
 
 .order-card-grid {
   display: grid;
-  /* 데스크톱 기본: 카드 220px ~ 자동 채움. 1100px 컨테이너에서 4열 정도. */
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* 데스크톱 기본: 카드 240px ~ 자동 채움(도구줄 FS·폴더·공유·명세서 글씨가 안 짤리게 살짝 넓힘). */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 14px;
 }
 
