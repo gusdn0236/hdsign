@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
 import PdfViewer from "../../components/common/PdfViewer.jsx";
@@ -194,6 +194,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
   const [activeFilter, setActiveFilter] = useState("IN_PROGRESS");
   const [selectedOrderId, setSelectedOrderId] = useState(null);
+  // 자동견적 명세서작성 화면(/admin/autoquote)으로 주문 컨텍스트와 함께 이동할 때 사용.
+  const navigate = useNavigate();
   // 작업현황 등 다른 화면에서 `?order=<id>` 로 넘어오면 그 주문 상세 모달을 바로 연다.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -1345,6 +1347,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     // 사진/변경 태그 — '본 시각(adminViewedAt)' 과 무관하게, 데이터가 존재하면 항상 표시.
     // (열람해도 사라지지 않게 해달라는 요청 — 한 번 보고 나서도 어느 카드에 사진/변경이 있는지 계속 보여야 함)
     const hasPhotos = !!order.evidenceLastUploadedAt;
+    // 자동견적 — 명세서 작성됨 / 이지폼 업로드됨 배지. 데이터 존재하면 항상 표시(열람과 무관).
+    const hasEstimate = !!order.hasEstimate;
+    const easyformUploaded = !!order.easyformUploadedAt;
     const worksheetChangeNote = (order.worksheetChangeNote || "").trim();
     // 변경 태그 — 지시서가 웹에 두 번째 이상 재반영된 적 있으면(worksheetRevisedAt) 표시.
     // 한 번 찍히면 재인쇄·열람으로도 안 사라지는 영구 신호. 옛 주문(타임스탬프 없이
@@ -1407,13 +1412,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </span>
             )}
           </div>
-          {(hasPhotos || hasWorksheetChange) && (
+          {(hasPhotos || hasWorksheetChange || hasEstimate || easyformUploaded) && (
             <div className="order-card-thumb-badges">
               {hasPhotos && (
                 <span className="row-badge badge-evidence" title="작업 사진이 등록되어 있습니다">사진</span>
               )}
               {hasWorksheetChange && (
                 <span className="row-badge badge-worksheet" title={worksheetChangeTitle}>변경</span>
+              )}
+              {hasEstimate && (
+                <span className="row-badge badge-estimate" title="자동견적 명세서가 작성되어 있습니다">명세서</span>
+              )}
+              {easyformUploaded && (
+                <span className="row-badge badge-easyform" title="이지폼에 업로드되었습니다">이지폼</span>
               )}
             </div>
           )}
@@ -2092,6 +2103,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 {selectedOrder.title || requestLabel(selectedOrder.requestType)}
               </h3>
 
+              {(selectedOrder.hasEstimate || selectedOrder.easyformUploadedAt) && (
+                <div className="modal-badges">
+                  {selectedOrder.hasEstimate && (
+                    <span className="row-badge badge-estimate" title="자동견적 명세서가 작성되어 있습니다">명세서</span>
+                  )}
+                  {selectedOrder.easyformUploadedAt && (
+                    <span className="row-badge badge-easyform" title="이지폼에 업로드되었습니다">이지폼</span>
+                  )}
+                </div>
+              )}
+
               {(hasPrevOrder || hasNextOrder) && !reviewSession && (
                 <div className="modal-order-nav-row">
                   <button
@@ -2140,6 +2162,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </span>
                 )}
                 <div className="modal-status-actions">
+                  {/* 자동견적 명세서작성 — 작업중/작업완료 공용(상태 무관). 이 지시서 컨텍스트(order=id)로
+                      /admin/autoquote 이동. 이미 명세서가 있으면 "명세서 수정". */}
+                  <button
+                    type="button"
+                    className="next-status-btn action-estimate"
+                    onClick={() => navigate(`/admin/autoquote?order=${selectedOrder.id}`)}
+                    title="이 지시서로 자동견적 명세서를 작성/수정합니다"
+                  >
+                    {selectedOrder.hasEstimate ? "명세서 수정" : "명세서작성"}
+                  </button>
                   {selectedOrder.deletedAt ? (
                     <>
                       <button

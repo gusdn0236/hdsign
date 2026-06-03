@@ -611,6 +611,27 @@
   border: 1px solid #b91c1c;
 }
 
+/* 자동견적 명세서 태그 — hdsign teal. 명세서가 작성돼 있으면 항상 표시. */
+.row-badge.badge-estimate {
+  color: #fff;
+  background: #005f73;
+  border: 1px solid #004a5a;
+}
+
+/* 이지폼 업로드 태그 — teal2(밝은 청록). 이지폼에 자동기입 완료 시 표시. */
+.row-badge.badge-easyform {
+  color: #fff;
+  background: #0a9396;
+  border: 1px solid #097a7d;
+}
+
+/* 상세 모달 제목 아래 자동견적 배지 행. */
+.modal-badges {
+  display: inline-flex;
+  gap: 6px;
+  margin: -4px 0 10px;
+}
+
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -709,6 +730,15 @@
 
 .next-status-btn.action-trash {
   background: #64748b;
+}
+
+/* 자동견적 명세서작성 — hdsign teal(자동견적 브랜드색). */
+.next-status-btn.action-estimate {
+  background: #005f73;
+}
+
+.next-status-btn.action-estimate:hover:not(:disabled) {
+  background: #004a5a;
 }
 
 .next-status-btn.action-trash:hover:not(:disabled) {
