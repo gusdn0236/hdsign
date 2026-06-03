@@ -146,7 +146,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [selPin, setSelPin] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
   const [imgSrc, setImgSrc] = useState<string | null>(null);
-  const [stageW, setStageW] = useState(0); // 표시 이미지 폭 — 말풍선이 우측 경계 넘치면 왼쪽으로 뒤집기 위함.
+  const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
+  const [stageH, setStageH] = useState(0);
   const [order, setOrder] = useState<OrderContext | null>(null);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
@@ -366,7 +367,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   // 창 크기 변경 시 표시 이미지 폭 갱신(말풍선 flip 판정용).
   useEffect(() => {
-    const onResize = () => setStageW(imgRef.current?.clientWidth || 0);
+    const onResize = () => {
+      setStageW(imgRef.current?.clientWidth || 0);
+      setStageH(imgRef.current?.clientHeight || 0);
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -695,8 +699,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         r = fs * 0.45;
       let bx: number, by: number;
       if (p.dragged) {
-        bx = lx - w / 2; // 리더선이 말풍선 정중앙에 닿도록 박스를 드롭 지점 중앙에.
-        by = ly - h / 2;
+        bx = lx + w > cv.width ? lx - w : lx; // 코너를 드롭 지점에. 넘치면 그 코너 기준 뒤집기.
+        by = ly + h > cv.height ? ly - h : ly;
         ctx.strokeStyle = c;
         ctx.lineWidth = fs * 0.16;
         ctx.beginPath();
@@ -748,7 +752,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   // ---- 렌더 ------------------------------------------------------------
-  const today = todayMD();
   const rows = Math.max(ROWS, pins.length);
 
   return (
@@ -794,7 +797,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 src={imgSrc}
                 alt="작업지시서"
                 onMouseDown={startStageDrag}
-                onLoad={() => setStageW(imgRef.current?.clientWidth || 0)}
+                onLoad={() => {
+                  setStageW(imgRef.current?.clientWidth || 0);
+                  setStageH(imgRef.current?.clientHeight || 0);
+                }}
                 draggable={false}
               />
               <svg className="aq-lines">
@@ -847,28 +853,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 // 활성(입력 중)이면 입력칸 때문에 박스가 ~360px 까지 넓어진다 → 그 폭으로 경계 판정해야 ✕가 안 잘림.
                 const estW = isActive ? 360 : Math.max(top.length, priceLine.length) * 8 + 60;
                 const bubbleW = Math.min(440, estW);
-                const half = bubbleW / 2;
+                const bubbleH = isActive ? 96 : 46;
                 let cls = 'aq-lbl';
                 let leftPx = p.lx;
+                let transform; // 드래그 말풍선은 드롭 지점에 코너를 붙이고, 경계 넘치면 그 코너 기준 뒤집기.
                 if (p.dragged) {
-                  // 드래그: 드롭 지점을 박스 중앙에. 좌/우 절반이 넘치면 그쪽 경계에 박스 끝을 붙인다.
-                  if (stageW > 0 && p.lx + half > stageW) {
-                    cls += ' drag pinright';
-                    leftPx = stageW;
-                  } else if (stageW > 0 && p.lx - half < 0) {
-                    cls += ' drag pinleft';
-                    leftPx = 0;
-                  } else {
-                    cls += ' drag';
-                  }
+                  const flipX = stageW > 0 && p.lx + bubbleW > stageW;
+                  const flipY = stageH > 0 && p.ly + bubbleH > stageH;
+                  cls += ' drag' + (flipX ? ' alignr' : '');
+                  transform = `translate(${flipX ? '-100%' : '0'}, ${flipY ? '-100%' : '0'})`;
                 } else {
-                  // 클릭(제자리): 기본 위로 열되, 좌우는 사진 안으로 클램프 / 위 공간 부족하면 아래로.
+                  // 저장본 복원(제자리) 말풍선: 위로 열되 좌우 클램프 / 위 공간 부족하면 아래로.
                   const maxLeft = Math.max(10, stageW - bubbleW + 10);
                   leftPx = stageW > 0 ? Math.min(Math.max(p.lx, 10), maxLeft) : p.lx;
                   cls += p.ly < 72 ? ' down' : ' up';
                 }
                 return (
-                  <div key={'lbl' + i} className={cls} style={{ left: leftPx, top: p.ly }}>
+                  <div key={'lbl' + i} className={cls} style={{ left: leftPx, top: p.ly, transform }}>
                     {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
                       className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
@@ -932,9 +933,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {/* 드래그하는 동안 반투명 미리보기 말풍선 — 떼면 여기에 실제 입력칸이 생긴다. */}
               {ghost &&
                 (() => {
-                  const gpr = stageW > 0 && ghost.x + 180 > stageW;
+                  const gflipX = stageW > 0 && ghost.x + 150 > stageW;
                   return (
-                    <div className={'aq-lbl ghost drag' + (gpr ? ' pinright' : '')} style={{ left: gpr ? stageW : ghost.x, top: ghost.y }}>
+                    <div
+                      className={'aq-lbl ghost drag' + (gflipX ? ' alignr' : '')}
+                      style={{ left: ghost.x, top: ghost.y, transform: `translate(${gflipX ? '-100%' : '0'}, 0)` }}
+                    >
                       <div className="aq-pintag">여기에 입력</div>
                       <div className="aq-pinrow">
                         <input placeholder="품목코드 입력 후 Enter" readOnly disabled />
@@ -957,46 +961,33 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           </div>
           <div className="aq-gridwrap">
             <table className="aq-tbl">
+              {/* 화면엔 품목코드·품목·규격·수량·단가 5칸만(+번호). 월일·공급가액·세액·비고는 숨김 —
+                  저장(buildGrid)·이지폼 매크로에서는 9칸 모두 채운다. */}
               <colgroup>
-                <col style={{ width: 30 }} />
-                <col style={{ width: 44 }} />
-                <col style={{ width: 66 }} />
+                <col style={{ width: 28 }} />
+                <col style={{ width: 70 }} />
                 <col />
-                <col style={{ width: 62 }} />
-                <col style={{ width: 40 }} />
-                <col style={{ width: 80 }} />
-                <col style={{ width: 80 }} />
-                <col style={{ width: 66 }} />
-                <col style={{ width: 50 }} />
+                <col style={{ width: 70 }} />
+                <col style={{ width: 44 }} />
+                <col style={{ width: 84 }} />
               </colgroup>
               <thead>
                 <tr>
                   <th></th>
-                  <th>월일</th>
                   <th>품목코드</th>
                   <th>품목</th>
                   <th>규격</th>
                   <th>수량</th>
                   <th className="p">단가</th>
-                  <th className="p">공급가액</th>
-                  <th className="p">세액</th>
-                  <th>비고</th>
                 </tr>
               </thead>
               <tbody>
                 {Array.from({ length: rows }, (_, i) => {
                   const p = pins[i];
                   const v = p ? p.vals : {};
-                  const dp = num(v['단가']);
-                  const sup = dp != null ? dp : '';
-                  const tax = dp != null ? Math.round(dp * 0.1) : '';
-                  const md = v['월일'] != null && v['월일'] !== '' ? v['월일'] : p ? today : '';
                   return (
                     <tr key={i} className={i === active ? 'cur' : undefined}>
                       <td className="rn">{p && <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>}</td>
-                      <td>
-                        <input value={md} onChange={(e) => setCell(i, '월일', e.target.value)} />
-                      </td>
                       <td>
                         <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} />
                       </td>
@@ -1011,15 +1002,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                       </td>
                       <td className="p">
                         <input value={v['단가'] || ''} onChange={(e) => setCell(i, '단가', e.target.value)} />
-                      </td>
-                      <td className="p">
-                        <input readOnly value={sup === '' ? '' : String(sup)} />
-                      </td>
-                      <td className="p">
-                        <input readOnly value={tax === '' ? '' : String(tax)} />
-                      </td>
-                      <td>
-                        <input value={v['비고'] || ''} onChange={(e) => setCell(i, '비고', e.target.value)} />
                       </td>
                     </tr>
                   );
@@ -1041,9 +1023,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             <button
               className="aq-btn ef"
               onClick={() =>
-                cdlg('이지폼 새로작성 → 거래처 선택 → 시작하기 를 누르면, 위 행이 자동기입됩니다. (매크로는 slice-14에서 연결)', [
-                  { label: '확인' },
-                ])
+                cdlg(
+                  '이지폼 새로작성 → 거래처 선택 → 시작하기 후, 각 행을 월일·품목코드·품목·규격·수량·단가·공급가액·세액·비고 9칸 모두 자동 기입합니다. (매크로는 slice-14에서 연결)',
+                  [{ label: '확인' }],
+                )
               }
             >
               이지폼 입력
