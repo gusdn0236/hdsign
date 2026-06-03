@@ -165,6 +165,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const pinDrag = useRef<
     { i: number; mx: number; my: number; ax: number; ay: number; lx: number; ly: number; moved: boolean } | null
   >(null);
+  // 말풍선(텍스트박스) 자체를 잡아서 이동 — 태그를 핸들로. 점(앵커)은 고정, 말풍선 위치(lx,ly)만 이동.
+  const bubbleDrag = useRef<{ i: number; mx: number; my: number; lx: number; ly: number; moved: boolean } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; ax: number; ay: number } | null>(null);
 
   const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
@@ -284,6 +286,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             return np;
           }),
         );
+      } else if (bubbleDrag.current) {
+        const bd = bubbleDrag.current;
+        const dx = e.clientX - bd.mx;
+        const dy = e.clientY - bd.my;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) bd.moved = true;
+        setPins((prev) =>
+          prev.map((p, idx) => {
+            if (idx !== bd.i) return p;
+            // 말풍선만 이동(점 고정). 제자리 말풍선을 끌면 리더선 핀으로 전환.
+            return { ...p, lx: bd.lx + dx, ly: bd.ly + dy, dragged: bd.moved ? true : p.dragged };
+          }),
+        );
       }
     };
     const onUp = (e: MouseEvent) => {
@@ -309,6 +323,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           setSelPin((s) => (s === pd.i ? null : pd.i));
         }
         pinDrag.current = null;
+      } else if (bubbleDrag.current) {
+        bubbleDrag.current = null;
       }
     };
     window.addEventListener('mousemove', onMove);
@@ -343,6 +359,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     e.stopPropagation();
     const p = pins[i];
     pinDrag.current = { i, mx: e.clientX, my: e.clientY, ax: p.ax, ay: p.ay, lx: p.lx, ly: p.ly, moved: false };
+  };
+
+  // 말풍선(텍스트박스) 잡아서 이동 — 태그가 핸들. 점은 고정, 말풍선 위치만 이동.
+  const startBubbleDrag = (e: React.MouseEvent, i: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const p = pins[i];
+    bubbleDrag.current = { i, mx: e.clientX, my: e.clientY, lx: p.lx, ly: p.ly, moved: false };
   };
 
   const closeActive = () => {
@@ -771,18 +795,31 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {pins.map((p, i) => {
                 const isActive = i === active;
                 const label = pinLabel(p) + (p.fi < FIELDS.length && isActive ? ' /' : '');
-                // 말풍선 예상 폭(활성=입력칸+버튼). 우측 경계를 넘치면 flip(왼쪽으로 열기) → ✕까지 화면 안.
                 const bubbleW = isActive ? 360 : Math.min(320, label.length * 8 + 36);
-                const flip = stageW > 0 && p.lx + bubbleW > stageW;
-                const cls = 'aq-lbl' + (p.dragged ? '' : ' up') + (flip ? ' flip' : '');
+                const overflow = stageW > 0 && p.lx + bubbleW > stageW;
+                // 우측을 넘치는 드래그 말풍선: 박스 오른쪽 끝을 사진 우측 경계에 딱 붙임(✕가 맨 우측,
+                // 리더선은 드롭 지점 lx 에 닿아 박스 중앙쯤에서 만남). 제자리 말풍선은 왼쪽으로 열어 화면 안.
+                const pinRight = overflow && p.dragged;
+                const flipUp = overflow && !p.dragged;
+                const cls =
+                  'aq-lbl' + (p.dragged ? '' : ' up') + (pinRight ? ' pinright' : '') + (flipUp ? ' flip' : '');
                 return (
                   <div
                     key={'lbl' + i}
                     className={cls}
-                    style={{ left: p.lx, top: p.ly, cursor: !isActive && p.fi < FIELDS.length ? 'pointer' : undefined }}
+                    style={{ left: pinRight ? stageW : p.lx, top: p.ly, cursor: !isActive && p.fi < FIELDS.length ? 'pointer' : undefined }}
                     onClick={!isActive && p.fi < FIELDS.length ? () => resumePin(i) : undefined}
                   >
-                    {label && <div className="aq-pintag" style={{ background: pinColor(i) }}>{label}</div>}
+                    {label && (
+                      <div
+                        className="aq-pintag"
+                        style={{ background: pinColor(i) }}
+                        title="드래그해서 말풍선 이동"
+                        onMouseDown={(e) => startBubbleDrag(e, i)}
+                      >
+                        {label}
+                      </div>
+                    )}
                     {i === active && (
                       <>
                         <div className="aq-pinrow">
@@ -861,7 +898,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   const md = v['월일'] != null && v['월일'] !== '' ? v['월일'] : p ? today : '';
                   return (
                     <tr key={i} className={i === active ? 'cur' : undefined}>
-                      <td className="rn">{p && <span className="rnum">{i + 1}</span>}</td>
+                      <td className="rn">{p && <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>}</td>
                       <td>
                         <input value={md} onChange={(e) => setCell(i, '월일', e.target.value)} />
                       </td>

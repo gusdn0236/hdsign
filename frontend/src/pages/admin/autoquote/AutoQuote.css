@@ -161,6 +161,11 @@
 .aq-lbl.up.flip {
   transform: translate(calc(-100% + 10px), calc(-100% - 9px));
 }
+/* 우측을 넘치는 드래그 말풍선: 박스 오른쪽 끝을 사진 우측 경계(left:stageW)에 딱 붙임 → ✕가 맨 우측. */
+.aq-lbl.pinright {
+  transform: translate(-100%, -50%);
+  align-items: flex-end;
+}
 .aq-pintag {
   background: var(--teal);
   color: #fff;
@@ -173,6 +178,7 @@
   max-width: 380px;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: move;
 }
 .aq-pinrow {
   display: flex;
