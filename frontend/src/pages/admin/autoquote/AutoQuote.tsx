@@ -335,10 +335,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     };
   }, []);
 
-  // active 핀이 바뀌면 입력 포커스.
+  // active 핀이 "바뀔 때만" 입력 포커스. (deps 에 pins 를 넣으면 우측 grid 편집 → pins 변경마다
+  //  사진 위 입력칸으로 포커스를 빼앗아, grid 에서 글씨가 안 써지고 포커스가 튀던 버그가 있었음.)
   useEffect(() => {
     if (active != null) inputRef.current?.focus();
-  }, [active, pins]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   // 창 크기 변경 시 표시 이미지 폭 갱신(말풍선 flip 판정용).
   useEffect(() => {
@@ -850,6 +852,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   </div>
                 );
               })}
+
+              {/* 드래그하는 동안 반투명 미리보기 말풍선 — 떼면 여기에 실제 입력칸이 생긴다. */}
+              {ghost &&
+                (() => {
+                  const gpr = stageW > 0 && ghost.x + 360 > stageW;
+                  return (
+                    <div className={'aq-lbl ghost' + (gpr ? ' pinright' : '')} style={{ left: gpr ? stageW : ghost.x, top: ghost.y }}>
+                      <div className="aq-pintag">여기에 입력</div>
+                      <div className="aq-pinrow">
+                        <input placeholder="품목코드 입력 후 Enter" readOnly disabled />
+                        <button className="aq-pinx" disabled>
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
             </div>
           )}
         </div>

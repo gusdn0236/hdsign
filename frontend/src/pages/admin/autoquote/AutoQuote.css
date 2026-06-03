@@ -166,6 +166,11 @@
   transform: translate(-100%, -50%);
   align-items: flex-end;
 }
+/* 드래그 중 반투명 미리보기 — 클릭 통과(pointer-events:none). */
+.aq-lbl.ghost {
+  opacity: 0.45;
+  pointer-events: none;
+}
 .aq-pintag {
   background: var(--teal);
   color: #fff;
