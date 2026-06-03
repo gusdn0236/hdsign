@@ -99,6 +99,12 @@ function pinColor(i: number): string {
   return PIN_COLORS[i % PIN_COLORS.length];
 }
 
+// 단가 입력용 — 숫자만 남기고 천 단위 콤마(돈 입력처럼). 빈 값은 ''.
+function formatWon(s: string): string {
+  const d = String(s ?? '').replace(/[^0-9]/g, '');
+  return d ? Number(d).toLocaleString() : '';
+}
+
 // 칩 한 칸 표시값: 수량→"N개", 단가→"15,000원", 그 외 원문.
 function formatChip(f: string, v: string): string {
   if (f === '수량') return v + '개';
@@ -346,7 +352,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (active == null) return;
     const p = pinsRef.current[active];
     if (!p || p.fi >= FIELDS.length) return;
-    setDraft(p.vals[FIELDS[p.fi]] || '');
+    const cur = p.vals[FIELDS[p.fi]] || '';
+    setDraft(FIELDS[p.fi] === '단가' ? formatWon(cur) : cur);
     const id = requestAnimationFrame(() => {
       const el = inputRef.current;
       if (el) {
@@ -365,7 +372,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // 삭제버튼(selPin)이 열린 상태에서 점/삭제버튼 외 다른 곳을 누르면 닫는다.
+  // 점·삭제버튼은 onMouseDown 에서 stopPropagation 하므로 이 window 리스너에 안 잡힌다.
+  useEffect(() => {
+    const onDocDown = (e: MouseEvent) => {
+      if (selPinRef.current == null) return;
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest && t.closest('.aq-dot, .aq-pindel')) return;
+      setSelPin(null);
+    };
+    window.addEventListener('mousedown', onDocDown);
+    return () => window.removeEventListener('mousedown', onDocDown);
+  }, []);
+
   const startStageDrag = (e: React.MouseEvent) => {
+    // 삭제버튼(selPin)이 열려 있으면 사진 클릭은 "삭제버튼 닫기"로만 — 새 핀은 안 만든다.
+    if (selPinRef.current != null) {
+      setSelPin(null);
+      return;
+    }
     if (activeRef.current !== null) return;
     e.preventDefault();
     const st = stageRef.current?.getBoundingClientRect();
@@ -436,6 +461,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   // ---- grid 편집 -------------------------------------------------------
   const setCell = (i: number, key: string, value: string) => {
+    if (key === '단가') value = formatWon(value); // 단가 셀도 천 단위 콤마.
     setPins((prev) => {
       const next = [...prev];
       if (!next[i]) {
@@ -537,8 +563,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       if (r.ok) applyResult(r.unit, r.qty, r.desc);
       else cdlg(r.message, [{ label: '확인', sec: true }]);
     } else {
+      // 내부 계산기 키(epoxy 등) 대신 사용자가 적은 품목코드를 보여준다. HTML 이스케이프.
+      const codeLabel = (code || pc.calc).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
       cdlg(
-        `이 품목(<b>${pc.calc}</b>)은 즉시계산 미지원 — admin/prices 계산기 페이지에서 확인하세요.<br>(현재 아크릴/포맥스·고무스카시만 지원)`,
+        `이 품목(<b>${codeLabel}</b>)은 즉시계산 미지원 — admin/prices 계산기 페이지에서 확인하세요.<br>(현재 아크릴/포맥스·고무스카시만 지원)`,
         [{ label: '확인', sec: true }],
       );
     }
@@ -840,7 +868,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                             value={draft}
                             placeholder={`${FIELDS[p.fi] ?? ''} 입력 후 Enter`}
                             autoComplete="off"
-                            onChange={(e) => setDraft(e.target.value)}
+                            inputMode={FIELDS[p.fi] === '단가' || FIELDS[p.fi] === '수량' ? 'numeric' : undefined}
+                            onChange={(e) => setDraft(FIELDS[p.fi] === '단가' ? formatWon(e.target.value) : e.target.value)}
                             onKeyDown={onInputKey}
                             onMouseDown={(e) => e.stopPropagation()}
                           />
