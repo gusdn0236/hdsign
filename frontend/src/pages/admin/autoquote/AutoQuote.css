@@ -150,6 +150,17 @@
 .aq-lbl:not(.up) {
   transform: translate(10px, -50%);
 }
+/* 우측 경계를 넘는 말풍선은 왼쪽으로 열어 입력칸·닫기(✕)까지 화면 안에 들어오게.
+   align-items:flex-end 로 내용을 앵커(리더선) 쪽으로 우측 정렬. */
+.aq-lbl.flip {
+  align-items: flex-end;
+}
+.aq-lbl.flip:not(.up) {
+  transform: translate(calc(-100% - 10px), -50%);
+}
+.aq-lbl.up.flip {
+  transform: translate(calc(-100% + 10px), calc(-100% - 9px));
+}
 .aq-pintag {
   background: var(--teal);
   color: #fff;
