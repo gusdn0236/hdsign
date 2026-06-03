@@ -761,8 +761,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         r = fs * 0.45;
       let bx: number, by: number;
       if (p.dragged) {
-        bx = lx + w > cv.width ? lx - w : lx; // 코너를 드롭 지점에. 넘치면 그 코너 기준 뒤집기.
-        by = ly + h > cv.height ? ly - h : ly;
+        bx = lx - w / 2; // 리더선이 말풍선 정중앙에 닿도록 박스를 드롭 지점 중앙에.
+        by = ly - h / 2;
         ctx.strokeStyle = c;
         ctx.lineWidth = fs * 0.16;
         ctx.beginPath();
@@ -972,22 +972,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 // 말풍선은 확대해도 원래 크기 유지(scale 1/zoom). 드롭 지점에 코너를 붙이고,
                 // 사진 경계를 넘치면 그 코너 기준으로 뒤집어(우→좌, 아래→위) 화면 안에 들어오게 한다.
                 // 박스가 차지하는 화면폭(~360px)을 zoom 으로 나눈 만큼이 콘텐츠 폭 — 그것으로 경계 판정.
-                const estWpx = isActive ? 360 : Math.max(top.length, priceLine.length) * 8 + 60;
-                const bubbleWc = Math.min(440, estWpx) / zoom;
-                const bubbleHc = (isActive ? 96 : 46) / zoom;
-                const flipX = stageW > 0 && p.lx + bubbleWc > stageW;
-                const flipY = stageH > 0 && p.ly + bubbleHc > stageH;
+                // 리더선이 말풍선 정중앙에 닿도록 박스를 드롭 지점 중앙에. 확대해도 크기 유지(scale 1/zoom).
                 const lblStyle: React.CSSProperties = {
-                  transform: `scale(${1 / zoom})`,
-                  transformOrigin: `${flipX ? '100%' : '0'} ${flipY ? '100%' : '0'}`,
+                  left: p.lx,
+                  top: p.ly,
+                  transform: `scale(${1 / zoom}) translate(-50%, -50%)`,
+                  transformOrigin: '50% 50%',
                 };
-                if (flipX) lblStyle.right = stageW - p.lx;
-                else lblStyle.left = p.lx;
-                if (flipY) lblStyle.bottom = stageH - p.ly;
-                else lblStyle.top = p.ly;
-                const cls = 'aq-lbl' + (flipX ? ' alignr' : '');
                 return (
-                  <div key={'lbl' + i} className={cls} style={lblStyle}>
+                  <div key={'lbl' + i} className="aq-lbl" style={lblStyle}>
                     {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
                       className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
@@ -1051,16 +1044,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {/* 드래그하는 동안 반투명 미리보기 말풍선 — 떼면 여기에 실제 입력칸이 생긴다. */}
               {ghost &&
                 (() => {
-                  const gflipX = stageW > 0 && ghost.x + 150 / zoom > stageW;
                   const gstyle: React.CSSProperties = {
-                    transform: `scale(${1 / zoom})`,
-                    transformOrigin: `${gflipX ? '100%' : '0'} 0`,
+                    left: ghost.x,
                     top: ghost.y,
+                    transform: `scale(${1 / zoom}) translate(-50%, -50%)`,
+                    transformOrigin: '50% 50%',
                   };
-                  if (gflipX) gstyle.right = stageW - ghost.x;
-                  else gstyle.left = ghost.x;
                   return (
-                    <div className={'aq-lbl ghost' + (gflipX ? ' alignr' : '')} style={gstyle}
+                    <div className="aq-lbl ghost" style={gstyle}
                     >
                       <div className="aq-pintag">여기에 입력</div>
                       <div className="aq-pinrow">
