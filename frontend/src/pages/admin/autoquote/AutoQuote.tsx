@@ -695,7 +695,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         r = fs * 0.45;
       let bx: number, by: number;
       if (p.dragged) {
-        bx = lx + 10 * sx;
+        bx = lx - w / 2; // 리더선이 말풍선 정중앙에 닿도록 박스를 드롭 지점 중앙에.
         by = ly - h / 2;
         ctx.strokeStyle = c;
         ctx.lineWidth = fs * 0.16;
@@ -846,7 +846,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 const hasContent = !!(top || priceLine);
                 const estW = isActive ? 150 : Math.max(top.length, priceLine.length) * 8 + 60;
                 const bubbleW = Math.min(420, estW);
-                const overflow = stageW > 0 && p.lx + bubbleW > stageW;
+                // 드래그 말풍선은 드롭 지점을 정중앙에 두므로 오른쪽 절반(bubbleW/2)만 넘침 판정.
+                const rightExtent = p.dragged ? p.lx + bubbleW / 2 : p.lx + bubbleW;
+                const overflow = stageW > 0 && rightExtent > stageW;
                 const pinRight = overflow && p.dragged;
                 const flipUp = overflow && !p.dragged;
                 const cls =
