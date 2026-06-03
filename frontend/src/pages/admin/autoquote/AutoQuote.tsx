@@ -258,7 +258,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         setPins([]);
         setActive(null);
         setSelPin(null);
-        setStatus('클릭=제자리 말풍선 · 드래그=리더선');
+        setStatus('드래그해서 말풍선을 만드세요 (리더선)');
       };
       r.readAsDataURL(file);
     };
@@ -314,14 +314,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         const dr = drag.current.moved;
         const ax = drag.current.ax;
         const ay = drag.current.ay;
-        const lx = dr ? x : ax;
-        const ly = dr ? y : ay;
         setGhost(null);
         drag.current = null;
+        // 클릭만으로는 핀 생성 안 함 — 드래그(리더선)로만 생성. (제자리 말풍선 경계 문제 회피.)
+        if (!dr) return;
         setSelPin(null);
         // 생성 즉시 입력칸 열기(품목코드부터). 이후 말풍선 더블클릭으로 다시 편집 가능.
         setPins((prev) => {
-          const next = [...prev, { ax, ay, lx, ly, dragged: dr, vals: {}, fi: 0 }];
+          const next = [...prev, { ax, ay, lx: x, ly: y, dragged: true, vals: {}, fi: 0 }];
           setActive(next.length - 1);
           return next;
         });
