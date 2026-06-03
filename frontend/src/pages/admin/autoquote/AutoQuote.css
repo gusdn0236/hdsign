@@ -171,6 +171,11 @@
   transform: translate(-100%, -50%);
   align-items: flex-end;
 }
+/* 좌측을 넘치는 드래그 말풍선: 박스 왼쪽 끝을 사진 좌측 경계(left:0)에 붙인다. */
+.aq-lbl.pinleft {
+  transform: translate(0, -50%);
+  align-items: flex-start;
+}
 /* 드래그 중 반투명 미리보기 — 클릭 통과(pointer-events:none). */
 .aq-lbl.ghost {
   opacity: 0.45;

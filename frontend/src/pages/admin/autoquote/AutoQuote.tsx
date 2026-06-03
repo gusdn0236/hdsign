@@ -844,15 +844,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 const priceLine =
                   dp != null ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원` : '';
                 const hasContent = !!(top || priceLine);
-                const estW = isActive ? 150 : Math.max(top.length, priceLine.length) * 8 + 60;
-                const bubbleW = Math.min(420, estW);
+                // 활성(입력 중)이면 입력칸 때문에 박스가 ~360px 까지 넓어진다 → 그 폭으로 경계 판정해야 ✕가 안 잘림.
+                const estW = isActive ? 360 : Math.max(top.length, priceLine.length) * 8 + 60;
+                const bubbleW = Math.min(440, estW);
+                const half = bubbleW / 2;
                 let cls = 'aq-lbl';
                 let leftPx = p.lx;
                 if (p.dragged) {
-                  // 드래그: 드롭 지점을 박스 중앙에. 우측 절반이 넘치면 박스 오른쪽 끝을 사진 경계에 붙임.
-                  const pinRight = stageW > 0 && p.lx + bubbleW / 2 > stageW;
-                  cls += ' drag' + (pinRight ? ' pinright' : '');
-                  leftPx = pinRight ? stageW : p.lx;
+                  // 드래그: 드롭 지점을 박스 중앙에. 좌/우 절반이 넘치면 그쪽 경계에 박스 끝을 붙인다.
+                  if (stageW > 0 && p.lx + half > stageW) {
+                    cls += ' drag pinright';
+                    leftPx = stageW;
+                  } else if (stageW > 0 && p.lx - half < 0) {
+                    cls += ' drag pinleft';
+                    leftPx = 0;
+                  } else {
+                    cls += ' drag';
+                  }
                 } else {
                   // 클릭(제자리): 기본 위로 열되, 좌우는 사진 안으로 클램프 / 위 공간 부족하면 아래로.
                   const maxLeft = Math.max(10, stageW - bubbleW + 10);
