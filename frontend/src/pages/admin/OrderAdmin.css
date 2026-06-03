@@ -1253,6 +1253,51 @@
   height: 16px;
 }
 
+/* 카드 도구 버튼 — FS·폴더·명세서를 아이콘 전용 콤팩트 버튼으로(텍스트 제거, 툴팁 유지).
+   상태 변경 버튼(다음단계/작업완료로/복원/영구삭제)만 라벨 텍스트를 유지해 카드가 깔끔해진다. */
+.order-card-actions .order-card-tool {
+  position: relative;
+  flex: 0 0 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: #f1f3f5;
+  color: #334155;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.order-card-actions .order-card-tool:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+.order-card-actions .order-card-tool:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 명세서작성 — teal 강조(주 기능). 이미 작성됐으면 우상단 점 표시. */
+.order-card-actions .order-card-tool.action-estimate {
+  background: #e0f0f1;
+  color: #005f73;
+}
+.order-card-actions .order-card-tool.action-estimate:hover:not(:disabled) {
+  background: #c6e6e8;
+}
+.order-card-actions .order-card-tool.action-estimate.has::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #005f73;
+  box-shadow: 0 0 0 1.5px #fff;
+}
+
 @media (max-width: 720px) {
   .order-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
