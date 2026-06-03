@@ -187,6 +187,11 @@
 .aq-lbl.alignr {
   align-items: flex-end;
 }
+/* 복사용으로 선택된 말풍선 — 점선 링으로 표시. */
+.aq-lbl.sel .aq-pintag {
+  outline: 2px dashed #fff;
+  outline-offset: 1px;
+}
 /* 우측 경계를 넘는 말풍선은 왼쪽으로 열어 입력칸·닫기(✕)까지 화면 안에 들어오게.
    align-items:flex-end 로 내용을 앵커(리더선) 쪽으로 우측 정렬. */
 .aq-lbl.flip {
