@@ -85,6 +85,8 @@ class AdminAutoQuotePredictControllerTest {
         ResponseEntity<String> res = postPredict(h,
                 "{\"client\":\"한국사인\",\"items\":[{\"text\":\"채널간판\",\"size\":\"h:300\"}]}");
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        // 미인증 거부 본문에 기밀(거래처/단가/명세서)이 새지 않았는지 확인.
+        assertNoConfidentialLeak(res.getBody());
     }
 
     @Test
@@ -92,8 +94,20 @@ class AdminAutoQuotePredictControllerTest {
         ResponseEntity<String> res = postPredict(clientHeaders(),
                 "{\"client\":\"한국사인\",\"items\":[{\"text\":\"채널간판\",\"size\":\"h:300\"}]}");
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-        // 거부 응답이 단가/근거를 흘리지 않았는지도 확인.
-        assertThat(res.getBody() == null || !res.getBody().contains("ref_invoice_idx")).isTrue();
+        // 거부 응답이 기밀(거래처/가격/명세서 내용)을 전혀 흘리지 않았는지 확인.
+        assertNoConfidentialLeak(res.getBody());
+    }
+
+    /** 401/403 거부 본문에 기밀 데이터(거래처명·단가·명세서 파일/근거)가 새지 않았음을 단정. */
+    private void assertNoConfidentialLeak(String body) {
+        if (body == null) {
+            return; // 본문 없음 = 누수 없음.
+        }
+        assertThat(body)
+                .doesNotContain("한국사인")           // 거래처명
+                .doesNotContain("100000")             // 단가
+                .doesNotContain("easyform_2099_test") // 명세서 파일
+                .doesNotContain("채널간판");           // 품목 근거
     }
 
     // ---- /predict 동작 ------------------------------------------------------
@@ -109,15 +123,51 @@ class AdminAutoQuotePredictControllerTest {
         assertThat(body).hasSize(1);
 
         JsonNode p = body.get(0);
-        // 응답 스키마: price>0, ref_invoice_idx, reason 존재.
+        // spec 계약: 정확히 9개 snake_case 키가 모두 존재.
+        assertThat(iteratorToList(p.fieldNames())).containsExactlyInAnyOrder(
+                "item", "size", "qty", "price", "ref_invoice_idx", "ref_file", "src", "score", "reason");
+        // 응답 스키마: price>0, ref_invoice_idx(snake_case) 존재, reason 존재.
         assertThat(p.get("price").asInt()).isGreaterThan(0);
-        assertThat(p.hasNonNull("refInvoiceIdx")).isTrue();
+        assertThat(p.hasNonNull("ref_invoice_idx")).isTrue();
         assertThat(p.get("reason").asText()).isNotBlank();
         assertThat(p.get("src").asText()).isEqualTo("이력");
-        assertThat(p.get("refFile").asText()).isEqualTo("easyform_2099_test.json");
+        assertThat(p.get("ref_file").asText()).isEqualTo("easyform_2099_test.json");
         // h:300(=90000) == 이력 사이즈 → 보정 1.0배, 단가 그대로 100000.
         assertThat(p.get("price").asInt()).isEqualTo(100000);
         assertThat(p.get("score").asDouble()).isGreaterThan(0.34);
+        // camelCase 키는 더 이상 나오지 않아야 한다(계약 위반 회귀 가드).
+        assertThat(p.has("refInvoiceIdx")).isFalse();
+        assertThat(p.has("refFile")).isFalse();
+    }
+
+    private static java.util.List<String> iteratorToList(java.util.Iterator<String> it) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        it.forEachRemaining(out::add);
+        return out;
+    }
+
+    @Test
+    void predict_fiveDigitDimension_pricePositive_noIntOverflow() throws Exception {
+        // 5자리 치수("50000")는 v*v=2.5e9 로 int 범위를 넘는다. long 계산이라야 price>0 가 유지된다.
+        // (회귀: int 였다면 음수 qsz → sqrt(neg)=NaN → price=0 으로 spec 계약 위반.)
+        ResponseEntity<String> res = postPredict(adminHeaders(),
+                "{\"client\":\"한국사인\",\"items\":[{\"text\":\"채널간판\",\"size\":\"50000\"}]}");
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode p = json.readTree(res.getBody()).get(0);
+        assertThat(p.get("price").asInt()).isGreaterThan(0);
+        assertThat(p.hasNonNull("ref_invoice_idx")).isTrue();
+    }
+
+    @Test
+    void predict_fiveDigitAreaDimension_pricePositive() throws Exception {
+        // AxB 면적도 5자리 변에서 A*B 가 int 를 넘을 수 있다("50000*3000"=1.5e8 은 OK지만 경로 회귀가드).
+        ResponseEntity<String> res = postPredict(adminHeaders(),
+                "{\"client\":\"한국사인\",\"items\":[{\"text\":\"채널간판\",\"size\":\"50000*3000\"}]}");
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode p = json.readTree(res.getBody()).get(0);
+        assertThat(p.get("price").asInt()).isGreaterThan(0);
     }
 
     @Test
@@ -130,7 +180,7 @@ class AdminAutoQuotePredictControllerTest {
         JsonNode p = json.readTree(res.getBody()).get(0);
         assertThat(p.get("src").asText()).isEqualTo("전체");
         assertThat(p.get("price").asInt()).isEqualTo(35000); // 동일 사이즈 → 보정 없음.
-        assertThat(p.get("refInvoiceIdx").asInt()).isEqualTo(11);
+        assertThat(p.get("ref_invoice_idx").asInt()).isEqualTo(11);
     }
 
     @Test
@@ -187,13 +237,17 @@ class AdminAutoQuotePredictControllerTest {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode body = json.readTree(res.getBody());
-        assertThat(body.get("invoiceIdx").asInt()).isEqualTo(10);
+        // evidence 응답도 snake_case 계약: invoice_idx, grid[*].unit_price 등.
+        assertThat(body.get("invoice_idx").asInt()).isEqualTo(10);
         assertThat(body.get("client").asText()).isEqualTo("한국사인");
         assertThat(body.get("grid").isArray()).isTrue();
         assertThat(body.get("grid")).isNotEmpty();
         JsonNode row = body.get("grid").get(0);
         assertThat(row.get("item").asText()).isEqualTo("채널간판");
-        assertThat(row.get("unitPrice").asText()).isEqualTo("100000");
+        assertThat(row.get("unit_price").asText()).isEqualTo("100000");
+        // camelCase 키는 더 이상 나오지 않아야 한다.
+        assertThat(body.has("invoiceIdx")).isFalse();
+        assertThat(row.has("unitPrice")).isFalse();
     }
 
     @Test
@@ -204,9 +258,9 @@ class AdminAutoQuotePredictControllerTest {
                 HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
 
         JsonNode body = json.readTree(res.getBody());
-        assertThat(body.get("photoAvailable").asBoolean()).isTrue();
-        assertThat(body.get("photoContentType").asText()).isEqualTo("image/png");
-        assertThat(body.get("photoBase64").asText()).isNotBlank();
+        assertThat(body.get("photo_available").asBoolean()).isTrue();
+        assertThat(body.get("photo_content_type").asText()).isEqualTo("image/png");
+        assertThat(body.get("photo_base64").asText()).isNotBlank();
     }
 
     @Test
@@ -218,7 +272,7 @@ class AdminAutoQuotePredictControllerTest {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode body = json.readTree(res.getBody());
-        assertThat(body.get("photoAvailable").asBoolean()).isFalse();
+        assertThat(body.get("photo_available").asBoolean()).isFalse();
         assertThat(body.get("grid")).isNotEmpty();
     }
 

@@ -1,5 +1,6 @@
 package com.example.backend.autoquote.predict;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
@@ -49,17 +50,24 @@ public class PricePredictor {
     public record Item(String text, String material, String size, String qty) {
     }
 
-    /** 견적 결과 한 줄. {@code price} 는 예측 단가(원). 매칭 실패 시 {@code price==null}. */
+    /**
+     * 견적 결과 한 줄. {@code price} 는 예측 단가(원). 매칭 실패 시 {@code price==null}.
+     *
+     * <p>JSON 직렬화 키는 spec 계약(snake_case, 9키)에 정확히 고정한다:
+     * {@code item,size,qty,price,ref_invoice_idx,ref_file,src,score,reason}. 전역
+     * PropertyNamingStrategy 대신 필드별 {@link JsonProperty} 로 <b>이 DTO 에만</b> 국소 적용
+     * (다른 컨트롤러 응답에 영향 없음). 프론트(slice-11)가 이 키를 그대로 소비한다.
+     */
     public record Prediction(
-            String item,
-            String size,
-            String qty,
-            Integer price,
-            Object refInvoiceIdx,
-            String refFile,
-            String src,        // "이력" | "전체"
-            Double score,
-            String reason) {
+            @JsonProperty("item") String item,
+            @JsonProperty("size") String size,
+            @JsonProperty("qty") String qty,
+            @JsonProperty("price") Integer price,
+            @JsonProperty("ref_invoice_idx") Object refInvoiceIdx,
+            @JsonProperty("ref_file") String refFile,
+            @JsonProperty("src") String src,        // "이력" | "전체"
+            @JsonProperty("score") Double score,
+            @JsonProperty("reason") String reason) {
     }
 
     // ---- 공개 API -----------------------------------------------------------
@@ -87,7 +95,7 @@ public class PricePredictor {
         // 재질+사이즈를 spec 처럼 합쳐 토큰/사이즈 파싱(숫자는 토큰에서 제외되므로 사이즈만 영향).
         String specBlob = blank(it.material()) ? n(it.size()) : it.material() + " " + n(it.size());
         Set<String> qtok = itoks(text, specBlob);
-        Integer qsz = sizeVal(text, specBlob);
+        Long qsz = sizeVal(text, specBlob);
         String cl = cnorm(client);
 
         Scored best = bestIn(idx.byClient.get(cl), qtok, qsz);
@@ -102,14 +110,19 @@ public class PricePredictor {
         }
 
         Line r = best.line;
-        int basePrice = r.up;
+        int basePrice = r.up;          // toLine 에서 up>0 보장(0/음수 라인은 인덱스에서 배제됨).
         int price = basePrice;
         double factor = 1.0;
         boolean scaled = false;
-        if (qsz != null && r.sz != null && r.sz > 0) {
+        // 사이즈 보정은 요청·이력 사이즈가 둘 다 양수일 때만. 하나라도 null/≤0 이면 보정 생략(factor=1).
+        // (5자리 치수의 v*v 가 long 이라 오버플로는 없지만, 0/음수 입력에서 sqrt 가 NaN 이 되는 것을 막는다.)
+        if (qsz != null && qsz > 0 && r.sz != null && r.sz > 0) {
             factor = Math.sqrt((double) qsz / r.sz);
             factor = Math.max(0.5, Math.min(2.0, factor));
-            price = (int) Math.round(basePrice * factor);
+            int scaledPrice = (int) Math.round(basePrice * factor);
+            // factor 는 [0.5,2.0] 유한값이고 basePrice>0 이라 정상 경로에선 항상 >0 이지만,
+            // 어떤 경로로든 0/음수가 나오면 보정 실패로 보고 ref.up(=basePrice)을 그대로 쓴다.
+            price = scaledPrice > 0 ? scaledPrice : basePrice;
             scaled = true;
         }
 
@@ -119,7 +132,7 @@ public class PricePredictor {
     }
 
     private String buildReason(String src, Line r, int basePrice, double factor, int price,
-                               boolean scaled, double score, Integer qsz) {
+                               boolean scaled, double score, Long qsz) {
         String where = "이력".equals(src)
                 ? "같은 거래처 이력에서"
                 : "전체 거래처 이력에서";
@@ -142,7 +155,7 @@ public class PricePredictor {
     }
 
     /** 후보군에서 자카드≥0.34 인 것 중 (자카드 0.7 + 사이즈근접 0.3) 최고점을 고른다. */
-    private Scored bestIn(List<Line> cands, Set<String> qtok, Integer qsz) {
+    private Scored bestIn(List<Line> cands, Set<String> qtok, Long qsz) {
         if (cands == null) {
             return null;
         }
@@ -155,8 +168,8 @@ public class PricePredictor {
             }
             double ratio;
             if (qsz != null && r.sz != null) {
-                int lo = Math.min(qsz, r.sz);
-                int hi = Math.max(qsz, r.sz);
+                long lo = Math.min(qsz, r.sz);
+                long hi = Math.max(qsz, r.sz);
                 ratio = hi == 0 ? 0.5 : (double) lo / hi;
             } else {
                 ratio = 0.5;
@@ -226,7 +239,7 @@ public class PricePredictor {
         }
         String item = text(ln, "item");
         String spec = text(ln, "spec");
-        Integer sz = ln.hasNonNull("sz") ? ln.get("sz").asInt() : null;
+        Long sz = ln.hasNonNull("sz") ? ln.get("sz").asLong() : null;
         Object idx = ln.hasNonNull("idx")
                 ? (ln.get("idx").isNumber() ? (Object) ln.get("idx").asInt() : ln.get("idx").asText())
                 : null;
@@ -270,21 +283,28 @@ public class PricePredictor {
         return out;
     }
 
-    /** 대표 사이즈 스칼라: AxB 면적 → A*B; h:NNN → NNN^2; 단일 숫자 → NNN^2; 없으면 null. */
-    static Integer sizeVal(String item, String spec) {
+    /**
+     * 대표 사이즈 스칼라: AxB 면적 → A*B; h:NNN → NNN^2; 단일 숫자 → NNN^2; 없으면 null.
+     *
+     * <p>곱/제곱은 반드시 {@code long} 으로 한다. 5자리 치수(예 50000)의 {@code v*v}=2.5e9 는
+     * {@code int} 범위(2.147e9)를 넘어 오버플로로 음수가 되는데, 그러면 하류 {@code sqrt(neg)} 가
+     * NaN → {@code price=0} 이 되어 spec 의 {@code price>0} 계약을 깬다. Python 원본은 임의정밀도라
+     * 오버플로가 없으므로 {@code long} 으로 동일 동작을 보장한다.
+     */
+    static Long sizeVal(String item, String spec) {
         String blob = ((item == null ? "" : item) + " " + (spec == null ? "" : spec)).toLowerCase();
         Matcher area = P_AREA.matcher(blob);
         if (area.find()) {
-            return Integer.parseInt(area.group(1)) * Integer.parseInt(area.group(2));
+            return (long) Integer.parseInt(area.group(1)) * Integer.parseInt(area.group(2));
         }
         Matcher h = P_HEIGHT.matcher(blob);
         if (h.find()) {
-            int v = Integer.parseInt(h.group(1));
+            long v = Integer.parseInt(h.group(1));
             return v * v;
         }
         Matcher any = P_ANY.matcher(blob);
         if (any.find()) {
-            int v = Integer.parseInt(any.group(1));
+            long v = Integer.parseInt(any.group(1));
             return v * v;
         }
         return null;
@@ -329,7 +349,7 @@ public class PricePredictor {
 
     // ---- 내부 자료구조 ------------------------------------------------------
 
-    private record Line(Object idx, String file, String item, String spec, int up, Integer sz,
+    private record Line(Object idx, String file, String item, String spec, int up, Long sz,
                         Set<String> itok) {
     }
 

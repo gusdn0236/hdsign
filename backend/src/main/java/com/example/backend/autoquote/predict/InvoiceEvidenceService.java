@@ -1,5 +1,6 @@
 package com.example.backend.autoquote.predict;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -33,21 +34,33 @@ public class InvoiceEvidenceService {
         this.dataSource = dataSource;
     }
 
-    /** 명세서 grid 한 줄. */
-    public record GridRow(String itemCode, String item, String spec, String qty, String unitPrice) {
+    /**
+     * 명세서 grid 한 줄. JSON 키는 명세서 컬럼 계약(snake_case)에 고정:
+     * {@code item_code,item,spec,qty,unit_price}. 프론트(slice-11 근거패널)가 이 키를 소비한다.
+     */
+    public record GridRow(
+            @JsonProperty("item_code") String itemCode,
+            @JsonProperty("item") String item,
+            @JsonProperty("spec") String spec,
+            @JsonProperty("qty") String qty,
+            @JsonProperty("unit_price") String unitPrice) {
     }
 
-    /** 근거 응답: 명세서 grid + (있으면) 작업지시서 사진(base64 data URL). */
+    /**
+     * 근거 응답: 명세서 grid + (있으면) 작업지시서 사진(base64). JSON 키는 snake_case 로 고정
+     * ({@code invoice_idx,file,date,client,total,grid,photo_available,photo_content_type,photo_base64}).
+     * predict 응답과 동일하게 전역 네이밍전략 대신 필드별 {@link JsonProperty} 로 이 DTO 에만 국소 적용.
+     */
     public record Evidence(
-            Object invoiceIdx,
-            String file,
-            String date,
-            String client,
-            String total,
-            List<GridRow> grid,
-            boolean photoAvailable,
-            String photoContentType,
-            String photoBase64) {
+            @JsonProperty("invoice_idx") Object invoiceIdx,
+            @JsonProperty("file") String file,
+            @JsonProperty("date") String date,
+            @JsonProperty("client") String client,
+            @JsonProperty("total") String total,
+            @JsonProperty("grid") List<GridRow> grid,
+            @JsonProperty("photo_available") boolean photoAvailable,
+            @JsonProperty("photo_content_type") String photoContentType,
+            @JsonProperty("photo_base64") String photoBase64) {
     }
 
     /** 파일명이 화이트리스트(easyform_*.json)에 맞는가 — 컨트롤러가 400 판정에 쓴다. */

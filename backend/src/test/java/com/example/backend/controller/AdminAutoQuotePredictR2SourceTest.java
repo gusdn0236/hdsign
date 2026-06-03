@@ -100,7 +100,7 @@ class AdminAutoQuotePredictR2SourceTest {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode p = json.readTree(res.getBody()).get(0);
         assertThat(p.get("price").asInt()).isEqualTo(100000);
-        assertThat(p.hasNonNull("refInvoiceIdx")).isTrue();
+        assertThat(p.hasNonNull("ref_invoice_idx")).isTrue();
         assertThat(p.get("reason").asText()).isNotBlank();
     }
 
@@ -113,7 +113,7 @@ class AdminAutoQuotePredictR2SourceTest {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         JsonNode body = json.readTree(res.getBody());
         assertThat(body.get("grid")).isNotEmpty();
-        assertThat(body.get("photoAvailable").asBoolean()).isTrue();
+        assertThat(body.get("photo_available").asBoolean()).isTrue();
     }
 
     @Test

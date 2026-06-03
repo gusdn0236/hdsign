@@ -39,14 +39,23 @@ class PricePredictorLogicTest {
     @Test
     void sizeVal_parsesAreaHeightAndBareNumber() {
         // AxB 면적.
-        assertThat(PricePredictor.sizeVal("간판", "1000x500")).isEqualTo(500000);
-        assertThat(PricePredictor.sizeVal("간판", "1000*500")).isEqualTo(500000);
+        assertThat(PricePredictor.sizeVal("간판", "1000x500")).isEqualTo(500000L);
+        assertThat(PricePredictor.sizeVal("간판", "1000*500")).isEqualTo(500000L);
         // h:NNN → NNN^2.
-        assertThat(PricePredictor.sizeVal("간판", "h:300")).isEqualTo(90000);
-        assertThat(PricePredictor.sizeVal("간판", "h 300")).isEqualTo(90000);
+        assertThat(PricePredictor.sizeVal("간판", "h:300")).isEqualTo(90000L);
+        assertThat(PricePredictor.sizeVal("간판", "h 300")).isEqualTo(90000L);
         // 단일 숫자 → NNN^2.
-        assertThat(PricePredictor.sizeVal("간판250", "")).isEqualTo(62500);
+        assertThat(PricePredictor.sizeVal("간판250", "")).isEqualTo(62500L);
         // 숫자 없음 → null.
         assertThat(PricePredictor.sizeVal("간판", "")).isNull();
+    }
+
+    @Test
+    void sizeVal_fiveDigitDimension_doesNotOverflow() {
+        // 5자리 치수의 v*v(=2.5e9)는 int 범위(2.147e9)를 넘는다 — long 이라야 양수로 보존된다.
+        // (int 였다면 오버플로로 음수가 되어 하류에서 sqrt(neg)=NaN → price=0 이 됐다.)
+        assertThat(PricePredictor.sizeVal("현수막 50000", "")).isEqualTo(2_500_000_000L);
+        assertThat(PricePredictor.sizeVal("간판", "50000*3000")).isEqualTo(150_000_000L);
+        assertThat(PricePredictor.sizeVal("현수막 50000", "")).isGreaterThan(0L);
     }
 }
