@@ -329,7 +329,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         setDraft('');
       } else if (pinDrag.current) {
         const pd = pinDrag.current;
-        if (!pd.moved && activeRef.current !== pd.i) {
+        if (!pd.moved) {
+          // 입력 중인 핀의 점을 클릭하면 입력을 닫고 삭제버튼을 띄운다(삭제버튼은 active 핀엔 안 뜨므로).
+          if (activeRef.current === pd.i) setActive(null);
           setSelPin((s) => (s === pd.i ? null : pd.i));
         }
         pinDrag.current = null;
