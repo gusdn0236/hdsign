@@ -1,881 +1,960 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 // AuthContext 는 .jsx — 확장자 명시로 vite/vitest 모두 해석되게.
 import { useAuth } from '../../../context/AuthContext.jsx';
-import { estimate, computeTotals, sizeBucket } from './engine';
-import type {
-  Correction,
-  CorpusItem,
-  EstimateResult,
-  EvidenceRef,
-  LineInput,
-  Priors,
-} from './engine';
-import { loadAutoQuoteData } from './data/corpusClient';
-import { loadCorrections, postCorrection } from './data/correctionsClient';
 import {
-  buildEasyformRows,
-  fillEasyform,
-  probeEasyformAgent,
-} from './data/easyformClient';
-import type { EasyformRow } from './data/easyformClient';
-import { readImageFile, requestVision } from './components/visionClient';
-import { visionToLineInputs } from './components/visionMapping';
-import WorkOrderStage from './components/WorkOrderStage';
-import type { OverlayPin } from './components/WorkOrderStage';
+  CALC,
+  FIELDS,
+  num,
+  sizev,
+  parseCode,
+  computeAcryl,
+  computeGomu,
+} from './annot/calc';
+import {
+  predict,
+  evidence as fetchEvidence,
+  getOrder,
+  getEstimate,
+  putEstimate,
+  type Evidence,
+  type OrderContext,
+} from './annot/api';
 import './AutoQuote.css';
 
 /**
- * HD사인 자동견적 — Slice 1: 탭 + 수동 입력 견적엔진 (비전 없음).
+ * HD사인 자동견적 — slice-13: 주석입력(annotation) 흐름.
  *
- * hdsign 어드민 네이티브 톤(틸/네이비, Banner+SubNav 크롬은 AdminLayout 이 제공).
- * 좌: 수동 항목 입력 폼 + 입력된 항목, 우: 견적엔진이 산출한 라인별 가격·근거·합계.
- * 코퍼스/priors 는 JWT 백엔드에서 lazy-fetch 후 캐시하며, 순수 견적엔진이 이를 근거로
- * 가격을 매긴다. 가격 계층: ① 이력 > ② 브랜드식별+사이즈 > ③ 카테고리+사이즈.
- * 비전·보정저장·easyform 은 후속 슬라이스에서 활성화(여기선 disabled placeholder).
+ * 바탕화면 프로토타입(build_annot_prototype.py)의 최종 UX 를 hdsign 앱 라우트로 포팅.
+ *  - 작업지시서 사진 붙여넣기(Ctrl+V) 또는 ?order=ID 진입 시 지시서 이미지 자동 로드.
+ *  - 사진 위 클릭=제자리 말풍선 / 드래그=리더선+여백 말풍선. 단계입력(품목코드→품목→규격→수량→단가).
+ *  - 우측 이지폼 grid(월일 자동·공급가=단가·세액10%). 핀 번호=grid 행.
+ *  - 단가 [🔎 찾아보기] = slice-11 /predict + /evidence(과거 사진+명세서, JWT).
+ *  - 단가 [🧮 계산기] = prices.json(acryl/gomu) 글자높이밴드 엔진.
+ *  - [공유하기] = Canvas 합성→클립보드. [저장] = slice-12 estimate API.
+ *
+ * 기밀(예측/근거 명세서·사진)은 번들 금지 — 전부 admin JWT 로 런타임 fetch.
  */
 
-/** 폼 카테고리 선택지 — 라벨은 모두 견적엔진 resolveCategory 가 인식하는 값. */
-const CATEGORIES = [
-  '채널간판',
-  '아크릴',
-  '에폭시',
-  '시트컷팅',
-  'LED·네온·조명',
-  '포맥스',
-  '박스·조명박스',
-  '도장',
-  '시공·부착',
-];
-
-interface Entry {
-  id: number;
-  category: string;
-  w: string;
-  h: string;
-  coats: string;
-  qty: string;
-  brandText: string;
+interface Pin {
+  ax: number;
+  ay: number;
+  lx: number;
+  ly: number;
+  dragged: boolean;
+  vals: Record<string, string>;
+  fi: number;
+  splitPending?: boolean;
 }
 
-interface PricedLine {
-  entry: Entry;
-  result: EstimateResult;
+interface DialogButton {
+  label: string;
+  sec?: boolean;
+  fn?: () => void;
+}
+interface DialogState {
+  html: string;
+  buttons: DialogButton[];
 }
 
-const won = (n: number): string => `₩${Math.round(n).toLocaleString('ko-KR')}`;
-
-/** 입력 폼의 한 항목을 견적엔진 LineInput 으로 변환. */
-function toLineInput(e: Entry): LineInput {
-  const num = (s: string): number | undefined => {
-    const v = Number(s);
-    return Number.isFinite(v) && s.trim() !== '' ? v : undefined;
-  };
-  return {
-    category: e.category,
-    w: num(e.w),
-    h: num(e.h),
-    coats: num(e.coats),
-    qty: num(e.qty) ?? 1,
-    brandText: e.brandText.trim() || undefined,
-  };
+interface LookupRef {
+  reason: string;
+  src: string;
+  price: number;
+  evidence: Evidence | null;
+  hitPrice: number;
 }
 
-/** 근거 ref → 화면 칩 (클래스 + 짧은 라벨). 모든 비할인 라인은 ≥1 근거칩. */
-function chipFor(ev: EvidenceRef): { cls: string; label: string } {
-  if (ev.tier === '도장') return { cls: 'size', label: '도장' };
-  switch (ev.type) {
-    case 'history':
-      return { cls: 'hist', label: `${ev.tier ?? '①'}이력` };
-    case 'size':
-      return { cls: 'size', label: `${ev.tier ?? ''} 사이즈곡선`.trim() };
-    case 'correction':
-      return { cls: 'corr', label: '보정 prior' };
-    case 'category':
-    default:
-      return { cls: 'size', label: '카테고리' };
-  }
+const ROWS = 10;
+
+function pinLabel(p: Pin): string {
+  return FIELDS.slice(0, p.fi)
+    .map((f) => {
+      const v = p.vals[f];
+      if (v == null || v === '') return null;
+      if (f === '수량') return v + '개';
+      if (f === '단가') {
+        const n = num(v);
+        return (n != null ? n.toLocaleString() : v) + '원';
+      }
+      return v;
+    })
+    .filter(Boolean)
+    .join(' / ');
 }
 
-function lineTitle(idx: number, e: Entry): string {
-  const size = e.w && e.h ? ` ${e.w}×${e.h}` : '';
-  const coats = e.coats && e.coats !== '0' ? ` · ${e.coats}도` : '';
-  const qty = e.qty && e.qty !== '1' ? ` ×${e.qty}` : '';
-  return `${idx + 1}. ${e.category}${size}${coats}${qty}`;
+function todayMD(): string {
+  const d = new Date();
+  return ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
 }
-
-const emptyDraft = () => ({
-  category: CATEGORIES[0],
-  w: '',
-  h: '',
-  coats: '',
-  qty: '1',
-  brandText: '',
-});
 
 export default function AutoQuote() {
   const { token } = useAuth();
-  const [corpus, setCorpus] = useState<CorpusItem[] | null>(null);
-  const [priors, setPriors] = useState<Priors>({});
-  const [dataError, setDataError] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
 
-  // @slice-3 공유 보정(correction) — mount 시 lazy-fetch, 저장/다음견적 시 재요청.
-  // 한 직원의 보정이 모든 직원의 다음 견적에서 TOP prior 로 되살아난다(엔진 findCorrection).
-  const [corrections, setCorrections] = useState<Correction[]>([]);
-  // 인라인 가격수정 폼 상태 — 한 번에 한 라인만 연다(entry.id).
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editPrice, setEditPrice] = useState('');
-  const [editReason, setEditReason] = useState('');
-  const [savingCorrection, setSavingCorrection] = useState(false);
-  const [savedToast, setSavedToast] = useState(false);
-  const [correctionError, setCorrectionError] = useState<string | null>(null);
+  const [pins, setPins] = useState<Pin[]>([]);
+  const [active, setActive] = useState<number | null>(null);
+  const [selPin, setSelPin] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
+  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [order, setOrder] = useState<OrderContext | null>(null);
+  const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
+  const [saving, setSaving] = useState(false);
 
-  const [draft, setDraft] = useState(emptyDraft());
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const nextId = useRef(1);
-  // 단일 비행(single-flight) 락 — visionState 는 비동기로 갱신되므로 ref 로 동기 차단.
-  // 처리 중 두 번째 트리거(Ctrl+V 연타·버튼)가 동시 runVision 을 시작하지 못하게 한다.
-  const visionBusy = useRef(false);
-  const categoryRef = useRef<HTMLSelectElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string } | null>(null);
 
-  // 비전(작업지시서) 상태. 'failed' → 폴백 배너 + 수동입력 유지(자동 재시도 없음).
-  const [imageSrc, setImageSrc] = useState<string | null>(null);
-  const [visionState, setVisionState] =
-    useState<'idle' | 'loading' | 'ok' | 'failed'>('idle');
-  // 비전이 추가한 라인의 entry id — 이 라인들만 이미지 위 핀으로 오버레이.
-  const [visionIds, setVisionIds] = useState<number[]>([]);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // @slice-4 로컬 easyform 에이전트 — mount 시 feature-detect. 부재 PC 에서는 false 로
-  // 남아 'easyform 자동기입' 액션이 DOM 에 아예 렌더되지 않는다(HIDDEN, not disabled).
-  const [agentPresent, setAgentPresent] = useState(false);
-  // 셀 미리보기 패널 — null 이면 닫힘, 배열이면 매핑된 행을 보여주며 열림.
-  const [easyformRows, setEasyformRows] = useState<EasyformRow[] | null>(null);
-  // 셀 채우기 진행 상태. 'done' → easyform-fill-done 표시(사람이 easyform 에서 확정).
-  const [fillState, setFillState] =
-    useState<'idle' | 'filling' | 'done' | 'error'>('idle');
+  // window 마우스 핸들러가 최신 상태를 읽도록 ref 미러.
+  const pinsRef = useRef(pins);
+  const activeRef = useRef(active);
+  const selPinRef = useRef(selPin);
+  const draftRef = useRef(draft);
+  pinsRef.current = pins;
+  activeRef.current = active;
+  selPinRef.current = selPin;
+  draftRef.current = draft;
 
-  // 공유 보정을 서버에서 재요청해 상태에 반영(저장 후·다음 견적 시 호출).
-  // 실패해도 견적은 계속 동작하므로 조용히 무시(보정만 최신화 안 될 뿐).
-  const refetchCorrections = useCallback(async () => {
-    try {
-      const fresh = await loadCorrections(token);
-      setCorrections(fresh);
-    } catch {
-      /* 보정 로드 실패 — 기존 보정/견적 유지. */
-    }
-  }, [token]);
+  // 전역(stage 밖) 드래그 상태 — 렌더와 무관한 transient.
+  const drag = useRef<{ ax: number; ay: number; moved: boolean } | null>(null);
+  const pinDrag = useRef<
+    { i: number; mx: number; my: number; ax: number; ay: number; lx: number; ly: number; moved: boolean } | null
+  >(null);
+  const [ghost, setGhost] = useState<{ x: number; y: number; ax: number; ay: number } | null>(null);
 
-  // 탭 진입 시 corpus + priors + 공유 보정을 JWT 백엔드에서 lazy-fetch (corpus 는 모듈 캐시).
-  // 보정은 다른 직원이 추가한 최신본까지 매 mount 가져온다 → 한 명의 보정이 모두에게 반영.
+  const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
+
+  // ---- ?order=ID 진입 시 지시서 이미지 + 저장된 명세서 자동 로드 -----------
   useEffect(() => {
+    const raw = searchParams.get('order');
+    if (!raw) return;
+    const id = Number(raw);
+    if (!Number.isFinite(id) || id <= 0) return;
     let alive = true;
-    loadAutoQuoteData(token)
-      .then((d) => {
-        if (!alive) return;
-        setCorpus(d.corpus);
-        setPriors(d.priors);
-      })
-      .catch((e: unknown) => {
-        if (!alive) return;
-        setDataError(e instanceof Error ? e.message : '데이터 로드 실패');
-        setCorpus([]); // 코퍼스 없이도 사이즈곡선 폴백으로 견적은 가능.
-      });
-    loadCorrections(token)
-      .then((c) => {
-        if (alive) setCorrections(c);
-      })
-      .catch(() => {
-        /* 보정 로드 실패 — 보정 없이도 견적은 동작. */
-      });
-    return () => {
-      alive = false;
-    };
-  }, [token]);
-
-  // 저장 토스트 자동 해제(잠깐 보여주고 사라짐). 새 보정 폼을 열면 즉시 숨긴다.
-  useEffect(() => {
-    if (!savedToast) return;
-    const t = setTimeout(() => setSavedToast(false), 4000);
-    return () => clearTimeout(t);
-  }, [savedToast]);
-
-  // @slice-4 탭 진입 시 로컬 easyform 에이전트를 한 번 feature-detect.
-  // 성공해야만 'easyform 자동기입' 액션을 렌더한다(부재 PC 에서는 액션이 없음).
-  useEffect(() => {
-    let alive = true;
-    void probeEasyformAgent().then((ok) => {
-      if (alive) setAgentPresent(ok);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // 입력된 항목마다 견적엔진을 돌려 가격·근거를 산출.
-  const priced: PricedLine[] = useMemo(() => {
-    if (corpus == null) return [];
-    return entries.map((entry) => ({
-      entry,
-      result: estimate(toLineInput(entry), { corpus, priors, corrections }),
-    }));
-  }, [entries, corpus, priors, corrections]);
-
-  const totals = useMemo(
-    () => computeTotals(priced.map((p) => ({ amount: p.result.total }))),
-    [priced],
-  );
-
-  const lowCount = priced.filter((p) => p.result.lowConfidence).length;
-  const loading = corpus == null;
-
-  // 비전이 검출한 라인의 가격 결과 → 이미지 위 오버레이 핀(낮은 신뢰도는 노랑).
-  const visionPins: OverlayPin[] = useMemo(() => {
-    const ids = new Set(visionIds);
-    return priced
-      .filter((p) => ids.has(p.entry.id))
-      .map((p, i) => ({
-        id: p.entry.id,
-        tag: `${i + 1}. ${p.entry.category}${p.result.lowConfidence ? ' · 검토요' : ''}`,
-        price: won(p.result.total),
-        low: p.result.lowConfidence,
-      }));
-  }, [priced, visionIds]);
-
-  /**
-   * 이미지(업로드/붙여넣기) → 백엔드 비전 프록시 → 검출 라인 자동 추가.
-   * 실패 시 폴백 배너만 띄우고 수동입력은 그대로 사용 가능(자동 재시도 없음).
-   */
-  const runVision = useCallback(
-    async (file: Blob) => {
-      // single-flight: 이미 처리 중이면 두 번째 호출은 즉시 무시(중복 /vision·중복 id 방지).
-      if (visionBusy.current) return;
-      visionBusy.current = true;
-      setVisionState('loading');
+    (async () => {
       try {
-        const { base64, mediaType } = await readImageFile(file);
-        // 이미지는 먼저 표시 — 비전이 실패해도 작업지시서는 화면에 남는다.
-        setImageSrc(`data:${mediaType};base64,${base64}`);
-        const items = await requestVision(base64, mediaType, token);
-        const lineInputs = visionToLineInputs(items);
-        // id 를 한 번에 원자적으로 할당한다: 읽기(startId)와 쓰기(nextId.current 전진)
-        // 사이에 await 가 없으므로 (락이 뚫리더라도) 두 번째 호출의 continuation 은 별도
-        // 마이크로태스크로 이미 전진된 카운터를 읽어 같은 id 를 재사용하지 못한다 →
-        // 중복 entry id / React key 충돌이 구조적으로 불가능. (이 ids 는 visionIds 에도
-        // 동기적으로 필요하므로 setEntries 업데이터 안이 아니라 여기서 계산한다 — 업데이터는
-        // async continuation 에서 호출 시 지연 실행되어 closure 로 값을 꺼낼 수 없다.)
-        const startId = nextId.current;
-        nextId.current = startId + lineInputs.length;
-        const detected: Entry[] = lineInputs.map((li, i) => ({
-          id: startId + i,
-          category: li.category,
-          w: li.w != null ? String(li.w) : '',
-          h: li.h != null ? String(li.h) : '',
-          coats: li.coats != null ? String(li.coats) : '',
-          qty: String(li.qty ?? 1),
-          brandText: li.brandText ?? '',
-        }));
-        setEntries((prev) => [...prev, ...detected]);
-        setVisionIds(detected.map((e) => e.id));
-        setVisionState('ok');
-        // 다음 견적(새 작업지시서)마다 공유 보정을 재요청 — 다른 직원이 방금 올린
-        // 보정까지 이 견적의 TOP prior 로 반영되게 한다.
-        void refetchCorrections();
-      } catch {
-        // 비전 실패 — 폴백. 수동입력 경로는 계속 동작(엔진이 여전히 가격 산출).
-        setVisionState('failed');
-      } finally {
-        visionBusy.current = false;
+        const o = await getOrder(token, id);
+        if (!alive || !o) return;
+        setOrder(o);
+        const url = o.worksheetThumbnailUrl || o.worksheetPdfUrl || null;
+        if (url && !/\.pdf($|\?)/i.test(url)) {
+          setImgSrc(url);
+          setStatus(`${o.clientCompanyName || ''} · ${o.title || o.orderNumber} — 지시서 자동 로드됨`);
+        } else {
+          setStatus(`${o.clientCompanyName || ''} · ${o.orderNumber} — 지시서 이미지를 붙여넣으세요 (PDF는 캡쳐 붙여넣기)`);
+        }
+        // 기존 명세서가 있으면 grid 를 핀(앵커 없는 grid 행)으로 복원.
+        const est = await getEstimate(token, id);
+        if (alive && est?.estimate?.grid?.length) {
+          const restored: Pin[] = est.estimate.grid.map((g: Record<string, string>, i: number) => ({
+            ax: 30,
+            ay: 30 + i * 30,
+            lx: 30,
+            ly: 30 + i * 30,
+            dragged: false,
+            fi: FIELDS.length,
+            vals: {
+              월일: g['월일'] || '',
+              품목코드: g['품목코드'] || '',
+              품목: g['품목'] || '',
+              규격: g['규격'] || '',
+              수량: g['수량'] || '',
+              단가: g['단가'] || '',
+            },
+          }));
+          setPins(restored);
+        }
+      } catch (e) {
+        console.error(e);
       }
-    },
-    [token, refetchCorrections],
-  );
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [searchParams, token]);
 
-  // Ctrl+V 클립보드 이미지 붙여넣기 — 탭에 있는 동안 전역 paste 수신.
+  // ---- 붙여넣기 ---------------------------------------------------------
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      // 키보드(Ctrl+V) 경로에도 single-flight 가드 — 처리 중이면 새 붙여넣기를 무시한다.
-      if (visionBusy.current) return;
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const it of items) {
-        if (it.type.startsWith('image/')) {
-          const file = it.getAsFile();
-          if (file) {
-            e.preventDefault();
-            void runVision(file);
-            return;
-          }
-        }
-      }
+      const items = [...(e.clipboardData?.items || [])];
+      const it = items.find((i) => i.type.startsWith('image'));
+      if (!it) return;
+      const file = it.getAsFile();
+      if (!file) return;
+      const r = new FileReader();
+      r.onload = () => {
+        setImgSrc(String(r.result));
+        setPins([]);
+        setActive(null);
+        setSelPin(null);
+        setStatus('클릭=제자리 말풍선 · 드래그=리더선');
+      };
+      r.readAsDataURL(file);
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [runVision]);
+  }, []);
 
-  // '이미지 붙여넣기' 버튼 — Clipboard API 로 이미지를 직접 읽기(가능한 환경에서).
-  const pasteFromClipboard = async () => {
-    try {
-      const items = await navigator.clipboard?.read?.();
-      for (const it of items ?? []) {
-        const type = it.types.find((t) => t.startsWith('image/'));
-        if (type) {
-          const blob = await it.getType(type);
-          void runVision(blob);
-          return;
-        }
+  // ---- 전역 마우스 무브/업 (스테이지 드래그 + 핀 드래그) ------------------
+  useEffect(() => {
+    const localXY = (e: MouseEvent) => {
+      const st = stageRef.current?.getBoundingClientRect();
+      return { x: e.clientX - (st?.left ?? 0), y: e.clientY - (st?.top ?? 0) };
+    };
+    const onMove = (e: MouseEvent) => {
+      if (drag.current) {
+        const { x, y } = localXY(e);
+        if (Math.abs(x - drag.current.ax) > 4 || Math.abs(y - drag.current.ay) > 4) drag.current.moved = true;
+        if (drag.current.moved) setGhost({ x, y, ax: drag.current.ax, ay: drag.current.ay });
+        else setGhost(null);
+      } else if (pinDrag.current) {
+        const dx = e.clientX - pinDrag.current.mx;
+        const dy = e.clientY - pinDrag.current.my;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) pinDrag.current.moved = true;
+        const pd = pinDrag.current;
+        setPins((prev) =>
+          prev.map((p, i) => {
+            if (i !== pd.i) return p;
+            const np = { ...p, ax: pd.ax + dx, ay: pd.ay + dy };
+            if (!p.dragged) {
+              np.lx = pd.lx + dx;
+              np.ly = pd.ly + dy;
+            }
+            return np;
+          }),
+        );
       }
-    } catch {
-      // 권한 거부/이미지 없음 — 사용자는 Ctrl+V 또는 파일 업로드로 진행 가능.
-    }
+    };
+    const onUp = (e: MouseEvent) => {
+      if (drag.current) {
+        const { x, y } = localXY(e);
+        const dr = drag.current.moved;
+        const ax = drag.current.ax;
+        const ay = drag.current.ay;
+        const lx = dr ? x : ax;
+        const ly = dr ? y : ay;
+        setGhost(null);
+        drag.current = null;
+        setSelPin(null);
+        setPins((prev) => {
+          const next = [...prev, { ax, ay, lx, ly, dragged: dr, vals: {}, fi: 0 }];
+          setActive(next.length - 1);
+          return next;
+        });
+        setDraft('');
+      } else if (pinDrag.current) {
+        const pd = pinDrag.current;
+        if (!pd.moved && activeRef.current !== pd.i) {
+          setSelPin((s) => (s === pd.i ? null : pd.i));
+        }
+        pinDrag.current = null;
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  // active 핀이 바뀌면 입력 포커스.
+  useEffect(() => {
+    if (active != null) inputRef.current?.focus();
+  }, [active, pins]);
+
+  const startStageDrag = (e: React.MouseEvent) => {
+    if (activeRef.current !== null) return;
+    e.preventDefault();
+    const st = stageRef.current?.getBoundingClientRect();
+    drag.current = { ax: e.clientX - (st?.left ?? 0), ay: e.clientY - (st?.top ?? 0), moved: false };
   };
 
-  const onUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) void runVision(file);
-    e.target.value = ''; // 같은 파일 재선택 허용.
+  const startPinDrag = (e: React.MouseEvent, i: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const p = pins[i];
+    pinDrag.current = { i, mx: e.clientX, my: e.clientY, ax: p.ax, ay: p.ay, lx: p.lx, ly: p.ly, moved: false };
   };
 
-  const update = (patch: Partial<ReturnType<typeof emptyDraft>>) =>
-    setDraft((d) => ({ ...d, ...patch }));
-
-  const addLine = () => {
-    setEntries((prev) => [...prev, { id: nextId.current++, ...draft }]);
-    setDraft((d) => ({ ...emptyDraft(), category: d.category }));
+  const closeActive = () => {
+    if (active == null) return;
+    setPins((prev) => (prev[active] && prev[active].fi === 0 ? prev.filter((_, i) => i !== active) : prev));
+    setActive(null);
+    setDraft('');
   };
 
-  const removeLine = (id: number) =>
-    setEntries((prev) => prev.filter((e) => e.id !== id));
-
-  const focusForm = () => categoryRef.current?.focus();
-
-  /** 인라인 가격수정 폼 열기/닫기 — 같은 라인을 다시 누르면 닫는다. */
-  const toggleCorrectionForm = (entry: Entry) => {
-    setCorrectionError(null);
-    setSavedToast(false);
-    if (editingId === entry.id) {
-      setEditingId(null);
-      return;
-    }
-    setEditingId(entry.id);
-    setEditPrice('');
-    setEditReason('');
-  };
-
-  /**
-   * 공유 저장: 한 라인의 단가를 수정하고 이유를 적어 보정 API 로 POST 한다.
-   *
-   * featureKey 는 엔진과 동일한 SHARED 계약으로 만든다 —
-   *   `${category}::${sizeBucket({ w, h })}`
-   * (engine `findCorrection` 의 매칭측과 정확히 일치해야 보정이 올바른 사이즈에 적용된다).
-   * author 는 절대 보내지 않는다(서버가 JWT principal 로 박는다).
-   *
-   * ANTI-FLAKY(job8 교훈): 저장이 성공하면 먼저 `correction-saved-toast` 를 띄운 뒤
-   * 보정을 재요청·재견적한다 — save→reload 레이스 없이 토스트가 먼저 보이도록 보장.
-   */
-  const saveCorrection = async (entry: Entry) => {
-    const price = Number(editPrice);
-    if (!Number.isFinite(price) || price <= 0) {
-      setCorrectionError('수정 단가를 숫자로 입력하세요.');
-      return;
-    }
-    if (!editReason.trim()) {
-      setCorrectionError('수정 이유를 적어주세요(모든 직원에게 공유됩니다).');
-      return;
-    }
-    const w = Number(entry.w);
-    const h = Number(entry.h);
-    const featureKey = `${entry.category}::${sizeBucket({
-      w: Number.isFinite(w) ? w : undefined,
-      h: Number.isFinite(h) ? h : undefined,
-    })}`;
-    setSavingCorrection(true);
-    setCorrectionError(null);
-    try {
-      await postCorrection(token, {
-        featureKey,
-        correctedUnitPrice: price,
-        explanation: editReason.trim(),
+  const commitDraft = () => {
+    if (active == null) return;
+    const val = draft.trim();
+    setPins((prev) => {
+      const next = prev.map((p, i) => {
+        if (i !== active) return p;
+        const np = { ...p, vals: { ...p.vals, [FIELDS[p.fi]]: val }, fi: p.fi + 1 };
+        if (np.splitPending && FIELDS[np.fi - 1] === '품목') {
+          np.fi = FIELDS.indexOf('단가');
+          np.splitPending = false;
+        }
+        return np;
       });
-      // 1) 토스트 먼저 — 재요청/재견적 전에 보이도록(레이스 방지).
-      setSavedToast(true);
-      setEditingId(null);
-      // 2) 보정 재요청 → 재견적: 이 라인이 보정 단가를 TOP prior 로 표시.
-      await refetchCorrections();
-    } catch (e: unknown) {
-      setCorrectionError(e instanceof Error ? e.message : '보정 저장 실패');
-    } finally {
-      setSavingCorrection(false);
+      const ap = next[active];
+      if (ap && ap.fi >= FIELDS.length) setActive(null);
+      return next;
+    });
+    setDraft('');
+  };
+
+  const onInputKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitDraft();
+    } else if (e.key === 'Escape') {
+      closeActive();
     }
   };
 
-  // @slice-4 'easyform 자동기입' → 승인된 견적 라인을 셀 행으로 매핑해 미리보기를 연다.
-  // (전송은 아직 — 직원이 미리보기를 확인하고 '셀 채우기'를 눌러야 비로소 POST 한다.)
-  const openEasyformPreview = () => {
-    setFillState('idle');
-    setEasyformRows(buildEasyformRows(priced));
+  const deletePin = (i: number) => {
+    setPins((prev) => prev.filter((_, j) => j !== i));
+    setActive((a) => (a != null && a > i ? a - 1 : a === i ? null : a));
+    setSelPin(null);
   };
 
-  const closeEasyformPreview = () => {
-    setEasyformRows(null);
-    setFillState('idle');
+  const resumePin = (i: number) => {
+    if (activeRef.current !== null) return;
+    setSelPin(null);
+    setActive(i);
+    setDraft('');
   };
 
-  // '셀 채우기' → { rows } 만 로컬 에이전트로 POST(FILL-ONLY). 성공 시 easyform-fill-done.
-  // 저장/Enter/확정은 절대 요청하지 않는다 — 사람이 easyform 에서 직접 확정한다.
-  const runEasyformFill = async () => {
-    // 채울 라인이 없으면 에이전트에 빈 요청을 보내지 않는다(empty no-op 방지).
-    if (!easyformRows || easyformRows.length === 0) return;
-    setFillState('filling');
+  // ---- grid 편집 -------------------------------------------------------
+  const setCell = (i: number, key: string, value: string) => {
+    setPins((prev) => {
+      const next = [...prev];
+      if (!next[i]) {
+        next[i] = { ax: 30, ay: 30 + i * 30, lx: 30, ly: 30 + i * 30, dragged: false, vals: {}, fi: FIELDS.length };
+      }
+      next[i] = { ...next[i], vals: { ...next[i].vals, [key]: value } };
+      return next;
+    });
+  };
+
+  const total = pins.reduce((s, p) => s + (num(p.vals['단가']) || 0) * (num(p.vals['수량']) || 1), 0);
+
+  // ---- 계산기 ----------------------------------------------------------
+  const applyResult = (unit: number, qty: number, desc: string) => {
+    if (active == null) return;
+    setPins((prev) =>
+      prev.map((p, i) =>
+        i === active ? { ...p, vals: { ...p.vals, 수량: String(qty), 단가: String(unit) }, fi: FIELDS.length } : p,
+      ),
+    );
+    setActive(null);
+    setDraft('');
+    cdlg(
+      `${desc}<br><b>${unit.toLocaleString()}원</b> × ${qty}자 = <b>${(unit * qty).toLocaleString()}원</b><br>` +
+        `<span style="font-size:12px;color:#6b7785">수량·단가가 채워졌어요</span>`,
+      [{ label: '확인' }],
+    );
+  };
+
+  const splitMixed = (p: Pin, item: string) => {
+    const ko = item.replace(/[^가-힣\s]/g, '').replace(/\s+/g, ' ').trim();
+    setPins((prev) => {
+      const idx = active!;
+      const cur = { ...prev[idx], vals: { ...prev[idx].vals } };
+      if (ko) cur.vals['품목'] = ko;
+      const np: Pin = {
+        ax: p.ax,
+        ay: p.ay,
+        lx: p.lx + 18,
+        ly: p.ly + (p.dragged ? 46 : 36),
+        dragged: p.dragged,
+        vals: { 품목코드: p.vals['품목코드'] || '', 규격: p.vals['규격'] || '' },
+        fi: 1,
+        splitPending: true,
+      };
+      const next = [...prev];
+      next[idx] = cur;
+      next.splice(idx + 1, 0, np);
+      return next;
+    });
+    setActive((a) => (a == null ? a : a + 1));
+    setDraft('');
+  };
+
+  const runCalc = () => {
+    if (active == null) return;
+    const p = pins[active];
+    const code = p.vals['품목코드'] || '';
+    const item = p.vals['품목'] || '';
+    const spec = p.vals['규격'] || '';
+    const pc = parseCode(code);
+    if (!pc) {
+      cdlg('품목코드에서 계산기 종류를 못 읽었어요.<br>예: <b>아크릴3T</b> · <b>포맥스5T</b> · <b>고무스카시10T</b>', [
+        { label: '확인', sec: true },
+      ]);
+      return;
+    }
+    if (!item) {
+      cdlg('품목(글자)을 먼저 입력하세요', [{ label: '확인', sec: true }]);
+      return;
+    }
+    if (pc.calc === 'acryl') {
+      const tk = pc.tk;
+      const hasKo = /[가-힣]/.test(item);
+      const hasEn = /[A-Za-z]/.test(item);
+      const doApply = (tt: '한글' | '영문', cmode: 'ko' | 'en' | 'all') => {
+        const r = computeAcryl(CALC, tk || '', tt, item, spec, cmode);
+        if (r.ok) applyResult(r.unit, r.qty, r.desc);
+        else cdlg(r.message, [{ label: '확인', sec: true }]);
+      };
+      if (hasKo && hasEn) {
+        cdlg('품목에 한글과 영문이 함께 있어요.<br><b>한글/영문을 분리</b>하시겠습니까?', [
+          { label: '분리하기', fn: () => splitMixed(p, item) },
+          {
+            label: '분리 안 함',
+            sec: true,
+            fn: () =>
+              cdlg('어느 단가로 적용할까요?', [
+                { label: '한글 단가', fn: () => doApply('한글', 'all') },
+                { label: '영문 단가', fn: () => doApply('영문', 'all') },
+              ]),
+          },
+        ]);
+        return;
+      }
+      doApply(hasKo ? '한글' : '영문', hasKo ? 'ko' : 'en');
+    } else if (pc.calc === 'gomu') {
+      const r = computeGomu(CALC, pc.tk, item, spec);
+      if (r.ok) applyResult(r.unit, r.qty, r.desc);
+      else cdlg(r.message, [{ label: '확인', sec: true }]);
+    } else {
+      cdlg(
+        `이 품목(<b>${pc.calc}</b>)은 즉시계산 미지원 — admin/prices 계산기 페이지에서 확인하세요.<br>(현재 아크릴/포맥스·고무스카시만 지원)`,
+        [{ label: '확인', sec: true }],
+      );
+    }
+  };
+
+  // ---- 단가 찾아보기 (slice-11 predict + evidence) ----------------------
+  const openLookup = async () => {
+    if (active == null) return;
+    const p = pins[active];
+    const code = p.vals['품목코드'] || '';
+    const item = p.vals['품목'] || '';
+    const spec = p.vals['규격'] || '';
+    const qty = p.vals['수량'] || '';
+    const client = order?.clientCompanyName || '';
+    setStatus('과거 단가 조회 중…');
     try {
-      await fillEasyform(easyformRows);
-      setFillState('done');
-    } catch {
-      setFillState('error');
+      const preds = await predict(token, client, [
+        { text: `${code} ${item}`.trim(), material: code, size: spec, qty },
+      ]);
+      if (preds == null) {
+        cdlg('학습 데이터(코퍼스)가 서버에 아직 없습니다. 관리자에게 R2 업로드를 요청하세요.', [{ label: '확인', sec: true }]);
+        setStatus('');
+        return;
+      }
+      const refs: LookupRef[] = [];
+      for (const pr of preds) {
+        let ev: Evidence | null = null;
+        try {
+          ev = await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
+        } catch {
+          ev = null;
+        }
+        refs.push({ reason: pr.reason, src: pr.src, price: pr.price, evidence: ev, hitPrice: pr.price });
+      }
+      const q = `"${(code + ' ' + item).trim() || '품목'}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
+      setLookup({ refs, ri: 0, q });
+      setStatus('');
+    } catch (e) {
+      console.error(e);
+      cdlg('단가 조회에 실패했습니다.', [{ label: '확인', sec: true }]);
+      setStatus('');
     }
   };
+
+  const applyPrice = (price: number | string) => {
+    setDraft(String(price));
+    setLookup(null);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  // ---- 저장 (slice-12 estimate API) ------------------------------------
+  const buildGrid = () => {
+    const today = todayMD();
+    return pins.map((p) => {
+      const dp = num(p.vals['단가']);
+      return {
+        월일: p.vals['월일'] || today,
+        품목코드: p.vals['품목코드'] || '',
+        품목: p.vals['품목'] || '',
+        규격: p.vals['규격'] || '',
+        수량: p.vals['수량'] || '',
+        단가: p.vals['단가'] || '',
+        공급가액: dp != null ? String(dp) : '',
+        세액: dp != null ? String(Math.round(dp * 0.1)) : '',
+        비고: p.vals['비고'] || '',
+      };
+    });
+  };
+
+  const save = async () => {
+    if (!order) {
+      cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    setSaving(true);
+    try {
+      await putEstimate(token, order.id, { grid: buildGrid(), total, savedFrom: 'autoquote' });
+      setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
+      cdlg('명세서가 저장됐어요. 주문 카드/모달에 “명세서” 배지가 표시됩니다.', [{ label: '확인' }]);
+    } catch (e) {
+      console.error(e);
+      cdlg('저장에 실패했습니다.', [{ label: '확인', sec: true }]);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ---- 공유 (Canvas 합성 → 클립보드) ------------------------------------
+  const captureShare = () => {
+    const img = imgRef.current;
+    if (!img || !imgSrc) {
+      cdlg('사진을 먼저 붙여넣으세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const nw = img.naturalWidth,
+      nh = img.naturalHeight,
+      dw = img.clientWidth,
+      dh = img.clientHeight;
+    const sx = nw / dw,
+      sy = nh / dh;
+    const cv = document.createElement('canvas');
+    cv.width = nw;
+    cv.height = nh;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    try {
+      ctx.drawImage(img, 0, 0, nw, nh);
+    } catch {
+      cdlg('이미지 처리 실패', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const fs = Math.max(13, Math.round(13 * sx));
+    ctx.font = '700 ' + fs + 'px sans-serif';
+    ctx.textBaseline = 'middle';
+    pins.forEach((p) => {
+      const t = pinLabel(p);
+      if (!t) return;
+      const ax = p.ax * sx,
+        ay = p.ay * sy,
+        lx = p.lx * sx,
+        ly = p.ly * sy;
+      const padx = fs * 0.7,
+        h = fs * 1.85,
+        w = ctx.measureText(t).width + padx * 2,
+        r = fs * 0.45;
+      let bx: number, by: number;
+      if (p.dragged) {
+        bx = lx + 10 * sx;
+        by = ly - h / 2;
+        ctx.strokeStyle = '#005f73';
+        ctx.lineWidth = fs * 0.16;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(lx, ly);
+        ctx.stroke();
+      } else {
+        bx = ax - 10 * sx;
+        by = ay - 9 * sx - h;
+      }
+      ctx.fillStyle = '#005f73';
+      ctx.beginPath();
+      ctx.moveTo(bx + r, by);
+      ctx.arcTo(bx + w, by, bx + w, by + h, r);
+      ctx.arcTo(bx + w, by + h, bx, by + h, r);
+      ctx.arcTo(bx, by + h, bx, by, r);
+      ctx.arcTo(bx, by, bx + w, by, r);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(t, bx + padx, by + h / 2);
+      ctx.fillStyle = '#005f73';
+      ctx.beginPath();
+      ctx.arc(ax, ay, fs * 0.35, 0, 7);
+      ctx.fill();
+      ctx.lineWidth = fs * 0.12;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+    });
+    cv.toBlob(async (blob) => {
+      if (!blob) {
+        cdlg('캡쳐 실패(샘플 이미지는 보안제한 — 붙여넣은 사진으로 시도하세요).', [{ label: '확인', sec: true }]);
+        return;
+      }
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        cdlg('✓ 사진+말풍선이 복사됐어요. 카톡에서 Ctrl+V 로 붙여넣으세요.', [{ label: '확인' }]);
+      } catch {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '견적.png';
+        a.click();
+        cdlg('클립보드 복사가 막혀 이미지로 저장했어요.', [{ label: '확인' }]);
+      }
+    }, 'image/png');
+  };
+
+  // ---- 렌더 ------------------------------------------------------------
+  const today = todayMD();
+  const rows = Math.max(ROWS, pins.length);
 
   return (
-    <div className="aq">
-      {savedToast && (
-        <div className="aq-toast" data-testid="correction-saved-toast" role="status">
-          ✓ 수정 단가를 저장했습니다 — 모든 직원의 다음 견적에 공유됩니다.
-        </div>
-      )}
-      <div className="aq-toolbar">
+    <div className="aq-root">
+      <div className="aq-bar">
+        <b>자동견적</b>
+        <span className="aq-hint">{status}</span>
+        <span className="aq-sp" />
         <button
-          type="button"
-          className="aq-btn"
-          onClick={pasteFromClipboard}
-          disabled={visionState === 'loading'}
+          className="aq-x"
+          title="초기화"
+          onClick={() => {
+            setPins([]);
+            setActive(null);
+            setSelPin(null);
+          }}
         >
-          📋 이미지 붙여넣기 (Ctrl+V)
+          ↺
         </button>
-        <button
-          type="button"
-          className="aq-btn ghost"
-          data-testid="work-order-upload-btn"
-          onClick={() => fileRef.current?.click()}
-          disabled={visionState === 'loading'}
-        >
-          ⬆ 파일 업로드
-        </button>
-        <button type="button" className="aq-btn ghost" onClick={focusForm}>
-          ＋ 수동 항목 추가
-        </button>
-        {/* Playwright/staffer 진입점 — 시각적으로 숨기되 기능은 유지. */}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="aq-file-input"
-          data-testid="work-order-upload"
-          onChange={onUploadChange}
-        />
-        <span className="aq-spacer" />
-        <button type="button" className="aq-btn ghost" disabled title="다음 슬라이스에서 활성화">
-          🖼 내보내기
-        </button>
-        {/* @slice-4 로컬 easyform 에이전트가 탐지된 PC 에서만 렌더(부재 시 액션 자체가 없음). */}
-        {agentPresent && (
-          <>
-            <span className="aq-agent-badge" data-testid="easyform-agent-badge">
-              🟢 로컬 에이전트 감지됨
-            </span>
-            <button
-              type="button"
-              className="aq-btn ghost"
-              data-testid="easyform-fill-btn"
-              onClick={openEasyformPreview}
-            >
-              🖥 easyform 자동기입
-            </button>
-          </>
-        )}
       </div>
 
-      {/* @slice-4 easyform 셀 미리보기 — 승인된 라인 → {품목코드·품목·규격·수량·단가}.
-          IRON LAW 고지: 셀 입력까지만, Enter/Save/확정은 전송하지 않는다(사람이 확정). */}
-      {easyformRows && (
-        <section className="aq-card aq-easyform" data-testid="easyform-preview">
-          <h2>
-            easyform 셀 미리보기
-            <span className="aq-seg">{easyformRows.length}개 행 · 로컬 에이전트가 셀만 채웁니다</span>
-          </h2>
-          <div className="aq-body">
-            <div
-              className="aq-easyform-notice"
-              role="note"
-              data-testid="easyform-ironlaw-notice"
-            >
-              🔒 셀 입력까지만 — Enter/Save/확정 키는 전송하지 않습니다 (저장은 사람이 easyform 에서 직접)
+      <div className="aq-wrap">
+        <div className="aq-stagewrap">
+          {!imgSrc ? (
+            <div className="aq-empty">
+              📋
+              <br />
+              작업지시서 이미지를 붙여넣으세요
+              <br />
+              <span style={{ fontSize: 12 }}>Ctrl + V</span>
             </div>
+          ) : (
+            <div className="aq-stage" ref={stageRef}>
+              <img
+                ref={imgRef}
+                src={imgSrc}
+                crossOrigin={/^https?:/.test(imgSrc) ? 'anonymous' : undefined}
+                alt="작업지시서"
+                onMouseDown={startStageDrag}
+                draggable={false}
+              />
+              <svg className="aq-lines">
+                {pins.map((p, i) =>
+                  p.dragged ? (
+                    <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke="#005f73" strokeWidth={2} />
+                  ) : null,
+                )}
+                {ghost && <line x1={ghost.ax} y1={ghost.ay} x2={ghost.x} y2={ghost.y} stroke="#0a9396" strokeWidth={2} strokeDasharray="5 4" />}
+              </svg>
 
-            {easyformRows.length === 0 ? (
-              <div className="aq-empty">
-                채울 견적 라인이 없습니다. 항목을 추가하거나 작업지시서를 인식시키세요.
-              </div>
-            ) : (
-              <table className="aq-easyform-table">
-                <thead>
-                  <tr>
-                    <th>품목코드</th>
-                    <th>품목</th>
-                    <th>규격</th>
-                    <th>수량</th>
-                    <th>단가</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {easyformRows.map((r, i) => (
-                    <tr key={i} data-testid="easyform-row">
-                      <td data-testid="ef-item-code">{r.item_code}</td>
-                      <td data-testid="ef-item">{r.item}</td>
-                      <td data-testid="ef-spec">{r.spec}</td>
-                      <td data-testid="ef-qty">{r.qty}</td>
-                      <td data-testid="ef-unit-price">{won(r.unit_price)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            {fillState === 'done' && (
-              <div
-                className="aq-easyform-done"
-                role="status"
-                data-testid="easyform-fill-done"
-              >
-                ✓ easyform 셀 채우기 완료 — easyform 화면에서 직접 확인 후 저장하세요.
-              </div>
-            )}
-            {fillState === 'error' && (
-              <div className="aq-correct-err" role="alert">
-                셀 채우기에 실패했습니다. 로컬 에이전트 상태를 확인한 뒤 다시 시도하세요.
-              </div>
-            )}
-
-            <div className="aq-easyform-actions">
-              <button
-                type="button"
-                className="aq-btn"
-                data-testid="easyform-do-fill-btn"
-                disabled={fillState === 'filling' || easyformRows.length === 0}
-                onClick={() => void runEasyformFill()}
-              >
-                {fillState === 'filling' ? '채우는 중…' : '셀 채우기'}
-              </button>
-              {/* 저장은 잠금 — 사람이 easyform 에서 직접 확정한다(프론트는 절대 저장 요청 안 함). */}
-              <button
-                type="button"
-                className="aq-btn ghost"
-                data-testid="easyform-save-locked"
-                disabled
-                title="저장은 easyform 에서 사람이 직접 확정합니다 (자동 저장 없음)"
-              >
-                🔒 저장 (잠금)
-              </button>
-              <button type="button" className="aq-link" onClick={closeEasyformPreview}>
-                닫기
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-
-      <div className="aq-grid">
-        {/* LEFT — 수동 항목 입력 + 입력된 항목 */}
-        <section className="aq-card">
-          <h2>
-            작업지시서 · 수동 입력
-            <span className="aq-seg">붙여넣기/업로드 → 자동검출, 실패 시 수동 입력</span>
-          </h2>
-          <div className="aq-body">
-            {visionState === 'ok' && (
-              <div className="aq-vstatus" data-testid="vision-status">
-                <span className="aq-dot" />
-                비전 추출 완료 · {visionIds.length}개 항목 검출
-                <span className="aq-vmono">(백엔드 프록시 · forced tool-use)</span>
-              </div>
-            )}
-            {visionState === 'loading' && (
-              <div className="aq-vstatus loading">
-                <span className="aq-dot" />
-                작업지시서 인식 중…
-              </div>
-            )}
-            {visionState === 'failed' && (
-              <div className="aq-vbanner" data-testid="vision-fallback-banner" role="alert">
-                ⚠ 비전 실패 — 수동 입력으로 진행하세요. (자동 재시도 안 함)
-              </div>
-            )}
-
-            {imageSrc && <WorkOrderStage imageSrc={imageSrc} pins={visionPins} />}
-
-            <div className="aq-form">
-              <label className="span2">
-                <span className="aq-lbl">품목 카테고리</span>
-                <select
-                  ref={categoryRef}
-                  value={draft.category}
-                  onChange={(e) => update({ category: e.target.value })}
+              {/* 핀 점 */}
+              {pins.map((p, i) => (
+                <div
+                  key={'dot' + i}
+                  className="aq-dot"
+                  style={{ left: p.ax, top: p.ay }}
+                  title={`드래그=이동 · 클릭=삭제 (${i + 1}번 행)`}
+                  onMouseDown={(e) => startPinDrag(e, i)}
                 >
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span className="aq-lbl">가로 (mm)</span>
-                <input
-                  inputMode="numeric"
-                  value={draft.w}
-                  onChange={(e) => update({ w: e.target.value })}
-                  placeholder="예: 3000"
-                />
-              </label>
-              <label>
-                <span className="aq-lbl">세로 (mm)</span>
-                <input
-                  inputMode="numeric"
-                  value={draft.h}
-                  onChange={(e) => update({ h: e.target.value })}
-                  placeholder="예: 600"
-                />
-              </label>
-              <label>
-                <span className="aq-lbl">도수 (N도 · 도장 칠 횟수 1~7)</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="7"
-                  value={draft.coats}
-                  onChange={(e) => update({ coats: e.target.value })}
-                  placeholder="선택 (없으면 비움)"
-                />
-              </label>
-              <label>
-                <span className="aq-lbl">수량</span>
-                <input
-                  type="number"
-                  min="1"
-                  value={draft.qty}
-                  onChange={(e) => update({ qty: e.target.value })}
-                />
-              </label>
-              <label className="span2">
-                <span className="aq-lbl">브랜드텍스트 (식별용, 선택)</span>
-                <input
-                  value={draft.brandText}
-                  onChange={(e) => update({ brandText: e.target.value })}
-                  placeholder="예: 투썸 · 식별필터로만 사용, 가격예측 아님"
-                />
-              </label>
-            </div>
-            <button type="button" className="aq-btn block" onClick={addLine}>
-              추가
-            </button>
-
-            <div className="aq-entries-head">입력된 항목 ({entries.length})</div>
-            {entries.length === 0 ? (
-              <div className="aq-empty">
-                항목을 직접 입력하면 우측에서 견적엔진이 가격과 근거를 산출합니다.
-              </div>
-            ) : (
-              entries.map((e, i) => (
-                <div className="aq-line" key={e.id}>
-                  <div className="aq-line-top">
-                    <span className="aq-name">{lineTitle(i, e)}</span>
-                    <button
-                      type="button"
-                      className="aq-link warn"
-                      onClick={() => removeLine(e.id)}
-                    >
-                      삭제
-                    </button>
-                  </div>
-                  <div className="aq-why">
-                    브랜드텍스트: {e.brandText.trim() ? `${e.brandText.trim()} (식별용)` : '—'}
-                  </div>
+                  {i + 1}
                 </div>
-              ))
-            )}
+              ))}
 
-            <div className="aq-footnote">
-              작업지시서를 붙여넣기(Ctrl+V)/업로드하면 비전이 항목을 검출해 가격을 오버레이합니다.
-              비전 실패 시 위 폼으로 수동 입력하세요. 가격 계층: 이력 &gt; 브랜드식별+사이즈 &gt;
-              카테고리+사이즈. “N도 = 도장 칠 횟수(1~7), 절곡 각도 아님.”
-            </div>
-          </div>
-        </section>
+              {/* 삭제 버튼 */}
+              {selPin != null && selPin !== active && pins[selPin] && (
+                <button
+                  className="aq-pindel"
+                  style={{ left: pins[selPin].ax, top: pins[selPin].ay }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deletePin(selPin);
+                  }}
+                >
+                  🗑 삭제
+                </button>
+              )}
 
-        {/* RIGHT — 견적 내역 · 근거 + 합계 */}
-        <section className="aq-card">
-          <h2>
-            견적 내역 · 근거
-            {lowCount > 0 && (
-              <span className="aq-flag" data-testid="review-flag">
-                ⚠ {lowCount}건 검토요
-              </span>
-            )}
-          </h2>
-          <div className="aq-body">
-            {dataError && <div className="aq-error">{dataError}</div>}
-            {loading ? (
-              <div className="aq-empty">학습 데이터를 불러오는 중…</div>
-            ) : priced.length === 0 ? (
-              <div className="aq-empty">
-                왼쪽에서 항목을 추가하면 라인별 가격과 근거가 여기에 표시됩니다.
-              </div>
-            ) : (
-              <>
-                {priced.map(({ entry, result }, i) => {
-                  const tone = result.lowConfidence ? ' low' : '';
-                  return (
-                    <div
-                      className={`aq-line${tone}`}
-                      data-testid="quote-line"
-                      key={entry.id}
-                    >
-                      <div className="aq-line-top">
-                        <span className="aq-name">
-                          {lineTitle(i, entry)}
-                          {result.lowConfidence && (
-                            <span
-                              className="aq-lowflag"
-                              data-testid="low-confidence-flag"
-                            >
-                              낮은 신뢰도
-                            </span>
-                          )}
-                        </span>
-                        <span className="aq-price" data-testid="line-price">
-                          {won(result.total)}
-                        </span>
-                      </div>
-
-                      <div className="aq-chips">
-                        {result.evidence.map((ev, j) => {
-                          const c = chipFor(ev);
-                          return (
-                            <span
-                              key={j}
-                              className={`aq-chip ${c.cls}`}
-                              data-testid="evidence-chip"
-                            >
-                              {c.label}
-                            </span>
-                          );
-                        })}
-                        {result.lowConfidence && (
-                          <span className="aq-chip low" data-testid="evidence-chip">
-                            낮은 신뢰도
-                          </span>
-                        )}
-                      </div>
-
-                      {result.coatWarning && (
-                        <div className="aq-coatwarn" data-testid="coat-warning">
-                          ⚠ {result.coatWarning}
+              {/* 말풍선 + 입력 */}
+              {pins.map((p, i) => {
+                const label = pinLabel(p) + (p.fi < FIELDS.length && i === active ? ' /' : '');
+                const cls = 'aq-lbl' + (p.dragged ? '' : ' up');
+                return (
+                  <div
+                    key={'lbl' + i}
+                    className={cls}
+                    style={{ left: p.lx, top: p.ly, cursor: i !== active && p.fi < FIELDS.length ? 'pointer' : undefined }}
+                    onClick={i !== active && p.fi < FIELDS.length ? () => resumePin(i) : undefined}
+                  >
+                    {label && <div className="aq-pintag">{label}</div>}
+                    {i === active && (
+                      <>
+                        <div className="aq-pinrow">
+                          <input
+                            ref={inputRef}
+                            value={draft}
+                            placeholder={`${FIELDS[p.fi]} 입력 후 Enter`}
+                            autoComplete="off"
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={onInputKey}
+                          />
+                          <button className="aq-pinx" onClick={closeActive} title="닫기">
+                            ✕
+                          </button>
                         </div>
-                      )}
-
-                      <details className="aq-corr" data-testid="why-expand">
-                        <summary>왜 이 가격?</summary>
-                        <ul className="aq-why-list">
-                          {result.evidence.map((ev, j) => (
-                            <li key={j}>{ev.note}</li>
-                          ))}
-                        </ul>
-                      </details>
-
-                      {/* @slice-3 인라인 가격 수정 + 이유 적기 → 공유 보정 저장. */}
-                      <div className="aq-correct">
-                        <button
-                          type="button"
-                          className="aq-link"
-                          onClick={() => toggleCorrectionForm(entry)}
-                        >
-                          ✎ 가격 수정 + 이유 적기
-                        </button>
-                        {editingId === entry.id && (
-                          <div className="aq-correct-form">
-                            <label className="aq-correct-row">
-                              <span className="aq-lbl">수정 단가 (₩)</span>
-                              <input
-                                type="number"
-                                min="0"
-                                inputMode="numeric"
-                                data-testid="correction-price"
-                                value={editPrice}
-                                onChange={(e) => setEditPrice(e.target.value)}
-                                placeholder="예: 95000"
-                              />
-                            </label>
-                            <label className="aq-correct-row">
-                              <span className="aq-lbl">수정 이유 (공유됨)</span>
-                              <textarea
-                                data-testid="correction-reason"
-                                value={editReason}
-                                onChange={(e) => setEditReason(e.target.value)}
-                                placeholder="예: 야간 시공 할증 포함"
-                                rows={2}
-                              />
-                            </label>
-                            {correctionError && (
-                              <div className="aq-correct-err" role="alert">
-                                {correctionError}
-                              </div>
-                            )}
-                            <div className="aq-correct-actions">
-                              <button
-                                type="button"
-                                className="aq-btn"
-                                disabled={savingCorrection}
-                                onClick={() => void saveCorrection(entry)}
-                              >
-                                {savingCorrection ? '저장 중…' : '공유 저장'}
-                              </button>
-                              <button
-                                type="button"
-                                className="aq-link"
-                                onClick={() => toggleCorrectionForm(entry)}
-                              >
-                                취소
-                              </button>
-                            </div>
+                        {FIELDS[p.fi] === '단가' && (
+                          <div className="aq-lkrow">
+                            <button className="aq-lookup" onClick={openLookup}>
+                              🔎 단가 찾아보기
+                            </button>
+                            <button className="aq-lookup calc" onClick={runCalc}>
+                              🧮 계산기
+                            </button>
                           </div>
                         )}
-                      </div>
-                    </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 우측 이지폼 grid */}
+        <div className="aq-side">
+          <div className="aq-h">
+            <b>견적 (이지폼)</b>
+            {order && <span className="aq-tag">{order.clientCompanyName || order.orderNumber}</span>}
+          </div>
+          <div className="aq-gridwrap">
+            <table className="aq-tbl">
+              <colgroup>
+                <col style={{ width: 30 }} />
+                <col style={{ width: 44 }} />
+                <col style={{ width: 66 }} />
+                <col />
+                <col style={{ width: 62 }} />
+                <col style={{ width: 40 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 66 }} />
+                <col style={{ width: 50 }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>월일</th>
+                  <th>품목코드</th>
+                  <th>품목</th>
+                  <th>규격</th>
+                  <th>수량</th>
+                  <th className="p">단가</th>
+                  <th className="p">공급가액</th>
+                  <th className="p">세액</th>
+                  <th>비고</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: rows }, (_, i) => {
+                  const p = pins[i];
+                  const v = p ? p.vals : {};
+                  const dp = num(v['단가']);
+                  const sup = dp != null ? dp : '';
+                  const tax = dp != null ? Math.round(dp * 0.1) : '';
+                  const md = v['월일'] != null && v['월일'] !== '' ? v['월일'] : p ? today : '';
+                  return (
+                    <tr key={i} className={i === active ? 'cur' : undefined}>
+                      <td className="rn">{p && <span className="rnum">{i + 1}</span>}</td>
+                      <td>
+                        <input value={md} onChange={(e) => setCell(i, '월일', e.target.value)} />
+                      </td>
+                      <td>
+                        <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} />
+                      </td>
+                      <td className="it">
+                        <input value={v['품목'] || ''} onChange={(e) => setCell(i, '품목', e.target.value)} />
+                      </td>
+                      <td>
+                        <input value={v['규격'] || ''} onChange={(e) => setCell(i, '규격', e.target.value)} />
+                      </td>
+                      <td>
+                        <input value={v['수량'] || ''} onChange={(e) => setCell(i, '수량', e.target.value)} />
+                      </td>
+                      <td className="p">
+                        <input value={v['단가'] || ''} onChange={(e) => setCell(i, '단가', e.target.value)} />
+                      </td>
+                      <td className="p">
+                        <input readOnly value={sup === '' ? '' : String(sup)} />
+                      </td>
+                      <td className="p">
+                        <input readOnly value={tax === '' ? '' : String(tax)} />
+                      </td>
+                      <td>
+                        <input value={v['비고'] || ''} onChange={(e) => setCell(i, '비고', e.target.value)} />
+                      </td>
+                    </tr>
                   );
                 })}
+              </tbody>
+            </table>
+          </div>
+          <div className="aq-foot">
+            <div className="aq-tot">
+              <span>합계</span>
+              <b>{total.toLocaleString()}원</b>
+            </div>
+            <button className="aq-btn ef" onClick={save} disabled={saving || !order}>
+              {saving ? '저장 중…' : '저장'}
+            </button>
+            <button className="aq-btn sh" onClick={captureShare}>
+              공유하기
+            </button>
+            <button
+              className="aq-btn ef"
+              onClick={() =>
+                cdlg('이지폼 새로작성 → 거래처 선택 → 시작하기 를 누르면, 위 행이 자동기입됩니다. (매크로는 slice-14에서 연결)', [
+                  { label: '확인' },
+                ])
+              }
+            >
+              이지폼 입력
+            </button>
+          </div>
+        </div>
+      </div>
 
-                <div className="aq-total">
-                  <span>소계</span>
-                  <span>{won(totals.supply)}</span>
+      {/* 단가 찾아보기 모달 */}
+      {lookup && (
+        <div className="aq-modal on" onClick={(e) => e.target === e.currentTarget && setLookup(null)}>
+          <div className="aq-mbox">
+            <div className="aq-mhead">
+              <b>단가 찾아보기</b>
+              <span className="aq-q">{lookup.q} · 예측 단가·근거</span>
+              <span className="aq-nav">
+                <button onClick={() => setLookup((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1 } : l))}>‹</button>
+                <span style={{ fontSize: 12.5, color: '#6b7785' }}>
+                  {lookup.refs.length ? `${lookup.ri + 1} / ${lookup.refs.length}` : '0'}
+                </span>
+                <button onClick={() => setLookup((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1 } : l))}>
+                  ›
+                </button>
+                <button className="aq-x" onClick={() => setLookup(null)}>
+                  ×
+                </button>
+              </span>
+            </div>
+            {!lookup.refs.length ? (
+              <div className="aq-mbody">
+                <div className="aq-mleft">
+                  <div className="none">관련 과거 단가가 없습니다. 품목코드/품목을 확인해 보세요.</div>
                 </div>
-                <div className="aq-total">
-                  <span>부가세 (10%)</span>
-                  <span>{won(totals.vat)}</span>
-                </div>
-                <div className="aq-total grand">
-                  <span>합계</span>
-                  <span data-testid="grand-total">{won(totals.total)}</span>
-                </div>
-
-                <div className="aq-footnote">
-                  비전은 hdsign Java 백엔드 프록시(<code>POST /api/admin/autoquote/vision</code>)로 호출되며
-                  ANTHROPIC 키는 서버 전용입니다(브라우저는 키를 보관/전송하지 않음). corpus·priors 도 JWT
-                  백엔드에서 lazy-fetch. 가격을 수정하고 이유를 적어 “공유 저장”하면 모든 직원의
-                  다음 견적에서 보정 단가가 TOP prior 로 적용됩니다.
-                </div>
-              </>
+                <div className="aq-mright" />
+              </div>
+            ) : (
+              (() => {
+                const R = lookup.refs[lookup.ri];
+                const ev = R.evidence;
+                const photo =
+                  ev?.photo_available && ev.photo_base64
+                    ? `data:${ev.photo_content_type || 'image/jpeg'};base64,${ev.photo_base64}`
+                    : null;
+                return (
+                  <div className="aq-mbody">
+                    <div className="aq-mleft">
+                      {photo ? <img src={photo} alt="과거 작업지시서" /> : <div className="none">사진 없음</div>}
+                    </div>
+                    <div className="aq-mright">
+                      <div className="aq-rinfo">
+                        예측 단가 <b>{Number(R.price).toLocaleString()}원</b>
+                        <span className="samebadge">{R.src}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#6b7785', margin: '6px 0' }}>{R.reason}</div>
+                      <button className="aq-btn sh" style={{ marginBottom: 10 }} onClick={() => applyPrice(R.price)}>
+                        이 단가 적용 →
+                      </button>
+                      <div style={{ fontSize: 12, color: '#6b7785', marginBottom: 6 }}>
+                        과거 명세서 — 행을 클릭하면 그 단가가 입력됩니다.
+                      </div>
+                      <table className="aq-rtbl">
+                        <thead>
+                          <tr>
+                            <th>품목코드</th>
+                            <th>품목</th>
+                            <th>규격</th>
+                            <th>수량</th>
+                            <th className="p">단가</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(ev?.grid || []).map((g, j) => {
+                            const price = num(g.unit_price);
+                            const hit = price != null && price === Math.round(Number(R.hitPrice));
+                            const clk = price != null && price > 0;
+                            return (
+                              <tr
+                                key={j}
+                                className={(hit ? 'hit ' : '') + (clk ? 'click' : '')}
+                                onClick={clk ? () => applyPrice(price as number) : undefined}
+                              >
+                                <td>{g.item_code || ''}</td>
+                                <td>{g.item || ''}</td>
+                                <td>{g.spec || ''}</td>
+                                <td>{g.qty ?? ''}</td>
+                                <td className="p">{g.unit_price ?? ''}</td>
+                                <td>{clk ? <span className="pick">선택 →</span> : ''}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()
             )}
           </div>
-        </section>
-      </div>
+        </div>
+      )}
+
+      {/* 작은 다이얼로그 */}
+      {dialog && (
+        <div className="aq-cdlg on" onClick={(e) => e.target === e.currentTarget && setDialog(null)}>
+          <div className="aq-cdbox">
+            <div className="aq-cdmsg" dangerouslySetInnerHTML={{ __html: dialog.html }} />
+            <div className="aq-cdbtns">
+              {dialog.buttons.map((b, i) => (
+                <button
+                  key={i}
+                  className={b.sec ? 'sec' : undefined}
+                  onClick={() => {
+                    setDialog(null);
+                    b.fn?.();
+                  }}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

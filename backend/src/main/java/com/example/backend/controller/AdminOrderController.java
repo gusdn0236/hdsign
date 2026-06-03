@@ -170,6 +170,16 @@ public class AdminOrderController {
                 .toList();
     }
 
+    // 주문 단건 조회 — 자동견적 명세서작성 화면(/admin/autoquote?order=id)이 지시서 이미지·거래처
+    // 컨텍스트 + 명세서 배지 플래그를 얻는 데 사용. (목록 전체를 받지 않도록 단건 제공.)
+    @GetMapping("/{id}")
+    public ResponseEntity<OrderDto.Response> getOne(@PathVariable Long id) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(id).orElse(null);
+        return ResponseEntity.ok(OrderDto.toResponse(order, est));
+    }
+
     // 관리자가 모달을 열면 "본 시각" 갱신 → 행 배지(신규 사진/지시서 변경) 클리어.
     // 멱등 — 여러 번 호출해도 동일.
     @PutMapping("/{id}/viewed")
