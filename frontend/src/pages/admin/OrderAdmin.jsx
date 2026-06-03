@@ -1470,23 +1470,25 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             {fsReady && (
               <button
                 type="button"
-                className="next-status-btn action-fs"
+                className="order-card-tool action-fs"
                 onClick={(e) => handleOpenFs(e, order)}
                 disabled={openingFs}
-                title="현장 에이전트로 거래처 폴더의 .fs 를 FlexiSIGN 에서 엽니다"
+                title="FS에서 열기 (FlexiSIGN)"
+                aria-label="FS에서 열기"
               >
-                {openingFs ? "여는 중..." : "FS에서 열기"}
+                {openingFs ? "⏳" : "🖥️"}
               </button>
             )}
             {fsReady && (
               <button
                 type="button"
-                className="next-status-btn action-folder"
+                className="order-card-tool action-folder"
                 onClick={(e) => handleOpenFolder(e, order)}
                 disabled={openingFolder}
-                title="현장 에이전트로 이 지시서 .fs 가 든 폴더(또는 거래처 폴더)를 탐색기로 엽니다"
+                title="폴더열기 (거래처/지시서 폴더)"
+                aria-label="폴더열기"
               >
-                {openingFolder ? "여는 중..." : "폴더열기"}
+                {openingFolder ? "⏳" : "📁"}
               </button>
             )}
             {fsReady && (
@@ -1500,11 +1502,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             )}
             <button
               type="button"
-              className="next-status-btn action-estimate"
+              className={`order-card-tool action-estimate${order.hasEstimate ? " has" : ""}`}
               onClick={() => setEstimateOrderId(order.id)}
-              title="이 지시서로 명세서를 작성/수정합니다"
+              title={order.hasEstimate ? "명세서 수정 (작성됨)" : "명세서작성"}
+              aria-label={order.hasEstimate ? "명세서 수정" : "명세서작성"}
             >
-              {order.hasEstimate ? "명세서 수정" : "명세서작성"}
+              📝
             </button>
             {isTrash ? (
               <>
