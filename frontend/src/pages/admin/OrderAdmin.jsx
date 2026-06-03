@@ -204,6 +204,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
     setTrashOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
   }, []);
+  // 명세서작성 모달이 열린 동안 배경(/admin/orders) 스크롤 잠금.
+  useEffect(() => {
+    if (estimateOrderId == null) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [estimateOrderId]);
   // 작업현황 등 다른 화면에서 `?order=<id>` 로 넘어오면 그 주문 상세 모달을 바로 연다.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
