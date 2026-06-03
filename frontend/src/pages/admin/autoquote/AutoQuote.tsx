@@ -1116,12 +1116,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {/* 화면엔 품목코드·품목·규격·수량·단가 5칸만(+번호). 월일·공급가액·세액·비고는 숨김 —
                   저장(buildGrid)·이지폼 매크로에서는 9칸 모두 채운다. */}
               <colgroup>
-                <col style={{ width: 28 }} />
-                <col style={{ width: 70 }} />
+                <col style={{ width: 26 }} />
+                <col style={{ width: 62 }} />
                 <col />
-                <col style={{ width: 70 }} />
-                <col style={{ width: 44 }} />
-                <col style={{ width: 84 }} />
+                <col style={{ width: 64 }} />
+                <col style={{ width: 40 }} />
+                <col style={{ width: 92 }} />
               </colgroup>
               <thead>
                 <tr>
