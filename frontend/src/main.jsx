@@ -8,6 +8,13 @@ import {installDemoGuard} from './utils/demoGuard';
 // 가로채 안내 토스트를 띄운다. 어떤 컴포넌트보다 먼저 설치되도록 최상단에서 호출.
 installDemoGuard();
 
+// 빌드 버전 마커 — 배포 반영 확인용. F12 콘솔에 한 줄 찍힌다(vite.config 의 define 으로 주입).
+// 같은 정보가 /version.json 으로도 노출된다(브라우저/curl 확인).
+console.log(
+    `%c[HD사인] build ${import.meta.env.VITE_BUILD_SHA} · ${import.meta.env.VITE_BUILD_BRANCH} · ${import.meta.env.VITE_BUILD_TIME}`,
+    'color:#0a9396;font-weight:700',
+);
+
 // 카톡 인앱브라우저(안드로이드 WebView 일부 빌드)는 svh/dvh 단위 처리가
 // 부정확해 URL바가 들락거릴 때 viewport 단위 기반 풀스크린 섹션이 출렁인다.
 // 진입 시점의 innerHeight 를 px 로 박아 (--app-vh) 메인 페이지 풀스크린
