@@ -46,8 +46,8 @@ const PDF_MAX_DPR = 20;
 const PDF_OVERSAMPLE = 1.25;
 const PDF_MAX_CANVAS_PIXELS = 80_000_000;
 const PDF_JS_MAX_IMAGE_BYTES = 384 * 1024 * 1024;
-const PINCH_MAX_SCALE = 7;
-const PDF_ZOOM_RENDER_STEPS = [1, 2, 3, 5, 7];
+const PINCH_MAX_SCALE = 10; // 오버레이가 보이는 영역을 device 해상도로 재렌더하므로 더 깊게 확대해도 선명
+const PDF_ZOOM_RENDER_STEPS = [1, 2, 3, 5, 7, 10];
 // 최고 DPR 에서 캔버스 할당 실패/pdf.js 내부 에러가 나면 DPR 을 단계적으로 낮추며
 // 재시도. 빈 화면으로 멈추는 대신 약간 낮은 화질로라도 보이게 하는 안전망.
 // 35% 까지 내려가도 deviceDpr 3 환경에선 여전히 6 DPR 안팎이라 옛 설정(MAX=14)과
@@ -1047,8 +1047,8 @@ export default function WorksheetViewer() {
                         onZoomStop={(ref) => {
                             const nextScale = ref?.state?.scale ?? currentScaleRef.current;
                             currentScaleRef.current = nextScale;
-                            requestPdfQualityForScale(nextScale);
-                            // 손 뗀 뒤 보이는 영역만 고해상으로 다시 그려 얹는다.
+                            // 선명도는 오버레이가 전담 → 베이스 전체페이지 고DPR 재렌더(느림·메모리 부담)는
+                            // 더 하지 않는다. 줌을 멈추면 가벼운 오버레이만 다시 그려 얹는다(팬과 동일 속도).
                             if (nextScale > OVERLAY_MIN_SCALE) scheduleOverlay();
                             else setOverlayOn(false);
                         }}
