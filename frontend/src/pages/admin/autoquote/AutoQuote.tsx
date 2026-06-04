@@ -599,7 +599,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const id = requestAnimationFrame(() => {
       const el = inputRef.current;
       if (el) {
-        el.focus();
+        // preventScroll — 입력칸이 화면 밖(확대/가장자리)에 생겨도 브라우저가 그걸 보이게
+        // 모달/페이지를 스크롤해 툴바가 밀려나가지 않게 한다.
+        el.focus({ preventScroll: true });
         el.select();
       }
     });
@@ -1032,7 +1034,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const applyPrice = (price: number | string) => {
     setDraft(String(price));
     setLookup(null);
-    setTimeout(() => inputRef.current?.focus(), 0);
+    setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
   };
 
   // ---- 저장 (slice-12 estimate API) ------------------------------------
@@ -1736,7 +1738,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 const lblStyle: React.CSSProperties = {
                   left: p.lx,
                   top: p.ly,
-                  transform: `scale(${1 / zoom}) translate(-50%, -50%)`,
+                  transform: `translate(-50%, -50%) scale(${1 / zoom})`,
                   transformOrigin: '50% 50%',
                 };
                 return (
@@ -1807,7 +1809,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   const gstyle: React.CSSProperties = {
                     left: ghost.x,
                     top: ghost.y,
-                    transform: `scale(${1 / zoom}) translate(-50%, -50%)`,
+                    transform: `translate(-50%, -50%) scale(${1 / zoom})`,
                     transformOrigin: '50% 50%',
                   };
                   return (
