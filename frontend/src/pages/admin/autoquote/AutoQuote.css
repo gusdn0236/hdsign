@@ -485,6 +485,49 @@
   align-items: center;
   margin-top: 4px;
 }
+/* 품목코드 자동완성 드롭다운 */
+.aq-acdrop {
+  margin-top: 4px;
+  width: 300px;
+  background: #fff;
+  border: 1.5px solid var(--teal);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  font-size: 13px;
+}
+.aq-achint {
+  padding: 6px 10px;
+  background: #fff7e6;
+  color: #8a5a1a;
+  font-weight: 700;
+  border-bottom: 1px solid #f0e2c8;
+}
+.aq-aclist {
+  max-height: 170px; /* ~5행만 먼저, 나머진 스크롤 */
+  overflow-y: auto;
+}
+.aq-acitem {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: #1f2733;
+  white-space: nowrap;
+}
+.aq-acitem:hover {
+  background: #eef7f8;
+}
+.aq-acitem.on {
+  background: var(--teal);
+  color: #fff;
+}
+.aq-acmore {
+  padding: 5px 10px;
+  font-size: 11.5px;
+  color: #6b7785;
+  background: #f4f7f8;
+  border-top: 1px solid #e4ecee;
+  text-align: center;
+}
 .aq-lbl input {
   border: 2px solid var(--teal);
   border-radius: 7px;

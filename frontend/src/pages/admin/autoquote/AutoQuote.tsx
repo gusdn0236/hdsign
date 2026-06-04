@@ -25,6 +25,7 @@ import {
   type Evidence,
   type OrderContext,
 } from './annot/api';
+import { matchCodes, didYouMean } from './itemCodes';
 import './AutoQuote.css';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -279,6 +280,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [selPin, setSelPin] = useState<number | null>(null);
   const [selectedPin, setSelectedPin] = useState<number | null>(null); // 복사용으로 클릭 선택된 말풍선.
   const [draft, setDraft] = useState('');
+  const [acIdx, setAcIdx] = useState(-1); // 품목코드 자동완성 드롭다운 하이라이트(-1=없음)
+  const acDropRef = useRef<HTMLDivElement>(null);
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [loadingImg, setLoadingImg] = useState(false); // 주문 진입 시 지시서 자동 로드 진행 중 — 빈화면에 "로딩중" 표시(붙여넣기 안내 대신).
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
@@ -629,6 +632,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (!p || p.fi >= FIELDS.length) return;
     const cur = p.vals[FIELDS[p.fi]] || '';
     setDraft(FIELDS[p.fi] === '단가' ? formatWon(cur) : cur);
+    setAcIdx(-1); // 단계 바뀌면 자동완성 하이라이트 리셋.
     const id = requestAnimationFrame(() => {
       const el = inputRef.current;
       if (el) {
@@ -641,6 +645,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, activeFi]);
+
+  // 자동완성 하이라이트가 바뀌면 그 항목을 드롭다운 안에 보이게 스크롤(키보드 ↓ 로 5개 너머 탐색).
+  useEffect(() => {
+    if (acIdx < 0) return;
+    acDropRef.current?.querySelector('.aq-acitem.on')?.scrollIntoView({ block: 'nearest' });
+  }, [acIdx]);
 
   // 창 크기 변경 시 표시 이미지 폭 갱신(말풍선 flip 판정용).
   useEffect(() => {
@@ -871,9 +881,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   // 현재 필드(fi)를 커밋하고 다음 필드로. 마지막이면 닫는다. (다음 필드 기존값 prefill+선택은 포커스 effect 가.)
-  const commitDraft = () => {
+  const commitDraft = (override?: string) => {
     if (active == null) return;
-    const val = draft.trim();
+    const val = (override ?? draft).trim();
     const cur = pinsRef.current[active];
     // 규격을 막 입력했고 계산 가능한 품목코드(아크릴·포맥스·고무스카시)면 → 단가만 자동 채우고
     // 수량 단계로 진행. 수량(글자수)은 사용자가 직접 입력(품목을 줄여 쓰는 경우가 많아 자동계산 금지).
@@ -909,6 +919,46 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   const onInputKey = (e: React.KeyboardEvent) => {
+    const p = active != null ? pins[active] : null;
+    const isCode = !!p && FIELDS[p.fi] === '품목코드';
+    // 품목코드 자동완성 — 드롭다운 탐색(↓↑) / 제안 적용(Enter) / 그대로(→).
+    if (isCode) {
+      const ms = matchCodes(draft);
+      if (e.key === 'ArrowDown' && ms.length) {
+        e.preventDefault();
+        setAcIdx((i) => Math.min(i + 1, ms.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp' && ms.length) {
+        e.preventDefault();
+        setAcIdx((i) => Math.max(i - 1, -1));
+        return;
+      }
+      if (e.key === 'ArrowRight' && acIdx >= 0) {
+        // 제안 무시하고 그대로 작성 — 커서가 맨 끝일 때만(중간 편집 방해 안 함).
+        const el = e.target as HTMLInputElement;
+        if (el.selectionStart === el.value.length && el.selectionEnd === el.value.length) {
+          e.preventDefault();
+          setAcIdx(-1);
+          return;
+        }
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (acIdx >= 0 && ms[acIdx]) commitDraft(ms[acIdx]); // 하이라이트된 표준코드로
+        else commitDraft(); // 그대로(강제 안 함)
+        setAcIdx(-1);
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (acIdx >= 0) {
+          setAcIdx(-1); // 1차 Esc: 드롭다운만 닫기
+          return;
+        }
+        closeActive();
+        return;
+      }
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       commitDraft();
@@ -1835,7 +1885,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                             placeholder={`${FIELDS[p.fi] ?? ''} 입력 후 Enter`}
                             autoComplete="off"
                             inputMode={FIELDS[p.fi] === '단가' || FIELDS[p.fi] === '수량' ? 'numeric' : undefined}
-                            onChange={(e) => setDraft(FIELDS[p.fi] === '단가' ? formatWon(e.target.value) : e.target.value)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (FIELDS[p.fi] === '단가') {
+                                setDraft(formatWon(v));
+                                return;
+                              }
+                              setDraft(v);
+                              if (FIELDS[p.fi] === '품목코드') {
+                                const ms = matchCodes(v);
+                                const dym = didYouMean(v, ms);
+                                setAcIdx(dym ? ms.indexOf(dym) : -1); // 표준형 변형이면 미리 하이라이트
+                              }
+                            }}
                             onKeyDown={onInputKey}
                             onMouseDown={(e) => e.stopPropagation()}
                           />
@@ -1848,6 +1910,40 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                             ✕
                           </button>
                         </div>
+                        {/* 품목코드 자동완성 드롭다운 — 강제 X. 비슷한 코드 5개 + 더보기(스크롤/↓). */}
+                        {FIELDS[p.fi] === '품목코드' &&
+                          draft.trim() &&
+                          (() => {
+                            const ms = matchCodes(draft);
+                            if (ms.length === 0) return null;
+                            const dym = didYouMean(draft, ms);
+                            return (
+                              <div className="aq-acdrop" ref={acDropRef} onMouseDown={(e) => e.stopPropagation()}>
+                                {dym && acIdx === ms.indexOf(dym) && (
+                                  <div className="aq-achint">
+                                    혹시 <b>{dym}</b>? · Enter 적용 · → 그대로
+                                  </div>
+                                )}
+                                <div className="aq-aclist">
+                                  {ms.map((c, j) => (
+                                    <div
+                                      key={c}
+                                      className={'aq-acitem' + (j === acIdx ? ' on' : '')}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        commitDraft(c);
+                                        setAcIdx(-1);
+                                      }}
+                                    >
+                                      {c}
+                                    </div>
+                                  ))}
+                                </div>
+                                {ms.length > 5 && <div className="aq-acmore">+{ms.length - 5}개 더 · ↓로 탐색</div>}
+                              </div>
+                            );
+                          })()}
                         {FIELDS[p.fi] === '단가' && (
                           <div className="aq-lkrow">
                             <button className="aq-lookup" onMouseDown={(e) => e.stopPropagation()} onClick={openLookup}>
