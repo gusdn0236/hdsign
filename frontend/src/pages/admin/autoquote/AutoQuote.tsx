@@ -248,6 +248,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const draftRef = useRef(draft);
   const selectedPinRef = useRef<number | null>(null);
   const copyBufRef = useRef<Record<string, string> | null>(null); // Ctrl+C 로 복사한 말풍선 값.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   pinsRef.current = pins;
   activeRef.current = active;
   selPinRef.current = selPin;
@@ -453,7 +455,31 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       // 연필·지우개 스트로크 종료.
       if (paintRef.current?.active) {
         paintRef.current = null;
-        setMaskHasInk(true);
+        if (ocrToolRef.current === 'eraser') {
+          // 지우개는 칠을 더하지 않는다 → 지운 뒤 마스크에 남은 칠이 있을 때만 ✓/✕ 활성.
+          // 다운샘플(200px)로 빠르게 잔여 칠 유무만 확인.
+          const m = maskRef.current;
+          let ink = false;
+          if (m && m.width > 0) {
+            const sc = document.createElement('canvas');
+            sc.width = 200;
+            sc.height = Math.max(1, Math.round((200 * m.height) / m.width));
+            const sctx = sc.getContext('2d');
+            if (sctx) {
+              sctx.drawImage(m, 0, 0, sc.width, sc.height);
+              const dd = sctx.getImageData(0, 0, sc.width, sc.height).data;
+              for (let i = 3; i < dd.length; i += 4) {
+                if (dd[i] > 8) {
+                  ink = true;
+                  break;
+                }
+              }
+            }
+          }
+          setMaskHasInk(ink);
+        } else {
+          setMaskHasInk(true); // 연필 = 칠 추가.
+        }
         return;
       }
       if (ocrDrag.current) {
@@ -648,7 +674,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
       e.preventDefault();
-      setMode(e.key === '1' ? 'cursor' : e.key === '2' ? 'hand' : 'ocr');
+      if (e.key === '1') {
+        setMode('cursor');
+      } else if (e.key === '2') {
+        setMode('hand');
+      } else if (modeRef.current === 'ocr') {
+        // 이미 글자수 모드면 3번 재입력 = 박스→연필→지우개 순환.
+        setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'));
+      } else {
+        setMode('ocr');
+      }
     };
     window.addEventListener('keydown', onNum);
     return () => window.removeEventListener('keydown', onNum);
