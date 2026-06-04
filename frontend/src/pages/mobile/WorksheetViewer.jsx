@@ -1042,6 +1042,13 @@ export default function WorksheetViewer() {
                             currentScaleRef.current = ref?.state?.scale ?? currentScaleRef.current;
                             setOverlayOn(false); // 제스처 중엔 베이스(부드러운 CSS 확대)만 보여줌
                         }}
+                        onPinchStop={(ref) => {
+                            // 핀치(두 손가락) 줌은 onZoomStop 이 아니라 여기서 끝난다 — 손 떼면 오버레이 재렌더.
+                            const nextScale = ref?.state?.scale ?? currentScaleRef.current;
+                            currentScaleRef.current = nextScale;
+                            if (nextScale > OVERLAY_MIN_SCALE) scheduleOverlay();
+                            else setOverlayOn(false);
+                        }}
                         onZoomStart={() => setOverlayOn(false)}
                         onPanningStart={() => setOverlayOn(false)}
                         onZoomStop={(ref) => {
