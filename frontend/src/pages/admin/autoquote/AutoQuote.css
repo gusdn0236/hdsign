@@ -56,16 +56,50 @@
   cursor: pointer;
   font-size: 15px;
 }
-/* 참고사진 ↔ 지시서 전환 토글 — 텍스트라 알약형(자동 폭). on=참고사진 보는 중. */
-.aq-reftoggle {
-  width: auto;
-  padding: 0 12px;
-  border-radius: 16px;
-  font-size: 13px;
-  font-weight: 700;
+/* 사진 좌·우 넘김 화살표(작업지시서 ↔ 참고사진). 스테이지(줌/팬) 위에 고정 — stagewrap 기준 절대배치. */
+.aq-navarrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 12;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.42);
+  color: #fff;
+  font-size: 30px;
+  line-height: 1;
+  padding-bottom: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
 }
-.aq-reftoggle.on {
-  background: var(--teal, #0a9396);
+.aq-navarrow:hover {
+  background: rgba(0, 0, 0, 0.68);
+}
+.aq-navarrow.left {
+  left: 14px;
+}
+.aq-navarrow.right {
+  right: 14px;
+}
+/* 현재 보는 사진 표시 — 하단중앙(상단은 툴바·OCR ✓✕ 와 겹치지 않게). */
+.aq-navlabel {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  padding: 4px 14px;
+  border-radius: 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  pointer-events: none;
 }
 
 .aq-wrap {

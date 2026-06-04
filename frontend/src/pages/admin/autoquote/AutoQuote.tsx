@@ -1808,15 +1808,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         >
           ↺
         </button>
-        {refSrc && (
-          <button
-            className={'aq-x aq-reftoggle' + (showRef ? ' on' : '')}
-            title={showRef ? '지시서 보기로 — 번호 동그라미를 얹을 수 있어요' : '참고사진 보기로 전환'}
-            onClick={() => setShowRef((v) => !v)}
-          >
-            {showRef ? '지시서' : '참고'}
-          </button>
-        )}
         {onClose && (
           <button className="aq-x aq-close" title="닫기" onClick={onClose}>
             ✕
@@ -1830,6 +1821,32 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           ref={stagewrapRef}
           onMouseDown={startStageDrag}
         >
+          {/* 참고사진이 있으면 사진 좌·우 화살표로 [작업지시서 ↔ 참고사진] 넘김(2장 캐러셀). */}
+          {imgSrc && refSrc && (
+            <>
+              <button
+                type="button"
+                className="aq-navarrow left"
+                title="이전 사진 (작업지시서 ↔ 참고사진)"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setShowRef((v) => !v)}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="aq-navarrow right"
+                title="다음 사진 (작업지시서 ↔ 참고사진)"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setShowRef((v) => !v)}
+              >
+                ›
+              </button>
+              <div className="aq-navlabel" onMouseDown={(e) => e.stopPropagation()}>
+                {showRef ? '참고사진 (2/2)' : '작업지시서 (1/2)'}
+              </div>
+            </>
+          )}
           {imgSrc && !showRef && (
             <div className="aq-tools">
               <button
