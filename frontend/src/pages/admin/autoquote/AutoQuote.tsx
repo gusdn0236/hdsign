@@ -36,11 +36,12 @@ async function renderPdfFirstPage(url: string): Promise<string> {
   try {
     const page = await pdf.getPage(1);
     const base = page.getViewport({ scale: 1 });
-    // 고해상 렌더(확대해도 선명) — 가로 ~4800px 목표.
+    // 고해상 렌더(확대해도 선명) — 가로 ~7200px 목표.
     // AutoQuote 는 이 비트맵을 CSS transform:scale(zoom) 로만 키우므로(PdfViewer 처럼 줌마다
-    // 재렌더하지 않음), 최대 줌(5×)에서도 또렷하려면 표시폭(~1000px)×5 ≈ 5000px 의 네이티브
-    // 해상도가 필요하다. 가로 4800px 면 A4 기준 ~32M px(JPEG 라 용량/메모리 감당 가능).
-    const TARGET_W = 4800;
+    // 재렌더하지 않음), 줌 상한(10×)을 지원하려면 네이티브 해상도가 클수록 좋다. 표시폭(~1000px)
+    // 기준 가로 7200px 면 ~7.2× 까지 1:1 이상으로 또렷하고, 거기서 10× 까지는 살짝 소프트하지만
+    // 읽을 만하다. A4 세로 기준 높이 ~10180px(크롬·파이어폭스 캔버스 한계 안)·~73M px.
+    const TARGET_W = 7200;
     const scale = Math.min(10, Math.max(2, TARGET_W / base.width));
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement('canvas');
@@ -154,9 +155,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [selectedPin, setSelectedPin] = useState<number | null>(null); // 복사용으로 클릭 선택된 말풍선.
   const [draft, setDraft] = useState('');
   const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [loadingImg, setLoadingImg] = useState(false); // 주문 진입 시 지시서 자동 로드 진행 중 — 빈화면에 "로딩중" 표시(붙여넣기 안내 대신).
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
   const [stageH, setStageH] = useState(0);
-  const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~5). 핀 좌표는 zoom 으로 나눠 변환.
+  const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~10). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
   const [mode, setMode] = useState<'cursor' | 'hand' | 'ocr'>('cursor'); // 커서=핀 작성 / 손바닥=화면 이동 / 글자=영역 OCR
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
@@ -209,10 +211,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const id = orderIdProp ?? Number(searchParams.get('order'));
     if (!Number.isFinite(id) || id <= 0) return;
     let alive = true;
+    setLoadingImg(true); // 지시서 자동 로드 시작 — 빈화면에 "로딩중" 표시.
     (async () => {
       try {
         const o = await getOrder(token, id);
-        if (!alive || !o) return;
+        if (!alive || !o) {
+          if (alive) setLoadingImg(false);
+          return;
+        }
         setOrder(o);
         const label = `${o.clientCompanyName || ''} · ${o.title || o.orderNumber}`;
         if (o.worksheetPdfUrl) {
@@ -239,6 +245,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         } else {
           setStatus(`${label} — 지시서 이미지를 붙여넣으세요`);
         }
+        if (alive) setLoadingImg(false); // 이미지 로드 끝(성공/폴백/없음) — 빈화면이면 붙여넣기 안내로 전환.
         // 기존 명세서가 있으면 grid 를 핀(앵커 없는 grid 행)으로 복원.
         const est = await getEstimate(token, id);
         if (alive && est?.estimate?.grid?.length) {
@@ -262,6 +269,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         }
       } catch (e) {
         console.error(e);
+        if (alive) setLoadingImg(false);
       }
     })();
     return () => {
@@ -449,7 +457,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       const z = zoomRef.current;
       const cux = (e.clientX - rect.left) / z; // 커서 아래 콘텐츠 좌표
       const cuy = (e.clientY - rect.top) / z;
-      const z2 = Math.max(1, Math.min(5, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      const z2 = Math.max(1, Math.min(10, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
       if (z2 === z) return;
       if (z2 === 1) setPan({ x: 0, y: 0 });
       else setPan((prev) => ({ x: prev.x + cux * (z - z2), y: prev.y + cuy * (z - z2) }));
@@ -1045,13 +1053,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           )}
           {ocrBusy && <div className="aq-ocrbusy">글자 읽는 중…</div>}
           {!imgSrc ? (
-            <div className="aq-empty">
-              📋
-              <br />
-              작업지시서 이미지를 붙여넣으세요
-              <br />
-              <span style={{ fontSize: 12 }}>Ctrl + V</span>
-            </div>
+            loadingImg ? (
+              <div className="aq-empty">
+                ⏳
+                <br />
+                지시서 로딩중입니다
+              </div>
+            ) : (
+              <div className="aq-empty">
+                📋
+                <br />
+                작업지시서 이미지를 붙여넣으세요
+                <br />
+                <span style={{ fontSize: 12 }}>Ctrl + V</span>
+              </div>
+            )
           ) : (
             <div
               className="aq-stage"
