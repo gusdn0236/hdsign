@@ -13,6 +13,7 @@ import {
   parseCode,
   computeAcryl,
   computeGomu,
+  charCount,
 } from './annot/calc';
 import {
   predict,
@@ -1235,11 +1236,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const createPinFromOcr = (anchor: { x: number; y: number }, text: string) => {
     const ax = anchor.x;
     const ay = anchor.y;
+    const qty = charCount(text, 'all'); // 글자수(공백 제외) = 수량.
     setPins((prev) => {
       // 점=영역 중앙, 말풍선=우상단으로 살짝 비켜 리더선 연결(주변에 생성).
+      // 품목=읽은 글자, 수량=글자수(둘 다 prefill — 단계 진행 시 입력칸에 채워져 나옴).
       const next = [
         ...prev,
-        { ax, ay, lx: ax + 36, ly: ay - 28, dragged: true, vals: { 품목: text }, fi: 0 },
+        { ax, ay, lx: ax + 36, ly: ay - 28, dragged: true, vals: { 품목: text, 수량: String(qty) }, fi: 0 },
       ];
       setActive(next.length - 1);
       return next;
@@ -1336,11 +1339,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           `<span style="display:inline-flex;width:22px;height:22px;border-radius:50%;` +
           `background:${pinColor(newIdx)};color:#fff;font-weight:800;font-size:12px;` +
           `align-items:center;justify-content:center;vertical-align:middle;margin-right:5px">${newIdx + 1}</span>`;
+        const qty = charCount(text, 'all');
         cdlg(
           `<div style="margin-bottom:7px;font-size:14px">${circle}<b>번 품목으로 추가할까요?</b></div>` +
             `<b style="font-size:15px">"${esc}"</b>` +
-            `<div style="font-size:11.5px;color:#6b7785;margin-top:7px">확인 → 칠한 자리에 말풍선이 생기고 품목코드부터 입력해요. ` +
-            `Enter 로 품목 단계에 가면 이 글자가 채워져 있어 바로 수정·확정할 수 있어요.</div>`,
+            `<div style="font-size:12px;color:#0a7d8c;font-weight:700;margin-top:6px">글자수 ${qty} → 수량 자동 입력</div>` +
+            `<div style="font-size:11.5px;color:#6b7785;margin-top:6px">확인 → 칠한 자리에 말풍선이 생기고 품목코드부터 입력해요. ` +
+            `Enter 로 진행하면 품목·수량이 채워져 있어 바로 수정·확정할 수 있어요.</div>`,
           [
             { label: '확인', fn: () => createPinFromOcr(anchor, text) },
             { label: '취소', sec: true },
