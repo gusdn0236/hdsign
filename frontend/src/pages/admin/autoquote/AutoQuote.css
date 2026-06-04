@@ -347,6 +347,10 @@
   flex-direction: column;
   align-items: flex-start;
 }
+/* 편집 중인 말풍선 — 드롭다운이 다른 말풍선 위로 보이도록 위로 띄운다. */
+.aq-lbl.active {
+  z-index: 9;
+}
 .aq-lbl.up {
   transform: translate(-10px, calc(-100% - 9px));
 }
@@ -485,9 +489,16 @@
   align-items: center;
   margin-top: 4px;
 }
-/* 품목코드 자동완성 드롭다운 */
+/* 입력칸 + 드롭다운 묶음 — 드롭다운을 절대배치할 기준(입력칸은 이 안에서 고정). */
+.aq-inwrap {
+  position: relative;
+}
+/* 품목코드 자동완성 드롭다운 — 절대배치라 입력칸을 밀지 않는다. 기본은 입력칸 바로 아래. */
 .aq-acdrop {
-  margin-top: 4px;
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 6;
   width: 300px;
   background: #fff;
   border: 1.5px solid var(--teal);
@@ -495,6 +506,11 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
   overflow: hidden;
   font-size: 13px;
+}
+/* 아래 공간이 부족하면 입력칸 위로 펼친다. */
+.aq-acdrop.above {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 .aq-achint {
   padding: 6px 10px;

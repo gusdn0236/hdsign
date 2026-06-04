@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
 // @ts-expect-error - Vite ?url 자산 임포트(타입 선언 없음). 앱 다른 곳(PdfViewer)과 동일 패턴.
@@ -281,6 +281,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [selectedPin, setSelectedPin] = useState<number | null>(null); // 복사용으로 클릭 선택된 말풍선.
   const [draft, setDraft] = useState('');
   const [acIdx, setAcIdx] = useState(-1); // 품목코드 자동완성 드롭다운 하이라이트(-1=없음)
+  const [acAbove, setAcAbove] = useState(false); // 드롭다운을 입력칸 위로 열지(아래 공간 부족 시)
   const acDropRef = useRef<HTMLDivElement>(null);
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [loadingImg, setLoadingImg] = useState(false); // 주문 진입 시 지시서 자동 로드 진행 중 — 빈화면에 "로딩중" 표시(붙여넣기 안내 대신).
@@ -651,6 +652,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (acIdx < 0) return;
     acDropRef.current?.querySelector('.aq-acitem.on')?.scrollIntoView({ block: 'nearest' });
   }, [acIdx]);
+
+  // 드롭다운은 입력칸을 밀지 않고 아래로 연다(절대배치). 단, 사진 영역 아래 공간이 부족하면 위로.
+  // 입력칸/스테이지의 화면 좌표를 재 비교 — 말풍선 scale(1/zoom) 까지 반영된 실측값을 쓴다.
+  useLayoutEffect(() => {
+    const inp = inputRef.current,
+      stage = stagewrapRef.current;
+    if (!inp || !stage) return;
+    const ir = inp.getBoundingClientRect(),
+      sr = stage.getBoundingClientRect();
+    const dh = acDropRef.current?.offsetHeight || 210; // 펼친 드롭다운 높이(없으면 추정).
+    const below = sr.bottom - ir.bottom,
+      above = ir.top - sr.top;
+    setAcAbove(below < dh + 10 && above > below);
+  }, [active, draft]);
 
   // 창 크기 변경 시 표시 이미지 폭 갱신(말풍선 flip 판정용).
   useEffect(() => {
@@ -1195,11 +1210,37 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       dh = img.clientHeight;
     const sx = nw / dw,
       sy = nh / dh;
+
+    // ── 오른쪽 명세서(표) 메트릭 — 사진 높이에 맞춰 글자 크기를 정한다(사진과 함께 한 장으로). ──
+    const tfs = Math.min(40, Math.max(22, Math.round(nh / 42)));
+    const cols: { key: string; label: string; w: number; align: 'left' | 'center' | 'right' }[] = [
+      { key: '번호', label: '', w: tfs * 2.0, align: 'center' },
+      { key: '품목코드', label: '품목코드', w: tfs * 4.6, align: 'left' },
+      { key: '품목', label: '품목', w: tfs * 12, align: 'left' },
+      { key: '규격', label: '규격', w: tfs * 4.4, align: 'left' },
+      { key: '수량', label: '수량', w: tfs * 3.0, align: 'right' },
+      { key: '단가', label: '단가', w: tfs * 5.6, align: 'right' },
+      { key: '공급가액', label: '공급가액', w: tfs * 6.4, align: 'right' },
+    ];
+    const tpad = tfs * 0.6;
+    const tw = cols.reduce((s, c) => s + c.w, 0) + tpad * 2;
+    const titleH = tfs * 2.6,
+      headH = tfs * 2.1,
+      rh = tfs * 2.0,
+      footH = tfs * 2.8;
+    const nRows = Math.max(pins.length, 1);
+    const th = titleH + headH + rh * nRows + footH;
+
+    const GAP = Math.round(tfs * 0.8);
     const cv = document.createElement('canvas');
-    cv.width = nw;
-    cv.height = nh;
+    cv.width = nw + GAP + tw;
+    cv.height = Math.max(nh, th);
     const ctx = cv.getContext('2d');
     if (!ctx) return;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+
+    // ── 왼쪽: 사진 + 말풍선 (기존 합성) ──────────────────────────────
     try {
       ctx.drawImage(img, 0, 0, nw, nh);
     } catch {
@@ -1235,8 +1276,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         bx = ax - 10 * sx;
         by = ay - 9 * sx - h;
       }
-      // 말풍선이 캔버스 우측을 넘으면 안쪽으로 당겨 그린다(편집 화면 flip 과 일관).
-      if (bx + w > cv.width - 2) bx = cv.width - w - 2;
+      // 말풍선이 사진 우측을 넘으면 안쪽으로 당겨 그린다(표 영역 침범 방지 — cv.width 아닌 사진폭 nw 기준).
+      if (bx + w > nw - 2) bx = nw - w - 2;
       if (bx < 2) bx = 2;
       ctx.fillStyle = c;
       ctx.beginPath();
@@ -1257,6 +1298,113 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       ctx.strokeStyle = '#fff';
       ctx.stroke();
     });
+
+    // ── 오른쪽: 명세서 표 (화면의 grid 를 캔버스로 재현) ──────────────
+    const ox = nw + GAP;
+    const cellText = (p: Pin, key: string): string => {
+      const v = p.vals;
+      if (key === '공급가액') {
+        const u = num(v['단가']);
+        return u == null ? '' : (u * (num(v['수량']) || 1)).toLocaleString();
+      }
+      if (key === '단가') {
+        const u = num(v['단가']);
+        return u == null ? '' : u.toLocaleString();
+      }
+      return v[key] || '';
+    };
+    // 셀 폭을 넘는 글자는 … 로 줄인다.
+    const fitText = (text: string, maxW: number): string => {
+      let t = String(text);
+      if (ctx.measureText(t).width <= maxW) return t;
+      while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+      return t + '…';
+    };
+    const cellX = (col: (typeof cols)[number], left: number): number =>
+      col.align === 'right' ? left + col.w - tfs * 0.35 : col.align === 'center' ? left + col.w / 2 : left + tfs * 0.35;
+
+    ctx.textBaseline = 'middle';
+    // 제목 줄 — "견적" + 거래처.
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'left';
+    ctx.font = '800 ' + Math.round(tfs * 1.15) + 'px sans-serif';
+    ctx.fillText('견적', ox + tpad, titleH / 2);
+    const tag = order ? order.clientCompanyName || order.orderNumber || '' : '';
+    if (tag) {
+      ctx.textAlign = 'right';
+      ctx.font = '600 ' + Math.round(tfs * 0.92) + 'px sans-serif';
+      ctx.fillStyle = '#475569';
+      ctx.fillText(fitText(String(tag), tw * 0.5), ox + tw - tpad, titleH / 2);
+    }
+    // 헤더 줄.
+    let ty = titleH;
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(ox, ty, tw, headH);
+    ctx.fillStyle = '#334155';
+    ctx.font = '700 ' + Math.round(tfs * 0.9) + 'px sans-serif';
+    {
+      let cx = ox + tpad;
+      for (const col of cols) {
+        if (col.label) {
+          ctx.textAlign = col.align;
+          ctx.fillText(col.label, cellX(col, cx), ty + headH / 2);
+        }
+        cx += col.w;
+      }
+    }
+    ty += headH;
+    // 데이터 행.
+    pins.forEach((p, i) => {
+      const rowY = ty + rh * i;
+      const my = rowY + rh / 2;
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ox, rowY + rh);
+      ctx.lineTo(ox + tw, rowY + rh);
+      ctx.stroke();
+      // 번호 배지(핀 색).
+      const c = pinColor(i);
+      const bcx = ox + tpad + cols[0].w / 2;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(bcx, my, tfs * 0.62, 0, 7);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.font = '700 ' + Math.round(tfs * 0.8) + 'px sans-serif';
+      ctx.fillText(String(i + 1), bcx, my);
+      // 셀 값.
+      ctx.fillStyle = '#1e293b';
+      ctx.font = Math.round(tfs * 0.96) + 'px sans-serif';
+      let cx = ox + tpad + cols[0].w;
+      for (let k = 1; k < cols.length; k++) {
+        const col = cols[k];
+        const raw = cellText(p, col.key);
+        if (raw) {
+          ctx.textAlign = col.align;
+          ctx.fillText(fitText(raw, col.w - tfs * 0.7), cellX(col, cx), my);
+        }
+        cx += col.w;
+      }
+    });
+    ty += rh * nRows;
+    // 합계 줄.
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(ox, ty, tw, footH);
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'left';
+    ctx.font = '700 ' + Math.round(tfs) + 'px sans-serif';
+    ctx.fillText('합계', ox + tpad, ty + footH / 2);
+    ctx.textAlign = 'right';
+    ctx.font = '800 ' + Math.round(tfs * 1.1) + 'px sans-serif';
+    ctx.fillText(total.toLocaleString() + '원', ox + tw - tpad, ty + footH / 2);
+    // 표 외곽선.
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(ox + 0.5, 0.5, tw - 1, th - 1);
+    ctx.textAlign = 'left';
+
     cv.toBlob(async (blob) => {
       if (!blob) {
         cdlg('캡쳐 실패(샘플 이미지는 보안제한 — 붙여넣은 사진으로 시도하세요).', [{ label: '확인', sec: true }]);
@@ -1264,7 +1412,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        cdlg('✓ 사진+말풍선이 복사됐어요. 카톡에서 Ctrl+V 로 붙여넣으세요.', [{ label: '확인' }]);
+        cdlg('✓ 사진+말풍선+명세서가 복사됐어요. 카톡에서 Ctrl+V 로 붙여넣으세요.', [{ label: '확인' }]);
       } catch {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -1548,9 +1696,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   performOcrRef.current = readMask;
 
   // ---- 렌더 ------------------------------------------------------------
-  // 글자수 모드에선 다음에 만들어질 행(빈 칸)이 보이도록 한 줄 더.
-  const ocrTarget = pins.length; // 읽으면 새로 만들어질 말풍선/행 번호(0-based).
-  const rows = Math.max(ROWS, pins.length + (mode === 'ocr' ? 1 : 0));
+  // 글자수·말풍선 모드에선 다음에 만들어질 행(빈 칸)이 보이도록 한 줄 더 + 그 행을 하이라이트.
+  // 단, 어떤 행을 편집 중(active≠null)이면 그 행을 다 채우는 중이므로 다음 행은 칠하지 않는다.
+  // → 현재 행 입력을 마쳐 active 가 풀리고 모드(2·3)가 유지될 때 비로소 다음 행이 칠해진다.
+  const ocrTarget = pins.length; // 읽으면/그리면 새로 만들어질 말풍선·행 번호(0-based).
+  const showTgtRow = (mode === 'ocr' || mode === 'cursor') && active === null; // 다음 항목 행 하이라이트(글자수=3 · 말풍선=2 공통).
+  const rows = Math.max(ROWS, pins.length + (showTgtRow ? 1 : 0));
   // 박스·연필·커서·grid 행 하이라이트 색 = 다음 말풍선 색. "지금 칠하는 게 N번으로 들어가겠구나".
   const ocrColor = pinColor(ocrTarget);
   ocrColorRef.current = ocrColor;
@@ -1853,7 +2004,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   transformOrigin: '50% 50%',
                 };
                 return (
-                  <div key={'lbl' + i} className={'aq-lbl' + (i === selectedPin ? ' sel' : '')} style={lblStyle}>
+                  <div
+                    key={'lbl' + i}
+                    className={'aq-lbl' + (i === selectedPin ? ' sel' : '') + (isActive ? ' active' : '')}
+                    style={lblStyle}
+                  >
                     {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
                       className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
@@ -1878,72 +2033,78 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                     </div>
                     {isActive && (
                       <>
-                        <div className="aq-pinrow">
-                          <input
-                            ref={inputRef}
-                            value={draft}
-                            placeholder={`${FIELDS[p.fi] ?? ''} 입력 후 Enter`}
-                            autoComplete="off"
-                            inputMode={FIELDS[p.fi] === '단가' || FIELDS[p.fi] === '수량' ? 'numeric' : undefined}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              if (FIELDS[p.fi] === '단가') {
-                                setDraft(formatWon(v));
-                                return;
-                              }
-                              setDraft(v);
-                              if (FIELDS[p.fi] === '품목코드') {
-                                const ms = matchCodes(v);
-                                const dym = didYouMean(v, ms);
-                                setAcIdx(dym ? ms.indexOf(dym) : -1); // 표준형 변형이면 미리 하이라이트
-                              }
-                            }}
-                            onKeyDown={onInputKey}
-                            onMouseDown={(e) => e.stopPropagation()}
-                          />
-                          <button
-                            className="aq-pinx"
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={closeActive}
-                            title="닫기"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                        {/* 품목코드 자동완성 드롭다운 — 강제 X. 비슷한 코드 5개 + 더보기(스크롤/↓). */}
-                        {FIELDS[p.fi] === '품목코드' &&
-                          draft.trim() &&
-                          (() => {
-                            const ms = matchCodes(draft);
-                            if (ms.length === 0) return null;
-                            const dym = didYouMean(draft, ms);
-                            return (
-                              <div className="aq-acdrop" ref={acDropRef} onMouseDown={(e) => e.stopPropagation()}>
-                                {dym && acIdx === ms.indexOf(dym) && (
-                                  <div className="aq-achint">
-                                    혹시 <b>{dym}</b>? · Enter 적용 · → 그대로
-                                  </div>
-                                )}
-                                <div className="aq-aclist">
-                                  {ms.map((c, j) => (
-                                    <div
-                                      key={c}
-                                      className={'aq-acitem' + (j === acIdx ? ' on' : '')}
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        commitDraft(c);
-                                        setAcIdx(-1);
-                                      }}
-                                    >
-                                      {c}
+                        <div className="aq-inwrap">
+                          <div className="aq-pinrow">
+                            <input
+                              ref={inputRef}
+                              value={draft}
+                              placeholder={`${FIELDS[p.fi] ?? ''} 입력 후 Enter`}
+                              autoComplete="off"
+                              inputMode={FIELDS[p.fi] === '단가' || FIELDS[p.fi] === '수량' ? 'numeric' : undefined}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (FIELDS[p.fi] === '단가') {
+                                  setDraft(formatWon(v));
+                                  return;
+                                }
+                                setDraft(v);
+                                if (FIELDS[p.fi] === '품목코드') {
+                                  const ms = matchCodes(v);
+                                  const dym = didYouMean(v, ms);
+                                  setAcIdx(dym ? ms.indexOf(dym) : -1); // 표준형 변형이면 미리 하이라이트
+                                }
+                              }}
+                              onKeyDown={onInputKey}
+                              onMouseDown={(e) => e.stopPropagation()}
+                            />
+                            <button
+                              className="aq-pinx"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={closeActive}
+                              title="닫기"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {/* 품목코드 자동완성 드롭다운 — 입력칸은 고정, 드롭다운만 절대배치로 아래(또는 위)로. */}
+                          {FIELDS[p.fi] === '품목코드' &&
+                            draft.trim() &&
+                            (() => {
+                              const ms = matchCodes(draft);
+                              if (ms.length === 0) return null;
+                              const dym = didYouMean(draft, ms);
+                              return (
+                                <div
+                                  className={'aq-acdrop' + (acAbove ? ' above' : '')}
+                                  ref={acDropRef}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                  {dym && acIdx === ms.indexOf(dym) && (
+                                    <div className="aq-achint">
+                                      혹시 <b>{dym}</b>? · Enter 적용 · → 그대로
                                     </div>
-                                  ))}
+                                  )}
+                                  <div className="aq-aclist">
+                                    {ms.map((c, j) => (
+                                      <div
+                                        key={c}
+                                        className={'aq-acitem' + (j === acIdx ? ' on' : '')}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          commitDraft(c);
+                                          setAcIdx(-1);
+                                        }}
+                                      >
+                                        {c}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {ms.length > 5 && <div className="aq-acmore">+{ms.length - 5}개 더 · ↓로 탐색</div>}
                                 </div>
-                                {ms.length > 5 && <div className="aq-acmore">+{ms.length - 5}개 더 · ↓로 탐색</div>}
-                              </div>
-                            );
-                          })()}
+                              );
+                            })()}
+                        </div>
                         {FIELDS[p.fi] === '단가' && (
                           <div className="aq-lkrow">
                             <button className="aq-lookup" onMouseDown={(e) => e.stopPropagation()} onClick={openLookup}>
@@ -2020,7 +2181,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 {Array.from({ length: rows }, (_, i) => {
                   const p = pins[i];
                   const v = p ? p.vals : {};
-                  const isOcrTgt = mode === 'ocr' && i === ocrTarget;
+                  const isOcrTgt = showTgtRow && i === ocrTarget;
                   return (
                     <tr
                       key={i}

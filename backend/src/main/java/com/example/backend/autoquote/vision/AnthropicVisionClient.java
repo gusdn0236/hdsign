@@ -65,6 +65,15 @@ public class AnthropicVisionClient implements VisionClient {
             + "Korean / English characters and digits shown, verbatim, in natural reading order. "
             + "Join multiple lines with a single space. Do NOT include measurements, dimensions, "
             + "material names, prices, or instructions — only the letters to be produced. "
+            + "\n\n"
+            + "READ HANGUL WITH CARE. The lettering may be thin, faint, or low-contrast. Each Korean "
+            + "syllable is a block of initial consonant + vowel + optional final consonant (받침); read "
+            + "all three parts of EVERY block. Distinguish look-alike jamo precisely: vowels ㅓ/ㅕ, ㅏ/ㅑ, "
+            + "ㅗ/ㅛ, ㅜ/ㅠ, ㅐ/ㅔ, ㅡ/ㅢ; final consonants ㄹ/ㅌ/ㄷ, ㅁ/ㅂ, ㄴ/ㄱ, ㅇ/ㅎ. Count vowel strokes "
+            + "(e.g. ㅓ has one short stroke, ㅕ has two) and check the 받침 shape carefully. "
+            + "When strokes are genuinely ambiguous, prefer the reading that forms a valid, natural Korean "
+            + "word or phrase over a meaningless string — but NEVER overwrite text that is clearly drawn, and "
+            + "never invent or auto-complete characters that are not present. "
             + "If there is no legible lettering, return an empty string. Call the " + READ_TEXT_TOOL + " tool.";
 
     private final String apiKey;
