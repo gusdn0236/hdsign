@@ -1,233 +1,348 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
-import 'react-pdf/dist/Page/AnnotationLayer.css';
-import 'react-pdf/dist/Page/TextLayer.css';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { pdfjs } from 'react-pdf';
+import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import './PdfViewer.css';
 
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
-const MIN_SCALE = 0.5;
-const MAX_SCALE = 4;
-const ZOOM_STEP = 0.25;
-const DPR_CAP = 6;
+// 뷰포트(보이는 영역만) 렌더 방식 — 페이지 전체를 한 장의 거대한 캔버스에 굽지 않고,
+// 화면 크기 캔버스에 "현재 보이는 창"만 그때그때 고해상으로 다시 그린다(지도 앱과 동일).
+//  - 캔버스가 항상 화면 크기라 브라우저 캔버스 한계(한 변 16384px·면적 ~268M px)를 절대 안 넘음
+//    → 아무리 확대해도 "Aw Snap"/깨짐 없음, 메모리도 화면 한 장 분량이라 가볍고 빠름.
+//  - 확대(zoom)는 viewport scale 에 곱해져 들어가므로 고배율에서도 선명.
+//  - 더블버퍼(offscreen→drawImage)라 다시 그리는 동안 직전 화면이 유지돼 깜빡임이 없다.
+const MIN_SCALE = 1; // 1 = 화면에 페이지 전체가 들어오는 배율(fit)
+const MAX_SCALE = 20; // 뷰포트 렌더라 깊게 확대해도 안전
+const ZOOM_STEP = 1.2; // 휠/버튼 1틱 배율(곱셈)
+const DPR_CAP = 2.5; // 렌더 선명도 상한(화면 캔버스라 2.5 면 충분)
+const PAD = 16; // fit 시 페이지 둘레 여백(px)
+const BG = '#1a1d24'; // 페이지 바깥 영역 색(pv-wrap 과 동일)
 
 export default function PdfViewer({ url }) {
     const stageRef = useRef(null);
-    const scaleRef = useRef(1);
-    const [stageWidth, setStageWidth] = useState(0);
-    const [stageHeight, setStageHeight] = useState(0);
-    // 첫 페이지 비율 (h/w) — 처음에 페이지 전체가 stage 안에 들어가도록 baseWidth 계산에 사용.
-    const [pageAspect, setPageAspect] = useState(null);
+    const canvasRef = useRef(null);
+    const offscreenRef = useRef(null); // 더블버퍼
+
+    const docRef = useRef(null); // pdfjs 문서
+    const pageRef = useRef(null); // 현재 페이지 객체
+    const page0Ref = useRef({ w: 0, h: 0 }); // scale=1 일 때 페이지 크기(pt)
+    const fitRef = useRef(1); // 페이지를 stage 에 맞추는 배율(CSS px/pt)
+    const zoomRef = useRef(1); // fit 위에 곱하는 줌
+    const offsetRef = useRef({ x: 0, y: 0 }); // 보이는 창의 좌상단(줌 적용된 페이지-CSS 좌표)
+
+    // 렌더 직렬화 — 그리는 중 새 요청이 오면 끝나고 한 번 더(dirty).
+    const drawingRef = useRef(false);
+    const dirtyRef = useRef(false);
+    const rafRef = useRef(0);
+
+    const readyRef = useRef(false); // 첫 페이지 렌더 완료(콜백 안정화를 위해 ref)
 
     const [numPages, setNumPages] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
-    const [scale, setScale] = useState(1);
-
+    const [zoomLabel, setZoomLabel] = useState(1);
     const [docLoading, setDocLoading] = useState(true);
-    const [pageRendering, setPageRendering] = useState(false);
+    const [ready, setReady] = useState(false); // 첫 페이지 렌더 완료(스피너용)
     const [error, setError] = useState('');
 
-    // 다음 렌더가 끝나면 적용할 줌 앵커. zoomTo 가 시각 좌표(cx,cy)와 페이지 분수(fracX/Y) 를
-    // 채워두면, useLayoutEffect 가 setScale 후 새 DOM 으로 같은 분수 위치가 같은 시각 좌표에
-    // 오도록 스크롤을 정확히 보정. 옛날엔 setScale + rAF 방식이었는데 react-pdf 의 wrapper
-    // 가 즉시 새 크기로 안 잡혀 측정값이 빗나가 매 휠마다 상단으로 점프하는 버그가 있었다.
-    const pendingZoomRef = useRef(null);
+    // ---- 한 프레임 렌더 ----------------------------------------------------
+    const drawOnce = useCallback(async () => {
+        const page = pageRef.current;
+        const stage = stageRef.current;
+        const canvas = canvasRef.current;
+        if (!page || !stage || !canvas) return;
 
-    useEffect(() => { scaleRef.current = scale; }, [scale]);
+        const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+        const cw = stage.clientWidth;
+        const ch = stage.clientHeight;
+        if (cw <= 0 || ch <= 0) return;
 
-    useEffect(() => {
-        const measure = () => {
-            if (stageRef.current) {
-                setStageWidth(stageRef.current.clientWidth);
-                setStageHeight(stageRef.current.clientHeight);
-            }
-        };
-        measure();
-        window.addEventListener('resize', measure);
-        return () => window.removeEventListener('resize', measure);
+        const bw = Math.round(cw * dpr);
+        const bh = Math.round(ch * dpr);
+
+        // 화면(visible) 캔버스 크기 맞추기.
+        if (canvas.width !== bw || canvas.height !== bh) {
+            canvas.width = bw;
+            canvas.height = bh;
+        }
+        canvas.style.width = cw + 'px';
+        canvas.style.height = ch + 'px';
+
+        // 더블버퍼(offscreen) 준비.
+        let off = offscreenRef.current;
+        if (!off) {
+            off = document.createElement('canvas');
+            offscreenRef.current = off;
+        }
+        if (off.width !== bw || off.height !== bh) {
+            off.width = bw;
+            off.height = bh;
+        }
+
+        // 오프셋 클램프(페이지 밖으로 못 나가게, 작으면 가운데).
+        const z = zoomRef.current;
+        const fit = fitRef.current;
+        const PW = page0Ref.current.w * fit * z; // 줌 적용 페이지 CSS 폭
+        const PH = page0Ref.current.h * fit * z;
+        let ox = offsetRef.current.x;
+        let oy = offsetRef.current.y;
+        ox = PW <= cw ? (PW - cw) / 2 : Math.min(Math.max(ox, 0), PW - cw);
+        oy = PH <= ch ? (PH - ch) / 2 : Math.min(Math.max(oy, 0), PH - ch);
+        offsetRef.current = { x: ox, y: oy };
+
+        // pdf 좌표 → device px 배율. 보이는 창만 그리도록 translate 로 밀어 넣는다.
+        const renderScale = fit * z * dpr;
+        const viewport = page.getViewport({ scale: renderScale });
+        const pageLeft = -ox * dpr; // 캔버스(=창) 안에서 페이지 좌상단 위치(device px)
+        const pageTop = -oy * dpr;
+
+        const octx = off.getContext('2d');
+        octx.setTransform(1, 0, 0, 1, 0, 0);
+        octx.fillStyle = BG; // 페이지 바깥은 뷰어 배경색
+        octx.fillRect(0, 0, bw, bh);
+        octx.fillStyle = '#fff'; // 페이지 영역 흰 바탕(투명 PDF 대비)
+        octx.fillRect(pageLeft, pageTop, PW * dpr, PH * dpr);
+
+        let task;
+        try {
+            task = page.render({
+                canvasContext: octx,
+                viewport,
+                transform: [1, 0, 0, 1, pageLeft, pageTop],
+            });
+            await task.promise;
+        } catch (e) {
+            if (e && e.name === 'RenderingCancelledException') return;
+            throw e;
+        }
+
+        // 다 그려졌으면 한 번에 화면으로(깜빡임 없음).
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(off, 0, 0);
+        if (!readyRef.current) {
+            readyRef.current = true;
+            setReady(true);
+        }
     }, []);
 
+    // 렌더 직렬화 — 그리는 중 들어온 요청은 dirty 로 모았다 끝나고 한 번 더.
+    const runDraw = useCallback(async () => {
+        if (drawingRef.current) {
+            dirtyRef.current = true;
+            return;
+        }
+        drawingRef.current = true;
+        try {
+            do {
+                dirtyRef.current = false;
+                await drawOnce();
+            } while (dirtyRef.current);
+        } catch (e) {
+            setError(e?.message || 'PDF 페이지를 그릴 수 없습니다.');
+        } finally {
+            drawingRef.current = false;
+        }
+    }, [drawOnce]);
+
+    const scheduleDraw = useCallback(() => {
+        if (rafRef.current) return;
+        rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = 0;
+            runDraw();
+        });
+    }, [runDraw]);
+
+    // ---- 문서 로드 --------------------------------------------------------
     useEffect(() => {
+        let alive = true;
+        setDocLoading(true);
+        setReady(false);
+        readyRef.current = false;
+        setError('');
         setNumPages(0);
         setCurrentPage(1);
-        setScale(1);
-        setPageAspect(null);
-        setDocLoading(true);
-        setError('');
+        zoomRef.current = 1;
+        offsetRef.current = { x: 0, y: 0 };
+        setZoomLabel(1);
+
+        const task = pdfjs.getDocument(url);
+        task.promise.then(
+            (doc) => {
+                if (!alive) {
+                    doc.destroy?.();
+                    return;
+                }
+                docRef.current = doc;
+                setNumPages(doc.numPages);
+                setDocLoading(false);
+            },
+            (err) => {
+                if (!alive) return;
+                setDocLoading(false);
+                setError(err?.message || 'PDF 를 표시할 수 없습니다.');
+            },
+        );
+        return () => {
+            alive = false;
+            try {
+                task.destroy?.();
+            } catch {
+                /* noop */
+            }
+            const d = docRef.current;
+            docRef.current = null;
+            pageRef.current = null;
+            try {
+                d?.destroy?.();
+            } catch {
+                /* noop */
+            }
+        };
     }, [url]);
 
-    // scale=1 일 때 페이지 전체가 stage 안에 들어가도록 — 폭·높이 중 작은 쪽에 맞춤.
-    // canvas-wrap 의 padding 합계만큼 빼서 페이지+패딩이 stage 안에 정확히 들어가게 한다.
-    // 이 보정이 없으면 한 쪽 dim 이 stage 와 정확히 일치해 패딩이 overflow 를 만들고
-    // 의도치 않은 스크롤이 생겨 가운데 정렬도 어긋난다.
-    // pageAspect 가 아직 없으면 (첫 렌더 직전) stageWidth 폴백 — 캔버스 그리기 전에
-    // onLoadSuccess 가 먼저 와 곧바로 정확한 값으로 갱신됨.
-    const baseWidth = useMemo(() => {
-        if (!stageWidth) return 0;
-        const PAD = 32; // .pv-canvas-wrap padding 16px × 2.
-        const availW = Math.max(0, stageWidth - PAD);
-        if (pageAspect && stageHeight) {
-            const availH = Math.max(0, stageHeight - PAD);
-            return Math.min(availW, availH / pageAspect);
-        }
-        return availW;
-    }, [stageWidth, stageHeight, pageAspect]);
+    // fit 배율을 stage 크기·페이지 크기로 재계산. 줌은 유지하되 오프셋을 새 fit 비율로 보정.
+    const recomputeFit = useCallback(() => {
+        const stage = stageRef.current;
+        if (!stage || !page0Ref.current.w) return;
+        const cw = Math.max(0, stage.clientWidth - PAD * 2);
+        const ch = Math.max(0, stage.clientHeight - PAD * 2);
+        const oldFit = fitRef.current || 1;
+        const nf = Math.min(cw / page0Ref.current.w, ch / page0Ref.current.h) || 1;
+        const ratio = nf / oldFit;
+        fitRef.current = nf;
+        offsetRef.current = { x: offsetRef.current.x * ratio, y: offsetRef.current.y * ratio };
+    }, []);
 
-    const renderDpr = useMemo(() => {
-        const native = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-        return Math.min(native * scale, DPR_CAP);
-    }, [scale]);
+    // ---- 페이지 로드(문서/페이지번호 바뀔 때) -------------------------------
+    useEffect(() => {
+        const doc = docRef.current;
+        if (!doc || numPages === 0) return;
+        let alive = true;
+        const n = Math.min(Math.max(1, currentPage), doc.numPages);
+        doc.getPage(n).then((page) => {
+            if (!alive) return;
+            pageRef.current = page;
+            const vp = page.getViewport({ scale: 1 });
+            page0Ref.current = { w: vp.width, h: vp.height };
+            // 페이지가 바뀌면 fit(전체보기)로 초기화.
+            zoomRef.current = 1;
+            offsetRef.current = { x: 0, y: 0 };
+            fitRef.current = 1;
+            setZoomLabel(1);
+            recomputeFit();
+            scheduleDraw();
+        });
+        return () => {
+            alive = false;
+        };
+        // numPages 가 0→N 으로 바뀐 직후 + currentPage 변경 시 재실행.
+    }, [numPages, currentPage, recomputeFit, scheduleDraw]);
 
-    /**
-     * 줌 + scroll 보정. anchorClientX/Y 는 viewport(client) 좌표계의 점.
-     * 줌 전후로 그 점이 페이지의 같은 분수(fractional) 위치를 가리키도록 스크롤을 맞춘다.
-     * 안 주면 stage 가운데가 앵커.
-     *
-     * 동작 — 앵커 클라이언트 좌표가 현재 페이지의 어느 분수 위치(fracX/Y ∈ [0,1])에 있는지
-     * 측정해 pendingZoomRef 에 저장 → setScale → useLayoutEffect 가 React 커밋 직후 새
-     * 페이지 DOM rect 기준으로 같은 분수 위치가 같은 클라이언트 픽셀에 오도록 스크롤 보정.
-     * (rAF 방식은 react-pdf 의 wrapper 가 그 시점에 새 크기로 못 잡혀 자주 빗나갔다.)
-     */
-    const zoomTo = useCallback((target, anchorClientX, anchorClientY) => {
+    // ---- stage 리사이즈 → fit 재계산 + 재렌더 -----------------------------
+    useEffect(() => {
         const stage = stageRef.current;
         if (!stage) return;
-        const oldScale = scaleRef.current;
-        const clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, +target.toFixed(2)));
-        if (clamped === oldScale) return;
+        const ro = new ResizeObserver(() => {
+            recomputeFit();
+            scheduleDraw();
+        });
+        ro.observe(stage);
+        return () => ro.disconnect();
+    }, [recomputeFit, scheduleDraw]);
 
-        const stageRect = stage.getBoundingClientRect();
-        const cx = anchorClientX != null ? anchorClientX : stageRect.left + stageRect.width / 2;
-        const cy = anchorClientY != null ? anchorClientY : stageRect.top + stageRect.height / 2;
+    // ---- 줌(앵커 보존) ----------------------------------------------------
+    const zoomTo = useCallback(
+        (nextZoom, anchorClientX, anchorClientY) => {
+            const stage = stageRef.current;
+            if (!stage) return;
+            const clamped = Math.max(MIN_SCALE, Math.min(MAX_SCALE, nextZoom));
+            const old = zoomRef.current;
+            if (clamped === old) return;
 
-        // 앵커 클라이언트 좌표가 현재 페이지의 어느 분수 위치인지. 페이지 밖이면 [0,1] 로 클램프해
-        // 가까운 모서리에 앵커한다 — 빈 패딩 영역에서 휠 굴려도 자연스럽게 동작.
-        const pageEl = stage.querySelector('.pv-page');
-        let fracX = 0.5, fracY = 0.5;
-        if (pageEl) {
-            const r = pageEl.getBoundingClientRect();
-            if (r.width > 0) fracX = Math.max(0, Math.min(1, (cx - r.left) / r.width));
-            if (r.height > 0) fracY = Math.max(0, Math.min(1, (cy - r.top) / r.height));
-        }
+            const rect = stage.getBoundingClientRect();
+            const mx = anchorClientX != null ? anchorClientX - rect.left : stage.clientWidth / 2;
+            const my = anchorClientY != null ? anchorClientY - rect.top : stage.clientHeight / 2;
 
-        // 다음 커밋 후 useLayoutEffect 에서 적용. 클라이언트 좌표 cx/cy 와 분수 위치 fracX/Y
-        // 만으로 충분 — 새 DOM 에서 페이지 rect 다시 읽어 같은 픽셀에 오도록 스크롤 보정.
-        pendingZoomRef.current = { fracX, fracY, cx, cy };
-        setScale(clamped);
-    }, []);
+            // 커서 아래 페이지-CSS 좌표가 줌 후에도 같은 화면 위치에 오도록 오프셋 보정.
+            const f = clamped / old;
+            offsetRef.current = {
+                x: (offsetRef.current.x + mx) * f - mx,
+                y: (offsetRef.current.y + my) * f - my,
+            };
+            zoomRef.current = clamped;
+            setZoomLabel(clamped);
+            scheduleDraw();
+        },
+        [scheduleDraw],
+    );
 
-    // setScale 후 React 커밋 직후 동기 실행 — 이 시점엔 page wrapper 의 width/height 가
-    // 새 prop 으로 반영돼 있어 getBoundingClientRect 가 새 크기를 돌려준다 (rAF 방식보다 안정).
-    useLayoutEffect(() => {
-        const pending = pendingZoomRef.current;
-        if (!pending) return;
-        pendingZoomRef.current = null;
-        const ns = stageRef.current;
-        const np = ns?.querySelector('.pv-page');
-        if (!ns || !np) return;
-        const nr = np.getBoundingClientRect();
-        const haveX = nr.left + pending.fracX * nr.width;
-        const haveY = nr.top + pending.fracY * nr.height;
-        // (have - want) 만큼 스크롤을 더하면 페이지가 그만큼 왼/위로 밀려 want 에 정렬됨.
-        ns.scrollLeft = Math.max(0, ns.scrollLeft + (haveX - pending.cx));
-        ns.scrollTop = Math.max(0, ns.scrollTop + (haveY - pending.cy));
-    }, [scale]);
-
-    const zoomIn = useCallback(() => {
-        zoomTo(scaleRef.current + ZOOM_STEP);
-    }, [zoomTo]);
-    const zoomOut = useCallback(() => {
-        zoomTo(scaleRef.current - ZOOM_STEP);
-    }, [zoomTo]);
+    const zoomIn = useCallback(() => zoomTo(zoomRef.current * ZOOM_STEP), [zoomTo]);
+    const zoomOut = useCallback(() => zoomTo(zoomRef.current / ZOOM_STEP), [zoomTo]);
     const zoomReset = useCallback(() => {
-        const stage = stageRef.current;
-        setScale(1);
-        if (stage) {
-            requestAnimationFrame(() => {
-                stage.scrollLeft = 0;
-                stage.scrollTop = 0;
-            });
-        }
-    }, []);
+        zoomRef.current = 1;
+        offsetRef.current = { x: 0, y: 0 };
+        setZoomLabel(1);
+        scheduleDraw();
+    }, [scheduleDraw]);
 
-    // 휠 = 줌 — 마우스 포인터 위치를 앵커로. native 리스너 + passive:false 로
-    // preventDefault 가능하게(React onWheel 은 일부 환경에서 passive 라 무시됨).
-    // PDF 가 stage 보다 클 때의 스크롤은 드래그(onPanStart) 로 대체.
+    // 휠 = 줌(커서 앵커). native 리스너 + passive:false 로 preventDefault.
     useEffect(() => {
         const stage = stageRef.current;
         if (!stage) return;
         const onWheel = (e) => {
             e.preventDefault();
-            const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
-            // zoomTo 가 클라이언트 좌표를 받아 페이지 DOM rect 로 분수 좌표 계산 — 정렬/패딩 무관 정확.
-            zoomTo(scaleRef.current + delta, e.clientX, e.clientY);
+            const f = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+            zoomTo(zoomRef.current * f, e.clientX, e.clientY);
         };
         stage.addEventListener('wheel', onWheel, { passive: false });
         return () => stage.removeEventListener('wheel', onWheel);
     }, [zoomTo]);
 
-    // 클릭 드래그로 스크롤 이동 — 확대 상태에서만 동작.
-    const onPanStart = useCallback((e) => {
-        if (e.button !== 0) return;
-        const stage = stageRef.current;
-        if (!stage) return;
-        const canPan = stage.scrollWidth > stage.clientWidth || stage.scrollHeight > stage.clientHeight;
-        if (!canPan) return;
+    // 드래그 = 이동(팬).
+    const onPanStart = useCallback(
+        (e) => {
+            if (e.button !== 0) return;
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const o0 = { ...offsetRef.current };
+            const stage = stageRef.current;
+            stage?.classList.add('pv-stage--panning');
+            e.preventDefault();
+            const onMove = (ev) => {
+                offsetRef.current = { x: o0.x - (ev.clientX - startX), y: o0.y - (ev.clientY - startY) };
+                scheduleDraw();
+            };
+            const onUp = () => {
+                stage?.classList.remove('pv-stage--panning');
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        },
+        [scheduleDraw],
+    );
 
-        const startX = e.clientX;
-        const startY = e.clientY;
-        const startScrollLeft = stage.scrollLeft;
-        const startScrollTop = stage.scrollTop;
-        stage.classList.add('pv-stage--panning');
-        e.preventDefault();
-
-        const onMove = (ev) => {
-            stage.scrollLeft = startScrollLeft - (ev.clientX - startX);
-            stage.scrollTop = startScrollTop - (ev.clientY - startY);
-        };
-        const onUp = () => {
-            stage.classList.remove('pv-stage--panning');
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onUp);
-        };
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
-    }, []);
-
-    const onDocLoad = useCallback(({ numPages: n }) => {
-        setNumPages(n);
-        setCurrentPage(1);
-        setDocLoading(false);
-        setError('');
-    }, []);
-    const onDocError = useCallback((err) => {
-        setDocLoading(false);
-        setError(err?.message || 'PDF 를 표시할 수 없습니다.');
-    }, []);
+    useEffect(
+        () => () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        },
+        [],
+    );
 
     return (
         <div className="pv-wrap">
             <div className="pv-controls">
-                <button
-                    type="button"
-                    onClick={zoomOut}
-                    disabled={scale <= MIN_SCALE}
-                    className="pv-btn"
-                    aria-label="축소"
-                >－</button>
-                <span className="pv-scale">{Math.round(scale * 100)}%</span>
-                <button
-                    type="button"
-                    onClick={zoomIn}
-                    disabled={scale >= MAX_SCALE}
-                    className="pv-btn"
-                    aria-label="확대"
-                >＋</button>
-                <button
-                    type="button"
-                    onClick={zoomReset}
-                    className="pv-btn pv-btn-ghost"
-                >원래대로</button>
+                <button type="button" onClick={zoomOut} disabled={zoomLabel <= MIN_SCALE} className="pv-btn" aria-label="축소">
+                    －
+                </button>
+                <span className="pv-scale">{Math.round(zoomLabel * 100)}%</span>
+                <button type="button" onClick={zoomIn} disabled={zoomLabel >= MAX_SCALE} className="pv-btn" aria-label="확대">
+                    ＋
+                </button>
+                <button type="button" onClick={zoomReset} className="pv-btn pv-btn-ghost">
+                    원래대로
+                </button>
 
                 <span className="pv-hint">휠 확대/축소 · 드래그 이동</span>
 
@@ -239,64 +354,29 @@ export default function PdfViewer({ url }) {
                             onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                             disabled={currentPage <= 1}
                             aria-label="이전 페이지"
-                        >‹</button>
-                        <span className="pv-pager-text">{currentPage} / {numPages}</span>
+                        >
+                            ‹
+                        </button>
+                        <span className="pv-pager-text">
+                            {currentPage} / {numPages}
+                        </span>
                         <button
                             type="button"
                             className="pv-btn"
                             onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
                             disabled={currentPage >= numPages}
                             aria-label="다음 페이지"
-                        >›</button>
+                        >
+                            ›
+                        </button>
                     </div>
                 )}
             </div>
 
             <div className="pv-stage" ref={stageRef} onMouseDown={onPanStart}>
-                {/* canvas-wrap — block 레이아웃. width: max-content + min-width: 100% 로
-                    페이지가 작으면 stage 폭, 크면 페이지 폭. .pv-page 의 margin: 0 auto
-                    가 작은 경우만 가운데 정렬하고 큰 경우엔 자연스레 무력화됨.
-                    flex justify-content:center 는 양쪽 overflow 를 만들어 좌측 영역이
-                    scroll 0 미만이라 닿을 수 없는 문제가 있어 사용 X. */}
-                <div className="pv-canvas-wrap">
-                    {stageWidth > 0 && (
-                        <Document
-                            file={url}
-                            onLoadSuccess={onDocLoad}
-                            onLoadError={onDocError}
-                            loading={null}
-                            error={null}
-                            noData={null}
-                        >
-                            {numPages > 0 && (
-                                <Page
-                                    /* key 에 scale 미포함 — 스케일 변경 시 unmount 없이
-                                       width prop 만 갱신해 부드럽게 재렌더. */
-                                    key={`p-${currentPage}`}
-                                    pageNumber={currentPage}
-                                    width={baseWidth * scale}
-                                    devicePixelRatio={renderDpr}
-                                    renderMode="canvas"
-                                    renderTextLayer={false}
-                                    renderAnnotationLayer={false}
-                                    onLoadSuccess={(page) => {
-                                        const viewport = page.getViewport({ scale: 1 });
-                                        const w = viewport?.width || page.originalWidth;
-                                        const h = viewport?.height || page.originalHeight;
-                                        if (w && h) setPageAspect(h / w);
-                                    }}
-                                    onRenderStart={() => setPageRendering(true)}
-                                    onRenderSuccess={() => setPageRendering(false)}
-                                    onRenderError={() => setPageRendering(false)}
-                                    loading={null}
-                                    className="pv-page"
-                                />
-                            )}
-                        </Document>
-                    )}
-                </div>
+                <canvas ref={canvasRef} className="pv-canvas" />
 
-                {(docLoading || pageRendering) && (
+                {(docLoading || !ready) && !error && (
                     <div className="pv-loading" role="status" aria-live="polite">
                         <div className="pv-spinner" />
                         <span>{docLoading ? 'PDF 불러오는 중...' : '페이지 그리는 중...'}</span>
