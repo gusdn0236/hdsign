@@ -53,6 +53,12 @@ const PDF_ZOOM_RENDER_STEPS = [1, 2, 3, 5, 7];
 // 35% 까지 내려가도 deviceDpr 3 환경에선 여전히 6 DPR 안팎이라 옛 설정(MAX=14)과
 // 비슷한 화질이 유지된다. 마지막 단계까지 가도 안 되면 거기서 멈춤(무한루프 방지).
 const PDF_RENDER_FALLBACK_FACTORS = [1, 0.7, 0.5, 0.35];
+// 고해상 뷰포트 오버레이 — 확대 후 손을 떼면 "보이는 영역만" 화면 크기 캔버스에 device 해상도로
+// 다시 그려 얹는다(웹 PdfViewer 와 동일 원리). 전체 페이지 거대 캔버스(메모리 한계로 폴백되어
+// 흐려지던 원인)를 우회 → 600dpi 원본 디테일을 고배율에서도 그대로 보여준다. 실패 시 그냥
+// 안 띄워 기존 베이스 렌더가 유지되므로 절대 깨지지 않는다(점진적 향상).
+const OVERLAY_DPR_CAP = 3; // 화면 크기 캔버스라 3이면 충분(메모리 안전)
+const OVERLAY_MIN_SCALE = 1.05; // 이 배율 초과부터 오버레이 표시(1x 부근은 베이스로 충분)
 
 function getPdfQualityScale(scale) {
     const value = Number.isFinite(scale) ? Math.max(1, Math.min(PINCH_MAX_SCALE, scale)) : 1;
@@ -176,6 +182,13 @@ export default function WorksheetViewer() {
     const [highQualityRender, setHighQualityRender] = useState(false);
     const [qualityScale, setQualityScale] = useState(1);
     const transformRef = useRef(null);
+    // 고해상 뷰포트 오버레이용.
+    const overlayCanvasRef = useRef(null);
+    const pageProxyRef = useRef(null); // react-pdf 가 넘겨준 pdf.js 페이지 객체(오버레이 재렌더에 재사용)
+    const finalRotationRef = useRef(0); // 베이스와 동일한 최종 회전값
+    const overlayTaskRef = useRef(null); // 진행 중 render task(새 요청 시 취소)
+    const overlayRafRef = useRef(0);
+    const [overlayOn, setOverlayOn] = useState(false);
 
     // 업로드된 증거사진 목록 — [사진보기] 시트 + 라이트박스 + 카톡 공유에 사용.
     // orderNumber 진입 시 1회 + 업로드 직후/시트 오픈 시 재조회. 인증 없는 공개 API.
@@ -665,6 +678,9 @@ export default function WorksheetViewer() {
     }, []);
 
     const onPageLoad = useCallback((page) => {
+        // 오버레이 재렌더에 같은 페이지 객체를 재사용. 페이지가 바뀌면 오버레이는 숨겼다 다음 settle 에 재렌더.
+        pageProxyRef.current = page;
+        setOverlayOn(false);
         // page.rotate = PDF 자체 /Rotate 값. getViewport({scale:1}) 인자 생략 시
         // 이 값을 적용한 dim 을 돌려준다 (즉 사용자가 보는 자연 방향 기준).
         const naturalRotation = (page?.rotate ?? 0) % 360;
@@ -678,6 +694,7 @@ export default function WorksheetViewer() {
             ? (naturalRotation + 90) % 360
             : naturalRotation;
 
+        finalRotationRef.current = finalRotation;
         setPageRotation((prev) => (prev === finalRotation ? prev : finalRotation));
 
         // 비율은 우리가 실제 그릴 회전 기준으로 — landscape 를 추가 회전해
@@ -699,6 +716,75 @@ export default function WorksheetViewer() {
         setRenderAttempt((a) => (
             a < PDF_RENDER_FALLBACK_FACTORS.length - 1 ? a + 1 : a
         ));
+    }, []);
+
+    // 보이는 영역만 device 해상도로 다시 그려 오버레이에 얹는다. 베이스 캔버스의 실제 화면 위치
+    // (getBoundingClientRect)를 읽어 정확히 정렬 — 라이브러리 transform 좌표계에 의존하지 않는다.
+    const renderDetailOverlay = useCallback(() => {
+        const page = pageProxyRef.current;
+        const cv = overlayCanvasRef.current;
+        const stage = stageRef.current;
+        if (!page || !cv || !stage) return;
+        const baseCanvas = stage.querySelector('.wsv-page-canvas canvas');
+        if (!baseCanvas) return;
+        const vpRect = cv.getBoundingClientRect(); // 오버레이(=stage) 화면 박스
+        const pgRect = baseCanvas.getBoundingClientRect(); // 현재 확대/이동된 페이지 화면 박스
+        if (!vpRect.width || !pgRect.width) return;
+
+        const dpr = Math.min(window.devicePixelRatio || 1, OVERLAY_DPR_CAP);
+        const bw = Math.round(vpRect.width * dpr);
+        const bh = Math.round(vpRect.height * dpr);
+        if (cv.width !== bw) cv.width = bw;
+        if (cv.height !== bh) cv.height = bh;
+
+        const rot = finalRotationRef.current;
+        const natural = page.getViewport({ scale: 1, rotation: rot });
+        if (!natural.width) return;
+        // 페이지 전체가 화면에서 pgRect.width 만큼 보이도록 하는 pt→device 배율.
+        const renderScale = (pgRect.width / natural.width) * dpr;
+        const viewport = page.getViewport({ scale: renderScale, rotation: rot });
+        const tx = (pgRect.left - vpRect.left) * dpr; // 페이지 좌상단을 오버레이 안 좌표로
+        const ty = (pgRect.top - vpRect.top) * dpr;
+
+        const ctx = cv.getContext('2d');
+        if (!ctx) return;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, bw, bh); // 페이지 밖은 투명 → 베이스/배경이 비침
+
+        if (overlayTaskRef.current) {
+            try { overlayTaskRef.current.cancel(); } catch { /* noop */ }
+            overlayTaskRef.current = null;
+        }
+        try {
+            const task = page.render({
+                canvasContext: ctx,
+                viewport,
+                transform: [1, 0, 0, 1, tx, ty],
+            });
+            overlayTaskRef.current = task;
+            task.promise.then(
+                () => { overlayTaskRef.current = null; setOverlayOn(true); },
+                () => { /* 취소/실패 — 베이스 렌더가 그대로 유지됨 */ },
+            );
+        } catch {
+            /* 베이스 유지 */
+        }
+    }, []);
+
+    // 제스처가 멈춘 뒤 레이아웃이 확정되도록 rAF 후 렌더.
+    const scheduleOverlay = useCallback(() => {
+        if (overlayRafRef.current) cancelAnimationFrame(overlayRafRef.current);
+        overlayRafRef.current = requestAnimationFrame(() => {
+            overlayRafRef.current = 0;
+            renderDetailOverlay();
+        });
+    }, [renderDetailOverlay]);
+
+    useEffect(() => () => {
+        if (overlayRafRef.current) cancelAnimationFrame(overlayRafRef.current);
+        if (overlayTaskRef.current) {
+            try { overlayTaskRef.current.cancel(); } catch { /* noop */ }
+        }
     }, []);
 
     const handlePickFiles = async (e) => {
@@ -934,6 +1020,7 @@ export default function WorksheetViewer() {
                     <div className="wsv-msg wsv-pdf-loading">PDF 불러오는 중…</div>
                 )}
                 {pdfFile && pageWidth > 0 && (
+                  <>
                     <TransformWrapper
                         key={`pdf-view-${pdfViewKey}`}
                         ref={transformRef}
@@ -953,11 +1040,20 @@ export default function WorksheetViewer() {
                         }}
                         onPinchStart={(ref) => {
                             currentScaleRef.current = ref?.state?.scale ?? currentScaleRef.current;
+                            setOverlayOn(false); // 제스처 중엔 베이스(부드러운 CSS 확대)만 보여줌
                         }}
+                        onZoomStart={() => setOverlayOn(false)}
+                        onPanningStart={() => setOverlayOn(false)}
                         onZoomStop={(ref) => {
                             const nextScale = ref?.state?.scale ?? currentScaleRef.current;
                             currentScaleRef.current = nextScale;
                             requestPdfQualityForScale(nextScale);
+                            // 손 뗀 뒤 보이는 영역만 고해상으로 다시 그려 얹는다.
+                            if (nextScale > OVERLAY_MIN_SCALE) scheduleOverlay();
+                            else setOverlayOn(false);
+                        }}
+                        onPanningStop={() => {
+                            if (currentScaleRef.current > OVERLAY_MIN_SCALE) scheduleOverlay();
                         }}
                         wheel={{
                             step: 0.18,
@@ -1037,6 +1133,14 @@ export default function WorksheetViewer() {
                             )}
                         </TransformComponent>
                     </TransformWrapper>
+                    {/* 고해상 뷰포트 오버레이 — 확대 후 멈추면 보이는 영역만 device 해상도로 그려 얹는다.
+                        pointer-events:none 라 핀치/팬은 아래 TransformWrapper 가 그대로 처리. */}
+                    <canvas
+                        ref={overlayCanvasRef}
+                        className={'wsv-detail-overlay' + (overlayOn ? ' on' : '')}
+                        aria-hidden="true"
+                    />
+                  </>
                 )}
                 {pdfError && <div className="wsv-msg error">{pdfError}</div>}
 
