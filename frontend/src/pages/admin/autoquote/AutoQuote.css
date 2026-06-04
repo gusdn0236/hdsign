@@ -117,23 +117,92 @@
 .aq-stagewrap.aq-hand .aq-stage img {
   cursor: grab;
 }
-/* 글자읽기 버튼 — 30px 칸에 '글자' 텍스트가 들어가게 작게. */
+/* 글자수 버튼 — 30px 칸에 '글자수' 3글자가 들어가게 더 작게. */
 .aq-ocrbtn {
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  letter-spacing: -1px;
 }
-/* 글자읽기 모드 — 영역 선택 커서(십자). */
+/* 글자수 모드 — 영역 선택 커서(십자). */
 .aq-stagewrap.aq-ocr .aq-stage img {
   cursor: crosshair;
 }
-/* 글자읽기 선택 박스 — stage 안(콘텐츠 좌표)이라 이미지와 함께 확대된다. */
+/* 글자수 선택 박스 — stage 안(콘텐츠 좌표)이라 이미지와 함께 확대된다. 테두리 굵기는 인라인(/zoom). */
 .aq-ocrsel {
   position: absolute;
   z-index: 6;
-  border: 2px dashed var(--teal2);
+  border-color: var(--teal2);
   background: rgba(10, 147, 150, 0.14);
   pointer-events: none;
+}
+/* 글자수 마스크 — 읽을 영역 색칠. 캔버스 알파가 곧 keep-mask, 표시는 opacity 로 반투명. */
+.aq-ocrmask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  opacity: 0.4;
+  pointer-events: none;
+}
+/* 글자수 하위 도구 바 — 박스/연필/지우개/크기/읽기. */
+.aq-ocrtools {
+  position: absolute;
+  top: 48px;
+  left: 10px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 20px);
+  background: rgba(15, 22, 32, 0.82);
+  border-radius: 8px;
+  padding: 4px 6px;
+}
+.aq-octbtn {
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aq-octbtn.on {
+  background: var(--teal2);
+}
+.aq-octbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.aq-octread {
+  background: var(--teal);
+}
+.aq-octsize {
+  display: inline-flex;
+  gap: 2px;
+}
+.aq-octszbtn {
+  border: none;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+}
+.aq-octszbtn.on {
+  background: var(--teal2);
+}
+.aq-octsp {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.18);
+  margin: 0 2px;
 }
 /* 글자읽기 안내/진행 오버레이. */
 .aq-ocrhint {

@@ -136,6 +136,37 @@ function todayMD(): string {
   return ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
 }
 
+/** 글자수 모드 연필·지우개 굵기(화면 px). 콘텐츠 lineWidth = 이 값 / zoom 으로 화면상 일정하게. */
+const BRUSH_SCREEN_PX: Record<'s' | 'm' | 'l', number> = { s: 12, m: 26, l: 46 };
+
+/** keep-mask 캔버스에 한 선분을 칠하거나(연필) 지운다(지우개). 알파 채널이 곧 마스크. */
+function paintMaskSegment(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  tool: 'pencil' | 'eraser',
+  lineWidth: number,
+) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = lineWidth;
+  if (tool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = 'rgba(10,147,150,1)'; // 풀 알파 — 표시 반투명은 CSS opacity 가 담당(겹침 누적 방지).
+  }
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+  ctx.restore();
+}
+
 interface AutoQuoteProps {
   /** 모달 모드: 부모(주문 상세)가 주문 id 를 직접 주입. 없으면 ?order= 쿼리에서 읽음. */
   orderId?: number;
@@ -163,6 +194,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [mode, setMode] = useState<'cursor' | 'hand' | 'ocr'>('cursor'); // 커서=핀 작성 / 손바닥=화면 이동 / 글자=영역 OCR
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
+  const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
+  const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
+  const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
@@ -202,7 +236,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [ghost, setGhost] = useState<{ x: number; y: number; ax: number; ay: number } | null>(null);
   // 글자읽기 영역 드래그 — 시작점(콘텐츠 좌표). 최신 performOcr 는 ref 로 호출(전역 핸들러가 [] deps).
   const ocrDrag = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
-  const performOcrRef = useRef<(r: { x: number; y: number; w: number; h: number }) => void>(() => {});
+  // 마스크 캔버스(읽을 영역 색칠 = keep-mask). 알파 채널이 곧 마스크. 콘텐츠 해상도(stageW×stageH).
+  const maskRef = useRef<HTMLCanvasElement>(null);
+  // 연필·지우개 스트로크 진행 상태 — 마지막 점(콘텐츠 좌표). 전역 핸들러가 ref 로 그린다.
+  const paintRef = useRef<{ active: boolean; lastX: number; lastY: number } | null>(null);
+  // 최신 도구/굵기를 전역 핸들러가 읽도록 미러.
+  const ocrToolRef = useRef(ocrTool);
+  ocrToolRef.current = ocrTool;
+  const brushRef = useRef(brush);
+  brushRef.current = brush;
+  const performOcrRef = useRef<() => void>(() => {});
+  const maskHasInkRef = useRef(false);
+  maskHasInkRef.current = maskHasInk;
 
   const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
 
@@ -309,6 +354,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     };
     const onMove = (e: MouseEvent) => {
       const z = zoomRef.current || 1;
+      // 연필·지우개 — 마지막점→현재점 선분을 마스크에 칠한다(콘텐츠 좌표).
+      if (paintRef.current?.active) {
+        const { x, y } = localXY(e);
+        const m = maskRef.current;
+        const mctx = m?.getContext('2d');
+        const pr = paintRef.current;
+        if (mctx) {
+          const lw = (BRUSH_SCREEN_PX[brushRef.current] || 26) / z; // 화면상 일정한 굵기.
+          paintMaskSegment(mctx, pr.lastX, pr.lastY, x, y, ocrToolRef.current === 'eraser' ? 'eraser' : 'pencil', lw);
+        }
+        pr.lastX = x;
+        pr.lastY = y;
+        return;
+      }
       if (ocrDrag.current) {
         const { x, y } = localXY(e);
         const od = ocrDrag.current;
@@ -357,14 +416,31 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
     };
     const onUp = (e: MouseEvent) => {
+      // 연필·지우개 스트로크 종료.
+      if (paintRef.current?.active) {
+        paintRef.current = null;
+        setMaskHasInk(true);
+        return;
+      }
       if (ocrDrag.current) {
         const { x, y } = localXY(e);
         const od = ocrDrag.current;
         ocrDrag.current = null;
         setOcrSel(null);
         const rect = { x: Math.min(x, od.x0), y: Math.min(y, od.y0), w: Math.abs(x - od.x0), h: Math.abs(y - od.y0) };
-        // 너무 작은 박스(클릭 수준)는 무시 — 실수로 한 점 클릭 시 OCR 호출 방지.
-        if (od.moved && rect.w > 8 && rect.h > 8) performOcrRef.current(rect);
+        // 박스 = 그 영역을 '읽을 영역'으로 마스크에 채움(즉시 읽지 않음). 너무 작으면 무시.
+        if (od.moved && rect.w > 8 && rect.h > 8) {
+          const m = maskRef.current;
+          const mctx = m?.getContext('2d');
+          if (mctx) {
+            mctx.save();
+            mctx.globalCompositeOperation = 'source-over';
+            mctx.fillStyle = 'rgba(10,147,150,1)';
+            mctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+            mctx.restore();
+            setMaskHasInk(true);
+          }
+        }
         return;
       }
       if (panDrag.current) {
@@ -500,6 +576,33 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // 마스크 캔버스 크기를 표시 이미지(콘텐츠)에 맞춘다. 캔버스 width/height 변경은 내용을 비우므로
+  // 새 이미지/리사이즈 시 마스크가 초기화된다.
+  useEffect(() => {
+    const m = maskRef.current;
+    if (!m) return;
+    if (m.width !== stageW || m.height !== stageH) {
+      m.width = stageW;
+      m.height = stageH;
+    }
+    setMaskHasInk(false);
+  }, [stageW, stageH]);
+
+  // 글자수 모드에서 Enter = [읽기]. 입력칸에 포커스 중이면 무시(말풍선 입력 방해 방지).
+  useEffect(() => {
+    if (mode !== 'ocr') return undefined;
+    const onEnter = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+      if (!maskHasInkRef.current) return;
+      e.preventDefault();
+      performOcrRef.current();
+    };
+    window.addEventListener('keydown', onEnter);
+    return () => window.removeEventListener('keydown', onEnter);
+  }, [mode]);
+
   // 삭제버튼(selPin)이 열린 상태에서 점/삭제버튼 외 다른 곳을 누르면 닫는다.
   // 점·삭제버튼은 onMouseDown 에서 stopPropagation 하므로 이 window 리스너에 안 잡힌다.
   useEffect(() => {
@@ -515,13 +618,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   const startStageDrag = (e: React.MouseEvent) => {
     if (!imgSrc) return;
-    // 글자읽기 모드 = 좌클릭 드래그로 영역 박스. 떼면 그 영역만 크롭→OCR.
+    // 글자수 모드 = 박스(읽을영역 채움) / 연필(칠) / 지우개(빼기). 떼는 즉시 읽지 않고 [읽기] 로 호출.
     if (mode === 'ocr') {
       if (e.button !== 0) return;
       e.preventDefault();
       const st = stageRef.current?.getBoundingClientRect();
       const z = zoomRef.current || 1;
-      ocrDrag.current = { x0: (e.clientX - (st?.left ?? 0)) / z, y0: (e.clientY - (st?.top ?? 0)) / z, moved: false };
+      const x = (e.clientX - (st?.left ?? 0)) / z;
+      const y = (e.clientY - (st?.top ?? 0)) / z;
+      if (ocrTool === 'pencil' || ocrTool === 'eraser') {
+        // 시작점에 점 하나(선분 길이 0) 찍어 클릭만으로도 칠해지게.
+        const mctx = maskRef.current?.getContext('2d');
+        if (mctx) {
+          const lw = (BRUSH_SCREEN_PX[brushRef.current] || 26) / z;
+          paintMaskSegment(mctx, x, y, x, y, ocrTool === 'eraser' ? 'eraser' : 'pencil', lw);
+        }
+        paintRef.current = { active: true, lastX: x, lastY: y };
+        return;
+      }
+      ocrDrag.current = { x0: x, y0: y, moved: false };
       return;
     }
     // 가운데(휠) 버튼 드래그 또는 손바닥 모드 = 화면 이동(팬). 확대 상태에서만.
@@ -896,39 +1011,43 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     }, 'image/png');
   };
 
-  // ---- 글자읽기(OCR) — 박스 영역만 크롭해 vision 으로 글자/글자수 ----------
-  // 선택 영역(콘텐츠 좌표)을 원본 해상도로 잘라 base64 → /vision(read_text). 읽은 글자를 활성/선택
-  // 말풍선의 품목 칸에 자동 입력하면 기존 계산기가 charCount 로 글자수(=수량)를 센다.
-  const performOcr = (rect: { x: number; y: number; w: number; h: number }) => {
-    const img = imgRef.current;
-    if (!img || !imgSrc) return;
-    const sx = img.naturalWidth / (img.clientWidth || 1);
-    const sy = img.naturalHeight / (img.clientHeight || 1);
-    const cw = Math.max(1, Math.round(rect.w * sx));
-    const ch = Math.max(1, Math.round(rect.h * sy));
-    // 출력 크기: Claude 이미지는 ~1.15MP(긴 변 ~1568px)로 다운스케일되므로 그 위는 토큰 낭비.
-    // 작은 박스는 ~900px 까지만 키워 얇은 획에 픽셀을 더 준다(상한 1568, 과확대로 인한 뭉개짐 방지).
-    const longNative = Math.max(cw, ch);
-    const targetLong = Math.min(1568, Math.max(longNative, 900));
-    const k = targetLong / longNative;
-    const ow = Math.max(1, Math.round(cw * k));
-    const oh = Math.max(1, Math.round(ch * k));
-    const cv = document.createElement('canvas');
-    cv.width = ow;
-    cv.height = oh;
+  // ---- 글자수(OCR) — 마스크로 칠한 영역만 크롭해 vision 으로 글자/글자수 -------
+  // 박스/연필로 칠한 keep-mask 영역만 원본 해상도로 잘라 base64 → /vision(read_text).
+  // 읽은 글자를 활성/선택 말풍선의 품목 칸에 자동 입력하면 기존 계산기가 charCount 로 글자수(=수량)를 센다.
+
+  /** 마스크 캔버스를 비운다(읽기 완료/지우기 버튼). */
+  const clearMask = () => {
+    const m = maskRef.current;
+    if (m) m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
+    setMaskHasInk(false);
+  };
+
+  /**
+   * 크롭된 출력 캔버스(소스 영역 그려진 상태)에 마스크 화이트아웃을 적용하고, 흑백+대비 전처리 후
+   * Haiku 로 보낸다. maskAlpha(출력 크기) 가 32 미만인 픽셀은 흰색으로 덮어 잡음을 제거한다.
+   */
+  const preprocessAndSend = (cv: HTMLCanvasElement, maskAlpha: Uint8ClampedArray | null) => {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
+    const ow = cv.width;
+    const oh = cv.height;
     let dataUrl: string;
     try {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy, 0, 0, ow, oh);
-      // 전처리 — 연한/저대비 글자도 Haiku 가 읽게: 흑백 변환 + 2~98% 퍼센타일 대비 스트레칭 + 가벼운 감마.
-      // 옅은 회색·파스텔 글자를 검정 쪽으로 끌어올리고 배경을 흰색으로 밀어 대비를 키운다.
-      // (CORS taint 면 getImageData 가 SecurityError 를 던져 아래 catch 로 → 동일 안내.)
+      // (CORS taint 면 getImageData 가 SecurityError 를 던져 catch 로 → 동일 안내.)
       const idata = ctx.getImageData(0, 0, ow, oh);
       const d = idata.data;
       const n = ow * oh;
+      // 마스크 밖(칠 안 한 곳)은 흰색으로 — 읽을 글자만 남긴다.
+      if (maskAlpha) {
+        for (let i = 0, p = 0; i < n; i++, p += 4) {
+          if (maskAlpha[i] < 32) {
+            d[p] = 255;
+            d[p + 1] = 255;
+            d[p + 2] = 255;
+          }
+        }
+      }
+      // 전처리 — 연한/저대비 글자도 Haiku 가 읽게: 흑백 변환 + 2~98% 퍼센타일 대비 스트레칭 + 가벼운 감마.
       const hist = new Uint32Array(256);
       const lum = new Uint8ClampedArray(n);
       for (let i = 0, p = 0; i < n; i++, p += 4) {
@@ -936,7 +1055,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         lum[i] = L;
         hist[L]++;
       }
-      // 2% / 98% 퍼센타일 — 점·얼룩 같은 소수 이상치에 스트레칭이 휘둘리지 않게.
       const loCut = n * 0.02;
       const hiCut = n * 0.98;
       let acc = 0;
@@ -981,7 +1099,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         const text = (r.text || '').trim();
         setStatus('');
         if (!text) {
-          cdlg('이 영역에서 글자를 못 읽었어요. 글자 부분을 더 크게/정확히 박스 쳐보세요.', [{ label: '확인', sec: true }]);
+          cdlg('이 영역에서 글자를 못 읽었어요. 읽을 부분을 더 크게/정확히 칠해보세요.', [{ label: '확인', sec: true }]);
           return;
         }
         const ko = charCount(text, 'ko');
@@ -1014,10 +1132,80 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       })
       .finally(() => {
         setOcrBusy(false);
-        setMode('cursor'); // 한 번 읽으면 커서 모드로 복귀해 이어서 작업.
+        clearMask(); // 읽고 나면 마스크를 비워 다음 영역을 새로 칠하게.
       });
   };
-  performOcrRef.current = performOcr;
+
+  /** [읽기] / Enter — 마스크의 칠한 영역(bbox) 만 잘라 화이트아웃 후 OCR 호출. */
+  const readMask = () => {
+    const img = imgRef.current;
+    const mask = maskRef.current;
+    if (!img || !imgSrc || !mask) return;
+    const mw = mask.width;
+    const mh = mask.height;
+    const mctx = mask.getContext('2d');
+    if (!mctx || mw === 0 || mh === 0) return;
+    // 칠한(알파>32) 픽셀의 bbox 계산.
+    const md = mctx.getImageData(0, 0, mw, mh).data;
+    let minX = mw;
+    let minY = mh;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < mh; y++) {
+      for (let x = 0; x < mw; x++) {
+        if (md[(y * mw + x) * 4 + 3] > 32) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) {
+      cdlg('읽을 영역을 먼저 칠하세요. (박스 또는 연필)', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const pad = 6; // 글자 가장자리가 잘리지 않게 약간 여유.
+    const bx = Math.max(0, minX - pad);
+    const by = Math.max(0, minY - pad);
+    const bw = Math.min(mw, maxX + 1 + pad) - bx;
+    const bh = Math.min(mh, maxY + 1 + pad) - by;
+    const sx = img.naturalWidth / (img.clientWidth || 1);
+    const sy = img.naturalHeight / (img.clientHeight || 1);
+    // 출력 크기: Claude 이미지는 ~1.15MP(긴 변 ~1568px)로 다운스케일 → 그 위는 토큰 낭비.
+    // 작은 영역은 ~900px 까지만 키워 얇은 획에 픽셀을 더 준다(상한 1568, 과확대 뭉개짐 방지).
+    const cw = Math.max(1, Math.round(bw * sx));
+    const ch = Math.max(1, Math.round(bh * sy));
+    const longNative = Math.max(cw, ch);
+    const targetLong = Math.min(1568, Math.max(longNative, 900));
+    const k = targetLong / longNative;
+    const ow = Math.max(1, Math.round(cw * k));
+    const oh = Math.max(1, Math.round(ch * k));
+    // 1) 소스 고해상에서 bbox 크롭.
+    const cv = document.createElement('canvas');
+    cv.width = ow;
+    cv.height = oh;
+    const cctx = cv.getContext('2d');
+    if (!cctx) return;
+    cctx.imageSmoothingEnabled = true;
+    cctx.imageSmoothingQuality = 'high';
+    cctx.fillStyle = '#fff';
+    cctx.fillRect(0, 0, ow, oh);
+    cctx.drawImage(img, bx * sx, by * sy, bw * sx, bh * sy, 0, 0, ow, oh);
+    // 2) 마스크 bbox 를 출력 크기로 스케일해 알파 추출(우리가 그린 캔버스라 taint 없음).
+    const mt = document.createElement('canvas');
+    mt.width = ow;
+    mt.height = oh;
+    const mtctx = mt.getContext('2d');
+    if (!mtctx) return;
+    mtctx.drawImage(mask, bx, by, bw, bh, 0, 0, ow, oh);
+    const ma = mtctx.getImageData(0, 0, ow, oh).data;
+    const maskAlpha = new Uint8ClampedArray(ow * oh);
+    for (let i = 0; i < ow * oh; i++) maskAlpha[i] = ma[i * 4 + 3];
+    // 3) 화이트아웃 + 전처리 + 전송.
+    preprocessAndSend(cv, maskAlpha);
+  };
+  performOcrRef.current = readMask;
 
   // ---- 렌더 ------------------------------------------------------------
   const rows = Math.max(ROWS, pins.length);
@@ -1092,16 +1280,78 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <button
                 type="button"
                 className={'aq-toolbtn aq-ocrbtn' + (mode === 'ocr' ? ' on' : '')}
-                title="글자읽기 — 사진에서 글자 영역을 드래그하면 AI가 읽어 글자수를 세요"
+                title="글자수 — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode((m) => (m === 'ocr' ? 'cursor' : 'ocr'))}
               >
-                글자
+                글자수
+              </button>
+            </div>
+          )}
+          {imgSrc && mode === 'ocr' && (
+            <div className="aq-ocrtools" onMouseDown={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                className={'aq-octbtn' + (ocrTool === 'box' ? ' on' : '')}
+                title="박스 — 사각 영역을 읽을 영역으로 채움"
+                onClick={() => setOcrTool('box')}
+              >
+                ▭ 박스
+              </button>
+              <button
+                type="button"
+                className={'aq-octbtn' + (ocrTool === 'pencil' ? ' on' : '')}
+                title="연필 — 읽을 글자를 칠해서 추가"
+                onClick={() => setOcrTool('pencil')}
+              >
+                ✏️ 연필
+              </button>
+              <button
+                type="button"
+                className={'aq-octbtn' + (ocrTool === 'eraser' ? ' on' : '')}
+                title="지우개 — 칠한 영역에서 빼기"
+                onClick={() => setOcrTool('eraser')}
+              >
+                🧽 지우개
+              </button>
+              {(ocrTool === 'pencil' || ocrTool === 'eraser') && (
+                <span className="aq-octsize">
+                  {(['s', 'm', 'l'] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={'aq-octszbtn' + (brush === s ? ' on' : '')}
+                      title={`굵기 ${s === 's' ? '가늘게' : s === 'm' ? '보통' : '굵게'}`}
+                      onClick={() => setBrush(s)}
+                    >
+                      {s === 's' ? '小' : s === 'm' ? '中' : '大'}
+                    </button>
+                  ))}
+                </span>
+              )}
+              <span className="aq-octsp" />
+              <button
+                type="button"
+                className="aq-octbtn aq-octread"
+                disabled={!maskHasInk || ocrBusy}
+                title="칠한 영역의 글자를 AI로 읽기 (Enter)"
+                onClick={() => performOcrRef.current()}
+              >
+                👁 읽기
+              </button>
+              <button
+                type="button"
+                className="aq-octbtn"
+                disabled={!maskHasInk || ocrBusy}
+                title="칠한 영역 모두 지우기"
+                onClick={clearMask}
+              >
+                지우기
               </button>
             </div>
           )}
           {imgSrc && mode === 'ocr' && !ocrBusy && (
-            <div className="aq-ocrhint">글자 영역을 드래그하세요 — AI가 읽어 글자수를 셉니다</div>
+            <div className="aq-ocrhint">박스로 영역을 잡고, 연필/지우개로 읽을 글자만 칠한 뒤 [읽기]</div>
           )}
           {ocrBusy && <div className="aq-ocrbusy">글자 읽는 중…</div>}
           {!imgSrc ? (
@@ -1138,6 +1388,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 }}
                 draggable={false}
               />
+              {/* 글자수 마스크 — 읽을 영역 색칠(알파=keep-mask). 콘텐츠 해상도, stage 스케일을 함께 탄다. */}
+              <canvas ref={maskRef} className="aq-ocrmask" style={{ width: stageW, height: stageH }} />
               <svg className="aq-lines">
                 {pins.map((p, i) =>
                   p.dragged ? (
@@ -1147,11 +1399,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 {ghost && <line x1={ghost.ax} y1={ghost.ay} x2={ghost.x} y2={ghost.y} stroke="#0a9396" strokeWidth={2} strokeDasharray="5 4" />}
               </svg>
 
-              {/* 글자읽기 선택 박스(콘텐츠 좌표 — stage 스케일을 그대로 타 이미지와 함께 확대) */}
+              {/* 글자수 선택 박스(콘텐츠 좌표 — stage 스케일을 그대로 탄다). 테두리는 /zoom 으로 화면상 일정. */}
               {ocrSel && (
                 <div
                   className="aq-ocrsel"
-                  style={{ left: ocrSel.x, top: ocrSel.y, width: ocrSel.w, height: ocrSel.h }}
+                  style={{
+                    left: ocrSel.x,
+                    top: ocrSel.y,
+                    width: ocrSel.w,
+                    height: ocrSel.h,
+                    borderWidth: `${1.5 / zoom}px`,
+                    borderStyle: 'dashed',
+                  }}
                 />
               )}
 
