@@ -294,6 +294,15 @@
   font-size: 15px;
   line-height: 1.8;
 }
+/* 글자수 선택 박스 — 움직이는 점선(마칭 앤츠). dashoffset 을 흘려 테두리가 도는 느낌. */
+@keyframes aq-march {
+  to {
+    stroke-dashoffset: -9;
+  }
+}
+.aq-march {
+  animation: aq-march 0.5s linear infinite;
+}
 .aq-lines {
   position: absolute;
   inset: 0;

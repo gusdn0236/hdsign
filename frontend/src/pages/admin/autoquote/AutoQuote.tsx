@@ -13,7 +13,6 @@ import {
   parseCode,
   computeAcryl,
   computeGomu,
-  charCount,
 } from './annot/calc';
 import {
   predict,
@@ -308,8 +307,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   // 전역 핸들러(스냅샷 push)·버튼/단축키(undo)에서 최신 함수를 ref 로 호출.
   const pushUndoRef = useRef<() => void>(() => {});
   const undoMaskRef = useRef<() => void>(() => {});
-  // 연필·지우개 스트로크 진행 상태 — 마지막 점(콘텐츠 좌표). 전역 핸들러가 ref 로 그린다.
-  const paintRef = useRef<{ active: boolean; lastX: number; lastY: number } | null>(null);
+  // 연필·지우개 스트로크 진행 상태 — 마지막 점(콘텐츠 좌표) + 현재 스트로크 bbox(첫 영역 중앙 산출용).
+  const paintRef = useRef<{
+    active: boolean;
+    lastX: number;
+    lastY: number;
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  } | null>(null);
+  // 이번 마스크 세션에서 '첫 번째로 칠한 영역'의 중앙(콘텐츠 좌표). 읽은 뒤 새 말풍선을 여기 만든다.
+  const firstAnchorRef = useRef<{ x: number; y: number } | null>(null);
   // 최신 도구/굵기를 전역 핸들러가 읽도록 미러.
   const ocrToolRef = useRef(ocrTool);
   ocrToolRef.current = ocrTool;
@@ -440,6 +449,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         }
         pr.lastX = x;
         pr.lastY = y;
+        if (x < pr.minX) pr.minX = x;
+        if (x > pr.maxX) pr.maxX = x;
+        if (y < pr.minY) pr.minY = y;
+        if (y > pr.maxY) pr.maxY = y;
         return;
       }
       if (ocrDrag.current) {
@@ -492,12 +505,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const onUp = (e: MouseEvent) => {
       // 연필·지우개 스트로크 종료.
       if (paintRef.current?.active) {
+        const pr = paintRef.current;
         paintRef.current = null;
         if (ocrToolRef.current === 'eraser') {
           // 지우개는 칠을 더하지 않는다 → 지운 뒤 남은 칠이 있을 때만 ✓/✕ 활성.
           setMaskHasInk(maskHasAnyInk(maskRef.current));
         } else {
-          setMaskHasInk(true); // 연필 = 칠 추가.
+          // 연필 = 칠 추가. 이번 세션 첫 영역이면 그 스트로크 bbox 중앙을 앵커로(새 말풍선 위치).
+          if (!firstAnchorRef.current) {
+            firstAnchorRef.current = { x: (pr.minX + pr.maxX) / 2, y: (pr.minY + pr.maxY) / 2 };
+          }
+          setMaskHasInk(true);
         }
         return;
       }
@@ -518,6 +536,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             mctx.fillStyle = ocrColorRef.current; // 말풍선 색.
             mctx.fillRect(rect.x * MASK_SS, rect.y * MASK_SS, rect.w * MASK_SS, rect.h * MASK_SS);
             mctx.restore();
+            // 이번 세션 첫 영역이면 박스 중앙을 앵커로(새 말풍선 위치).
+            if (!firstAnchorRef.current) {
+              firstAnchorRef.current = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+            }
             setMaskHasInk(true);
           }
         }
@@ -677,6 +699,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       m.height = bh;
     }
     undoRef.current = [];
+    firstAnchorRef.current = null;
     setCanUndo(false);
     setMaskHasInk(false);
   }, [stageW, stageH]);
@@ -765,7 +788,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
           paintMaskSegment(mctx, x * MASK_SS, y * MASK_SS, x * MASK_SS, y * MASK_SS, ocrTool === 'eraser' ? 'eraser' : 'pencil', lw, ocrColorRef.current);
         }
-        paintRef.current = { active: true, lastX: x, lastY: y };
+        paintRef.current = { active: true, lastX: x, lastY: y, minX: x, minY: y, maxX: x, maxY: y };
         return;
       }
       ocrDrag.current = { x0: x, y0: y, moved: false };
@@ -1191,6 +1214,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (!m) return;
     pushUndo();
     m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
+    firstAnchorRef.current = null;
     setMaskHasInk(false);
   };
 
@@ -1199,8 +1223,27 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const m = maskRef.current;
     if (m) m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
     undoRef.current = [];
+    firstAnchorRef.current = null;
     setCanUndo(false);
     setMaskHasInk(false);
+  };
+
+  // 읽은 글자 → 칠한 자리(anchor)에 새 말풍선 생성. 품목코드(fi=0)부터 입력 포커스, 품목엔 읽은
+  // 글자가 미리 채워져 있어(prefill effect) Enter 로 품목 단계에 가면 바로 수정·확정 가능.
+  const createPinFromOcr = (anchor: { x: number; y: number }, text: string) => {
+    const ax = anchor.x;
+    const ay = anchor.y;
+    setPins((prev) => {
+      // 점=영역 중앙, 말풍선=우상단으로 살짝 비켜 리더선 연결(주변에 생성).
+      const next = [
+        ...prev,
+        { ax, ay, lx: ax + 36, ly: ay - 28, dragged: true, vals: { 품목: text }, fi: 0 },
+      ];
+      setActive(next.length - 1);
+      return next;
+    });
+    setSelPin(null);
+    setSelectedPin(null);
   };
 
   /**
@@ -1275,6 +1318,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     }
     setOcrBusy(true);
     setStatus('글자 읽는 중…');
+    // 앵커는 비우기 전에 캡처(finally 가 firstAnchorRef 를 null 로 만든다).
+    const anchor = firstAnchorRef.current ?? { x: 30, y: 30 };
     readText(token, dataUrl, 'image/png')
       .then((r) => {
         const text = (r.text || '').trim();
@@ -1283,28 +1328,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           cdlg('이 영역에서 글자를 못 읽었어요. 읽을 부분을 더 크게/정확히 칠해보세요.', [{ label: '확인', sec: true }]);
           return;
         }
-        const ko = charCount(text, 'ko');
-        const en = charCount(text, 'en');
-        const all = charCount(text, 'all');
         const esc = text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
-        const countLine = `<span style="font-size:12px;color:#6b7785">한글 ${ko} · 영문/숫자 ${en} · 합계 ${all}글자</span>`;
-        const tgt = activeRef.current ?? selectedPinRef.current;
-        if (tgt != null) {
-          // 활성/선택 말풍선의 품목 칸에 자동 입력.
-          setPins((prev) => prev.map((p, i) => (i === tgt ? { ...p, vals: { ...p.vals, 품목: text } } : p)));
-          // 입력 중(active)이고 현재 단계가 품목이면 입력칸(draft)도 즉시 갱신.
-          const ap = activeRef.current;
-          if (ap != null && ap === tgt && pinsRef.current[ap] && FIELDS[pinsRef.current[ap].fi] === '품목') {
-            setDraft(text);
-          }
-          cdlg(`✓ 품목에 입력했어요<br><b>${esc}</b><br>${countLine}`, [{ label: '확인' }]);
-        } else {
-          cdlg(
-            `읽은 글자<br><b>${esc}</b><br>${countLine}<br>` +
-              `<span style="font-size:12px;color:#6b7785">말풍선을 만들고 품목 단계에서 다시 시도하면 자동 입력됩니다.</span>`,
-            [{ label: '확인' }],
-          );
-        }
+        const newIdx = pinsRef.current.length; // 새로 만들어질 말풍선 번호(0-based).
+        const circle =
+          `<span style="display:inline-flex;width:22px;height:22px;border-radius:50%;` +
+          `background:${pinColor(newIdx)};color:#fff;font-weight:800;font-size:12px;` +
+          `align-items:center;justify-content:center;vertical-align:middle;margin-right:5px">${newIdx + 1}</span>`;
+        cdlg(
+          `<div style="margin-bottom:7px;font-size:14px">${circle}<b>번 품목으로 추가할까요?</b></div>` +
+            `<b style="font-size:15px">"${esc}"</b>` +
+            `<div style="font-size:11.5px;color:#6b7785;margin-top:7px">확인 → 칠한 자리에 말풍선이 생기고 품목코드부터 입력해요. ` +
+            `Enter 로 품목 단계에 가면 이 글자가 채워져 있어 바로 수정·확정할 수 있어요.</div>`,
+          [
+            { label: '확인', fn: () => createPinFromOcr(anchor, text) },
+            { label: '취소', sec: true },
+          ],
+        );
       })
       .catch((e) => {
         console.error(e);
@@ -1351,6 +1390,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const by = Math.max(0, minY - pad);
     const bw = Math.min(mw, maxX + 1 + pad) - bx;
     const bh = Math.min(mh, maxY + 1 + pad) - by;
+    // 첫 영역 앵커가 없으면(방어) 전체 마스크 bbox 중앙을 앵커로(콘텐츠 좌표).
+    if (!firstAnchorRef.current) {
+      firstAnchorRef.current = { x: (bx + bw / 2) / MASK_SS, y: (by + bh / 2) / MASK_SS };
+    }
     // bx..bh 는 마스크 백킹 px(=콘텐츠 px × MASK_SS). 소스 매핑은 콘텐츠로 환산(÷MASK_SS) 후 ×sx.
     const sx = img.naturalWidth / (img.clientWidth || 1);
     const sy = img.naturalHeight / (img.clientHeight || 1);
@@ -1392,11 +1435,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   performOcrRef.current = readMask;
 
   // ---- 렌더 ------------------------------------------------------------
-  const rows = Math.max(ROWS, pins.length);
-  // 글자수 OCR 타깃 말풍선(읽은 글자가 들어갈 곳) = 편집중(active) ?? 선택(selectedPin).
-  // 그 색을 박스·연필 색으로 쓰고, grid 의 해당 행을 연하게 칠해 어디 들어갈지 보이게.
-  const ocrTarget = active ?? selectedPin;
-  const ocrColor = ocrTarget != null ? pinColor(ocrTarget) : '#0a9396';
+  // 글자수 모드에선 다음에 만들어질 행(빈 칸)이 보이도록 한 줄 더.
+  const ocrTarget = pins.length; // 읽으면 새로 만들어질 말풍선/행 번호(0-based).
+  const rows = Math.max(ROWS, pins.length + (mode === 'ocr' ? 1 : 0));
+  // 박스·연필·커서·grid 행 하이라이트 색 = 다음 말풍선 색. "지금 칠하는 게 N번으로 들어가겠구나".
+  const ocrColor = pinColor(ocrTarget);
   ocrColorRef.current = ocrColor;
   // 글자수 모드 커서: 연필·지우개는 브러시 지름만 한 원, 박스는 십자.
   const ocrCursor =
@@ -1562,9 +1605,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           )}
           {imgSrc && mode === 'ocr' && !ocrBusy && (
             <div className="aq-ocrhint">
-              {ocrTarget != null
-                ? `${ocrTarget + 1}번 명세서 — 박스/연필로 칠한 뒤 위 ✓ 누르면 한꺼번에 읽어요`
-                : '먼저 말풍선(명세서 행)을 선택하세요 — 그 색으로 칠해집니다'}
+              {`${ocrTarget + 1}번 항목 — 박스/연필로 칠한 뒤 위 ✓ 누르면 그 자리에 말풍선이 생겨요`}
             </div>
           )}
           {ocrBusy && <div className="aq-ocrbusy">글자 읽는 중…</div>}
@@ -1605,19 +1646,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               />
               {/* 글자수 마스크 — 읽을 영역 색칠(알파=keep-mask). 콘텐츠 해상도, stage 스케일을 함께 탄다. */}
               <canvas ref={maskRef} className="aq-ocrmask" style={{ width: stageW, height: stageH }} />
+              {/* SVG stroke 은 sub-pixel 허용(CSS border 의 1px 클램프 없음)이라 strokeWidth=폭/zoom 으로
+                  확대해도 화면상 일정한 얇은 선이 된다. (vector-effect 는 조상 CSS transform 엔 안 먹어서 미사용.) */}
               <svg className="aq-lines">
                 {pins.map((p, i) =>
                   p.dragged ? (
-                    <line
-                      key={i}
-                      x1={p.ax}
-                      y1={p.ay}
-                      x2={p.lx}
-                      y2={p.ly}
-                      stroke={pinColor(i)}
-                      strokeWidth={2}
-                      vectorEffect="non-scaling-stroke"
-                    />
+                    <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke={pinColor(i)} strokeWidth={2 / zoom} />
                   ) : null,
                 )}
                 {ghost && (
@@ -1627,23 +1661,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                     x2={ghost.x}
                     y2={ghost.y}
                     stroke="#0a9396"
-                    strokeWidth={2}
-                    strokeDasharray="5 4"
-                    vectorEffect="non-scaling-stroke"
+                    strokeWidth={2 / zoom}
+                    strokeDasharray={`${5 / zoom} ${4 / zoom}`}
                   />
                 )}
-                {/* 글자수 선택 박스 — non-scaling-stroke 라 확대해도 테두리·점선이 화면상 일정(얇게). */}
+                {/* 글자수 선택 박스 — 움직이는 점선(마칭 앤츠). 폭·점선 간격을 /zoom 해서 확대해도 얇고 일정. */}
                 {ocrSel && (
                   <rect
+                    className="aq-march"
                     x={ocrSel.x}
                     y={ocrSel.y}
                     width={ocrSel.w}
                     height={ocrSel.h}
                     fill={hexToRgba(ocrColor, 0.14)}
                     stroke={ocrColor}
-                    strokeWidth={1.5}
-                    strokeDasharray="5 4"
-                    vectorEffect="non-scaling-stroke"
+                    strokeWidth={1.5 / zoom}
+                    strokeDasharray={`${5 / zoom} ${4 / zoom}`}
                   />
                 )}
               </svg>
@@ -1827,14 +1860,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 {Array.from({ length: rows }, (_, i) => {
                   const p = pins[i];
                   const v = p ? p.vals : {};
-                  const isOcrTgt = mode === 'ocr' && i === ocrTarget && !!p;
+                  const isOcrTgt = mode === 'ocr' && i === ocrTarget;
                   return (
                     <tr
                       key={i}
                       className={`${i === active ? 'cur' : ''}${isOcrTgt ? ' ocrtgt' : ''}`.trim() || undefined}
                       style={isOcrTgt ? { background: hexToRgba(pinColor(i), 0.28) } : undefined}
                     >
-                      <td className="rn">{p && <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>}</td>
+                      <td className="rn">
+                        {(p || isOcrTgt) && (
+                          <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>
+                        )}
+                      </td>
                       <td>
                         <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} />
                       </td>
