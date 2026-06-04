@@ -630,6 +630,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     return () => window.removeEventListener('keydown', onEnter);
   }, [mode]);
 
+  // 단축키 1/2/3 = 커서/지시서이동/글자수 모드. 입력칸에 타이핑 중이면 무시(숫자 입력 보존).
+  useEffect(() => {
+    const onNum = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key !== '1' && e.key !== '2' && e.key !== '3') return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      e.preventDefault();
+      setMode(e.key === '1' ? 'cursor' : e.key === '2' ? 'hand' : 'ocr');
+    };
+    window.addEventListener('keydown', onNum);
+    return () => window.removeEventListener('keydown', onNum);
+  }, []);
+
   // 삭제버튼(selPin)이 열린 상태에서 점/삭제버튼 외 다른 곳을 누르면 닫는다.
   // 점·삭제버튼은 onMouseDown 에서 stopPropagation 하므로 이 window 리스너에 안 잡힌다.
   useEffect(() => {
@@ -645,6 +659,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   const startStageDrag = (e: React.MouseEvent) => {
     if (!imgSrc) return;
+    // 지시서를 클릭하면 명세서(grid 등) 텍스트박스의 포커스를 푼다. preventDefault 로 기본 blur 가
+    // 막히므로 명시적으로 처리. 단, 말풍선 입력칸(inputRef)은 유지(작성 흐름 보존).
+    const ae = document.activeElement as HTMLElement | null;
+    if (ae && ae !== inputRef.current && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) {
+      ae.blur();
+    }
     // 가운데(휠) 버튼 = 모든 모드(커서·손바닥·글자수)에서 화면 이동(확대 상태에서만).
     // 글자수의 박스/연필/지우개로 작업하면서도 휠버튼 드래그로 패닝할 수 있게 최상단에서 처리.
     if (e.button === 1) {
@@ -1304,7 +1324,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <button
                 type="button"
                 className={'aq-toolbtn' + (mode === 'cursor' ? ' on' : '')}
-                title="커서 — 드래그로 말풍선 작성"
+                title="커서 — 드래그로 말풍선 작성 (단축키 1)"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode('cursor')}
               >
@@ -1315,7 +1335,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <button
                 type="button"
                 className={'aq-toolbtn' + (mode === 'hand' ? ' on' : '')}
-                title="이동 — 드래그로 사진 이동(확대 시)"
+                title="지시서 이동 — 드래그로 사진 이동(확대 시) (단축키 2)"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode('hand')}
               >
@@ -1326,7 +1346,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <button
                 type="button"
                 className={'aq-toolbtn aq-ocrbtn' + (mode === 'ocr' ? ' on' : '')}
-                title="글자수 — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요"
+                title="글자수 — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 3)"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode((m) => (m === 'ocr' ? 'cursor' : 'ocr'))}
               >
