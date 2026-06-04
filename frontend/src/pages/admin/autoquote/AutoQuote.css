@@ -216,10 +216,48 @@
   background: rgba(255, 255, 255, 0.18);
   margin: 0 2px;
 }
-/* 글자읽기 안내/진행 오버레이. */
-.aq-ocrhint {
+/* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 스테이지(transform) 밖이라 확대/이동에 안 흔들린다.
+   translateZ(0) 로 자체 레이어 승격(스테이지 GPU 레이어 위에 항상 그려지게). */
+.aq-ocrconfirm {
   position: absolute;
   top: 10px;
+  left: 50%;
+  transform: translateX(-50%) translateZ(0);
+  z-index: 22;
+  display: flex;
+  gap: 8px;
+}
+.aq-ocrok,
+.aq-ocrclear {
+  width: 42px;
+  height: 42px;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.aq-ocrok {
+  background: #2a9d4a;
+}
+.aq-ocrclear {
+  background: #c0504a;
+}
+.aq-ocrok:disabled,
+.aq-ocrclear:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+/* 글자읽기 안내 — 하단 중앙(상단은 ✓/✕ 가 차지). */
+.aq-ocrhint {
+  position: absolute;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 7;
@@ -231,6 +269,9 @@
   font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .aq-ocrbusy {
   position: absolute;

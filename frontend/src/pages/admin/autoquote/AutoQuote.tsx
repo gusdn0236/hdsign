@@ -106,6 +106,13 @@ const PIN_COLORS = ['#0a7d8c', '#4f8a5b', '#b07d3a', '#8a5a7d', '#c06a52', '#5a7
 function pinColor(i: number): string {
   return PIN_COLORS[i % PIN_COLORS.length];
 }
+/** '#rrggbb' → 'rgba(r,g,b,a)' — grid 행/박스 연한 틴트용. */
+function hexToRgba(hex: string, a: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return `rgba(10,147,150,${a})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
 
 // 단가 입력용 — 숫자만 남기고 천 단위 콤마(돈 입력처럼). 빈 값은 ''.
 function formatWon(s: string): string {
@@ -148,13 +155,13 @@ const BRUSH_DOT_PX: Record<'s' | 'm' | 'l', number> = { s: 7, m: 12, l: 18 };
  */
 const MASK_SS = 3;
 
-/** 연필·지우개 커서 — 브러시 지름만 한 원(SVG data URI). 핫스팟은 중심. */
-function brushCursor(diam: number, tool: 'pencil' | 'eraser'): string {
+/** 연필·지우개 커서 — 브러시 지름만 한 원(SVG data URI). 핫스팟은 중심. 연필은 말풍선 색. */
+function brushCursor(diam: number, tool: 'pencil' | 'eraser', color: string): string {
   const d = Math.max(8, Math.round(diam));
   const c = d / 2;
   const r = c - 1.5;
-  const stroke = tool === 'eraser' ? '#ff5d5d' : '#0a9396';
-  const fill = tool === 'eraser' ? 'none' : 'rgba(10,147,150,0.22)';
+  const stroke = tool === 'eraser' ? '#ff5d5d' : color;
+  const fill = tool === 'eraser' ? 'none' : hexToRgba(color, 0.22);
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='${d}' height='${d}'>` +
     `<circle cx='${c}' cy='${c}' r='${r}' fill='${fill}' stroke='${stroke}' stroke-width='1.5'/></svg>`;
@@ -170,6 +177,7 @@ function paintMaskSegment(
   y1: number,
   tool: 'pencil' | 'eraser',
   lineWidth: number,
+  color: string,
 ) {
   ctx.save();
   ctx.lineCap = 'round';
@@ -180,7 +188,7 @@ function paintMaskSegment(
     ctx.strokeStyle = 'rgba(0,0,0,1)';
   } else {
     ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = 'rgba(10,147,150,1)'; // 풀 알파 — 표시 반투명은 CSS opacity 가 담당(겹침 누적 방지).
+    ctx.strokeStyle = color; // 말풍선 색(풀 알파). 표시 반투명은 CSS opacity 가 담당(겹침 누적 방지).
   }
   ctx.beginPath();
   ctx.moveTo(x0, y0);
@@ -270,6 +278,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const performOcrRef = useRef<() => void>(() => {});
   const maskHasInkRef = useRef(false);
   maskHasInkRef.current = maskHasInk;
+  // 현재 OCR 타깃 말풍선의 색(박스·연필 색을 그 말풍선과 일치). 렌더에서 갱신.
+  const ocrColorRef = useRef('#0a9396');
 
   const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
 
@@ -386,7 +396,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           // 콘텐츠 굵기 = 화면px/zoom, 백킹 좌표·굵기는 ×MASK_SS(슈퍼샘플).
           const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
           const tool = ocrToolRef.current === 'eraser' ? 'eraser' : 'pencil';
-          paintMaskSegment(mctx, pr.lastX * MASK_SS, pr.lastY * MASK_SS, x * MASK_SS, y * MASK_SS, tool, lw);
+          paintMaskSegment(mctx, pr.lastX * MASK_SS, pr.lastY * MASK_SS, x * MASK_SS, y * MASK_SS, tool, lw, ocrColorRef.current);
         }
         pr.lastX = x;
         pr.lastY = y;
@@ -459,7 +469,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           if (mctx) {
             mctx.save();
             mctx.globalCompositeOperation = 'source-over';
-            mctx.fillStyle = 'rgba(10,147,150,1)';
+            mctx.fillStyle = ocrColorRef.current; // 말풍선 색.
             mctx.fillRect(rect.x * MASK_SS, rect.y * MASK_SS, rect.w * MASK_SS, rect.h * MASK_SS);
             mctx.restore();
             setMaskHasInk(true);
@@ -687,7 +697,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         const mctx = maskRef.current?.getContext('2d');
         if (mctx) {
           const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
-          paintMaskSegment(mctx, x * MASK_SS, y * MASK_SS, x * MASK_SS, y * MASK_SS, ocrTool === 'eraser' ? 'eraser' : 'pencil', lw);
+          paintMaskSegment(mctx, x * MASK_SS, y * MASK_SS, x * MASK_SS, y * MASK_SS, ocrTool === 'eraser' ? 'eraser' : 'pencil', lw, ocrColorRef.current);
         }
         paintRef.current = { active: true, lastX: x, lastY: y };
         return;
@@ -1268,11 +1278,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   // ---- 렌더 ------------------------------------------------------------
   const rows = Math.max(ROWS, pins.length);
+  // 글자수 OCR 타깃 말풍선(읽은 글자가 들어갈 곳) = 편집중(active) ?? 선택(selectedPin).
+  // 그 색을 박스·연필 색으로 쓰고, grid 의 해당 행을 연하게 칠해 어디 들어갈지 보이게.
+  const ocrTarget = active ?? selectedPin;
+  const ocrColor = ocrTarget != null ? pinColor(ocrTarget) : '#0a9396';
+  ocrColorRef.current = ocrColor;
   // 글자수 모드 커서: 연필·지우개는 브러시 지름만 한 원, 박스는 십자.
   const ocrCursor =
     mode === 'ocr'
       ? ocrTool === 'pencil' || ocrTool === 'eraser'
-        ? brushCursor(BRUSH_SCREEN_PX[brush], ocrTool)
+        ? brushCursor(BRUSH_SCREEN_PX[brush], ocrTool, ocrColor)
         : 'crosshair'
       : undefined;
 
@@ -1395,29 +1410,37 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   ))}
                 </span>
               )}
-              <span className="aq-octsp" />
+            </div>
+          )}
+          {/* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 화면 이동/확대해도 따라다닌다. */}
+          {imgSrc && mode === 'ocr' && (
+            <div className="aq-ocrconfirm" onMouseDown={(e) => e.stopPropagation()}>
               <button
                 type="button"
-                className="aq-octbtn aq-octread"
+                className="aq-ocrok"
                 disabled={!maskHasInk || ocrBusy}
-                title="칠한 영역의 글자를 AI로 읽기 (Enter)"
+                title="칠한 영역의 글자를 한꺼번에 읽기 (Enter)"
                 onClick={() => performOcrRef.current()}
               >
-                👁 읽기
+                ✓
               </button>
               <button
                 type="button"
-                className="aq-octbtn"
+                className="aq-ocrclear"
                 disabled={!maskHasInk || ocrBusy}
                 title="칠한 영역 모두 지우기"
                 onClick={clearMask}
               >
-                지우기
+                ✕
               </button>
             </div>
           )}
           {imgSrc && mode === 'ocr' && !ocrBusy && (
-            <div className="aq-ocrhint">박스로 영역을 잡고, 연필/지우개로 읽을 글자만 칠한 뒤 [읽기]</div>
+            <div className="aq-ocrhint">
+              {ocrTarget != null
+                ? `${ocrTarget + 1}번 명세서 — 박스/연필로 칠한 뒤 위 ✓ 누르면 한꺼번에 읽어요`
+                : '먼저 말풍선(명세서 행)을 선택하세요 — 그 색으로 칠해집니다'}
+            </div>
           )}
           {ocrBusy && <div className="aq-ocrbusy">글자 읽는 중…</div>}
           {!imgSrc ? (
@@ -1477,6 +1500,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                     height: ocrSel.h,
                     borderWidth: `${1.5 / zoom}px`,
                     borderStyle: 'dashed',
+                    borderColor: ocrColor,
+                    background: hexToRgba(ocrColor, 0.14),
                   }}
                 />
               )}
@@ -1661,7 +1686,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   const p = pins[i];
                   const v = p ? p.vals : {};
                   return (
-                    <tr key={i} className={i === active ? 'cur' : undefined}>
+                    <tr
+                      key={i}
+                      className={i === active ? 'cur' : undefined}
+                      style={
+                        mode === 'ocr' && i === ocrTarget && p
+                          ? { background: hexToRgba(pinColor(i), 0.16) }
+                          : undefined
+                      }
+                    >
                       <td className="rn">{p && <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>}</td>
                       <td>
                         <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} />
