@@ -148,6 +148,19 @@ function computeAuto(code: string, item: string, spec: string): { unit: number; 
   return r.ok ? { unit: r.unit, qty: r.qty } : null;
 }
 
+/**
+ * 품목을 newItem 으로 바꿀 때 수량을 따라가게 한 vals 를 만든다. 단, 수량이 '기존 품목의 글자수'와
+ * 일치할 때만(=비전 자동입력 후 손대지 않은 동기 상태). 사용자가 수량을 직접 다르게 넣었으면 보존.
+ */
+function syncQty(oldVals: Record<string, string>, newItem: string): Record<string, string> {
+  const v = { ...oldVals, 품목: newItem };
+  const oldQty = num(oldVals['수량']);
+  if (oldQty != null && oldQty === charCount(oldVals['품목'] || '', 'all')) {
+    v['수량'] = String(charCount(newItem, 'all'));
+  }
+  return v;
+}
+
 // 공유 이미지용 한 줄 라벨 — "품목 규격 / 단가원 ×수량개 = 합계원".
 function pinLabel(p: Pin): string {
   const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
@@ -881,7 +894,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     setPins((prev) => {
       const next = prev.map((p, i) => {
         if (i !== active) return p;
-        const np = { ...p, vals: { ...p.vals, [FIELDS[p.fi]]: val }, fi: p.fi + 1 };
+        // 품목 단계면 수량(글자수)도 동기(비전 자동입력 후 손 안 댄 경우만).
+        const nv = FIELDS[p.fi] === '품목' ? syncQty(p.vals, val) : { ...p.vals, [FIELDS[p.fi]]: val };
+        const np = { ...p, vals: nv, fi: p.fi + 1 };
         if (np.splitPending && FIELDS[np.fi - 1] === '품목') {
           np.fi = FIELDS.indexOf('단가');
           np.splitPending = false;
@@ -924,7 +939,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       if (!next[i]) {
         next[i] = { ax: 30, ay: 30 + i * 30, lx: 30, ly: 30 + i * 30, dragged: false, vals: {}, fi: FIELDS.length };
       }
-      next[i] = { ...next[i], vals: { ...next[i].vals, [key]: value } };
+      next[i] =
+        key === '품목'
+          ? { ...next[i], vals: syncQty(next[i].vals, value) } // 품목 수정 시 수량(글자수) 자동 동기
+          : { ...next[i], vals: { ...next[i].vals, [key]: value } };
       return next;
     });
   };
