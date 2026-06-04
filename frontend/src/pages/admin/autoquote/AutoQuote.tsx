@@ -36,8 +36,12 @@ async function renderPdfFirstPage(url: string): Promise<string> {
   try {
     const page = await pdf.getPage(1);
     const base = page.getViewport({ scale: 1 });
-    // 고해상 렌더(확대해도 선명) — 가로 ~3200px 목표.
-    const scale = Math.min(4.5, Math.max(1, 3200 / base.width));
+    // 고해상 렌더(확대해도 선명) — 가로 ~4800px 목표.
+    // AutoQuote 는 이 비트맵을 CSS transform:scale(zoom) 로만 키우므로(PdfViewer 처럼 줌마다
+    // 재렌더하지 않음), 최대 줌(5×)에서도 또렷하려면 표시폭(~1000px)×5 ≈ 5000px 의 네이티브
+    // 해상도가 필요하다. 가로 4800px 면 A4 기준 ~32M px(JPEG 라 용량/메모리 감당 가능).
+    const TARGET_W = 4800;
+    const scale = Math.min(10, Math.max(2, TARGET_W / base.width));
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(viewport.width);
