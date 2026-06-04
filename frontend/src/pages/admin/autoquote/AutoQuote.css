@@ -56,6 +56,17 @@
   cursor: pointer;
   font-size: 15px;
 }
+/* 참고사진 ↔ 지시서 전환 토글 — 텍스트라 알약형(자동 폭). on=참고사진 보는 중. */
+.aq-reftoggle {
+  width: auto;
+  padding: 0 12px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.aq-reftoggle.on {
+  background: var(--teal, #0a9396);
+}
 
 .aq-wrap {
   display: flex;
@@ -84,6 +95,19 @@
   border-radius: 4px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   cursor: crosshair;
+}
+/* 참고사진 — 지시서 박스 안에 contain 으로 겹쳐 표시(보기 전용). 선택자 특이도를 .aq-stage img 보다 높여 채운다. */
+.aq-stage img.aq-refimg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  background: #fff;
+  cursor: default;
+  z-index: 3;
 }
 /* 좌상단 커서/손바닥 모드 토글.
    z-index 를 스테이지 위로 충분히 올리고 translateZ(0) 로 자체 컴포지팅 레이어로 승격한다.

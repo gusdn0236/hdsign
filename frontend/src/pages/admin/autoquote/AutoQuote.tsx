@@ -283,7 +283,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [acIdx, setAcIdx] = useState(-1); // 품목코드 자동완성 드롭다운 하이라이트(-1=없음)
   const [acAbove, setAcAbove] = useState(false); // 드롭다운을 입력칸 위로 열지(아래 공간 부족 시)
   const acDropRef = useRef<HTMLDivElement>(null);
-  const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [imgSrc, setImgSrc] = useState<string | null>(null); // 작업지시서 — 말풍선(핀)을 얹는 캔버스.
+  const [refSrc, setRefSrc] = useState<string | null>(null); // 참고사진 — 보기 전용(붙여넣기). 지시서와 별개.
+  const [showRef, setShowRef] = useState(false); // 스테이지에 참고사진 표시(true) / 지시서 표시(false).
   const [loadingImg, setLoadingImg] = useState(false); // 주문 진입 시 지시서 자동 로드 진행 중 — 빈화면에 "로딩중" 표시(붙여넣기 안내 대신).
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
   const [stageH, setStageH] = useState(0);
@@ -450,11 +452,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       if (!file) return;
       const r = new FileReader();
       r.onload = () => {
-        setImgSrc(String(r.result));
-        setPins([]);
-        setActive(null);
-        setSelPin(null);
-        setStatus('드래그해서 말풍선을 만드세요 (리더선)');
+        const dataUrl = String(r.result);
+        // 붙여넣은 이미지를 바로 깔지 않고, 참고사진으로 추가할지 먼저 묻는다(작업 중 실수 붙여넣기 방지).
+        cdlg(
+          `<b style="font-size:15px">참고사진을 추가하시겠습니까?</b>` +
+            `<div style="font-size:12px;color:#6b7785;margin-top:6px">추가하면 이 사진을 보면서 명세서를 작성할 수 있어요. ` +
+            `작성 후 상단 [지시서] 전환 → 표의 번호 동그라미를 사진 위로 드래그하면 그 칸 말풍선이 생깁니다.</div>`,
+          [
+            {
+              label: '추가하기',
+              fn: () => {
+                setRefSrc(dataUrl); // 참고사진으로 보관(보기 전용).
+                setImgSrc((prev) => prev || dataUrl); // 지시서가 없으면 이 사진을 지시서로도 사용(말풍선 캔버스 확보).
+                setShowRef(true); // 바로 참고사진을 띄워 보면서 작성.
+                setStatus('참고사진을 보며 명세서를 작성하세요 · 상단 [지시서] 전환 후 번호 동그라미를 드래그');
+              },
+            },
+            { label: '취소', sec: true },
+          ],
+        );
       };
       r.readAsDataURL(file);
     };
@@ -823,6 +839,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (ae && ae !== inputRef.current && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) {
       ae.blur();
     }
+    // 참고사진 보기 중 — 지시서 편집(핀 생성·칠하기) 금지. 확대 상태면 팬만 허용(참고사진 둘러보기).
+    if (showRef) {
+      if (zoomRef.current > 1 && (e.button === 1 || mode === 'hand')) {
+        e.preventDefault();
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+      }
+      return;
+    }
     // 가운데(휠) 버튼 = 모든 모드(커서·손바닥·글자수)에서 화면 이동(확대 상태에서만).
     // 글자수의 박스/연필/지우개로 작업하면서도 휠버튼 드래그로 패닝할 수 있게 최상단에서 처리.
     if (e.button === 1) {
@@ -1012,6 +1036,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     });
   };
 
+  // 표의 번호 동그라미를 사진(지시서) 위로 드롭 → 그 행(핀)을 드롭 지점에 배치(제자리 말풍선). 역방향 작성.
+  const onBadgeDrop = (e: React.DragEvent) => {
+    if (showRef) return; // 참고사진 보기 중엔 무시 — 말풍선은 지시서에 얹는다.
+    const raw = e.dataTransfer.getData('application/x-aq-pin');
+    if (!raw) return;
+    e.preventDefault();
+    const i = parseInt(raw, 10);
+    if (Number.isNaN(i)) return;
+    const st = stageRef.current?.getBoundingClientRect();
+    const z = zoomRef.current || 1;
+    const x = (e.clientX - (st?.left ?? 0)) / z; // 화면→콘텐츠(지시서) 좌표.
+    const y = (e.clientY - (st?.top ?? 0)) / z;
+    setPins((prev) => prev.map((p, idx) => (idx === i ? { ...p, ax: x, ay: y, lx: x, ly: y, dragged: false } : p)));
+    setSelPin(i);
+  };
+
   const total = pins.reduce((s, p) => s + (num(p.vals['단가']) || 0) * (num(p.vals['수량']) || 1), 0);
 
   // ---- 계산기 ----------------------------------------------------------
@@ -1198,7 +1238,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   // ---- 공유 (Canvas 합성 → 클립보드) ------------------------------------
+  // 참고사진이 있으면 포함 여부를 먼저 묻는다. 포함 시 2장(① 지시서+말풍선+명세서, ② 참고사진)으로 저장.
   const captureShare = () => {
+    if (refSrc) {
+      cdlg('참고사진도 함께 공유할까요?', [
+        { label: '참고사진 포함', fn: () => doShare(true) },
+        { label: '지시서+명세서만', fn: () => doShare(false), sec: true },
+      ]);
+    } else {
+      doShare(false);
+    }
+  };
+
+  const doShare = (includeRef: boolean) => {
     const img = imgRef.current;
     if (!img || !imgSrc) {
       cdlg('사진을 먼저 붙여넣으세요.', [{ label: '확인', sec: true }]);
@@ -1405,19 +1457,35 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     ctx.strokeRect(ox + 0.5, 0.5, tw - 1, th - 1);
     ctx.textAlign = 'left';
 
+    const dlBlob = (b: Blob, name: string) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    };
     cv.toBlob(async (blob) => {
       if (!blob) {
         cdlg('캡쳐 실패(샘플 이미지는 보안제한 — 붙여넣은 사진으로 시도하세요).', [{ label: '확인', sec: true }]);
+        return;
+      }
+      // 참고사진 포함 — 클립보드는 1장만 가능하므로 두 장 모두 파일로 저장(① 합성, ② 참고사진).
+      if (includeRef && refSrc) {
+        dlBlob(blob, '지시서_명세서.png');
+        try {
+          const rb = await (await fetch(refSrc)).blob();
+          dlBlob(rb, '참고사진.png');
+        } catch {
+          /* 참고사진 저장 실패는 합성 저장엔 영향 없음 */
+        }
+        cdlg('2장(지시서+명세서 · 참고사진)을 저장했어요. 카톡에 두 장 모두 첨부하세요.', [{ label: '확인' }]);
         return;
       }
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         cdlg('✓ 사진+말풍선+명세서가 복사됐어요. 카톡에서 Ctrl+V 로 붙여넣으세요.', [{ label: '확인' }]);
       } catch {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = '견적.png';
-        a.click();
+        dlBlob(blob, '견적.png');
         cdlg('클립보드 복사가 막혀 이미지로 저장했어요.', [{ label: '확인' }]);
       }
     }, 'image/png');
@@ -1740,6 +1808,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         >
           ↺
         </button>
+        {refSrc && (
+          <button
+            className={'aq-x aq-reftoggle' + (showRef ? ' on' : '')}
+            title={showRef ? '지시서 보기로 — 번호 동그라미를 얹을 수 있어요' : '참고사진 보기로 전환'}
+            onClick={() => setShowRef((v) => !v)}
+          >
+            {showRef ? '지시서' : '참고'}
+          </button>
+        )}
         {onClose && (
           <button className="aq-x aq-close" title="닫기" onClick={onClose}>
             ✕
@@ -1753,7 +1830,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           ref={stagewrapRef}
           onMouseDown={startStageDrag}
         >
-          {imgSrc && (
+          {imgSrc && !showRef && (
             <div className="aq-tools">
               <button
                 type="button"
@@ -1788,7 +1865,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               </button>
             </div>
           )}
-          {imgSrc && mode === 'ocr' && (
+          {imgSrc && !showRef && mode === 'ocr' && (
             <div className="aq-ocrtools" onMouseDown={(e) => e.stopPropagation()}>
               <button
                 type="button"
@@ -1842,7 +1919,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             </div>
           )}
           {/* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 화면 이동/확대해도 따라다닌다. */}
-          {imgSrc && mode === 'ocr' && (
+          {imgSrc && !showRef && mode === 'ocr' && (
             <div className="aq-ocrconfirm" onMouseDown={(e) => e.stopPropagation()}>
               <button
                 type="button"
@@ -1864,12 +1941,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               </button>
             </div>
           )}
-          {imgSrc && mode === 'ocr' && !ocrBusy && (
+          {imgSrc && !showRef && mode === 'ocr' && !ocrBusy && (
             <div className="aq-ocrhint">
               {`${ocrTarget + 1}번 항목 — 박스/연필로 칠한 뒤 위 ✓ 누르면 그 자리에 말풍선이 생겨요`}
             </div>
           )}
-          {ocrBusy && <div className="aq-ocrbusy">글자 읽는 중…</div>}
+          {ocrBusy && !showRef && <div className="aq-ocrbusy">글자 읽는 중…</div>}
           {!imgSrc ? (
             loadingImg ? (
               <div className="aq-empty">
@@ -1891,6 +1968,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               className="aq-stage"
               ref={stageRef}
               style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, transformOrigin: '0 0' }}
+              onDragOver={(e) => {
+                if (!showRef) e.preventDefault(); // 번호 동그라미 드롭 허용(지시서 보기 중에만).
+              }}
+              onDrop={onBadgeDrop}
             >
               {/* crossOrigin 미설정 — R2 공개 URL 이 CORS 헤더를 안 줘서 anonymous 면 이미지가 깨진다.
                   로드 우선. 공유 캔버스가 taint 로 막히면 PNG 다운로드로 폴백한다. */}
@@ -1903,8 +1984,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   setStageH(imgRef.current?.clientHeight || 0);
                 }}
                 draggable={false}
-                style={ocrCursor ? { cursor: ocrCursor } : undefined}
+                style={{ ...(ocrCursor ? { cursor: ocrCursor } : {}), visibility: showRef ? 'hidden' : 'visible' }}
               />
+              {/* 참고사진 보기 — 지시서 박스 안에 겹쳐 표시(보기 전용, 말풍선 없음). */}
+              {showRef && refSrc && <img className="aq-refimg" src={refSrc} alt="참고사진" draggable={false} />}
+              {/* 지시서 오버레이(마스크·리더선·핀·말풍선)는 참고사진 볼 땐 숨긴다. */}
+              {!showRef && (
+                <>
               {/* 글자수 마스크 — 읽을 영역 색칠(알파=keep-mask). 콘텐츠 해상도, stage 스케일을 함께 탄다. */}
               <canvas ref={maskRef} className="aq-ocrmask" style={{ width: stageW, height: stageH }} />
               {/* SVG stroke 은 sub-pixel 허용(CSS border 의 1px 클램프 없음)이라 strokeWidth=폭/zoom 으로
@@ -2140,6 +2226,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                     </div>
                   );
                 })()}
+                </>
+              )}
             </div>
           )}
         </div>
@@ -2187,7 +2275,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                     >
                       <td className="rn">
                         {(p || isOcrTgt) && (
-                          <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>
+                          <span
+                            className="rnum"
+                            style={{ background: pinColor(i), cursor: p ? 'grab' : undefined }}
+                            draggable={!!p}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('application/x-aq-pin', String(i));
+                              e.dataTransfer.effectAllowed = 'move';
+                            }}
+                            title={p ? '사진(지시서) 위로 드래그하면 이 칸 말풍선이 그 자리에 생겨요' : undefined}
+                          >
+                            {i + 1}
+                          </span>
                         )}
                       </td>
                       <td>
