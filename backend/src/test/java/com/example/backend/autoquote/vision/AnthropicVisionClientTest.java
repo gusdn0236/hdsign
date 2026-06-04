@@ -67,7 +67,7 @@ class AnthropicVisionClientTest {
 
     /** 목 AnthropicClient 를 주입한 클라이언트(키/OkHttp 미사용). */
     private AnthropicVisionClient clientWith(AnthropicClient delegate) {
-        return new AnthropicVisionClient("", "claude-sonnet-4-6", 60_000L, delegate);
+        return new AnthropicVisionClient("", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", 60_000L, delegate);
     }
 
     /** delegate.messages().create(...) 를 스텁/캡처할 수 있게 묶어주는 헬퍼. */
@@ -145,6 +145,49 @@ class AnthropicVisionClientTest {
         Tool sent = params.tools().orElseThrow().get(0).tool().orElseThrow();
         assertThat(sent.inputSchema().properties().orElseThrow()._additionalProperties().keySet())
                 .containsExactlyInAnyOrderElementsOf(RICH_SCHEMA_KEYS);
+    }
+
+    // ---- 글자읽기(read_text) 분기 ----------------------------------------
+
+    @Test
+    void readTextTool_isSingleTextField() {
+        Tool tool = AnthropicVisionClient.readTextTool();
+
+        assertThat(tool.name()).isEqualTo("report_text");
+        assertThat(tool.inputSchema().properties().orElseThrow()._additionalProperties().keySet())
+                .containsExactly("text");
+    }
+
+    @Test
+    void isReadTextMode_trueOnlyForReadTextHint() {
+        assertThat(AnthropicVisionClient.isReadTextMode(null)).isFalse();
+        assertThat(AnthropicVisionClient.isReadTextMode(Map.of())).isFalse();
+        assertThat(AnthropicVisionClient.isReadTextMode(Map.of("mode", "read_text"))).isTrue();
+        assertThat(AnthropicVisionClient.isReadTextMode(Map.of("mode", "other"))).isFalse();
+    }
+
+    @Test
+    void buildParams_readTextMode_forcesReportTextTool_withCountModel() {
+        // 글자읽기 모드 → report_text 도구로 강제 + 저렴한(haiku) count 모델 사용.
+        AnthropicVisionClient c = new AnthropicVisionClient(
+                "", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", 60_000L, mock(AnthropicClient.class));
+        MessageCreateParams params = c.buildParams(TINY_PNG_B64, "jpeg", Map.of("mode", "read_text"));
+
+        ToolChoice choice = params.toolChoice().orElseThrow();
+        assertThat(choice.isTool()).isTrue();
+        assertThat(choice.asTool().name()).isEqualTo("report_text");
+
+        Tool sent = params.tools().orElseThrow().get(0).tool().orElseThrow();
+        assertThat(sent.inputSchema().properties().orElseThrow()._additionalProperties().keySet())
+                .containsExactly("text");
+    }
+
+    @Test
+    void buildParams_default_stillUsesExtractionTool() {
+        // 힌트가 read_text 가 아니면 기존 전체추출(report_work_order) 경로 유지(회귀 가드).
+        MessageCreateParams params = clientWith(mock(AnthropicClient.class))
+                .buildParams(TINY_PNG_B64, "png", Map.of("거래처", "현대사인"));
+        assertThat(params.toolChoice().orElseThrow().asTool().name()).isEqualTo("report_work_order");
     }
 
     /** 스텁 등가물(라이브 스모크 보강): extract() 가 forced 파라미터를 실제로 보내고 rich-schema Map 을 돌려준다. */
@@ -274,7 +317,8 @@ class AnthropicVisionClientTest {
     @Test
     void extract_noKeyAndNoDelegate_throwsUpstream_withoutLeakingKey() {
         // 주입 delegate 없음 + 키 공백 → 키 노출 없이 Upstream(서비스가 502 로 매핑). 부팅은 여전히 키 불필요.
-        AnthropicVisionClient noKey = new AnthropicVisionClient("", "claude-sonnet-4-6", 60_000L);
+        AnthropicVisionClient noKey =
+                new AnthropicVisionClient("", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", 60_000L);
 
         VisionClientException ex = catchThrowableOfType(
                 () -> noKey.extract(TINY_PNG_B64, "png", null), VisionClientException.class);

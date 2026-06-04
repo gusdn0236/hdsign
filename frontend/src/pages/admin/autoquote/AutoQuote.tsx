@@ -13,6 +13,7 @@ import {
   parseCode,
   computeAcryl,
   computeGomu,
+  charCount,
 } from './annot/calc';
 import {
   predict,
@@ -20,6 +21,7 @@ import {
   getOrder,
   getEstimate,
   putEstimate,
+  readText,
   type Evidence,
   type OrderContext,
 } from './annot/api';
@@ -152,7 +154,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [stageH, setStageH] = useState(0);
   const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~5). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
-  const [mode, setMode] = useState<'cursor' | 'hand'>('cursor'); // 커서=핀 작성 / 손바닥=화면 이동
+  const [mode, setMode] = useState<'cursor' | 'hand' | 'ocr'>('cursor'); // 커서=핀 작성 / 손바닥=화면 이동 / 글자=영역 OCR
+  const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
+  const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
   const [order, setOrder] = useState<OrderContext | null>(null);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
@@ -190,6 +194,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   // 화면 이동(팬) — 가운데 버튼 드래그 또는 손바닥 모드. 시작 시점 pan(px) 캡처.
   const panDrag = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
   const [ghost, setGhost] = useState<{ x: number; y: number; ax: number; ay: number } | null>(null);
+  // 글자읽기 영역 드래그 — 시작점(콘텐츠 좌표). 최신 performOcr 는 ref 로 호출(전역 핸들러가 [] deps).
+  const ocrDrag = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
+  const performOcrRef = useRef<(r: { x: number; y: number; w: number; h: number }) => void>(() => {});
 
   const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
 
@@ -290,6 +297,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     };
     const onMove = (e: MouseEvent) => {
       const z = zoomRef.current || 1;
+      if (ocrDrag.current) {
+        const { x, y } = localXY(e);
+        const od = ocrDrag.current;
+        if (Math.abs(x - od.x0) > 3 || Math.abs(y - od.y0) > 3) od.moved = true;
+        setOcrSel({ x: Math.min(x, od.x0), y: Math.min(y, od.y0), w: Math.abs(x - od.x0), h: Math.abs(y - od.y0) });
+        return;
+      }
       if (panDrag.current) {
         const pd = panDrag.current;
         setPan({ x: pd.px + (e.clientX - pd.sx), y: pd.py + (e.clientY - pd.sy) });
@@ -331,6 +345,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
     };
     const onUp = (e: MouseEvent) => {
+      if (ocrDrag.current) {
+        const { x, y } = localXY(e);
+        const od = ocrDrag.current;
+        ocrDrag.current = null;
+        setOcrSel(null);
+        const rect = { x: Math.min(x, od.x0), y: Math.min(y, od.y0), w: Math.abs(x - od.x0), h: Math.abs(y - od.y0) };
+        // 너무 작은 박스(클릭 수준)는 무시 — 실수로 한 점 클릭 시 OCR 호출 방지.
+        if (od.moved && rect.w > 8 && rect.h > 8) performOcrRef.current(rect);
+        return;
+      }
       if (panDrag.current) {
         panDrag.current = null;
         return;
@@ -479,6 +503,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   const startStageDrag = (e: React.MouseEvent) => {
     if (!imgSrc) return;
+    // 글자읽기 모드 = 좌클릭 드래그로 영역 박스. 떼면 그 영역만 크롭→OCR.
+    if (mode === 'ocr') {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const st = stageRef.current?.getBoundingClientRect();
+      const z = zoomRef.current || 1;
+      ocrDrag.current = { x0: (e.clientX - (st?.left ?? 0)) / z, y0: (e.clientY - (st?.top ?? 0)) / z, moved: false };
+      return;
+    }
     // 가운데(휠) 버튼 드래그 또는 손바닥 모드 = 화면 이동(팬). 확대 상태에서만.
     if (e.button === 1 || mode === 'hand') {
       if (zoomRef.current > 1) {
@@ -851,6 +884,77 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     }, 'image/png');
   };
 
+  // ---- 글자읽기(OCR) — 박스 영역만 크롭해 vision 으로 글자/글자수 ----------
+  // 선택 영역(콘텐츠 좌표)을 원본 해상도로 잘라 base64 → /vision(read_text). 읽은 글자를 활성/선택
+  // 말풍선의 품목 칸에 자동 입력하면 기존 계산기가 charCount 로 글자수(=수량)를 센다.
+  const performOcr = (rect: { x: number; y: number; w: number; h: number }) => {
+    const img = imgRef.current;
+    if (!img || !imgSrc) return;
+    const sx = img.naturalWidth / (img.clientWidth || 1);
+    const sy = img.naturalHeight / (img.clientHeight || 1);
+    const cw = Math.max(1, Math.round(rect.w * sx));
+    const ch = Math.max(1, Math.round(rect.h * sy));
+    const cv = document.createElement('canvas');
+    cv.width = cw;
+    cv.height = ch;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    let dataUrl: string;
+    try {
+      ctx.drawImage(img, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy, 0, 0, cw, ch);
+      dataUrl = cv.toDataURL('image/jpeg', 0.92);
+    } catch {
+      cdlg(
+        '이 지시서 이미지는 보안 제한(CORS)으로 잘라낼 수 없어요.<br>붙여넣기(Ctrl+V)했거나 PDF로 불러온 지시서에서 사용하세요.',
+        [{ label: '확인', sec: true }],
+      );
+      return;
+    }
+    setOcrBusy(true);
+    setStatus('글자 읽는 중…');
+    readText(token, dataUrl, 'image/jpeg')
+      .then((r) => {
+        const text = (r.text || '').trim();
+        setStatus('');
+        if (!text) {
+          cdlg('이 영역에서 글자를 못 읽었어요. 글자 부분을 더 크게/정확히 박스 쳐보세요.', [{ label: '확인', sec: true }]);
+          return;
+        }
+        const ko = charCount(text, 'ko');
+        const en = charCount(text, 'en');
+        const all = charCount(text, 'all');
+        const esc = text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
+        const countLine = `<span style="font-size:12px;color:#6b7785">한글 ${ko} · 영문/숫자 ${en} · 합계 ${all}글자</span>`;
+        const tgt = activeRef.current ?? selectedPinRef.current;
+        if (tgt != null) {
+          // 활성/선택 말풍선의 품목 칸에 자동 입력.
+          setPins((prev) => prev.map((p, i) => (i === tgt ? { ...p, vals: { ...p.vals, 품목: text } } : p)));
+          // 입력 중(active)이고 현재 단계가 품목이면 입력칸(draft)도 즉시 갱신.
+          const ap = activeRef.current;
+          if (ap != null && ap === tgt && pinsRef.current[ap] && FIELDS[pinsRef.current[ap].fi] === '품목') {
+            setDraft(text);
+          }
+          cdlg(`✓ 품목에 입력했어요<br><b>${esc}</b><br>${countLine}`, [{ label: '확인' }]);
+        } else {
+          cdlg(
+            `읽은 글자<br><b>${esc}</b><br>${countLine}<br>` +
+              `<span style="font-size:12px;color:#6b7785">말풍선을 만들고 품목 단계에서 다시 시도하면 자동 입력됩니다.</span>`,
+            [{ label: '확인' }],
+          );
+        }
+      })
+      .catch((e) => {
+        console.error(e);
+        setStatus('');
+        cdlg('글자읽기에 실패했어요. 잠시 후 다시 시도해 주세요.', [{ label: '확인', sec: true }]);
+      })
+      .finally(() => {
+        setOcrBusy(false);
+        setMode('cursor'); // 한 번 읽으면 커서 모드로 복귀해 이어서 작업.
+      });
+  };
+  performOcrRef.current = performOcr;
+
   // ---- 렌더 ------------------------------------------------------------
   const rows = Math.max(ROWS, pins.length);
 
@@ -893,7 +997,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
       <div className="aq-wrap">
         <div
-          className={`aq-stagewrap${mode === 'hand' ? ' aq-hand' : ''}`}
+          className={`aq-stagewrap${mode === 'hand' ? ' aq-hand' : ''}${mode === 'ocr' ? ' aq-ocr' : ''}`}
           ref={stagewrapRef}
           onMouseDown={startStageDrag}
         >
@@ -921,8 +1025,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   <path d="M352.2 425.8l-79.2 79.2c-9.4 9.4-24.6 9.4-33.9 0l-79.2-79.2c-15.1-15.1-4.4-41 17-41h51.2V284H127.2v51.2c0 21.4-25.9 32.1-41 17L7 272.9c-9.4-9.4-9.4-24.6 0-33.9L86.2 159.8c15.1-15.1 41-4.4 41 17V228H228V127.2h-51.2c-21.4 0-32.1-25.9-17-41L239 7c9.4-9.4 24.6-9.4 33.9 0l79.2 79.2c15.1 15.1 4.4 41-17 41h-51.2V228h100.8v-51.2c0-21.4 25.9-32.1 41-17l79.2 79.2c9.4 9.4 9.4 24.6 0 33.9l-79.2 79.2c-15.1 15.1-41 4.4-41-17V284H284v100.8h51.2c21.4 0 32.1 25.9 17 41z" />
                 </svg>
               </button>
+              <button
+                type="button"
+                className={'aq-toolbtn aq-ocrbtn' + (mode === 'ocr' ? ' on' : '')}
+                title="글자읽기 — 사진에서 글자 영역을 드래그하면 AI가 읽어 글자수를 세요"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setMode((m) => (m === 'ocr' ? 'cursor' : 'ocr'))}
+              >
+                글자
+              </button>
             </div>
           )}
+          {imgSrc && mode === 'ocr' && !ocrBusy && (
+            <div className="aq-ocrhint">글자 영역을 드래그하세요 — AI가 읽어 글자수를 셉니다</div>
+          )}
+          {ocrBusy && <div className="aq-ocrbusy">글자 읽는 중…</div>}
           {!imgSrc ? (
             <div className="aq-empty">
               📋
@@ -957,6 +1074,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 )}
                 {ghost && <line x1={ghost.ax} y1={ghost.ay} x2={ghost.x} y2={ghost.y} stroke="#0a9396" strokeWidth={2} strokeDasharray="5 4" />}
               </svg>
+
+              {/* 글자읽기 선택 박스(콘텐츠 좌표 — stage 스케일을 그대로 타 이미지와 함께 확대) */}
+              {ocrSel && (
+                <div
+                  className="aq-ocrsel"
+                  style={{ left: ocrSel.x, top: ocrSel.y, width: ocrSel.w, height: ocrSel.h }}
+                />
+              )}
 
               {/* 핀 점 */}
               {pins.map((p, i) => (
