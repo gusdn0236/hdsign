@@ -139,6 +139,28 @@ function todayMD(): string {
 /** 글자수 모드 연필·지우개 굵기(화면 px). 콘텐츠 lineWidth = 이 값 / zoom 으로 화면상 일정하게. */
 const BRUSH_SCREEN_PX: Record<'s' | 'm' | 'l', number> = { s: 12, m: 26, l: 46 };
 
+/** 굵기 선택 버튼 안에 그릴 원 아이콘 지름(px) — 작은원/중간원/큰원. */
+const BRUSH_DOT_PX: Record<'s' | 'm' | 'l', number> = { s: 7, m: 12, l: 18 };
+
+/**
+ * 마스크 슈퍼샘플 배율 — 마스크 캔버스 백킹 해상도 = 표시(콘텐츠) px × 이 값. 확대(zoom)해도
+ * 캔버스가 흐려지지 않게 사진과 비슷한 해상도로 칠한다. 그리기 좌표는 모두 ×MASK_SS 로 변환.
+ */
+const MASK_SS = 3;
+
+/** 연필·지우개 커서 — 브러시 지름만 한 원(SVG data URI). 핫스팟은 중심. */
+function brushCursor(diam: number, tool: 'pencil' | 'eraser'): string {
+  const d = Math.max(8, Math.round(diam));
+  const c = d / 2;
+  const r = c - 1.5;
+  const stroke = tool === 'eraser' ? '#ff5d5d' : '#0a9396';
+  const fill = tool === 'eraser' ? 'none' : 'rgba(10,147,150,0.22)';
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${d}' height='${d}'>` +
+    `<circle cx='${c}' cy='${c}' r='${r}' fill='${fill}' stroke='${stroke}' stroke-width='1.5'/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${c} ${c}, crosshair`;
+}
+
 /** keep-mask 캔버스에 한 선분을 칠하거나(연필) 지운다(지우개). 알파 채널이 곧 마스크. */
 function paintMaskSegment(
   ctx: CanvasRenderingContext2D,
@@ -361,8 +383,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         const mctx = m?.getContext('2d');
         const pr = paintRef.current;
         if (mctx) {
-          const lw = (BRUSH_SCREEN_PX[brushRef.current] || 26) / z; // 화면상 일정한 굵기.
-          paintMaskSegment(mctx, pr.lastX, pr.lastY, x, y, ocrToolRef.current === 'eraser' ? 'eraser' : 'pencil', lw);
+          // 콘텐츠 굵기 = 화면px/zoom, 백킹 좌표·굵기는 ×MASK_SS(슈퍼샘플).
+          const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
+          const tool = ocrToolRef.current === 'eraser' ? 'eraser' : 'pencil';
+          paintMaskSegment(mctx, pr.lastX * MASK_SS, pr.lastY * MASK_SS, x * MASK_SS, y * MASK_SS, tool, lw);
         }
         pr.lastX = x;
         pr.lastY = y;
@@ -436,7 +460,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             mctx.save();
             mctx.globalCompositeOperation = 'source-over';
             mctx.fillStyle = 'rgba(10,147,150,1)';
-            mctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+            mctx.fillRect(rect.x * MASK_SS, rect.y * MASK_SS, rect.w * MASK_SS, rect.h * MASK_SS);
             mctx.restore();
             setMaskHasInk(true);
           }
@@ -581,9 +605,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   useEffect(() => {
     const m = maskRef.current;
     if (!m) return;
-    if (m.width !== stageW || m.height !== stageH) {
-      m.width = stageW;
-      m.height = stageH;
+    // 백킹 해상도 = 표시 px × MASK_SS (확대해도 선명). CSS 표시 크기는 인라인 style 로 표시 px.
+    const bw = Math.round(stageW * MASK_SS);
+    const bh = Math.round(stageH * MASK_SS);
+    if (m.width !== bw || m.height !== bh) {
+      m.width = bw;
+      m.height = bh;
     }
     setMaskHasInk(false);
   }, [stageW, stageH]);
@@ -618,6 +645,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   const startStageDrag = (e: React.MouseEvent) => {
     if (!imgSrc) return;
+    // 가운데(휠) 버튼 = 모든 모드(커서·손바닥·글자수)에서 화면 이동(확대 상태에서만).
+    // 글자수의 박스/연필/지우개로 작업하면서도 휠버튼 드래그로 패닝할 수 있게 최상단에서 처리.
+    if (e.button === 1) {
+      if (zoomRef.current > 1) {
+        e.preventDefault();
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+      }
+      return;
+    }
     // 글자수 모드 = 박스(읽을영역 채움) / 연필(칠) / 지우개(빼기). 떼는 즉시 읽지 않고 [읽기] 로 호출.
     if (mode === 'ocr') {
       if (e.button !== 0) return;
@@ -630,8 +666,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         // 시작점에 점 하나(선분 길이 0) 찍어 클릭만으로도 칠해지게.
         const mctx = maskRef.current?.getContext('2d');
         if (mctx) {
-          const lw = (BRUSH_SCREEN_PX[brushRef.current] || 26) / z;
-          paintMaskSegment(mctx, x, y, x, y, ocrTool === 'eraser' ? 'eraser' : 'pencil', lw);
+          const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
+          paintMaskSegment(mctx, x * MASK_SS, y * MASK_SS, x * MASK_SS, y * MASK_SS, ocrTool === 'eraser' ? 'eraser' : 'pencil', lw);
         }
         paintRef.current = { active: true, lastX: x, lastY: y };
         return;
@@ -1165,22 +1201,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       cdlg('읽을 영역을 먼저 칠하세요. (박스 또는 연필)', [{ label: '확인', sec: true }]);
       return;
     }
-    const pad = 6; // 글자 가장자리가 잘리지 않게 약간 여유.
+    const pad = 6 * MASK_SS; // 글자 가장자리가 잘리지 않게 약간 여유(백킹 px 기준 = 콘텐츠 6px).
     const bx = Math.max(0, minX - pad);
     const by = Math.max(0, minY - pad);
     const bw = Math.min(mw, maxX + 1 + pad) - bx;
     const bh = Math.min(mh, maxY + 1 + pad) - by;
+    // bx..bh 는 마스크 백킹 px(=콘텐츠 px × MASK_SS). 소스 매핑은 콘텐츠로 환산(÷MASK_SS) 후 ×sx.
     const sx = img.naturalWidth / (img.clientWidth || 1);
     const sy = img.naturalHeight / (img.clientHeight || 1);
+    const srcX = (bx / MASK_SS) * sx;
+    const srcY = (by / MASK_SS) * sy;
+    const srcW = (bw / MASK_SS) * sx;
+    const srcH = (bh / MASK_SS) * sy;
     // 출력 크기: Claude 이미지는 ~1.15MP(긴 변 ~1568px)로 다운스케일 → 그 위는 토큰 낭비.
     // 작은 영역은 ~900px 까지만 키워 얇은 획에 픽셀을 더 준다(상한 1568, 과확대 뭉개짐 방지).
-    const cw = Math.max(1, Math.round(bw * sx));
-    const ch = Math.max(1, Math.round(bh * sy));
-    const longNative = Math.max(cw, ch);
+    const longNative = Math.max(srcW, srcH);
     const targetLong = Math.min(1568, Math.max(longNative, 900));
     const k = targetLong / longNative;
-    const ow = Math.max(1, Math.round(cw * k));
-    const oh = Math.max(1, Math.round(ch * k));
+    const ow = Math.max(1, Math.round(srcW * k));
+    const oh = Math.max(1, Math.round(srcH * k));
     // 1) 소스 고해상에서 bbox 크롭.
     const cv = document.createElement('canvas');
     cv.width = ow;
@@ -1191,7 +1230,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     cctx.imageSmoothingQuality = 'high';
     cctx.fillStyle = '#fff';
     cctx.fillRect(0, 0, ow, oh);
-    cctx.drawImage(img, bx * sx, by * sy, bw * sx, bh * sy, 0, 0, ow, oh);
+    cctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, ow, oh);
     // 2) 마스크 bbox 를 출력 크기로 스케일해 알파 추출(우리가 그린 캔버스라 taint 없음).
     const mt = document.createElement('canvas');
     mt.width = ow;
@@ -1209,6 +1248,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   // ---- 렌더 ------------------------------------------------------------
   const rows = Math.max(ROWS, pins.length);
+  // 글자수 모드 커서: 연필·지우개는 브러시 지름만 한 원, 박스는 십자.
+  const ocrCursor =
+    mode === 'ocr'
+      ? ocrTool === 'pencil' || ocrTool === 'eraser'
+        ? brushCursor(BRUSH_SCREEN_PX[brush], ocrTool)
+        : 'crosshair'
+      : undefined;
 
   return (
     <div className="aq-root">
@@ -1321,10 +1367,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                       key={s}
                       type="button"
                       className={'aq-octszbtn' + (brush === s ? ' on' : '')}
-                      title={`굵기 ${s === 's' ? '가늘게' : s === 'm' ? '보통' : '굵게'}`}
+                      title={`${s === 's' ? '작은' : s === 'm' ? '중간' : '큰'} 원`}
                       onClick={() => setBrush(s)}
                     >
-                      {s === 's' ? '小' : s === 'm' ? '中' : '大'}
+                      <span className="aq-octdot" style={{ width: BRUSH_DOT_PX[s], height: BRUSH_DOT_PX[s] }} />
                     </button>
                   ))}
                 </span>
@@ -1387,6 +1433,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   setStageH(imgRef.current?.clientHeight || 0);
                 }}
                 draggable={false}
+                style={ocrCursor ? { cursor: ocrCursor } : undefined}
               />
               {/* 글자수 마스크 — 읽을 영역 색칠(알파=keep-mask). 콘텐츠 해상도, stage 스케일을 함께 탄다. */}
               <canvas ref={maskRef} className="aq-ocrmask" style={{ width: stageW, height: stageH }} />

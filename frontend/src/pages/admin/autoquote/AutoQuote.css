@@ -85,12 +85,16 @@
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   cursor: crosshair;
 }
-/* 좌상단 커서/손바닥 모드 토글. */
+/* 좌상단 커서/손바닥 모드 토글.
+   z-index 를 스테이지 위로 충분히 올리고 translateZ(0) 로 자체 컴포지팅 레이어로 승격한다.
+   (스테이지가 transform:scale 로 GPU 레이어가 되면 확대 시 비-컴포지팅 오버레이가 사라지는
+   Chrome 버그 회피 — 확대해도 버튼이 항상 제자리에 보이게.) */
 .aq-tools {
   position: absolute;
   top: 10px;
   left: 10px;
-  z-index: 6;
+  z-index: 20;
+  transform: translateZ(0);
   display: flex;
   gap: 4px;
   background: rgba(15, 22, 32, 0.7);
@@ -149,7 +153,8 @@
   position: absolute;
   top: 48px;
   left: 10px;
-  z-index: 7;
+  z-index: 21;
+  transform: translateZ(0);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -189,14 +194,21 @@
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
-  font-size: 12px;
-  font-weight: 700;
   width: 26px;
   height: 26px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .aq-octszbtn.on {
   background: var(--teal2);
+}
+/* 굵기 = 원 아이콘(작은원/중간원/큰원). 지름은 인라인 style. */
+.aq-octdot {
+  display: inline-block;
+  border-radius: 50%;
+  background: currentColor;
 }
 .aq-octsp {
   width: 1px;
