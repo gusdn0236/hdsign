@@ -25,7 +25,8 @@ class AnthropicVisionLiveSmokeTest {
         String key = System.getenv("ANTHROPIC_API_KEY");
         String model = System.getenv().getOrDefault("ANTHROPIC_MODEL", "claude-sonnet-4-6");
 
-        AnthropicVisionClient client = new AnthropicVisionClient(key, model, 60_000L);
+        String countModel = System.getenv().getOrDefault("ANTHROPIC_COUNT_MODEL", "claude-haiku-4-5-20251001");
+        AnthropicVisionClient client = new AnthropicVisionClient(key, model, countModel, 60_000L);
 
         Map<String, Object> result = client.extract(TINY_PNG_B64, "png", null);
 

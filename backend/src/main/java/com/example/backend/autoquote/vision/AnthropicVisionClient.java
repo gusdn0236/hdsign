@@ -44,6 +44,9 @@ public class AnthropicVisionClient implements VisionClient {
     /** 강제 호출할 추출 도구 이름. */
     static final String TOOL_NAME = "report_work_order";
 
+    /** @slice 글자수: 박스 친 영역의 간판 글자만 읽어 글자수 계산(charCount)에 쓰는 경량 도구 이름. */
+    static final String READ_TEXT_TOOL = "report_text";
+
     private static final String PROMPT =
             "You are reading a single Korean signage (간판) shop work order (작업지시서). "
             + "Extract every structured field you can see and call the " + TOOL_NAME + " tool. "
@@ -51,8 +54,23 @@ public class AnthropicVisionClient implements VisionClient {
             + "dimensions are millimetre width/height pairs; coats is the paint coat count when shown; "
             + "qty is the per-line quantity list. Keep brand_text and notes verbatim.";
 
+    /**
+     * 글자읽기 프롬프트 — 사용자가 지시서에서 박스로 오려낸 영역만 보고, 제작될 <b>간판 글자</b>만
+     * verbatim 으로 옮긴다. 치수/재질/가격/지시문은 제외(글자수 산정에 잡음). 글자수 세기는 프론트가
+     * {@code charCount} 로 하므로 여기서는 글자 자체만 정확히 돌려주면 된다.
+     */
+    private static final String READ_TEXT_PROMPT =
+            "This image is a cropped region of a Korean signage (간판) work order. "
+            + "Transcribe ONLY the sign lettering (간판 글자) that will be fabricated — the actual "
+            + "Korean / English characters and digits shown, verbatim, in natural reading order. "
+            + "Join multiple lines with a single space. Do NOT include measurements, dimensions, "
+            + "material names, prices, or instructions — only the letters to be produced. "
+            + "If there is no legible lettering, return an empty string. Call the " + READ_TEXT_TOOL + " tool.";
+
     private final String apiKey;
     private final String model;
+    /** 글자읽기 전용 모델 — OCR+글자수엔 가장 저렴한 Haiku 로 충분(전체 추출은 {@link #model}). */
+    private final String countModel;
     private final long perCallTimeoutMs;
 
     /** 지연 생성된 SDK 클라이언트(키가 있을 때만). */
@@ -62,8 +80,9 @@ public class AnthropicVisionClient implements VisionClient {
     public AnthropicVisionClient(
             @Value("${autoquote.vision.api-key:${ANTHROPIC_API_KEY:}}") String apiKey,
             @Value("${autoquote.vision.model:${ANTHROPIC_MODEL:claude-sonnet-4-6}}") String model,
+            @Value("${autoquote.vision.count-model:claude-haiku-4-5-20251001}") String countModel,
             @Value("${autoquote.vision.timeout-ms:60000}") long perCallTimeoutMs) {
-        this(apiKey, model, perCallTimeoutMs, null);
+        this(apiKey, model, countModel, perCallTimeoutMs, null);
     }
 
     /**
@@ -72,9 +91,11 @@ public class AnthropicVisionClient implements VisionClient {
      * tool-use·파싱·예외 매핑 전 구간을 결정적으로 단위테스트할 수 있다(스펙 'Vision proxy' 커버리지).
      * {@code injectedDelegate == null} 이면 운영과 동일하게 첫 호출 시 키로 OkHttp 클라이언트를 지연 생성한다.
      */
-    AnthropicVisionClient(String apiKey, String model, long perCallTimeoutMs, AnthropicClient injectedDelegate) {
+    AnthropicVisionClient(
+            String apiKey, String model, String countModel, long perCallTimeoutMs, AnthropicClient injectedDelegate) {
         this.apiKey = apiKey;
         this.model = model;
+        this.countModel = countModel;
         this.perCallTimeoutMs = perCallTimeoutMs;
         this.delegate = injectedDelegate;
     }
@@ -113,6 +134,16 @@ public class AnthropicVisionClient implements VisionClient {
      * 순수 함수라 실 키 없이 단위테스트로 toolChoice·rich input_schema 를 검증할 수 있다.
      */
     MessageCreateParams buildParams(String imageBase64, String mediaType, Map<String, Object> hints) {
+        if (isReadTextMode(hints)) {
+            // 글자읽기 경로 — 경량 도구 + Haiku. mode 힌트는 프롬프트에 섞지 않는다(null 전달).
+            return MessageCreateParams.builder()
+                    .model(countModel)
+                    .maxTokens(1024)
+                    .addTool(readTextTool())
+                    .toolToolChoice(READ_TEXT_TOOL) // forced tool-use
+                    .addUserMessageOfBlockParams(buildContentWithPrompt(imageBase64, mediaType, null, READ_TEXT_PROMPT))
+                    .build();
+        }
         return MessageCreateParams.builder()
                 .model(model)
                 .maxTokens(2048)
@@ -120,6 +151,11 @@ public class AnthropicVisionClient implements VisionClient {
                 .toolToolChoice(TOOL_NAME) // forced tool-use: 반드시 이 도구를 호출(auto 아님)
                 .addUserMessageOfBlockParams(buildContent(imageBase64, mediaType, hints))
                 .build();
+    }
+
+    /** {@code hints.mode == "read_text"} 면 글자읽기(경량/Haiku) 경로로 분기한다. */
+    static boolean isReadTextMode(Map<String, Object> hints) {
+        return hints != null && "read_text".equals(String.valueOf(hints.get("mode")));
     }
 
     /** 응답 컨텐츠에서 forced tool_use 블록을 찾아 입력을 Map 으로 변환. 없거나 비-object 면 Unparsable. */
@@ -146,6 +182,12 @@ public class AnthropicVisionClient implements VisionClient {
     }
 
     static List<ContentBlockParam> buildContent(String imageBase64, String mediaType, Map<String, Object> hints) {
+        return buildContentWithPrompt(imageBase64, mediaType, hints, PROMPT);
+    }
+
+    /** 이미지 + (기본 프롬프트 ± 컨텍스트 힌트) 컨텐츠 블록. 전체추출/글자읽기가 프롬프트만 달리해 공유한다. */
+    static List<ContentBlockParam> buildContentWithPrompt(
+            String imageBase64, String mediaType, Map<String, Object> hints, String basePrompt) {
         ImageBlockParam image = ImageBlockParam.builder()
                 .source(Base64ImageSource.builder()
                         .data(imageBase64)
@@ -153,7 +195,7 @@ public class AnthropicVisionClient implements VisionClient {
                         .build())
                 .build();
 
-        String text = PROMPT;
+        String text = basePrompt;
         if (hints != null && !hints.isEmpty()) {
             text = text + "\n\nContext hints (may help disambiguate): " + hints;
         }
@@ -202,6 +244,24 @@ public class AnthropicVisionClient implements VisionClient {
         return Tool.builder()
                 .name(TOOL_NAME)
                 .description("Report the structured contents of a Korean signage work order (작업지시서).")
+                .inputSchema(Tool.InputSchema.builder()
+                        .properties(properties)
+                        .build())
+                .build();
+    }
+
+    /**
+     * 글자읽기 도구 — 박스 영역의 간판 글자만 verbatim 으로 돌려준다(글자수는 프론트 {@code charCount} 가 센다).
+     * 단일 {@code text} 필드라 forced tool-use 로 거의 항상 유효 JSON 을 받는다.
+     */
+    static Tool readTextTool() {
+        Tool.InputSchema.Properties properties = Tool.InputSchema.Properties.builder()
+                .putAdditionalProperty("text", str("The exact sign lettering visible, verbatim, multiple lines joined by a space"))
+                .build();
+
+        return Tool.builder()
+                .name(READ_TEXT_TOOL)
+                .description("Report the verbatim lettering (글자) to be fabricated from a cropped signage work-order region.")
                 .inputSchema(Tool.InputSchema.builder()
                         .properties(properties)
                         .build())

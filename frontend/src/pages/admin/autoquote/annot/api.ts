@@ -83,6 +83,39 @@ export async function evidence(
   return res.json();
 }
 
+/** 글자읽기(OCR) 응답 — 박스 영역에서 읽은 간판 글자. 글자수는 프론트 charCount 로 센다. */
+export interface ReadTextResult {
+  text: string;
+}
+
+/**
+ * 글자읽기 — 사진에서 박스로 오려낸 영역(base64 또는 data URI)을 보내 간판 글자만 읽어온다.
+ * 기존 /vision 엔드포인트를 hints.mode='read_text' 로 재사용(서버가 저렴한 Haiku 로 분기).
+ * 실패 시 throw — 호출부가 상태코드로 안내 메시지를 띄운다.
+ */
+export async function readText(
+  token: string | null | undefined,
+  imageBase64: string,
+  mediaType = 'image/jpeg',
+): Promise<ReadTextResult> {
+  const res = await fetch(`${BASE_URL}/api/admin/autoquote/vision`, {
+    method: 'POST',
+    headers: authHeaders(token, true),
+    body: JSON.stringify({ imageBase64, mediaType, hints: { mode: 'read_text' } }),
+  });
+  if (!res.ok) {
+    let code = '';
+    try {
+      code = (await res.json())?.error || '';
+    } catch {
+      /* 본문 없음 */
+    }
+    throw new Error(`글자읽기 실패 (${res.status}${code ? ' ' + code : ''})`);
+  }
+  const j = await res.json();
+  return { text: typeof j?.text === 'string' ? j.text : '' };
+}
+
 export interface OrderContext {
   id: number;
   orderNumber: string;
