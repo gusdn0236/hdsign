@@ -155,17 +155,49 @@ const BRUSH_DOT_PX: Record<'s' | 'm' | 'l', number> = { s: 7, m: 12, l: 18 };
  */
 const MASK_SS = 3;
 
-/** 연필·지우개 커서 — 브러시 지름만 한 원(SVG data URI). 핫스팟은 중심. 연필은 말풍선 색. */
+/** 되돌리기 최대 보관 수. PNG dataURL(빈 마스크는 수 KB)이라 메모리 부담 작아 20 까지. */
+const MAX_UNDO = 20;
+
+/** 마스크에 칠(알파)이 남아있는지 다운샘플(200px)로 빠르게 확인. 우리 캔버스라 taint 없음. */
+function maskHasAnyInk(m: HTMLCanvasElement | null): boolean {
+  if (!m || m.width === 0) return false;
+  const sc = document.createElement('canvas');
+  sc.width = 200;
+  sc.height = Math.max(1, Math.round((200 * m.height) / m.width));
+  const sctx = sc.getContext('2d');
+  if (!sctx) return false;
+  sctx.drawImage(m, 0, 0, sc.width, sc.height);
+  const dd = sctx.getImageData(0, 0, sc.width, sc.height).data;
+  for (let i = 3; i < dd.length; i += 4) {
+    if (dd[i] > 8) return true;
+  }
+  return false;
+}
+
+/**
+ * 연필·지우개 커서 — 브러시 지름만 한 원 + 우측상단에 도구 로고(연필/지우개)가 따라다닌다(SVG data URI).
+ * 핫스팟(실제 칠 지점) = 원 중심. 연필 테두리는 말풍선 색, 지우개는 빨강.
+ */
 function brushCursor(diam: number, tool: 'pencil' | 'eraser', color: string): string {
   const d = Math.max(8, Math.round(diam));
-  const c = d / 2;
-  const r = c - 1.5;
+  const ICON = 15; // 우측상단 로고 칸.
+  const D = d + ICON;
+  const cx = d / 2; // 원 중심 = 핫스팟.
+  const cy = D - d / 2;
+  const r = d / 2 - 1.5;
   const stroke = tool === 'eraser' ? '#ff5d5d' : color;
   const fill = tool === 'eraser' ? 'none' : hexToRgba(color, 0.22);
+  const icon =
+    tool === 'eraser'
+      ? `<g transform='translate(${d},0)'><rect x='1' y='5' width='12' height='6' rx='1.5' transform='rotate(-32 7 8)' fill='#ff9ab5' stroke='#9a3f5e' stroke-width='1'/></g>`
+      : `<g transform='translate(${d},0)' stroke='#6f521a' stroke-width='1' stroke-linejoin='round'>` +
+        `<path d='M11 1 L14 4 L5 13 L1 14 L2 10 Z' fill='#f4c542'/><path d='M9.5 2.5 L12.5 5.5'/></g>`;
   const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' width='${d}' height='${d}'>` +
-    `<circle cx='${c}' cy='${c}' r='${r}' fill='${fill}' stroke='${stroke}' stroke-width='1.5'/></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${c} ${c}, crosshair`;
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${D}' height='${D}'>` +
+    `<circle cx='${cx}' cy='${cy}' r='${r}' fill='${fill}' stroke='${stroke}' stroke-width='1.5'/>` +
+    icon +
+    `</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${cx} ${cy}, crosshair`;
 }
 
 /** keep-mask 캔버스에 한 선분을 칠하거나(연필) 지운다(지우개). 알파 채널이 곧 마스크. */
@@ -270,6 +302,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const ocrDrag = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
   // 마스크 캔버스(읽을 영역 색칠 = keep-mask). 알파 채널이 곧 마스크. 콘텐츠 해상도(stageW×stageH).
   const maskRef = useRef<HTMLCanvasElement>(null);
+  // 되돌리기 스택 — 각 그리기/박스/지우기 직전 마스크 상태(PNG dataURL). 최대 MAX_UNDO.
+  const undoRef = useRef<string[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  // 전역 핸들러(스냅샷 push)·버튼/단축키(undo)에서 최신 함수를 ref 로 호출.
+  const pushUndoRef = useRef<() => void>(() => {});
+  const undoMaskRef = useRef<() => void>(() => {});
   // 연필·지우개 스트로크 진행 상태 — 마지막 점(콘텐츠 좌표). 전역 핸들러가 ref 로 그린다.
   const paintRef = useRef<{ active: boolean; lastX: number; lastY: number } | null>(null);
   // 최신 도구/굵기를 전역 핸들러가 읽도록 미러.
@@ -456,27 +494,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       if (paintRef.current?.active) {
         paintRef.current = null;
         if (ocrToolRef.current === 'eraser') {
-          // 지우개는 칠을 더하지 않는다 → 지운 뒤 마스크에 남은 칠이 있을 때만 ✓/✕ 활성.
-          // 다운샘플(200px)로 빠르게 잔여 칠 유무만 확인.
-          const m = maskRef.current;
-          let ink = false;
-          if (m && m.width > 0) {
-            const sc = document.createElement('canvas');
-            sc.width = 200;
-            sc.height = Math.max(1, Math.round((200 * m.height) / m.width));
-            const sctx = sc.getContext('2d');
-            if (sctx) {
-              sctx.drawImage(m, 0, 0, sc.width, sc.height);
-              const dd = sctx.getImageData(0, 0, sc.width, sc.height).data;
-              for (let i = 3; i < dd.length; i += 4) {
-                if (dd[i] > 8) {
-                  ink = true;
-                  break;
-                }
-              }
-            }
-          }
-          setMaskHasInk(ink);
+          // 지우개는 칠을 더하지 않는다 → 지운 뒤 남은 칠이 있을 때만 ✓/✕ 활성.
+          setMaskHasInk(maskHasAnyInk(maskRef.current));
         } else {
           setMaskHasInk(true); // 연필 = 칠 추가.
         }
@@ -493,6 +512,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           const m = maskRef.current;
           const mctx = m?.getContext('2d');
           if (mctx) {
+            pushUndoRef.current(); // 박스 채우기 직전 상태 저장(되돌리기).
             mctx.save();
             mctx.globalCompositeOperation = 'source-over';
             mctx.fillStyle = ocrColorRef.current; // 말풍선 색.
@@ -609,6 +629,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
+      // Ctrl+Z = 글자수 마스크 되돌리기(입력칸 타이핑 중이 아닐 때).
+      if (k === 'z' && modeRef.current === 'ocr') {
+        const ae0 = document.activeElement as HTMLElement | null;
+        if (ae0 && (ae0.tagName === 'INPUT' || ae0.tagName === 'TEXTAREA')) return;
+        e.preventDefault();
+        undoMaskRef.current();
+        return;
+      }
       if (k !== 'c' && k !== 'v') return;
       const ae = document.activeElement as HTMLElement | null;
       const isPinInput = ae === inputRef.current;
@@ -648,6 +676,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       m.width = bw;
       m.height = bh;
     }
+    undoRef.current = [];
+    setCanUndo(false);
     setMaskHasInk(false);
   }, [stageW, stageH]);
 
@@ -728,6 +758,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       const x = (e.clientX - (st?.left ?? 0)) / z;
       const y = (e.clientY - (st?.top ?? 0)) / z;
       if (ocrTool === 'pencil' || ocrTool === 'eraser') {
+        pushUndoRef.current(); // 스트로크 직전 상태 저장(되돌리기).
         // 시작점에 점 하나(선분 길이 0) 찍어 클릭만으로도 칠해지게.
         const mctx = maskRef.current?.getContext('2d');
         if (mctx) {
@@ -1117,9 +1148,58 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   // 읽은 글자를 활성/선택 말풍선의 품목 칸에 자동 입력하면 기존 계산기가 charCount 로 글자수(=수량)를 센다.
 
   /** 마스크 캔버스를 비운다(읽기 완료/지우기 버튼). */
+  // 현재 마스크 상태를 되돌리기 스택에 저장(그리기/박스/지우기 직전 호출). 우리 캔버스라 taint 없음.
+  const pushUndo = () => {
+    const m = maskRef.current;
+    if (!m || m.width === 0) return;
+    try {
+      undoRef.current.push(m.toDataURL('image/png'));
+      if (undoRef.current.length > MAX_UNDO) undoRef.current.shift();
+      setCanUndo(true);
+    } catch {
+      /* 무시 */
+    }
+  };
+  pushUndoRef.current = pushUndo;
+
+  // 직전 상태로 되돌린다(연필/지우개/박스/✕ 한 단계씩). 복원은 비동기(Image 디코드).
+  const undoMask = () => {
+    const m = maskRef.current;
+    const mctx = m?.getContext('2d');
+    if (!m || !mctx) return;
+    const prev = undoRef.current.pop();
+    setCanUndo(undoRef.current.length > 0);
+    if (prev === undefined) {
+      // 더 되돌릴 게 없으면 비운다.
+      mctx.clearRect(0, 0, m.width, m.height);
+      setMaskHasInk(false);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      mctx.clearRect(0, 0, m.width, m.height);
+      mctx.drawImage(img, 0, 0, m.width, m.height);
+      setMaskHasInk(maskHasAnyInk(m));
+    };
+    img.src = prev;
+  };
+  undoMaskRef.current = undoMask;
+
+  // ✕ — 칠한 것 전부 지우기(되돌리기 가능하게 직전 상태 저장).
   const clearMask = () => {
     const m = maskRef.current;
+    if (!m) return;
+    pushUndo();
+    m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
+    setMaskHasInk(false);
+  };
+
+  // 읽기 완료 후 — 마스크와 되돌리기 스택을 함께 비운다(읽기 너머로는 undo 안 함).
+  const resetMaskAndUndo = () => {
+    const m = maskRef.current;
     if (m) m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
+    undoRef.current = [];
+    setCanUndo(false);
     setMaskHasInk(false);
   };
 
@@ -1233,7 +1313,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       })
       .finally(() => {
         setOcrBusy(false);
-        clearMask(); // 읽고 나면 마스크를 비워 다음 영역을 새로 칠하게.
+        resetMaskAndUndo(); // 읽고 나면 마스크·되돌리기 스택을 비워 다음 영역을 새로.
       });
   };
 
@@ -1445,6 +1525,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   ))}
                 </span>
               )}
+              <span className="aq-octsp" />
+              <button
+                type="button"
+                className="aq-octbtn"
+                disabled={!canUndo || ocrBusy}
+                title="되돌리기 — 방금 그린 박스/연필/지우개 취소 (Ctrl+Z)"
+                onClick={() => undoMaskRef.current()}
+              >
+                ↶ 되돌리기
+              </button>
             </div>
           )}
           {/* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 화면 이동/확대해도 따라다닌다. */}
@@ -1518,28 +1608,45 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <svg className="aq-lines">
                 {pins.map((p, i) =>
                   p.dragged ? (
-                    <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke={pinColor(i)} strokeWidth={2} />
+                    <line
+                      key={i}
+                      x1={p.ax}
+                      y1={p.ay}
+                      x2={p.lx}
+                      y2={p.ly}
+                      stroke={pinColor(i)}
+                      strokeWidth={2}
+                      vectorEffect="non-scaling-stroke"
+                    />
                   ) : null,
                 )}
-                {ghost && <line x1={ghost.ax} y1={ghost.ay} x2={ghost.x} y2={ghost.y} stroke="#0a9396" strokeWidth={2} strokeDasharray="5 4" />}
+                {ghost && (
+                  <line
+                    x1={ghost.ax}
+                    y1={ghost.ay}
+                    x2={ghost.x}
+                    y2={ghost.y}
+                    stroke="#0a9396"
+                    strokeWidth={2}
+                    strokeDasharray="5 4"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
+                {/* 글자수 선택 박스 — non-scaling-stroke 라 확대해도 테두리·점선이 화면상 일정(얇게). */}
+                {ocrSel && (
+                  <rect
+                    x={ocrSel.x}
+                    y={ocrSel.y}
+                    width={ocrSel.w}
+                    height={ocrSel.h}
+                    fill={hexToRgba(ocrColor, 0.14)}
+                    stroke={ocrColor}
+                    strokeWidth={1.5}
+                    strokeDasharray="5 4"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
               </svg>
-
-              {/* 글자수 선택 박스(콘텐츠 좌표 — stage 스케일을 그대로 탄다). 테두리는 /zoom 으로 화면상 일정. */}
-              {ocrSel && (
-                <div
-                  className="aq-ocrsel"
-                  style={{
-                    left: ocrSel.x,
-                    top: ocrSel.y,
-                    width: ocrSel.w,
-                    height: ocrSel.h,
-                    borderWidth: `${1.5 / zoom}px`,
-                    borderStyle: 'dashed',
-                    borderColor: ocrColor,
-                    background: hexToRgba(ocrColor, 0.14),
-                  }}
-                />
-              )}
 
               {/* 핀 점 */}
               {pins.map((p, i) => (
@@ -1720,15 +1827,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 {Array.from({ length: rows }, (_, i) => {
                   const p = pins[i];
                   const v = p ? p.vals : {};
+                  const isOcrTgt = mode === 'ocr' && i === ocrTarget && !!p;
                   return (
                     <tr
                       key={i}
-                      className={i === active ? 'cur' : undefined}
-                      style={
-                        mode === 'ocr' && i === ocrTarget && p
-                          ? { background: hexToRgba(pinColor(i), 0.16) }
-                          : undefined
-                      }
+                      className={`${i === active ? 'cur' : ''}${isOcrTgt ? ' ocrtgt' : ''}`.trim() || undefined}
+                      style={isOcrTgt ? { background: hexToRgba(pinColor(i), 0.28) } : undefined}
                     >
                       <td className="rn">{p && <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>}</td>
                       <td>

@@ -225,34 +225,36 @@
   transform: translateX(-50%) translateZ(0);
   z-index: 22;
   display: flex;
-  gap: 8px;
+  gap: 0; /* 한 박스로 붙임 */
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
 .aq-ocrok,
 .aq-ocrclear {
-  width: 42px;
-  height: 42px;
+  width: 50px;
+  height: 38px;
   border: none;
-  border-radius: 50%;
+  border-radius: 0;
   color: #fff;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 900;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .aq-ocrok {
   background: #2a9d4a;
+  border-right: 1px solid rgba(0, 0, 0, 0.28); /* 둘 사이 구분선 */
 }
 .aq-ocrclear {
   background: #c0504a;
 }
 .aq-ocrok:disabled,
 .aq-ocrclear:disabled {
-  opacity: 0.35;
+  opacity: 0.4;
   cursor: not-allowed;
-  box-shadow: none;
 }
 /* 글자읽기 안내 — 하단 중앙(상단은 ✓/✕ 가 차지). */
 .aq-ocrhint {
@@ -601,6 +603,12 @@
 }
 .aq-tbl tr.cur {
   background: #fbfdee;
+}
+/* 글자수 OCR 타깃 행 — tr 인라인 배경(말풍선 색 틴트)이 셀에 가리지 않게 셀을 투명화.
+   "지금 칠하는 박스 내용이 이 행에 들어가겠구나" 를 행 전체 색으로 표시. */
+.aq-tbl tr.ocrtgt td,
+.aq-tbl tr.ocrtgt td.rn {
+  background: transparent;
 }
 .aq-tbl td.rn {
   text-align: center;
