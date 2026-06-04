@@ -906,15 +906,67 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const sy = img.naturalHeight / (img.clientHeight || 1);
     const cw = Math.max(1, Math.round(rect.w * sx));
     const ch = Math.max(1, Math.round(rect.h * sy));
+    // 출력 크기: Claude 이미지는 ~1.15MP(긴 변 ~1568px)로 다운스케일되므로 그 위는 토큰 낭비.
+    // 작은 박스는 ~900px 까지만 키워 얇은 획에 픽셀을 더 준다(상한 1568, 과확대로 인한 뭉개짐 방지).
+    const longNative = Math.max(cw, ch);
+    const targetLong = Math.min(1568, Math.max(longNative, 900));
+    const k = targetLong / longNative;
+    const ow = Math.max(1, Math.round(cw * k));
+    const oh = Math.max(1, Math.round(ch * k));
     const cv = document.createElement('canvas');
-    cv.width = cw;
-    cv.height = ch;
+    cv.width = ow;
+    cv.height = oh;
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     let dataUrl: string;
     try {
-      ctx.drawImage(img, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy, 0, 0, cw, ch);
-      dataUrl = cv.toDataURL('image/jpeg', 0.92);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy, 0, 0, ow, oh);
+      // 전처리 — 연한/저대비 글자도 Haiku 가 읽게: 흑백 변환 + 2~98% 퍼센타일 대비 스트레칭 + 가벼운 감마.
+      // 옅은 회색·파스텔 글자를 검정 쪽으로 끌어올리고 배경을 흰색으로 밀어 대비를 키운다.
+      // (CORS taint 면 getImageData 가 SecurityError 를 던져 아래 catch 로 → 동일 안내.)
+      const idata = ctx.getImageData(0, 0, ow, oh);
+      const d = idata.data;
+      const n = ow * oh;
+      const hist = new Uint32Array(256);
+      const lum = new Uint8ClampedArray(n);
+      for (let i = 0, p = 0; i < n; i++, p += 4) {
+        const L = (d[p] * 299 + d[p + 1] * 587 + d[p + 2] * 114) / 1000 | 0;
+        lum[i] = L;
+        hist[L]++;
+      }
+      // 2% / 98% 퍼센타일 — 점·얼룩 같은 소수 이상치에 스트레칭이 휘둘리지 않게.
+      const loCut = n * 0.02;
+      const hiCut = n * 0.98;
+      let acc = 0;
+      let lo = 0;
+      let hi = 255;
+      for (let v = 0; v < 256; v++) {
+        acc += hist[v];
+        if (acc >= loCut) { lo = v; break; }
+      }
+      acc = 0;
+      for (let v = 0; v < 256; v++) {
+        acc += hist[v];
+        if (acc >= hiCut) { hi = v; break; }
+      }
+      const span = hi - lo;
+      const gamma = 1.15; // >1 → 중간톤을 어둡게: 얇고 연한 획을 검정 쪽으로.
+      const lut = new Uint8ClampedArray(256);
+      for (let v = 0; v < 256; v++) {
+        let t = span > 4 ? (v - lo) / span : v / 255; // 거의 평탄하면 스트레칭 생략(흑백만).
+        t = Math.min(1, Math.max(0, t));
+        lut[v] = Math.round(Math.pow(t, gamma) * 255);
+      }
+      for (let i = 0, p = 0; i < n; i++, p += 4) {
+        const o = lut[lum[i]];
+        d[p] = o;
+        d[p + 1] = o;
+        d[p + 2] = o;
+      }
+      ctx.putImageData(idata, 0, 0);
+      dataUrl = cv.toDataURL('image/png'); // 무손실 — 고대비 가장자리를 JPEG 압축으로 뭉개지 않게.
     } catch {
       cdlg(
         '이 지시서 이미지는 보안 제한(CORS)으로 잘라낼 수 없어요.<br>붙여넣기(Ctrl+V)했거나 PDF로 불러온 지시서에서 사용하세요.',
@@ -924,7 +976,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     }
     setOcrBusy(true);
     setStatus('글자 읽는 중…');
-    readText(token, dataUrl, 'image/jpeg')
+    readText(token, dataUrl, 'image/png')
       .then((r) => {
         const text = (r.text || '').trim();
         setStatus('');
