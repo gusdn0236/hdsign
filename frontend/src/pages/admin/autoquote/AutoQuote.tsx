@@ -129,9 +129,28 @@ function formatChip(f: string, v: string): string {
   }
   return v;
 }
+/**
+ * 품목코드가 계산 가능한 자재(아크릴/포맥스→acryl, 고무/스카시→gomu)면 규격(글자높이mm) 기준으로
+ * 단가·수량(글자수)을 자동 계산해 돌려준다. 계산 대상이 아니거나 입력 부족/혼합(아크릴 한+영)이면 null.
+ */
+function computeAuto(code: string, item: string, spec: string): { unit: number; qty: number } | null {
+  const pc = parseCode(code);
+  if (!pc || (pc.calc !== 'acryl' && pc.calc !== 'gomu')) return null;
+  if (!item || !spec) return null;
+  if (pc.calc === 'gomu') {
+    const r = computeGomu(CALC, pc.tk, item, spec);
+    return r.ok ? { unit: r.unit, qty: r.qty } : null;
+  }
+  const hasKo = /[가-힣]/.test(item);
+  const hasEn = /[A-Za-z]/.test(item);
+  if (hasKo && hasEn) return null; // 한글+영문 혼합은 자동 안 함(계산기 버튼에서 분리/선택).
+  const r = computeAcryl(CALC, pc.tk || '', hasKo ? '한글' : '영문', item, spec, hasKo ? 'ko' : 'en');
+  return r.ok ? { unit: r.unit, qty: r.qty } : null;
+}
+
 // 공유 이미지용 한 줄 라벨 — "품목 규격 / 단가원 ×수량개 = 합계원".
 function pinLabel(p: Pin): string {
-  const top = [p.vals['품목'], p.vals['규격']].filter(Boolean).join(' ');
+  const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
   const dp = num(p.vals['단가']);
   const qty = num(p.vals['수량']) || 1;
   const priceLine = dp != null ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원` : '';
@@ -842,6 +861,27 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const commitDraft = () => {
     if (active == null) return;
     const val = draft.trim();
+    const cur = pinsRef.current[active];
+    // 규격을 막 입력했고 계산 가능한 품목코드(아크릴·포맥스·고무스카시)면 → 수량·단가 자동 채우고 완료.
+    if (cur && FIELDS[cur.fi] === '규격') {
+      const auto = computeAuto(cur.vals['품목코드'] || '', cur.vals['품목'] || '', val);
+      if (auto) {
+        setPins((prev) =>
+          prev.map((p, i) =>
+            i === active
+              ? {
+                  ...p,
+                  vals: { ...p.vals, 규격: val, 수량: String(auto.qty), 단가: String(auto.unit) },
+                  fi: FIELDS.length,
+                }
+              : p,
+          ),
+        );
+        setActive(null);
+        setDraft('');
+        return;
+      }
+    }
     setPins((prev) => {
       const next = prev.map((p, i) => {
         if (i !== active) return p;
@@ -1043,6 +1083,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const today = todayMD();
     return pins.map((p) => {
       const dp = num(p.vals['단가']);
+      const qty = num(p.vals['수량']) || 1;
+      const supply = dp != null ? dp * qty : null; // 공급가액 = 단가 × 수량(총액).
       return {
         월일: p.vals['월일'] || today,
         품목코드: p.vals['품목코드'] || '',
@@ -1050,8 +1092,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         규격: p.vals['규격'] || '',
         수량: p.vals['수량'] || '',
         단가: p.vals['단가'] || '',
-        공급가액: dp != null ? String(dp) : '',
-        세액: dp != null ? String(Math.round(dp * 0.1)) : '',
+        공급가액: supply != null ? String(supply) : '',
+        세액: supply != null ? String(Math.round(supply * 0.1)) : '',
         비고: p.vals['비고'] || '',
       };
     });
@@ -1730,7 +1772,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {pins.map((p, i) => {
                 const isActive = i === active;
                 // 입력 중에는 현재 필드명만 안내. 끝나면 2줄: (위) 품목 규격, (아래) 단가원 ×수량개 = 합계원.
-                const top = [p.vals['품목'], p.vals['규격']].filter(Boolean).join(' ');
+                const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
                 const dp = num(p.vals['단가']);
                 const qty = num(p.vals['수량']) || 1;
                 const priceLine =
@@ -1842,15 +1884,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           </div>
           <div className="aq-gridwrap">
             <table className="aq-tbl">
-              {/* 화면엔 품목코드·품목·규격·수량·단가 5칸만(+번호). 월일·공급가액·세액·비고는 숨김 —
+              {/* 화면엔 품목코드·품목·규격·수량·단가·공급가액(+번호). 월일·세액·비고는 숨김 —
                   저장(buildGrid)·이지폼 매크로에서는 9칸 모두 채운다. */}
               <colgroup>
-                <col style={{ width: 26 }} />
-                <col style={{ width: 62 }} />
+                <col style={{ width: 24 }} />
+                <col style={{ width: 58 }} />
                 <col />
-                <col style={{ width: 64 }} />
-                <col style={{ width: 40 }} />
-                <col style={{ width: 92 }} />
+                <col style={{ width: 56 }} />
+                <col style={{ width: 34 }} />
+                <col style={{ width: 78 }} />
+                <col style={{ width: 86 }} />
               </colgroup>
               <thead>
                 <tr>
@@ -1860,6 +1903,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   <th>규격</th>
                   <th>수량</th>
                   <th className="p">단가</th>
+                  <th className="p">공급가액</th>
                 </tr>
               </thead>
               <tbody>
@@ -1892,6 +1936,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                       </td>
                       <td className="p">
                         <input value={v['단가'] || ''} onChange={(e) => setCell(i, '단가', e.target.value)} />
+                      </td>
+                      <td className="p">
+                        {/* 공급가액 = 단가×수량 (총액). 읽기전용 — 단가·수량은 말풍선/위 칸에서 수정. */}
+                        <input
+                          className="ro"
+                          value={(() => {
+                            const u = num(v['단가']);
+                            if (u == null) return '';
+                            return (u * (num(v['수량']) || 1)).toLocaleString();
+                          })()}
+                          readOnly
+                          tabIndex={-1}
+                          title="공급가액 = 단가 × 수량"
+                        />
                       </td>
                     </tr>
                   );
