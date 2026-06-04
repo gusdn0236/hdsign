@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
 // @ts-expect-error - Vite ?url 자산 임포트(타입 선언 없음). 앱 다른 곳(PdfViewer)과 동일 패턴.
@@ -25,6 +25,7 @@ import {
   type Evidence,
   type OrderContext,
 } from './annot/api';
+import { matchCodes, didYouMean } from './itemCodes';
 import './AutoQuote.css';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -36,11 +37,12 @@ async function renderPdfFirstPage(url: string): Promise<string> {
   try {
     const page = await pdf.getPage(1);
     const base = page.getViewport({ scale: 1 });
-    // 고해상 렌더(확대해도 선명) — 가로 ~4800px 목표.
+    // 고해상 렌더(확대해도 선명) — 가로 ~7200px 목표.
     // AutoQuote 는 이 비트맵을 CSS transform:scale(zoom) 로만 키우므로(PdfViewer 처럼 줌마다
-    // 재렌더하지 않음), 최대 줌(5×)에서도 또렷하려면 표시폭(~1000px)×5 ≈ 5000px 의 네이티브
-    // 해상도가 필요하다. 가로 4800px 면 A4 기준 ~32M px(JPEG 라 용량/메모리 감당 가능).
-    const TARGET_W = 4800;
+    // 재렌더하지 않음), 줌 상한(10×)을 지원하려면 네이티브 해상도가 클수록 좋다. 표시폭(~1000px)
+    // 기준 가로 7200px 면 ~7.2× 까지 1:1 이상으로 또렷하고, 거기서 10× 까지는 살짝 소프트하지만
+    // 읽을 만하다. A4 세로 기준 높이 ~10180px(크롬·파이어폭스 캔버스 한계 안)·~73M px.
+    const TARGET_W = 7200;
     const scale = Math.min(10, Math.max(2, TARGET_W / base.width));
     const viewport = page.getViewport({ scale });
     const canvas = document.createElement('canvas');
@@ -105,6 +107,13 @@ const PIN_COLORS = ['#0a7d8c', '#4f8a5b', '#b07d3a', '#8a5a7d', '#c06a52', '#5a7
 function pinColor(i: number): string {
   return PIN_COLORS[i % PIN_COLORS.length];
 }
+/** '#rrggbb' → 'rgba(r,g,b,a)' — grid 행/박스 연한 틴트용. */
+function hexToRgba(hex: string, a: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return `rgba(10,147,150,${a})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
 
 // 단가 입력용 — 숫자만 남기고 천 단위 콤마(돈 입력처럼). 빈 값은 ''.
 function formatWon(s: string): string {
@@ -121,9 +130,41 @@ function formatChip(f: string, v: string): string {
   }
   return v;
 }
+/**
+ * 품목코드가 계산 가능한 자재(아크릴/포맥스→acryl, 고무/스카시→gomu)면 규격(글자높이mm) 기준으로
+ * 단가·수량(글자수)을 자동 계산해 돌려준다. 계산 대상이 아니거나 입력 부족/혼합(아크릴 한+영)이면 null.
+ */
+function computeAuto(code: string, item: string, spec: string): { unit: number; qty: number } | null {
+  const pc = parseCode(code);
+  if (!pc || (pc.calc !== 'acryl' && pc.calc !== 'gomu')) return null;
+  if (!item || !spec) return null;
+  if (pc.calc === 'gomu') {
+    const r = computeGomu(CALC, pc.tk, item, spec);
+    return r.ok ? { unit: r.unit, qty: r.qty } : null;
+  }
+  const hasKo = /[가-힣]/.test(item);
+  const hasEn = /[A-Za-z]/.test(item);
+  if (hasKo && hasEn) return null; // 한글+영문 혼합은 자동 안 함(계산기 버튼에서 분리/선택).
+  const r = computeAcryl(CALC, pc.tk || '', hasKo ? '한글' : '영문', item, spec, hasKo ? 'ko' : 'en');
+  return r.ok ? { unit: r.unit, qty: r.qty } : null;
+}
+
+/**
+ * 품목을 newItem 으로 바꿀 때 수량을 따라가게 한 vals 를 만든다. 단, 수량이 '기존 품목의 글자수'와
+ * 일치할 때만(=비전 자동입력 후 손대지 않은 동기 상태). 사용자가 수량을 직접 다르게 넣었으면 보존.
+ */
+function syncQty(oldVals: Record<string, string>, newItem: string): Record<string, string> {
+  const v = { ...oldVals, 품목: newItem };
+  const oldQty = num(oldVals['수량']);
+  if (oldQty != null && oldQty === charCount(oldVals['품목'] || '', 'all')) {
+    v['수량'] = String(charCount(newItem, 'all'));
+  }
+  return v;
+}
+
 // 공유 이미지용 한 줄 라벨 — "품목 규격 / 단가원 ×수량개 = 합계원".
 function pinLabel(p: Pin): string {
-  const top = [p.vals['품목'], p.vals['규격']].filter(Boolean).join(' ');
+  const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
   const dp = num(p.vals['단가']);
   const qty = num(p.vals['수량']) || 1;
   const priceLine = dp != null ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원` : '';
@@ -133,6 +174,92 @@ function pinLabel(p: Pin): string {
 function todayMD(): string {
   const d = new Date();
   return ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
+}
+
+/** 글자수 모드 연필·지우개 굵기(화면 px). 콘텐츠 lineWidth = 이 값 / zoom 으로 화면상 일정하게. */
+const BRUSH_SCREEN_PX: Record<'s' | 'm' | 'l', number> = { s: 12, m: 26, l: 46 };
+
+/** 굵기 선택 버튼 안에 그릴 원 아이콘 지름(px) — 작은원/중간원/큰원. */
+const BRUSH_DOT_PX: Record<'s' | 'm' | 'l', number> = { s: 7, m: 12, l: 18 };
+
+/**
+ * 마스크 슈퍼샘플 배율 — 마스크 캔버스 백킹 해상도 = 표시(콘텐츠) px × 이 값. 확대(zoom)해도
+ * 캔버스가 흐려지지 않게 사진과 비슷한 해상도로 칠한다. 그리기 좌표는 모두 ×MASK_SS 로 변환.
+ */
+const MASK_SS = 3;
+
+/** 되돌리기 최대 보관 수. PNG dataURL(빈 마스크는 수 KB)이라 메모리 부담 작아 20 까지. */
+const MAX_UNDO = 20;
+
+/** 마스크에 칠(알파)이 남아있는지 다운샘플(200px)로 빠르게 확인. 우리 캔버스라 taint 없음. */
+function maskHasAnyInk(m: HTMLCanvasElement | null): boolean {
+  if (!m || m.width === 0) return false;
+  const sc = document.createElement('canvas');
+  sc.width = 200;
+  sc.height = Math.max(1, Math.round((200 * m.height) / m.width));
+  const sctx = sc.getContext('2d');
+  if (!sctx) return false;
+  sctx.drawImage(m, 0, 0, sc.width, sc.height);
+  const dd = sctx.getImageData(0, 0, sc.width, sc.height).data;
+  for (let i = 3; i < dd.length; i += 4) {
+    if (dd[i] > 8) return true;
+  }
+  return false;
+}
+
+/**
+ * 연필·지우개 커서 — 브러시 지름만 한 원 + 우측상단에 도구 로고(연필/지우개)가 따라다닌다(SVG data URI).
+ * 핫스팟(실제 칠 지점) = 원 중심. 연필 테두리는 말풍선 색, 지우개는 빨강.
+ */
+function brushCursor(diam: number, tool: 'pencil' | 'eraser', color: string): string {
+  const d = Math.max(8, Math.round(diam));
+  const ICON = 15; // 우측상단 로고 칸.
+  const D = d + ICON;
+  const cx = d / 2; // 원 중심 = 핫스팟.
+  const cy = D - d / 2;
+  const r = d / 2 - 1.5;
+  const stroke = tool === 'eraser' ? '#ff5d5d' : color;
+  const fill = tool === 'eraser' ? 'none' : hexToRgba(color, 0.22);
+  const icon =
+    tool === 'eraser'
+      ? `<g transform='translate(${d},0)'><rect x='1' y='5' width='12' height='6' rx='1.5' transform='rotate(-32 7 8)' fill='#ff9ab5' stroke='#9a3f5e' stroke-width='1'/></g>`
+      : `<g transform='translate(${d},0)' stroke='#6f521a' stroke-width='1' stroke-linejoin='round'>` +
+        `<path d='M11 1 L14 4 L5 13 L1 14 L2 10 Z' fill='#f4c542'/><path d='M9.5 2.5 L12.5 5.5'/></g>`;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${D}' height='${D}'>` +
+    `<circle cx='${cx}' cy='${cy}' r='${r}' fill='${fill}' stroke='${stroke}' stroke-width='1.5'/>` +
+    icon +
+    `</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${cx} ${cy}, crosshair`;
+}
+
+/** keep-mask 캔버스에 한 선분을 칠하거나(연필) 지운다(지우개). 알파 채널이 곧 마스크. */
+function paintMaskSegment(
+  ctx: CanvasRenderingContext2D,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  tool: 'pencil' | 'eraser',
+  lineWidth: number,
+  color: string,
+) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = lineWidth;
+  if (tool === 'eraser') {
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+  } else {
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = color; // 말풍선 색(풀 알파). 표시 반투명은 CSS opacity 가 담당(겹침 누적 방지).
+  }
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+  ctx.restore();
 }
 
 interface AutoQuoteProps {
@@ -153,14 +280,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [selPin, setSelPin] = useState<number | null>(null);
   const [selectedPin, setSelectedPin] = useState<number | null>(null); // 복사용으로 클릭 선택된 말풍선.
   const [draft, setDraft] = useState('');
+  const [acIdx, setAcIdx] = useState(-1); // 품목코드 자동완성 드롭다운 하이라이트(-1=없음)
+  const [acAbove, setAcAbove] = useState(false); // 드롭다운을 입력칸 위로 열지(아래 공간 부족 시)
+  const acDropRef = useRef<HTMLDivElement>(null);
   const [imgSrc, setImgSrc] = useState<string | null>(null);
+  const [loadingImg, setLoadingImg] = useState(false); // 주문 진입 시 지시서 자동 로드 진행 중 — 빈화면에 "로딩중" 표시(붙여넣기 안내 대신).
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
   const [stageH, setStageH] = useState(0);
-  const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~5). 핀 좌표는 zoom 으로 나눠 변환.
+  const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~10). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
   const [mode, setMode] = useState<'cursor' | 'hand' | 'ocr'>('cursor'); // 커서=핀 작성 / 손바닥=화면 이동 / 글자=영역 OCR
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
+  const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
+  const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
+  const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
@@ -182,6 +316,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const draftRef = useRef(draft);
   const selectedPinRef = useRef<number | null>(null);
   const copyBufRef = useRef<Record<string, string> | null>(null); // Ctrl+C 로 복사한 말풍선 값.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   pinsRef.current = pins;
   activeRef.current = active;
   selPinRef.current = selPin;
@@ -200,7 +336,36 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [ghost, setGhost] = useState<{ x: number; y: number; ax: number; ay: number } | null>(null);
   // 글자읽기 영역 드래그 — 시작점(콘텐츠 좌표). 최신 performOcr 는 ref 로 호출(전역 핸들러가 [] deps).
   const ocrDrag = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
-  const performOcrRef = useRef<(r: { x: number; y: number; w: number; h: number }) => void>(() => {});
+  // 마스크 캔버스(읽을 영역 색칠 = keep-mask). 알파 채널이 곧 마스크. 콘텐츠 해상도(stageW×stageH).
+  const maskRef = useRef<HTMLCanvasElement>(null);
+  // 되돌리기 스택 — 각 그리기/박스/지우기 직전 마스크 상태(PNG dataURL). 최대 MAX_UNDO.
+  const undoRef = useRef<string[]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+  // 전역 핸들러(스냅샷 push)·버튼/단축키(undo)에서 최신 함수를 ref 로 호출.
+  const pushUndoRef = useRef<() => void>(() => {});
+  const undoMaskRef = useRef<() => void>(() => {});
+  // 연필·지우개 스트로크 진행 상태 — 마지막 점(콘텐츠 좌표) + 현재 스트로크 bbox(첫 영역 중앙 산출용).
+  const paintRef = useRef<{
+    active: boolean;
+    lastX: number;
+    lastY: number;
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  } | null>(null);
+  // 이번 마스크 세션에서 '첫 번째로 칠한 영역'의 중앙(콘텐츠 좌표). 읽은 뒤 새 말풍선을 여기 만든다.
+  const firstAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  // 최신 도구/굵기를 전역 핸들러가 읽도록 미러.
+  const ocrToolRef = useRef(ocrTool);
+  ocrToolRef.current = ocrTool;
+  const brushRef = useRef(brush);
+  brushRef.current = brush;
+  const performOcrRef = useRef<() => void>(() => {});
+  const maskHasInkRef = useRef(false);
+  maskHasInkRef.current = maskHasInk;
+  // 현재 OCR 타깃 말풍선의 색(박스·연필 색을 그 말풍선과 일치). 렌더에서 갱신.
+  const ocrColorRef = useRef('#0a9396');
 
   const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
 
@@ -209,10 +374,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const id = orderIdProp ?? Number(searchParams.get('order'));
     if (!Number.isFinite(id) || id <= 0) return;
     let alive = true;
+    setLoadingImg(true); // 지시서 자동 로드 시작 — 빈화면에 "로딩중" 표시.
     (async () => {
       try {
         const o = await getOrder(token, id);
-        if (!alive || !o) return;
+        if (!alive || !o) {
+          if (alive) setLoadingImg(false);
+          return;
+        }
         setOrder(o);
         const label = `${o.clientCompanyName || ''} · ${o.title || o.orderNumber}`;
         if (o.worksheetPdfUrl) {
@@ -239,6 +408,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         } else {
           setStatus(`${label} — 지시서 이미지를 붙여넣으세요`);
         }
+        if (alive) setLoadingImg(false); // 이미지 로드 끝(성공/폴백/없음) — 빈화면이면 붙여넣기 안내로 전환.
         // 기존 명세서가 있으면 grid 를 핀(앵커 없는 grid 행)으로 복원.
         const est = await getEstimate(token, id);
         if (alive && est?.estimate?.grid?.length) {
@@ -262,6 +432,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         }
       } catch (e) {
         console.error(e);
+        if (alive) setLoadingImg(false);
       }
     })();
     return () => {
@@ -301,6 +472,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     };
     const onMove = (e: MouseEvent) => {
       const z = zoomRef.current || 1;
+      // 연필·지우개 — 마지막점→현재점 선분을 마스크에 칠한다(콘텐츠 좌표).
+      if (paintRef.current?.active) {
+        const { x, y } = localXY(e);
+        const m = maskRef.current;
+        const mctx = m?.getContext('2d');
+        const pr = paintRef.current;
+        if (mctx) {
+          // 콘텐츠 굵기 = 화면px/zoom, 백킹 좌표·굵기는 ×MASK_SS(슈퍼샘플).
+          const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
+          const tool = ocrToolRef.current === 'eraser' ? 'eraser' : 'pencil';
+          paintMaskSegment(mctx, pr.lastX * MASK_SS, pr.lastY * MASK_SS, x * MASK_SS, y * MASK_SS, tool, lw, ocrColorRef.current);
+        }
+        pr.lastX = x;
+        pr.lastY = y;
+        if (x < pr.minX) pr.minX = x;
+        if (x > pr.maxX) pr.maxX = x;
+        if (y < pr.minY) pr.minY = y;
+        if (y > pr.maxY) pr.maxY = y;
+        return;
+      }
       if (ocrDrag.current) {
         const { x, y } = localXY(e);
         const od = ocrDrag.current;
@@ -349,14 +540,46 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
     };
     const onUp = (e: MouseEvent) => {
+      // 연필·지우개 스트로크 종료.
+      if (paintRef.current?.active) {
+        const pr = paintRef.current;
+        paintRef.current = null;
+        if (ocrToolRef.current === 'eraser') {
+          // 지우개는 칠을 더하지 않는다 → 지운 뒤 남은 칠이 있을 때만 ✓/✕ 활성.
+          setMaskHasInk(maskHasAnyInk(maskRef.current));
+        } else {
+          // 연필 = 칠 추가. 이번 세션 첫 영역이면 그 스트로크 bbox 중앙을 앵커로(새 말풍선 위치).
+          if (!firstAnchorRef.current) {
+            firstAnchorRef.current = { x: (pr.minX + pr.maxX) / 2, y: (pr.minY + pr.maxY) / 2 };
+          }
+          setMaskHasInk(true);
+        }
+        return;
+      }
       if (ocrDrag.current) {
         const { x, y } = localXY(e);
         const od = ocrDrag.current;
         ocrDrag.current = null;
         setOcrSel(null);
         const rect = { x: Math.min(x, od.x0), y: Math.min(y, od.y0), w: Math.abs(x - od.x0), h: Math.abs(y - od.y0) };
-        // 너무 작은 박스(클릭 수준)는 무시 — 실수로 한 점 클릭 시 OCR 호출 방지.
-        if (od.moved && rect.w > 8 && rect.h > 8) performOcrRef.current(rect);
+        // 박스 = 그 영역을 '읽을 영역'으로 마스크에 채움(즉시 읽지 않음). 너무 작으면 무시.
+        if (od.moved && rect.w > 8 && rect.h > 8) {
+          const m = maskRef.current;
+          const mctx = m?.getContext('2d');
+          if (mctx) {
+            pushUndoRef.current(); // 박스 채우기 직전 상태 저장(되돌리기).
+            mctx.save();
+            mctx.globalCompositeOperation = 'source-over';
+            mctx.fillStyle = ocrColorRef.current; // 말풍선 색.
+            mctx.fillRect(rect.x * MASK_SS, rect.y * MASK_SS, rect.w * MASK_SS, rect.h * MASK_SS);
+            mctx.restore();
+            // 이번 세션 첫 영역이면 박스 중앙을 앵커로(새 말풍선 위치).
+            if (!firstAnchorRef.current) {
+              firstAnchorRef.current = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
+            }
+            setMaskHasInk(true);
+          }
+        }
         return;
       }
       if (panDrag.current) {
@@ -410,16 +633,39 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (!p || p.fi >= FIELDS.length) return;
     const cur = p.vals[FIELDS[p.fi]] || '';
     setDraft(FIELDS[p.fi] === '단가' ? formatWon(cur) : cur);
+    setAcIdx(-1); // 단계 바뀌면 자동완성 하이라이트 리셋.
     const id = requestAnimationFrame(() => {
       const el = inputRef.current;
       if (el) {
-        el.focus();
+        // preventScroll — 입력칸이 화면 밖(확대/가장자리)에 생겨도 브라우저가 그걸 보이게
+        // 모달/페이지를 스크롤해 툴바가 밀려나가지 않게 한다.
+        el.focus({ preventScroll: true });
         el.select();
       }
     });
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, activeFi]);
+
+  // 자동완성 하이라이트가 바뀌면 그 항목을 드롭다운 안에 보이게 스크롤(키보드 ↓ 로 5개 너머 탐색).
+  useEffect(() => {
+    if (acIdx < 0) return;
+    acDropRef.current?.querySelector('.aq-acitem.on')?.scrollIntoView({ block: 'nearest' });
+  }, [acIdx]);
+
+  // 드롭다운은 입력칸을 밀지 않고 아래로 연다(절대배치). 단, 사진 영역 아래 공간이 부족하면 위로.
+  // 입력칸/스테이지의 화면 좌표를 재 비교 — 말풍선 scale(1/zoom) 까지 반영된 실측값을 쓴다.
+  useLayoutEffect(() => {
+    const inp = inputRef.current,
+      stage = stagewrapRef.current;
+    if (!inp || !stage) return;
+    const ir = inp.getBoundingClientRect(),
+      sr = stage.getBoundingClientRect();
+    const dh = acDropRef.current?.offsetHeight || 210; // 펼친 드롭다운 높이(없으면 추정).
+    const below = sr.bottom - ir.bottom,
+      above = ir.top - sr.top;
+    setAcAbove(below < dh + 10 && above > below);
+  }, [active, draft]);
 
   // 창 크기 변경 시 표시 이미지 폭 갱신(말풍선 flip 판정용).
   useEffect(() => {
@@ -449,7 +695,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       const z = zoomRef.current;
       const cux = (e.clientX - rect.left) / z; // 커서 아래 콘텐츠 좌표
       const cuy = (e.clientY - rect.top) / z;
-      const z2 = Math.max(1, Math.min(5, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      const z2 = Math.max(1, Math.min(10, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
       if (z2 === z) return;
       if (z2 === 1) setPan({ x: 0, y: 0 });
       else setPan((prev) => ({ x: prev.x + cux * (z - z2), y: prev.y + cuy * (z - z2) }));
@@ -465,6 +711,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
+      // Ctrl+Z = 글자수 마스크 되돌리기(입력칸 타이핑 중이 아닐 때).
+      if (k === 'z' && modeRef.current === 'ocr') {
+        const ae0 = document.activeElement as HTMLElement | null;
+        if (ae0 && (ae0.tagName === 'INPUT' || ae0.tagName === 'TEXTAREA')) return;
+        e.preventDefault();
+        undoMaskRef.current();
+        return;
+      }
       if (k !== 'c' && k !== 'v') return;
       const ae = document.activeElement as HTMLElement | null;
       const isPinInput = ae === inputRef.current;
@@ -492,6 +746,62 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // 마스크 캔버스 크기를 표시 이미지(콘텐츠)에 맞춘다. 캔버스 width/height 변경은 내용을 비우므로
+  // 새 이미지/리사이즈 시 마스크가 초기화된다.
+  useEffect(() => {
+    const m = maskRef.current;
+    if (!m) return;
+    // 백킹 해상도 = 표시 px × MASK_SS (확대해도 선명). CSS 표시 크기는 인라인 style 로 표시 px.
+    const bw = Math.round(stageW * MASK_SS);
+    const bh = Math.round(stageH * MASK_SS);
+    if (m.width !== bw || m.height !== bh) {
+      m.width = bw;
+      m.height = bh;
+    }
+    undoRef.current = [];
+    firstAnchorRef.current = null;
+    setCanUndo(false);
+    setMaskHasInk(false);
+  }, [stageW, stageH]);
+
+  // 글자수 모드에서 Enter = [읽기]. 입력칸에 포커스 중이면 무시(말풍선 입력 방해 방지).
+  useEffect(() => {
+    if (mode !== 'ocr') return undefined;
+    const onEnter = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+      if (!maskHasInkRef.current) return;
+      e.preventDefault();
+      performOcrRef.current();
+    };
+    window.addEventListener('keydown', onEnter);
+    return () => window.removeEventListener('keydown', onEnter);
+  }, [mode]);
+
+  // 단축키 1/2/3 = 커서/지시서이동/글자수 모드. 입력칸에 타이핑 중이면 무시(숫자 입력 보존).
+  useEffect(() => {
+    const onNum = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key !== '1' && e.key !== '2' && e.key !== '3') return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      e.preventDefault();
+      if (e.key === '1') {
+        setMode('hand'); // 1 = 지시서 이동
+      } else if (e.key === '2') {
+        setMode('cursor'); // 2 = 말풍선
+      } else if (modeRef.current === 'ocr') {
+        // 3 = 글자수. 이미 글자수 모드면 재입력 = 박스→연필→지우개 순환.
+        setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'));
+      } else {
+        setMode('ocr');
+      }
+    };
+    window.addEventListener('keydown', onNum);
+    return () => window.removeEventListener('keydown', onNum);
+  }, []);
+
   // 삭제버튼(selPin)이 열린 상태에서 점/삭제버튼 외 다른 곳을 누르면 닫는다.
   // 점·삭제버튼은 onMouseDown 에서 stopPropagation 하므로 이 window 리스너에 안 잡힌다.
   useEffect(() => {
@@ -507,13 +817,41 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   const startStageDrag = (e: React.MouseEvent) => {
     if (!imgSrc) return;
-    // 글자읽기 모드 = 좌클릭 드래그로 영역 박스. 떼면 그 영역만 크롭→OCR.
+    // 지시서를 클릭하면 명세서(grid 등) 텍스트박스의 포커스를 푼다. preventDefault 로 기본 blur 가
+    // 막히므로 명시적으로 처리. 단, 말풍선 입력칸(inputRef)은 유지(작성 흐름 보존).
+    const ae = document.activeElement as HTMLElement | null;
+    if (ae && ae !== inputRef.current && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) {
+      ae.blur();
+    }
+    // 가운데(휠) 버튼 = 모든 모드(커서·손바닥·글자수)에서 화면 이동(확대 상태에서만).
+    // 글자수의 박스/연필/지우개로 작업하면서도 휠버튼 드래그로 패닝할 수 있게 최상단에서 처리.
+    if (e.button === 1) {
+      if (zoomRef.current > 1) {
+        e.preventDefault();
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+      }
+      return;
+    }
+    // 글자수 모드 = 박스(읽을영역 채움) / 연필(칠) / 지우개(빼기). 떼는 즉시 읽지 않고 [읽기] 로 호출.
     if (mode === 'ocr') {
       if (e.button !== 0) return;
       e.preventDefault();
       const st = stageRef.current?.getBoundingClientRect();
       const z = zoomRef.current || 1;
-      ocrDrag.current = { x0: (e.clientX - (st?.left ?? 0)) / z, y0: (e.clientY - (st?.top ?? 0)) / z, moved: false };
+      const x = (e.clientX - (st?.left ?? 0)) / z;
+      const y = (e.clientY - (st?.top ?? 0)) / z;
+      if (ocrTool === 'pencil' || ocrTool === 'eraser') {
+        pushUndoRef.current(); // 스트로크 직전 상태 저장(되돌리기).
+        // 시작점에 점 하나(선분 길이 0) 찍어 클릭만으로도 칠해지게.
+        const mctx = maskRef.current?.getContext('2d');
+        if (mctx) {
+          const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
+          paintMaskSegment(mctx, x * MASK_SS, y * MASK_SS, x * MASK_SS, y * MASK_SS, ocrTool === 'eraser' ? 'eraser' : 'pencil', lw, ocrColorRef.current);
+        }
+        paintRef.current = { active: true, lastX: x, lastY: y, minX: x, minY: y, maxX: x, maxY: y };
+        return;
+      }
+      ocrDrag.current = { x0: x, y0: y, moved: false };
       return;
     }
     // 가운데(휠) 버튼 드래그 또는 손바닥 모드 = 화면 이동(팬). 확대 상태에서만.
@@ -558,13 +896,32 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   // 현재 필드(fi)를 커밋하고 다음 필드로. 마지막이면 닫는다. (다음 필드 기존값 prefill+선택은 포커스 effect 가.)
-  const commitDraft = () => {
+  const commitDraft = (override?: string) => {
     if (active == null) return;
-    const val = draft.trim();
+    const val = (override ?? draft).trim();
+    const cur = pinsRef.current[active];
+    // 규격을 막 입력했고 계산 가능한 품목코드(아크릴·포맥스·고무스카시)면 → 단가만 자동 채우고
+    // 수량 단계로 진행. 수량(글자수)은 사용자가 직접 입력(품목을 줄여 쓰는 경우가 많아 자동계산 금지).
+    // OCR(글자수)로 만든 핀은 수량이 이미 채워져 있어 그 단계에서 Enter 로 확인만 하면 된다.
+    if (cur && FIELDS[cur.fi] === '규격') {
+      const auto = computeAuto(cur.vals['품목코드'] || '', cur.vals['품목'] || '', val);
+      if (auto) {
+        setPins((prev) =>
+          prev.map((p, i) =>
+            i === active
+              ? { ...p, vals: { ...p.vals, 규격: val, 단가: String(auto.unit) }, fi: p.fi + 1 }
+              : p,
+          ),
+        );
+        return;
+      }
+    }
     setPins((prev) => {
       const next = prev.map((p, i) => {
         if (i !== active) return p;
-        const np = { ...p, vals: { ...p.vals, [FIELDS[p.fi]]: val }, fi: p.fi + 1 };
+        // 품목 단계면 수량(글자수)도 동기(비전 자동입력 후 손 안 댄 경우만).
+        const nv = FIELDS[p.fi] === '품목' ? syncQty(p.vals, val) : { ...p.vals, [FIELDS[p.fi]]: val };
+        const np = { ...p, vals: nv, fi: p.fi + 1 };
         if (np.splitPending && FIELDS[np.fi - 1] === '품목') {
           np.fi = FIELDS.indexOf('단가');
           np.splitPending = false;
@@ -577,6 +934,46 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   const onInputKey = (e: React.KeyboardEvent) => {
+    const p = active != null ? pins[active] : null;
+    const isCode = !!p && FIELDS[p.fi] === '품목코드';
+    // 품목코드 자동완성 — 드롭다운 탐색(↓↑) / 제안 적용(Enter) / 그대로(→).
+    if (isCode) {
+      const ms = matchCodes(draft);
+      if (e.key === 'ArrowDown' && ms.length) {
+        e.preventDefault();
+        setAcIdx((i) => Math.min(i + 1, ms.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp' && ms.length) {
+        e.preventDefault();
+        setAcIdx((i) => Math.max(i - 1, -1));
+        return;
+      }
+      if (e.key === 'ArrowRight' && acIdx >= 0) {
+        // 제안 무시하고 그대로 작성 — 커서가 맨 끝일 때만(중간 편집 방해 안 함).
+        const el = e.target as HTMLInputElement;
+        if (el.selectionStart === el.value.length && el.selectionEnd === el.value.length) {
+          e.preventDefault();
+          setAcIdx(-1);
+          return;
+        }
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (acIdx >= 0 && ms[acIdx]) commitDraft(ms[acIdx]); // 하이라이트된 표준코드로
+        else commitDraft(); // 그대로(강제 안 함)
+        setAcIdx(-1);
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (acIdx >= 0) {
+          setAcIdx(-1); // 1차 Esc: 드롭다운만 닫기
+          return;
+        }
+        closeActive();
+        return;
+      }
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       commitDraft();
@@ -607,7 +1004,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       if (!next[i]) {
         next[i] = { ax: 30, ay: 30 + i * 30, lx: 30, ly: 30 + i * 30, dragged: false, vals: {}, fi: FIELDS.length };
       }
-      next[i] = { ...next[i], vals: { ...next[i].vals, [key]: value } };
+      next[i] =
+        key === '품목'
+          ? { ...next[i], vals: syncQty(next[i].vals, value) } // 품목 수정 시 수량(글자수) 자동 동기
+          : { ...next[i], vals: { ...next[i].vals, [key]: value } };
       return next;
     });
   };
@@ -754,7 +1154,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const applyPrice = (price: number | string) => {
     setDraft(String(price));
     setLookup(null);
-    setTimeout(() => inputRef.current?.focus(), 0);
+    setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
   };
 
   // ---- 저장 (slice-12 estimate API) ------------------------------------
@@ -762,6 +1162,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const today = todayMD();
     return pins.map((p) => {
       const dp = num(p.vals['단가']);
+      const qty = num(p.vals['수량']) || 1;
+      const supply = dp != null ? dp * qty : null; // 공급가액 = 단가 × 수량(총액).
       return {
         월일: p.vals['월일'] || today,
         품목코드: p.vals['품목코드'] || '',
@@ -769,8 +1171,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         규격: p.vals['규격'] || '',
         수량: p.vals['수량'] || '',
         단가: p.vals['단가'] || '',
-        공급가액: dp != null ? String(dp) : '',
-        세액: dp != null ? String(Math.round(dp * 0.1)) : '',
+        공급가액: supply != null ? String(supply) : '',
+        세액: supply != null ? String(Math.round(supply * 0.1)) : '',
         비고: p.vals['비고'] || '',
       };
     });
@@ -808,11 +1210,37 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       dh = img.clientHeight;
     const sx = nw / dw,
       sy = nh / dh;
+
+    // ── 오른쪽 명세서(표) 메트릭 — 사진 높이에 맞춰 글자 크기를 정한다(사진과 함께 한 장으로). ──
+    const tfs = Math.min(40, Math.max(22, Math.round(nh / 42)));
+    const cols: { key: string; label: string; w: number; align: 'left' | 'center' | 'right' }[] = [
+      { key: '번호', label: '', w: tfs * 2.0, align: 'center' },
+      { key: '품목코드', label: '품목코드', w: tfs * 4.6, align: 'left' },
+      { key: '품목', label: '품목', w: tfs * 12, align: 'left' },
+      { key: '규격', label: '규격', w: tfs * 4.4, align: 'left' },
+      { key: '수량', label: '수량', w: tfs * 3.0, align: 'right' },
+      { key: '단가', label: '단가', w: tfs * 5.6, align: 'right' },
+      { key: '공급가액', label: '공급가액', w: tfs * 6.4, align: 'right' },
+    ];
+    const tpad = tfs * 0.6;
+    const tw = cols.reduce((s, c) => s + c.w, 0) + tpad * 2;
+    const titleH = tfs * 2.6,
+      headH = tfs * 2.1,
+      rh = tfs * 2.0,
+      footH = tfs * 2.8;
+    const nRows = Math.max(pins.length, 1);
+    const th = titleH + headH + rh * nRows + footH;
+
+    const GAP = Math.round(tfs * 0.8);
     const cv = document.createElement('canvas');
-    cv.width = nw;
-    cv.height = nh;
+    cv.width = nw + GAP + tw;
+    cv.height = Math.max(nh, th);
     const ctx = cv.getContext('2d');
     if (!ctx) return;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+
+    // ── 왼쪽: 사진 + 말풍선 (기존 합성) ──────────────────────────────
     try {
       ctx.drawImage(img, 0, 0, nw, nh);
     } catch {
@@ -848,8 +1276,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         bx = ax - 10 * sx;
         by = ay - 9 * sx - h;
       }
-      // 말풍선이 캔버스 우측을 넘으면 안쪽으로 당겨 그린다(편집 화면 flip 과 일관).
-      if (bx + w > cv.width - 2) bx = cv.width - w - 2;
+      // 말풍선이 사진 우측을 넘으면 안쪽으로 당겨 그린다(표 영역 침범 방지 — cv.width 아닌 사진폭 nw 기준).
+      if (bx + w > nw - 2) bx = nw - w - 2;
       if (bx < 2) bx = 2;
       ctx.fillStyle = c;
       ctx.beginPath();
@@ -870,6 +1298,113 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       ctx.strokeStyle = '#fff';
       ctx.stroke();
     });
+
+    // ── 오른쪽: 명세서 표 (화면의 grid 를 캔버스로 재현) ──────────────
+    const ox = nw + GAP;
+    const cellText = (p: Pin, key: string): string => {
+      const v = p.vals;
+      if (key === '공급가액') {
+        const u = num(v['단가']);
+        return u == null ? '' : (u * (num(v['수량']) || 1)).toLocaleString();
+      }
+      if (key === '단가') {
+        const u = num(v['단가']);
+        return u == null ? '' : u.toLocaleString();
+      }
+      return v[key] || '';
+    };
+    // 셀 폭을 넘는 글자는 … 로 줄인다.
+    const fitText = (text: string, maxW: number): string => {
+      let t = String(text);
+      if (ctx.measureText(t).width <= maxW) return t;
+      while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+      return t + '…';
+    };
+    const cellX = (col: (typeof cols)[number], left: number): number =>
+      col.align === 'right' ? left + col.w - tfs * 0.35 : col.align === 'center' ? left + col.w / 2 : left + tfs * 0.35;
+
+    ctx.textBaseline = 'middle';
+    // 제목 줄 — "견적" + 거래처.
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'left';
+    ctx.font = '800 ' + Math.round(tfs * 1.15) + 'px sans-serif';
+    ctx.fillText('견적', ox + tpad, titleH / 2);
+    const tag = order ? order.clientCompanyName || order.orderNumber || '' : '';
+    if (tag) {
+      ctx.textAlign = 'right';
+      ctx.font = '600 ' + Math.round(tfs * 0.92) + 'px sans-serif';
+      ctx.fillStyle = '#475569';
+      ctx.fillText(fitText(String(tag), tw * 0.5), ox + tw - tpad, titleH / 2);
+    }
+    // 헤더 줄.
+    let ty = titleH;
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(ox, ty, tw, headH);
+    ctx.fillStyle = '#334155';
+    ctx.font = '700 ' + Math.round(tfs * 0.9) + 'px sans-serif';
+    {
+      let cx = ox + tpad;
+      for (const col of cols) {
+        if (col.label) {
+          ctx.textAlign = col.align;
+          ctx.fillText(col.label, cellX(col, cx), ty + headH / 2);
+        }
+        cx += col.w;
+      }
+    }
+    ty += headH;
+    // 데이터 행.
+    pins.forEach((p, i) => {
+      const rowY = ty + rh * i;
+      const my = rowY + rh / 2;
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ox, rowY + rh);
+      ctx.lineTo(ox + tw, rowY + rh);
+      ctx.stroke();
+      // 번호 배지(핀 색).
+      const c = pinColor(i);
+      const bcx = ox + tpad + cols[0].w / 2;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(bcx, my, tfs * 0.62, 0, 7);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.font = '700 ' + Math.round(tfs * 0.8) + 'px sans-serif';
+      ctx.fillText(String(i + 1), bcx, my);
+      // 셀 값.
+      ctx.fillStyle = '#1e293b';
+      ctx.font = Math.round(tfs * 0.96) + 'px sans-serif';
+      let cx = ox + tpad + cols[0].w;
+      for (let k = 1; k < cols.length; k++) {
+        const col = cols[k];
+        const raw = cellText(p, col.key);
+        if (raw) {
+          ctx.textAlign = col.align;
+          ctx.fillText(fitText(raw, col.w - tfs * 0.7), cellX(col, cx), my);
+        }
+        cx += col.w;
+      }
+    });
+    ty += rh * nRows;
+    // 합계 줄.
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(ox, ty, tw, footH);
+    ctx.fillStyle = '#0f172a';
+    ctx.textAlign = 'left';
+    ctx.font = '700 ' + Math.round(tfs) + 'px sans-serif';
+    ctx.fillText('합계', ox + tpad, ty + footH / 2);
+    ctx.textAlign = 'right';
+    ctx.font = '800 ' + Math.round(tfs * 1.1) + 'px sans-serif';
+    ctx.fillText(total.toLocaleString() + '원', ox + tw - tpad, ty + footH / 2);
+    // 표 외곽선.
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(ox + 0.5, 0.5, tw - 1, th - 1);
+    ctx.textAlign = 'left';
+
     cv.toBlob(async (blob) => {
       if (!blob) {
         cdlg('캡쳐 실패(샘플 이미지는 보안제한 — 붙여넣은 사진으로 시도하세요).', [{ label: '확인', sec: true }]);
@@ -877,7 +1412,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        cdlg('✓ 사진+말풍선이 복사됐어요. 카톡에서 Ctrl+V 로 붙여넣으세요.', [{ label: '확인' }]);
+        cdlg('✓ 사진+말풍선+명세서가 복사됐어요. 카톡에서 Ctrl+V 로 붙여넣으세요.', [{ label: '확인' }]);
       } catch {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -888,25 +1423,151 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     }, 'image/png');
   };
 
-  // ---- 글자읽기(OCR) — 박스 영역만 크롭해 vision 으로 글자/글자수 ----------
-  // 선택 영역(콘텐츠 좌표)을 원본 해상도로 잘라 base64 → /vision(read_text). 읽은 글자를 활성/선택
-  // 말풍선의 품목 칸에 자동 입력하면 기존 계산기가 charCount 로 글자수(=수량)를 센다.
-  const performOcr = (rect: { x: number; y: number; w: number; h: number }) => {
-    const img = imgRef.current;
-    if (!img || !imgSrc) return;
-    const sx = img.naturalWidth / (img.clientWidth || 1);
-    const sy = img.naturalHeight / (img.clientHeight || 1);
-    const cw = Math.max(1, Math.round(rect.w * sx));
-    const ch = Math.max(1, Math.round(rect.h * sy));
-    const cv = document.createElement('canvas');
-    cv.width = cw;
-    cv.height = ch;
+  // ---- 글자수(OCR) — 마스크로 칠한 영역만 크롭해 vision 으로 글자/글자수 -------
+  // 박스/연필로 칠한 keep-mask 영역만 원본 해상도로 잘라 base64 → /vision(read_text).
+  // 읽은 글자를 활성/선택 말풍선의 품목 칸에 자동 입력하면 기존 계산기가 charCount 로 글자수(=수량)를 센다.
+
+  /** 마스크 캔버스를 비운다(읽기 완료/지우기 버튼). */
+  // 현재 마스크 상태를 되돌리기 스택에 저장(그리기/박스/지우기 직전 호출). 우리 캔버스라 taint 없음.
+  const pushUndo = () => {
+    const m = maskRef.current;
+    if (!m || m.width === 0) return;
+    try {
+      undoRef.current.push(m.toDataURL('image/png'));
+      if (undoRef.current.length > MAX_UNDO) undoRef.current.shift();
+      setCanUndo(true);
+    } catch {
+      /* 무시 */
+    }
+  };
+  pushUndoRef.current = pushUndo;
+
+  // 직전 상태로 되돌린다(연필/지우개/박스/✕ 한 단계씩). 복원은 비동기(Image 디코드).
+  const undoMask = () => {
+    const m = maskRef.current;
+    const mctx = m?.getContext('2d');
+    if (!m || !mctx) return;
+    const prev = undoRef.current.pop();
+    setCanUndo(undoRef.current.length > 0);
+    if (prev === undefined) {
+      // 더 되돌릴 게 없으면 비운다.
+      mctx.clearRect(0, 0, m.width, m.height);
+      setMaskHasInk(false);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      mctx.clearRect(0, 0, m.width, m.height);
+      mctx.drawImage(img, 0, 0, m.width, m.height);
+      setMaskHasInk(maskHasAnyInk(m));
+    };
+    img.src = prev;
+  };
+  undoMaskRef.current = undoMask;
+
+  // ✕ — 칠한 것 전부 지우기(되돌리기 가능하게 직전 상태 저장).
+  const clearMask = () => {
+    const m = maskRef.current;
+    if (!m) return;
+    pushUndo();
+    m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
+    firstAnchorRef.current = null;
+    setMaskHasInk(false);
+  };
+
+  // 읽기 완료 후 — 마스크와 되돌리기 스택을 함께 비운다(읽기 너머로는 undo 안 함).
+  const resetMaskAndUndo = () => {
+    const m = maskRef.current;
+    if (m) m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
+    undoRef.current = [];
+    firstAnchorRef.current = null;
+    setCanUndo(false);
+    setMaskHasInk(false);
+  };
+
+  // 읽은 글자 → 칠한 자리(anchor)에 새 말풍선 생성. 품목코드(fi=0)부터 입력 포커스, 품목엔 읽은
+  // 글자가 미리 채워져 있어(prefill effect) Enter 로 품목 단계에 가면 바로 수정·확정 가능.
+  const createPinFromOcr = (anchor: { x: number; y: number }, text: string) => {
+    const ax = anchor.x;
+    const ay = anchor.y;
+    const qty = charCount(text, 'all'); // 글자수(공백 제외) = 수량.
+    setPins((prev) => {
+      // 점=영역 중앙, 말풍선=우상단으로 살짝 비켜 리더선 연결(주변에 생성).
+      // 품목=읽은 글자, 수량=글자수(둘 다 prefill — 단계 진행 시 입력칸에 채워져 나옴).
+      const next = [
+        ...prev,
+        { ax, ay, lx: ax + 36, ly: ay - 28, dragged: true, vals: { 품목: text, 수량: String(qty) }, fi: 0 },
+      ];
+      setActive(next.length - 1);
+      return next;
+    });
+    setSelPin(null);
+    setSelectedPin(null);
+  };
+
+  /**
+   * 크롭된 출력 캔버스(소스 영역 그려진 상태)에 마스크 화이트아웃을 적용하고, 흑백+대비 전처리 후
+   * Haiku 로 보낸다. maskAlpha(출력 크기) 가 32 미만인 픽셀은 흰색으로 덮어 잡음을 제거한다.
+   */
+  const preprocessAndSend = (cv: HTMLCanvasElement, maskAlpha: Uint8ClampedArray | null) => {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
+    const ow = cv.width;
+    const oh = cv.height;
     let dataUrl: string;
     try {
-      ctx.drawImage(img, rect.x * sx, rect.y * sy, rect.w * sx, rect.h * sy, 0, 0, cw, ch);
-      dataUrl = cv.toDataURL('image/jpeg', 0.92);
+      // (CORS taint 면 getImageData 가 SecurityError 를 던져 catch 로 → 동일 안내.)
+      const idata = ctx.getImageData(0, 0, ow, oh);
+      const d = idata.data;
+      const n = ow * oh;
+      // 마스크 밖(칠 안 한 곳)은 흰색으로 — 읽을 글자만 남긴다.
+      if (maskAlpha) {
+        for (let i = 0, p = 0; i < n; i++, p += 4) {
+          if (maskAlpha[i] < 32) {
+            d[p] = 255;
+            d[p + 1] = 255;
+            d[p + 2] = 255;
+          }
+        }
+      }
+      // 전처리 — 연한/저대비 글자도 Haiku 가 읽게: 흑백 변환 + 2~98% 퍼센타일 대비 스트레칭 + 가벼운 감마.
+      const hist = new Uint32Array(256);
+      const lum = new Uint8ClampedArray(n);
+      for (let i = 0, p = 0; i < n; i++, p += 4) {
+        const L = (d[p] * 299 + d[p + 1] * 587 + d[p + 2] * 114) / 1000 | 0;
+        lum[i] = L;
+        hist[L]++;
+      }
+      const loCut = n * 0.02;
+      const hiCut = n * 0.98;
+      let acc = 0;
+      let lo = 0;
+      let hi = 255;
+      for (let v = 0; v < 256; v++) {
+        acc += hist[v];
+        if (acc >= loCut) { lo = v; break; }
+      }
+      acc = 0;
+      for (let v = 0; v < 256; v++) {
+        acc += hist[v];
+        if (acc >= hiCut) { hi = v; break; }
+      }
+      const span = hi - lo;
+      const gamma = 1.15; // >1 → 중간톤을 어둡게: 얇고 연한 획을 검정 쪽으로.
+      const lut = new Uint8ClampedArray(256);
+      for (let v = 0; v < 256; v++) {
+        let t = span > 4 ? (v - lo) / span : v / 255; // 거의 평탄하면 스트레칭 생략(흑백만).
+        t = Math.min(1, Math.max(0, t));
+        lut[v] = Math.round(Math.pow(t, gamma) * 255);
+      }
+      for (let i = 0, p = 0; i < n; i++, p += 4) {
+        const o = lut[lum[i]];
+        d[p] = o;
+        d[p + 1] = o;
+        d[p + 2] = o;
+      }
+      ctx.putImageData(idata, 0, 0);
+      dataUrl = cv.toDataURL('image/png'); // 무손실 — 고대비 가장자리를 JPEG 압축으로 뭉개지 않게.
     } catch {
       cdlg(
         '이 지시서 이미지는 보안 제한(CORS)으로 잘라낼 수 없어요.<br>붙여넣기(Ctrl+V)했거나 PDF로 불러온 지시서에서 사용하세요.',
@@ -916,36 +1577,34 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     }
     setOcrBusy(true);
     setStatus('글자 읽는 중…');
-    readText(token, dataUrl, 'image/jpeg')
+    // 앵커는 비우기 전에 캡처(finally 가 firstAnchorRef 를 null 로 만든다).
+    const anchor = firstAnchorRef.current ?? { x: 30, y: 30 };
+    readText(token, dataUrl, 'image/png')
       .then((r) => {
         const text = (r.text || '').trim();
         setStatus('');
         if (!text) {
-          cdlg('이 영역에서 글자를 못 읽었어요. 글자 부분을 더 크게/정확히 박스 쳐보세요.', [{ label: '확인', sec: true }]);
+          cdlg('이 영역에서 글자를 못 읽었어요. 읽을 부분을 더 크게/정확히 칠해보세요.', [{ label: '확인', sec: true }]);
           return;
         }
-        const ko = charCount(text, 'ko');
-        const en = charCount(text, 'en');
-        const all = charCount(text, 'all');
         const esc = text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
-        const countLine = `<span style="font-size:12px;color:#6b7785">한글 ${ko} · 영문/숫자 ${en} · 합계 ${all}글자</span>`;
-        const tgt = activeRef.current ?? selectedPinRef.current;
-        if (tgt != null) {
-          // 활성/선택 말풍선의 품목 칸에 자동 입력.
-          setPins((prev) => prev.map((p, i) => (i === tgt ? { ...p, vals: { ...p.vals, 품목: text } } : p)));
-          // 입력 중(active)이고 현재 단계가 품목이면 입력칸(draft)도 즉시 갱신.
-          const ap = activeRef.current;
-          if (ap != null && ap === tgt && pinsRef.current[ap] && FIELDS[pinsRef.current[ap].fi] === '품목') {
-            setDraft(text);
-          }
-          cdlg(`✓ 품목에 입력했어요<br><b>${esc}</b><br>${countLine}`, [{ label: '확인' }]);
-        } else {
-          cdlg(
-            `읽은 글자<br><b>${esc}</b><br>${countLine}<br>` +
-              `<span style="font-size:12px;color:#6b7785">말풍선을 만들고 품목 단계에서 다시 시도하면 자동 입력됩니다.</span>`,
-            [{ label: '확인' }],
-          );
-        }
+        const newIdx = pinsRef.current.length; // 새로 만들어질 말풍선 번호(0-based).
+        const circle =
+          `<span style="display:inline-flex;width:22px;height:22px;border-radius:50%;` +
+          `background:${pinColor(newIdx)};color:#fff;font-weight:800;font-size:12px;` +
+          `align-items:center;justify-content:center;vertical-align:middle;margin-right:5px">${newIdx + 1}</span>`;
+        const qty = charCount(text, 'all');
+        cdlg(
+          `<div style="margin-bottom:7px;font-size:14px">${circle}<b>번 품목으로 추가할까요?</b></div>` +
+            `<b style="font-size:15px">"${esc}"</b>` +
+            `<div style="font-size:12px;color:#0a7d8c;font-weight:700;margin-top:6px">글자수 ${qty} → 수량 자동 입력</div>` +
+            `<div style="font-size:11.5px;color:#6b7785;margin-top:6px">확인 → 칠한 자리에 말풍선이 생기고 품목코드부터 입력해요. ` +
+            `Enter 로 진행하면 품목·수량이 채워져 있어 바로 수정·확정할 수 있어요.</div>`,
+          [
+            { label: '확인', fn: () => createPinFromOcr(anchor, text) },
+            { label: '취소', sec: true },
+          ],
+        );
       })
       .catch((e) => {
         console.error(e);
@@ -954,13 +1613,105 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       })
       .finally(() => {
         setOcrBusy(false);
-        setMode('cursor'); // 한 번 읽으면 커서 모드로 복귀해 이어서 작업.
+        resetMaskAndUndo(); // 읽고 나면 마스크·되돌리기 스택을 비워 다음 영역을 새로.
       });
   };
-  performOcrRef.current = performOcr;
+
+  /** [읽기] / Enter — 마스크의 칠한 영역(bbox) 만 잘라 화이트아웃 후 OCR 호출. */
+  const readMask = () => {
+    const img = imgRef.current;
+    const mask = maskRef.current;
+    if (!img || !imgSrc || !mask) return;
+    const mw = mask.width;
+    const mh = mask.height;
+    const mctx = mask.getContext('2d');
+    if (!mctx || mw === 0 || mh === 0) return;
+    // 칠한(알파>32) 픽셀의 bbox 계산.
+    const md = mctx.getImageData(0, 0, mw, mh).data;
+    let minX = mw;
+    let minY = mh;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < mh; y++) {
+      for (let x = 0; x < mw; x++) {
+        if (md[(y * mw + x) * 4 + 3] > 32) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) {
+      cdlg('읽을 영역을 먼저 칠하세요. (박스 또는 연필)', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const pad = 6 * MASK_SS; // 글자 가장자리가 잘리지 않게 약간 여유(백킹 px 기준 = 콘텐츠 6px).
+    const bx = Math.max(0, minX - pad);
+    const by = Math.max(0, minY - pad);
+    const bw = Math.min(mw, maxX + 1 + pad) - bx;
+    const bh = Math.min(mh, maxY + 1 + pad) - by;
+    // 첫 영역 앵커가 없으면(방어) 전체 마스크 bbox 중앙을 앵커로(콘텐츠 좌표).
+    if (!firstAnchorRef.current) {
+      firstAnchorRef.current = { x: (bx + bw / 2) / MASK_SS, y: (by + bh / 2) / MASK_SS };
+    }
+    // bx..bh 는 마스크 백킹 px(=콘텐츠 px × MASK_SS). 소스 매핑은 콘텐츠로 환산(÷MASK_SS) 후 ×sx.
+    const sx = img.naturalWidth / (img.clientWidth || 1);
+    const sy = img.naturalHeight / (img.clientHeight || 1);
+    const srcX = (bx / MASK_SS) * sx;
+    const srcY = (by / MASK_SS) * sy;
+    const srcW = (bw / MASK_SS) * sx;
+    const srcH = (bh / MASK_SS) * sy;
+    // 출력 크기: Claude 이미지는 ~1.15MP(긴 변 ~1568px)로 다운스케일 → 그 위는 토큰 낭비.
+    // 작은 영역은 ~900px 까지만 키워 얇은 획에 픽셀을 더 준다(상한 1568, 과확대 뭉개짐 방지).
+    const longNative = Math.max(srcW, srcH);
+    const targetLong = Math.min(1568, Math.max(longNative, 900));
+    const k = targetLong / longNative;
+    const ow = Math.max(1, Math.round(srcW * k));
+    const oh = Math.max(1, Math.round(srcH * k));
+    // 1) 소스 고해상에서 bbox 크롭.
+    const cv = document.createElement('canvas');
+    cv.width = ow;
+    cv.height = oh;
+    const cctx = cv.getContext('2d');
+    if (!cctx) return;
+    cctx.imageSmoothingEnabled = true;
+    cctx.imageSmoothingQuality = 'high';
+    cctx.fillStyle = '#fff';
+    cctx.fillRect(0, 0, ow, oh);
+    cctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, ow, oh);
+    // 2) 마스크 bbox 를 출력 크기로 스케일해 알파 추출(우리가 그린 캔버스라 taint 없음).
+    const mt = document.createElement('canvas');
+    mt.width = ow;
+    mt.height = oh;
+    const mtctx = mt.getContext('2d');
+    if (!mtctx) return;
+    mtctx.drawImage(mask, bx, by, bw, bh, 0, 0, ow, oh);
+    const ma = mtctx.getImageData(0, 0, ow, oh).data;
+    const maskAlpha = new Uint8ClampedArray(ow * oh);
+    for (let i = 0; i < ow * oh; i++) maskAlpha[i] = ma[i * 4 + 3];
+    // 3) 화이트아웃 + 전처리 + 전송.
+    preprocessAndSend(cv, maskAlpha);
+  };
+  performOcrRef.current = readMask;
 
   // ---- 렌더 ------------------------------------------------------------
-  const rows = Math.max(ROWS, pins.length);
+  // 글자수·말풍선 모드에선 다음에 만들어질 행(빈 칸)이 보이도록 한 줄 더 + 그 행을 하이라이트.
+  // 단, 어떤 행을 편집 중(active≠null)이면 그 행을 다 채우는 중이므로 다음 행은 칠하지 않는다.
+  // → 현재 행 입력을 마쳐 active 가 풀리고 모드(2·3)가 유지될 때 비로소 다음 행이 칠해진다.
+  const ocrTarget = pins.length; // 읽으면/그리면 새로 만들어질 말풍선·행 번호(0-based).
+  const showTgtRow = (mode === 'ocr' || mode === 'cursor') && active === null; // 다음 항목 행 하이라이트(글자수=3 · 말풍선=2 공통).
+  const rows = Math.max(ROWS, pins.length + (showTgtRow ? 1 : 0));
+  // 박스·연필·커서·grid 행 하이라이트 색 = 다음 말풍선 색. "지금 칠하는 게 N번으로 들어가겠구나".
+  const ocrColor = pinColor(ocrTarget);
+  ocrColorRef.current = ocrColor;
+  // 글자수 모드 커서: 연필·지우개는 브러시 지름만 한 원, 박스는 십자.
+  const ocrCursor =
+    mode === 'ocr'
+      ? ocrTool === 'pencil' || ocrTool === 'eraser'
+        ? brushCursor(BRUSH_SCREEN_PX[brush], ocrTool, ocrColor)
+        : 'crosshair'
+      : undefined;
 
   return (
     <div className="aq-root">
@@ -1009,19 +1760,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             <div className="aq-tools">
               <button
                 type="button"
-                className={'aq-toolbtn' + (mode === 'cursor' ? ' on' : '')}
-                title="커서 — 드래그로 말풍선 작성"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setMode('cursor')}
-              >
-                <svg viewBox="0 0 320 512" width="14" height="14" fill="currentColor" aria-hidden="true">
-                  <path d="M0 55.2V426c0 12.2 9.9 22 22 22 6.3 0 12.4-2.7 16.6-7.5L121.2 346l58.1 116.3c7.9 15.8 27.1 22.2 42.9 14.3s22.2-27.1 14.3-42.9L179.8 320H297c12.2 0 22-9.9 22-22 0-6.4-2.8-12.5-7.7-16.6L38.6 38.6C34.4 35.1 29.2 33 23.5 33 10.5 33 0 43.5 0 56.5z" />
-                </svg>
-              </button>
-              <button
-                type="button"
                 className={'aq-toolbtn' + (mode === 'hand' ? ' on' : '')}
-                title="이동 — 드래그로 사진 이동(확대 시)"
+                title="지시서 이동 — 드래그로 사진 이동(확대 시) (단축키 1)"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode('hand')}
               >
@@ -1031,27 +1771,124 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               </button>
               <button
                 type="button"
+                className={'aq-toolbtn' + (mode === 'cursor' ? ' on' : '')}
+                title="말풍선 — 드래그로 말풍선 작성 (단축키 2)"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setMode('cursor')}
+              >
+                <svg viewBox="0 0 512 512" width="15" height="15" fill="currentColor" aria-hidden="true">
+                  <path d="M256 32C114.6 32 0 125.1 0 240c0 49.6 21.4 95 57 130.7C44.5 421.1 2.7 466 2.2 466.5c-2.2 2.3-2.8 5.7-1.5 8.7 1.3 3 4.3 4.9 7.5 4.8 66.3 0 116-31.8 140.6-51.4 32.7 12.3 69 19.4 106.4 19.4 141.4 0 256-93.1 256-208S397.4 32 256 32z" />
+                </svg>
+              </button>
+              <button
+                type="button"
                 className={'aq-toolbtn aq-ocrbtn' + (mode === 'ocr' ? ' on' : '')}
-                title="글자읽기 — 사진에서 글자 영역을 드래그하면 AI가 읽어 글자수를 세요"
+                title="글자수 — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 3)"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode((m) => (m === 'ocr' ? 'cursor' : 'ocr'))}
               >
-                글자
+                글자수
+              </button>
+            </div>
+          )}
+          {imgSrc && mode === 'ocr' && (
+            <div className="aq-ocrtools" onMouseDown={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                className={'aq-octbtn' + (ocrTool === 'box' ? ' on' : '')}
+                title="박스 — 사각 영역을 읽을 영역으로 채움"
+                onClick={() => setOcrTool('box')}
+              >
+                ▭ 박스
+              </button>
+              <button
+                type="button"
+                className={'aq-octbtn' + (ocrTool === 'pencil' ? ' on' : '')}
+                title="연필 — 읽을 글자를 칠해서 추가"
+                onClick={() => setOcrTool('pencil')}
+              >
+                ✏️ 연필
+              </button>
+              <button
+                type="button"
+                className={'aq-octbtn' + (ocrTool === 'eraser' ? ' on' : '')}
+                title="지우개 — 칠한 영역에서 빼기"
+                onClick={() => setOcrTool('eraser')}
+              >
+                🧽 지우개
+              </button>
+              {(ocrTool === 'pencil' || ocrTool === 'eraser') && (
+                <span className="aq-octsize">
+                  {(['s', 'm', 'l'] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={'aq-octszbtn' + (brush === s ? ' on' : '')}
+                      title={`${s === 's' ? '작은' : s === 'm' ? '중간' : '큰'} 원`}
+                      onClick={() => setBrush(s)}
+                    >
+                      <span className="aq-octdot" style={{ width: BRUSH_DOT_PX[s], height: BRUSH_DOT_PX[s] }} />
+                    </button>
+                  ))}
+                </span>
+              )}
+              <span className="aq-octsp" />
+              <button
+                type="button"
+                className="aq-octbtn"
+                disabled={!canUndo || ocrBusy}
+                title="되돌리기 — 방금 그린 박스/연필/지우개 취소 (Ctrl+Z)"
+                onClick={() => undoMaskRef.current()}
+              >
+                ↶ 되돌리기
+              </button>
+            </div>
+          )}
+          {/* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 화면 이동/확대해도 따라다닌다. */}
+          {imgSrc && mode === 'ocr' && (
+            <div className="aq-ocrconfirm" onMouseDown={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                className="aq-ocrok"
+                disabled={!maskHasInk || ocrBusy}
+                title="칠한 영역의 글자를 한꺼번에 읽기 (Enter)"
+                onClick={() => performOcrRef.current()}
+              >
+                ✓
+              </button>
+              <button
+                type="button"
+                className="aq-ocrclear"
+                disabled={!maskHasInk || ocrBusy}
+                title="칠한 영역 모두 지우기"
+                onClick={clearMask}
+              >
+                ✕
               </button>
             </div>
           )}
           {imgSrc && mode === 'ocr' && !ocrBusy && (
-            <div className="aq-ocrhint">글자 영역을 드래그하세요 — AI가 읽어 글자수를 셉니다</div>
+            <div className="aq-ocrhint">
+              {`${ocrTarget + 1}번 항목 — 박스/연필로 칠한 뒤 위 ✓ 누르면 그 자리에 말풍선이 생겨요`}
+            </div>
           )}
           {ocrBusy && <div className="aq-ocrbusy">글자 읽는 중…</div>}
           {!imgSrc ? (
-            <div className="aq-empty">
-              📋
-              <br />
-              작업지시서 이미지를 붙여넣으세요
-              <br />
-              <span style={{ fontSize: 12 }}>Ctrl + V</span>
-            </div>
+            loadingImg ? (
+              <div className="aq-empty">
+                ⏳
+                <br />
+                지시서 로딩중입니다
+              </div>
+            ) : (
+              <div className="aq-empty">
+                📋
+                <br />
+                작업지시서 이미지를 붙여넣으세요
+                <br />
+                <span style={{ fontSize: 12 }}>Ctrl + V</span>
+              </div>
+            )
           ) : (
             <div
               className="aq-stage"
@@ -1069,23 +1906,43 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   setStageH(imgRef.current?.clientHeight || 0);
                 }}
                 draggable={false}
+                style={ocrCursor ? { cursor: ocrCursor } : undefined}
               />
+              {/* 글자수 마스크 — 읽을 영역 색칠(알파=keep-mask). 콘텐츠 해상도, stage 스케일을 함께 탄다. */}
+              <canvas ref={maskRef} className="aq-ocrmask" style={{ width: stageW, height: stageH }} />
+              {/* SVG stroke 은 sub-pixel 허용(CSS border 의 1px 클램프 없음)이라 strokeWidth=폭/zoom 으로
+                  확대해도 화면상 일정한 얇은 선이 된다. (vector-effect 는 조상 CSS transform 엔 안 먹어서 미사용.) */}
               <svg className="aq-lines">
                 {pins.map((p, i) =>
                   p.dragged ? (
-                    <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke={pinColor(i)} strokeWidth={2} />
+                    <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke={pinColor(i)} strokeWidth={2 / zoom} />
                   ) : null,
                 )}
-                {ghost && <line x1={ghost.ax} y1={ghost.ay} x2={ghost.x} y2={ghost.y} stroke="#0a9396" strokeWidth={2} strokeDasharray="5 4" />}
+                {ghost && (
+                  <line
+                    x1={ghost.ax}
+                    y1={ghost.ay}
+                    x2={ghost.x}
+                    y2={ghost.y}
+                    stroke="#0a9396"
+                    strokeWidth={2 / zoom}
+                    strokeDasharray={`${5 / zoom} ${4 / zoom}`}
+                  />
+                )}
+                {/* 글자수 선택 박스 — 정지 점선. 폭·점선 간격을 /zoom 해서 확대해도 얇고 일정. */}
+                {ocrSel && (
+                  <rect
+                    x={ocrSel.x}
+                    y={ocrSel.y}
+                    width={ocrSel.w}
+                    height={ocrSel.h}
+                    fill={hexToRgba(ocrColor, 0.14)}
+                    stroke={ocrColor}
+                    strokeWidth={1.5 / zoom}
+                    strokeDasharray={`${5 / zoom} ${4 / zoom}`}
+                  />
+                )}
               </svg>
-
-              {/* 글자읽기 선택 박스(콘텐츠 좌표 — stage 스케일을 그대로 타 이미지와 함께 확대) */}
-              {ocrSel && (
-                <div
-                  className="aq-ocrsel"
-                  style={{ left: ocrSel.x, top: ocrSel.y, width: ocrSel.w, height: ocrSel.h }}
-                />
-              )}
 
               {/* 핀 점 */}
               {pins.map((p, i) => (
@@ -1130,7 +1987,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               {pins.map((p, i) => {
                 const isActive = i === active;
                 // 입력 중에는 현재 필드명만 안내. 끝나면 2줄: (위) 품목 규격, (아래) 단가원 ×수량개 = 합계원.
-                const top = [p.vals['품목'], p.vals['규격']].filter(Boolean).join(' ');
+                const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
                 const dp = num(p.vals['단가']);
                 const qty = num(p.vals['수량']) || 1;
                 const priceLine =
@@ -1143,11 +2000,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                 const lblStyle: React.CSSProperties = {
                   left: p.lx,
                   top: p.ly,
-                  transform: `scale(${1 / zoom}) translate(-50%, -50%)`,
+                  transform: `translate(-50%, -50%) scale(${1 / zoom})`,
                   transformOrigin: '50% 50%',
                 };
                 return (
-                  <div key={'lbl' + i} className={'aq-lbl' + (i === selectedPin ? ' sel' : '')} style={lblStyle}>
+                  <div
+                    key={'lbl' + i}
+                    className={'aq-lbl' + (i === selectedPin ? ' sel' : '') + (isActive ? ' active' : '')}
+                    style={lblStyle}
+                  >
                     {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
                     <div
                       className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
@@ -1172,25 +2033,77 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                     </div>
                     {isActive && (
                       <>
-                        <div className="aq-pinrow">
-                          <input
-                            ref={inputRef}
-                            value={draft}
-                            placeholder={`${FIELDS[p.fi] ?? ''} 입력 후 Enter`}
-                            autoComplete="off"
-                            inputMode={FIELDS[p.fi] === '단가' || FIELDS[p.fi] === '수량' ? 'numeric' : undefined}
-                            onChange={(e) => setDraft(FIELDS[p.fi] === '단가' ? formatWon(e.target.value) : e.target.value)}
-                            onKeyDown={onInputKey}
-                            onMouseDown={(e) => e.stopPropagation()}
-                          />
-                          <button
-                            className="aq-pinx"
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={closeActive}
-                            title="닫기"
-                          >
-                            ✕
-                          </button>
+                        <div className="aq-inwrap">
+                          <div className="aq-pinrow">
+                            <input
+                              ref={inputRef}
+                              value={draft}
+                              placeholder={`${FIELDS[p.fi] ?? ''} 입력 후 Enter`}
+                              autoComplete="off"
+                              inputMode={FIELDS[p.fi] === '단가' || FIELDS[p.fi] === '수량' ? 'numeric' : undefined}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (FIELDS[p.fi] === '단가') {
+                                  setDraft(formatWon(v));
+                                  return;
+                                }
+                                setDraft(v);
+                                if (FIELDS[p.fi] === '품목코드') {
+                                  const ms = matchCodes(v);
+                                  const dym = didYouMean(v, ms);
+                                  setAcIdx(dym ? ms.indexOf(dym) : -1); // 표준형 변형이면 미리 하이라이트
+                                }
+                              }}
+                              onKeyDown={onInputKey}
+                              onMouseDown={(e) => e.stopPropagation()}
+                            />
+                            <button
+                              className="aq-pinx"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={closeActive}
+                              title="닫기"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {/* 품목코드 자동완성 드롭다운 — 입력칸은 고정, 드롭다운만 절대배치로 아래(또는 위)로. */}
+                          {FIELDS[p.fi] === '품목코드' &&
+                            draft.trim() &&
+                            (() => {
+                              const ms = matchCodes(draft);
+                              if (ms.length === 0) return null;
+                              const dym = didYouMean(draft, ms);
+                              return (
+                                <div
+                                  className={'aq-acdrop' + (acAbove ? ' above' : '')}
+                                  ref={acDropRef}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                  {dym && acIdx === ms.indexOf(dym) && (
+                                    <div className="aq-achint">
+                                      혹시 <b>{dym}</b>? · Enter 적용 · → 그대로
+                                    </div>
+                                  )}
+                                  <div className="aq-aclist">
+                                    {ms.map((c, j) => (
+                                      <div
+                                        key={c}
+                                        className={'aq-acitem' + (j === acIdx ? ' on' : '')}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          commitDraft(c);
+                                          setAcIdx(-1);
+                                        }}
+                                      >
+                                        {c}
+                                      </div>
+                                    ))}
+                                  </div>
+                                  {ms.length > 5 && <div className="aq-acmore">+{ms.length - 5}개 더 · ↓로 탐색</div>}
+                                </div>
+                              );
+                            })()}
                         </div>
                         {FIELDS[p.fi] === '단가' && (
                           <div className="aq-lkrow">
@@ -1214,7 +2127,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   const gstyle: React.CSSProperties = {
                     left: ghost.x,
                     top: ghost.y,
-                    transform: `scale(${1 / zoom}) translate(-50%, -50%)`,
+                    transform: `translate(-50%, -50%) scale(${1 / zoom})`,
                     transformOrigin: '50% 50%',
                   };
                   return (
@@ -1242,15 +2155,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           </div>
           <div className="aq-gridwrap">
             <table className="aq-tbl">
-              {/* 화면엔 품목코드·품목·규격·수량·단가 5칸만(+번호). 월일·공급가액·세액·비고는 숨김 —
+              {/* 화면엔 품목코드·품목·규격·수량·단가·공급가액(+번호). 월일·세액·비고는 숨김 —
                   저장(buildGrid)·이지폼 매크로에서는 9칸 모두 채운다. */}
               <colgroup>
-                <col style={{ width: 26 }} />
-                <col style={{ width: 62 }} />
+                <col style={{ width: 24 }} />
+                <col style={{ width: 58 }} />
                 <col />
-                <col style={{ width: 64 }} />
-                <col style={{ width: 40 }} />
-                <col style={{ width: 92 }} />
+                <col style={{ width: 56 }} />
+                <col style={{ width: 34 }} />
+                <col style={{ width: 78 }} />
+                <col style={{ width: 86 }} />
               </colgroup>
               <thead>
                 <tr>
@@ -1260,15 +2174,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                   <th>규격</th>
                   <th>수량</th>
                   <th className="p">단가</th>
+                  <th className="p">공급가액</th>
                 </tr>
               </thead>
               <tbody>
                 {Array.from({ length: rows }, (_, i) => {
                   const p = pins[i];
                   const v = p ? p.vals : {};
+                  const isOcrTgt = showTgtRow && i === ocrTarget;
                   return (
-                    <tr key={i} className={i === active ? 'cur' : undefined}>
-                      <td className="rn">{p && <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>}</td>
+                    <tr
+                      key={i}
+                      className={`${i === active ? 'cur' : ''}${isOcrTgt ? ' ocrtgt' : ''}`.trim() || undefined}
+                      style={isOcrTgt ? { background: hexToRgba(pinColor(i), 0.28) } : undefined}
+                    >
+                      <td className="rn">
+                        {(p || isOcrTgt) && (
+                          <span className="rnum" style={{ background: pinColor(i) }}>{i + 1}</span>
+                        )}
+                      </td>
                       <td>
                         <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} />
                       </td>
@@ -1283,6 +2207,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                       </td>
                       <td className="p">
                         <input value={v['단가'] || ''} onChange={(e) => setCell(i, '단가', e.target.value)} />
+                      </td>
+                      <td className="p">
+                        {/* 공급가액 = 단가×수량 (총액). 읽기전용 — 단가·수량은 말풍선/위 칸에서 수정. */}
+                        <input
+                          className="ro"
+                          value={(() => {
+                            const u = num(v['단가']);
+                            if (u == null) return '';
+                            return (u * (num(v['수량']) || 1)).toLocaleString();
+                          })()}
+                          readOnly
+                          tabIndex={-1}
+                          title="공급가액 = 단가 × 수량"
+                        />
                       </td>
                     </tr>
                   );

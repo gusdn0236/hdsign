@@ -76,3 +76,27 @@ auto-quote-data/
 # 기밀 corpus/priors 는 classpath 가 아니라 런타임(AUTOQUOTE_DATA_DIR)에서 서빙한다.
 # 실수로 resources 에 다시 떨어뜨려도 PUBLIC repo 로 유출되지 않도록 가드한다.
 backend/src/main/resources/autoquote/*.json
+
+# 로컬 환경변수/시크릿 — 절대 커밋 금지. (파일 헤더에 gitignored 라 적혀있었으나 실제 규칙이 누락돼 있었음.)
+.env
+backend/.env
+*.env.local
+
+# 루트 gradle 캐시(.gradle-home-fix) — backend/ 하위뿐 아니라 루트에도 생김.
+/.gradle-home-fix/
+
+# 백엔드 부팅/통합테스트 로그.
+backend/_it_boot.log
+*_boot.log
+
+# 프론트 테스트 산출물 — 매 실행마다 재생성.
+frontend/coverage/
+frontend/test-results/
+
+# 워처 배포 패키지(타임스탬프 폴더/zip) — 100MB+ 빌드 산출물, 배포는 별도 경로.
+HDSign_Watcher_Deploy_*/
+HDSign_Watcher_Deploy_*.zip
+
+# 일회성 임시 스크립트/덤프.
+tmp_*.py
+tmp_*.txt

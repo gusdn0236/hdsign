@@ -85,12 +85,16 @@
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   cursor: crosshair;
 }
-/* 좌상단 커서/손바닥 모드 토글. */
+/* 좌상단 커서/손바닥 모드 토글.
+   z-index 를 스테이지 위로 충분히 올리고 translateZ(0) 로 자체 컴포지팅 레이어로 승격한다.
+   (스테이지가 transform:scale 로 GPU 레이어가 되면 확대 시 비-컴포지팅 오버레이가 사라지는
+   Chrome 버그 회피 — 확대해도 버튼이 항상 제자리에 보이게.) */
 .aq-tools {
   position: absolute;
   top: 10px;
   left: 10px;
-  z-index: 6;
+  z-index: 20;
+  transform: translateZ(0);
   display: flex;
   gap: 4px;
   background: rgba(15, 22, 32, 0.7);
@@ -117,28 +121,145 @@
 .aq-stagewrap.aq-hand .aq-stage img {
   cursor: grab;
 }
-/* 글자읽기 버튼 — 30px 칸에 '글자' 텍스트가 들어가게 작게. */
+/* 글자수 버튼 — 30px 칸에 '글자수' 3글자가 들어가게 더 작게. */
 .aq-ocrbtn {
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 800;
-  letter-spacing: -0.5px;
+  letter-spacing: -1px;
 }
-/* 글자읽기 모드 — 영역 선택 커서(십자). */
+/* 글자수 모드 — 영역 선택 커서(십자). */
 .aq-stagewrap.aq-ocr .aq-stage img {
   cursor: crosshair;
 }
-/* 글자읽기 선택 박스 — stage 안(콘텐츠 좌표)이라 이미지와 함께 확대된다. */
+/* 글자수 선택 박스 — stage 안(콘텐츠 좌표)이라 이미지와 함께 확대된다. 테두리 굵기는 인라인(/zoom). */
 .aq-ocrsel {
   position: absolute;
   z-index: 6;
-  border: 2px dashed var(--teal2);
+  border-color: var(--teal2);
   background: rgba(10, 147, 150, 0.14);
   pointer-events: none;
 }
-/* 글자읽기 안내/진행 오버레이. */
-.aq-ocrhint {
+/* 글자수 마스크 — 읽을 영역 색칠. 캔버스 알파가 곧 keep-mask, 표시는 opacity 로 반투명. */
+.aq-ocrmask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  opacity: 0.4;
+  pointer-events: none;
+}
+/* 글자수 하위 도구 바 — 박스/연필/지우개/크기/읽기. */
+.aq-ocrtools {
+  position: absolute;
+  top: 48px;
+  left: 10px;
+  z-index: 21;
+  transform: translateZ(0);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 20px);
+  background: rgba(15, 22, 32, 0.82);
+  border-radius: 8px;
+  padding: 4px 6px;
+}
+.aq-octbtn {
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aq-octbtn.on {
+  background: var(--teal2);
+}
+.aq-octbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.aq-octread {
+  background: var(--teal);
+}
+.aq-octsize {
+  display: inline-flex;
+  gap: 2px;
+}
+.aq-octszbtn {
+  border: none;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.aq-octszbtn.on {
+  background: var(--teal2);
+}
+/* 굵기 = 원 아이콘(작은원/중간원/큰원). 지름은 인라인 style. */
+.aq-octdot {
+  display: inline-block;
+  border-radius: 50%;
+  background: currentColor;
+}
+.aq-octsp {
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.18);
+  margin: 0 2px;
+}
+/* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 스테이지(transform) 밖이라 확대/이동에 안 흔들린다.
+   translateZ(0) 로 자체 레이어 승격(스테이지 GPU 레이어 위에 항상 그려지게). */
+.aq-ocrconfirm {
   position: absolute;
   top: 10px;
+  left: 50%;
+  transform: translateX(-50%) translateZ(0);
+  z-index: 22;
+  display: flex;
+  gap: 0; /* 한 박스로 붙임 */
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.aq-ocrok,
+.aq-ocrclear {
+  width: 50px;
+  height: 38px;
+  border: none;
+  border-radius: 0;
+  color: #fff;
+  font-size: 19px;
+  font-weight: 900;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.aq-ocrok {
+  background: #2a9d4a;
+  border-right: 1px solid rgba(0, 0, 0, 0.28); /* 둘 사이 구분선 */
+}
+.aq-ocrclear {
+  background: #c0504a;
+}
+.aq-ocrok:disabled,
+.aq-ocrclear:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* 글자읽기 안내 — 하단 중앙(상단은 ✓/✕ 가 차지). */
+.aq-ocrhint {
+  position: absolute;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 7;
@@ -150,6 +271,9 @@
   font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .aq-ocrbusy {
   position: absolute;
@@ -222,6 +346,10 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+}
+/* 편집 중인 말풍선 — 드롭다운이 다른 말풍선 위로 보이도록 위로 띄운다. */
+.aq-lbl.active {
+  z-index: 9;
 }
 .aq-lbl.up {
   transform: translate(-10px, calc(-100% - 9px));
@@ -361,6 +489,61 @@
   align-items: center;
   margin-top: 4px;
 }
+/* 입력칸 + 드롭다운 묶음 — 드롭다운을 절대배치할 기준(입력칸은 이 안에서 고정). */
+.aq-inwrap {
+  position: relative;
+}
+/* 품목코드 자동완성 드롭다운 — 절대배치라 입력칸을 밀지 않는다. 기본은 입력칸 바로 아래. */
+.aq-acdrop {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 6;
+  width: 300px;
+  background: #fff;
+  border: 1.5px solid var(--teal);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  font-size: 13px;
+}
+/* 아래 공간이 부족하면 입력칸 위로 펼친다. */
+.aq-acdrop.above {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+.aq-achint {
+  padding: 6px 10px;
+  background: #fff7e6;
+  color: #8a5a1a;
+  font-weight: 700;
+  border-bottom: 1px solid #f0e2c8;
+}
+.aq-aclist {
+  max-height: 170px; /* ~5행만 먼저, 나머진 스크롤 */
+  overflow-y: auto;
+}
+.aq-acitem {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: #1f2733;
+  white-space: nowrap;
+}
+.aq-acitem:hover {
+  background: #eef7f8;
+}
+.aq-acitem.on {
+  background: var(--teal);
+  color: #fff;
+}
+.aq-acmore {
+  padding: 5px 10px;
+  font-size: 11.5px;
+  color: #6b7785;
+  background: #f4f7f8;
+  border-top: 1px solid #e4ecee;
+  text-align: center;
+}
 .aq-lbl input {
   border: 2px solid var(--teal);
   border-radius: 7px;
@@ -474,11 +657,28 @@
   background: #eaf6f8;
   box-shadow: inset 0 0 0 2px var(--teal2);
 }
+/* 읽기전용(공급가액=단가×수량) — 직접 입력 안 함. 살짝 음영 + 우측정렬. */
+.aq-tbl td input.ro {
+  background: #f2f6f7;
+  color: #2a3b4a;
+  font-weight: 600;
+  text-align: right;
+  cursor: default;
+}
+.aq-tbl td input.ro:focus {
+  box-shadow: none;
+}
 .aq-tbl td.p input {
   text-align: right;
 }
 .aq-tbl tr.cur {
   background: #fbfdee;
+}
+/* 글자수 OCR 타깃 행 — tr 인라인 배경(말풍선 색 틴트)이 셀에 가리지 않게 셀을 투명화.
+   "지금 칠하는 박스 내용이 이 행에 들어가겠구나" 를 행 전체 색으로 표시. */
+.aq-tbl tr.ocrtgt td,
+.aq-tbl tr.ocrtgt td.rn {
+  background: transparent;
 }
 .aq-tbl td.rn {
   text-align: center;
