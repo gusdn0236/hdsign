@@ -1665,10 +1665,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                     strokeDasharray={`${5 / zoom} ${4 / zoom}`}
                   />
                 )}
-                {/* 글자수 선택 박스 — 움직이는 점선(마칭 앤츠). 폭·점선 간격을 /zoom 해서 확대해도 얇고 일정. */}
+                {/* 글자수 선택 박스 — 정지 점선. 폭·점선 간격을 /zoom 해서 확대해도 얇고 일정. */}
                 {ocrSel && (
                   <rect
-                    className="aq-march"
                     x={ocrSel.x}
                     y={ocrSel.y}
                     width={ocrSel.w}
