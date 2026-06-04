@@ -773,11 +773,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
       e.preventDefault();
       if (e.key === '1') {
-        setMode('cursor');
+        setMode('hand'); // 1 = 지시서 이동
       } else if (e.key === '2') {
-        setMode('hand');
+        setMode('cursor'); // 2 = 말풍선
       } else if (modeRef.current === 'ocr') {
-        // 이미 글자수 모드면 3번 재입력 = 박스→연필→지우개 순환.
+        // 3 = 글자수. 이미 글자수 모드면 재입력 = 박스→연필→지우개 순환.
         setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'));
       } else {
         setMode('ocr');
@@ -1609,24 +1609,24 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             <div className="aq-tools">
               <button
                 type="button"
-                className={'aq-toolbtn' + (mode === 'cursor' ? ' on' : '')}
-                title="커서 — 드래그로 말풍선 작성 (단축키 1)"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setMode('cursor')}
-              >
-                <svg viewBox="0 0 320 512" width="14" height="14" fill="currentColor" aria-hidden="true">
-                  <path d="M0 55.2V426c0 12.2 9.9 22 22 22 6.3 0 12.4-2.7 16.6-7.5L121.2 346l58.1 116.3c7.9 15.8 27.1 22.2 42.9 14.3s22.2-27.1 14.3-42.9L179.8 320H297c12.2 0 22-9.9 22-22 0-6.4-2.8-12.5-7.7-16.6L38.6 38.6C34.4 35.1 29.2 33 23.5 33 10.5 33 0 43.5 0 56.5z" />
-                </svg>
-              </button>
-              <button
-                type="button"
                 className={'aq-toolbtn' + (mode === 'hand' ? ' on' : '')}
-                title="지시서 이동 — 드래그로 사진 이동(확대 시) (단축키 2)"
+                title="지시서 이동 — 드래그로 사진 이동(확대 시) (단축키 1)"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setMode('hand')}
               >
                 <svg viewBox="0 0 512 512" width="15" height="15" fill="currentColor" aria-hidden="true">
                   <path d="M352.2 425.8l-79.2 79.2c-9.4 9.4-24.6 9.4-33.9 0l-79.2-79.2c-15.1-15.1-4.4-41 17-41h51.2V284H127.2v51.2c0 21.4-25.9 32.1-41 17L7 272.9c-9.4-9.4-9.4-24.6 0-33.9L86.2 159.8c15.1-15.1 41-4.4 41 17V228H228V127.2h-51.2c-21.4 0-32.1-25.9-17-41L239 7c9.4-9.4 24.6-9.4 33.9 0l79.2 79.2c15.1 15.1 4.4 41-17 41h-51.2V228h100.8v-51.2c0-21.4 25.9-32.1 41-17l79.2 79.2c9.4 9.4 9.4 24.6 0 33.9l-79.2 79.2c-15.1 15.1-41 4.4-41-17V284H284v100.8h51.2c21.4 0 32.1 25.9 17 41z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className={'aq-toolbtn' + (mode === 'cursor' ? ' on' : '')}
+                title="말풍선 — 드래그로 말풍선 작성 (단축키 2)"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setMode('cursor')}
+              >
+                <svg viewBox="0 0 512 512" width="15" height="15" fill="currentColor" aria-hidden="true">
+                  <path d="M256 32C114.6 32 0 125.1 0 240c0 49.6 21.4 95 57 130.7C44.5 421.1 2.7 466 2.2 466.5c-2.2 2.3-2.8 5.7-1.5 8.7 1.3 3 4.3 4.9 7.5 4.8 66.3 0 116-31.8 140.6-51.4 32.7 12.3 69 19.4 106.4 19.4 141.4 0 256-93.1 256-208S397.4 32 256 32z" />
                 </svg>
               </button>
               <button
