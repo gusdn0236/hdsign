@@ -28,7 +28,8 @@ import java.io.ByteArrayOutputStream;
  * <p>페이지당 단일 이미지 구조로 평탄화하면 안드로이드에서도 즉시 렌더되고, 모바일 뷰어는
  * 이미 textLayer/annotationLayer 를 끈 상태라 텍스트 선택/검색 같은 사용성 손실은 없다.
  *
- * <p>DPI 300 + JPEG 품질 0.88: A4 → 2480x3508px, 핀치 5x 까지 또렷.
+ * <p>DPI 600 + JPEG 품질 0.95: A4 → 4960x7016px, 화면/핀치 ~500% 까지 또렷.
+     * (PDF24 가 600/1200 어느 쪽이든 여기서 단일 JPEG 으로 재렌더되므로 이 DPI 가 실질 화질 천장.)
  * 신규 PDF 업로드 ({@link com.example.backend.controller.PublicEvidenceController}) 와
  * 기존 PDF 백필 ({@link com.example.backend.controller.AdminOrderController#backfillWorksheetFlatten})
  * 양쪽에서 사용.
@@ -37,7 +38,7 @@ import java.io.ByteArrayOutputStream;
 @Service
 public class WorksheetFlattenService {
 
-    private static final float FLATTEN_DPI = 400f;
+    private static final float FLATTEN_DPI = 600f;
     private static final float FLATTEN_JPEG_QUALITY = 0.95f;
 
     /**
