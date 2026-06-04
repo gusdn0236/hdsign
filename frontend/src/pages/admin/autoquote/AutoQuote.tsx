@@ -289,7 +289,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [stageH, setStageH] = useState(0);
   const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~10). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
-  const [mode, setMode] = useState<'cursor' | 'hand' | 'ocr'>('cursor'); // 커서=핀 작성 / 손바닥=화면 이동 / 글자=영역 OCR
+  const [mode, setMode] = useState<'cursor' | 'hand' | 'ocr'>('hand'); // 진입 기본=이동(1). 커서=핀 작성(2) / 손바닥=화면 이동 / 글자=영역 OCR(3)
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
   const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
@@ -1593,13 +1593,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           `<span style="display:inline-flex;width:22px;height:22px;border-radius:50%;` +
           `background:${pinColor(newIdx)};color:#fff;font-weight:800;font-size:12px;` +
           `align-items:center;justify-content:center;vertical-align:middle;margin-right:5px">${newIdx + 1}</span>`;
-        const qty = charCount(text, 'all');
         cdlg(
           `<div style="margin-bottom:7px;font-size:14px">${circle}<b>번 품목으로 추가할까요?</b></div>` +
             `<b style="font-size:15px">"${esc}"</b>` +
-            `<div style="font-size:12px;color:#0a7d8c;font-weight:700;margin-top:6px">글자수 ${qty} → 수량 자동 입력</div>` +
-            `<div style="font-size:11.5px;color:#6b7785;margin-top:6px">확인 → 칠한 자리에 말풍선이 생기고 품목코드부터 입력해요. ` +
-            `Enter 로 진행하면 품목·수량이 채워져 있어 바로 수정·확정할 수 있어요.</div>`,
+            `<div style="font-size:11.5px;color:#6b7785;margin-top:6px">추후에 수정 가능합니다.</div>`,
           [
             { label: '확인', fn: () => createPinFromOcr(anchor, text) },
             { label: '취소', sec: true },
