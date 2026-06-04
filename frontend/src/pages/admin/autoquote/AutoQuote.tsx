@@ -862,23 +862,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (active == null) return;
     const val = draft.trim();
     const cur = pinsRef.current[active];
-    // 규격을 막 입력했고 계산 가능한 품목코드(아크릴·포맥스·고무스카시)면 → 수량·단가 자동 채우고 완료.
+    // 규격을 막 입력했고 계산 가능한 품목코드(아크릴·포맥스·고무스카시)면 → 단가만 자동 채우고
+    // 수량 단계로 진행. 수량(글자수)은 사용자가 직접 입력(품목을 줄여 쓰는 경우가 많아 자동계산 금지).
+    // OCR(글자수)로 만든 핀은 수량이 이미 채워져 있어 그 단계에서 Enter 로 확인만 하면 된다.
     if (cur && FIELDS[cur.fi] === '규격') {
       const auto = computeAuto(cur.vals['품목코드'] || '', cur.vals['품목'] || '', val);
       if (auto) {
         setPins((prev) =>
           prev.map((p, i) =>
             i === active
-              ? {
-                  ...p,
-                  vals: { ...p.vals, 규격: val, 수량: String(auto.qty), 단가: String(auto.unit) },
-                  fi: FIELDS.length,
-                }
+              ? { ...p, vals: { ...p.vals, 규격: val, 단가: String(auto.unit) }, fi: p.fi + 1 }
               : p,
           ),
         );
-        setActive(null);
-        setDraft('');
         return;
       }
     }
