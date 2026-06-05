@@ -2332,7 +2332,35 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                       }}
                     >
                       {isActive ? (
-                        <span className="aq-pin-guide">{FIELDS[p.fi] ?? ''}</span>
+                        <span className="aq-pin-guide">
+                          {FIELDS[p.fi] ?? ''}
+                          {FIELDS[p.fi] === '수량' && (p.vals['품목'] || '').trim() !== '' && (
+                            <button
+                              type="button"
+                              title="품목에 입력한 글자 수만큼 수량에 넣기"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                commitDraft(String(charCount(p.vals['품목'] || '', 'all')));
+                              }}
+                              style={{
+                                marginLeft: 7,
+                                fontSize: '0.82em',
+                                fontWeight: 700,
+                                background: '#0a9396',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 5,
+                                padding: '1px 7px',
+                                cursor: 'pointer',
+                                verticalAlign: 'middle',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              글씨갯수만큼 적용
+                            </button>
+                          )}
+                        </span>
                       ) : hasContent ? (
                         <>
                           {top && <div className="aq-pin-l1">{top}</div>}
