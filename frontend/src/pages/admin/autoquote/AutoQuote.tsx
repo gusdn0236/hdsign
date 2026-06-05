@@ -336,7 +336,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   // 말풍선(텍스트박스) 자체를 잡아서 이동 — 태그를 핸들로. 점(앵커)은 고정, 말풍선 위치(lx,ly)만 이동.
   const bubbleDrag = useRef<{ i: number; mx: number; my: number; lx: number; ly: number; moved: boolean } | null>(null);
   // 화면 이동(팬) — 가운데 버튼 드래그 또는 손바닥 모드. 시작 시점 pan(px) 캡처.
-  const panDrag = useRef<{ sx: number; sy: number; px: number; py: number } | null>(null);
+  const panDrag = useRef<{ sx: number; sy: number; px: number; py: number; btn: number } | null>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null); // 최신 마우스 화면좌표(가장자리 자동 팬용)
   const [ghost, setGhost] = useState<{ x: number; y: number; ax: number; ay: number } | null>(null);
   // 글자읽기 영역 드래그 — 시작점(콘텐츠 좌표). 최신 performOcr 는 ref 로 호출(전역 핸들러가 [] deps).
   const ocrDrag = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
@@ -497,6 +498,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     };
     const onMove = (e: MouseEvent) => {
       const z = zoomRef.current || 1;
+      pointerRef.current = { x: e.clientX, y: e.clientY };
+      // 팬(가운데버튼/손바닥)을 최우선 — 좌클릭 박스/칠 드래그 중에도 가운데버튼으로 화면 이동.
+      if (panDrag.current) {
+        const pd = panDrag.current;
+        setPan({ x: pd.px + (e.clientX - pd.sx), y: pd.py + (e.clientY - pd.sy) });
+        return;
+      }
       // 연필·지우개 — 마지막점→현재점 선분을 마스크에 칠한다(콘텐츠 좌표).
       if (paintRef.current?.active) {
         const { x, y } = localXY(e);
@@ -522,11 +530,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         const od = ocrDrag.current;
         if (Math.abs(x - od.x0) > 3 || Math.abs(y - od.y0) > 3) od.moved = true;
         setOcrSel({ x: Math.min(x, od.x0), y: Math.min(y, od.y0), w: Math.abs(x - od.x0), h: Math.abs(y - od.y0) });
-        return;
-      }
-      if (panDrag.current) {
-        const pd = panDrag.current;
-        setPan({ x: pd.px + (e.clientX - pd.sx), y: pd.py + (e.clientY - pd.sy) });
         return;
       }
       if (drag.current) {
@@ -565,6 +568,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
     };
     const onUp = (e: MouseEvent) => {
+      // 팬 종료 — 팬을 시작한 그 버튼이 떼졌을 때만(좌클릭 박스/칠 드래그는 유지).
+      if (panDrag.current && e.button === panDrag.current.btn) {
+        panDrag.current = null;
+        return;
+      }
+      if (e.button !== 0) return; // 이하 좌클릭 떼기만 — 박스/칠/핀 확정.
       // 연필·지우개 스트로크 종료.
       if (paintRef.current?.active) {
         const pr = paintRef.current;
@@ -605,10 +614,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             setMaskHasInk(true);
           }
         }
-        return;
-      }
-      if (panDrag.current) {
-        panDrag.current = null;
         return;
       }
       if (drag.current) {
@@ -729,6 +734,56 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [imgSrc]);
+
+  // 가장자리 자동 팬 — 확대 상태에서 박스/칠을 그리다 마우스를 지시서(뷰포트) 끝에 대면
+  // 그 방향으로 조금씩 화면을 이동(좌클릭 유지한 채). 박스를 화면 밖까지 이어 그릴 수 있게.
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const drawing = !!ocrDrag.current || !!paintRef.current?.active;
+      if (!drawing || panDrag.current || zoomRef.current <= 1) return; // 가운데버튼 팬 중이면 양보.
+      const wrap = stagewrapRef.current?.getBoundingClientRect();
+      const p = pointerRef.current;
+      if (!wrap || !p) return;
+      const EDGE = 48,
+        STEP = 16; // 가장자리 48px 안에 들어오면 프레임당 16px 씩 그 방향으로.
+      let dx = 0,
+        dy = 0;
+      if (p.x > wrap.right - EDGE) dx = -STEP;
+      else if (p.x < wrap.left + EDGE) dx = STEP;
+      if (p.y > wrap.bottom - EDGE) dy = -STEP;
+      else if (p.y < wrap.top + EDGE) dy = STEP;
+      if (!dx && !dy) return;
+      setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+      // 팬 후(다음 프레임 stage 이동)를 미리 반영해 커서 아래 콘텐츠 좌표로 박스/스트로크를 이어붙인다.
+      const st = stageRef.current?.getBoundingClientRect();
+      const z = zoomRef.current || 1;
+      const x = (p.x - ((st?.left ?? 0) + dx)) / z;
+      const y = (p.y - ((st?.top ?? 0) + dy)) / z;
+      if (ocrDrag.current) {
+        const od = ocrDrag.current;
+        od.moved = true;
+        setOcrSel({ x: Math.min(x, od.x0), y: Math.min(y, od.y0), w: Math.abs(x - od.x0), h: Math.abs(y - od.y0) });
+      } else if (paintRef.current?.active) {
+        const pr = paintRef.current;
+        const mctx = maskRef.current?.getContext('2d');
+        if (mctx) {
+          const lw = ((BRUSH_SCREEN_PX[brushRef.current] || 26) / z) * MASK_SS;
+          const tool = ocrToolRef.current === 'eraser' ? 'eraser' : 'pencil';
+          paintMaskSegment(mctx, pr.lastX * MASK_SS, pr.lastY * MASK_SS, x * MASK_SS, y * MASK_SS, tool, lw, ocrColorRef.current);
+        }
+        pr.lastX = x;
+        pr.lastY = y;
+        if (x < pr.minX) pr.minX = x;
+        if (x > pr.maxX) pr.maxX = x;
+        if (y < pr.minY) pr.minY = y;
+        if (y > pr.maxY) pr.maxY = y;
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   // 말풍선 복사/붙여넣기 — 말풍선 클릭(선택) 후 Ctrl+C 로 값 복사, 다른 말풍선(선택/활성)에서 Ctrl+V 로 붙여넣기.
   // grid 등 다른 입력칸(텍스트박스)에서는 기본 복사/붙여넣기 동작을 유지.
@@ -852,7 +907,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (showRef) {
       if (zoomRef.current > 1 && (e.button === 1 || mode === 'hand')) {
         e.preventDefault();
-        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y, btn: e.button };
       }
       return;
     }
@@ -861,7 +916,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (e.button === 1) {
       if (zoomRef.current > 1) {
         e.preventDefault();
-        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y, btn: e.button };
       }
       return;
     }
@@ -891,7 +946,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (e.button === 1 || mode === 'hand') {
       if (zoomRef.current > 1) {
         e.preventDefault();
-        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y, btn: e.button };
       }
       return;
     }
