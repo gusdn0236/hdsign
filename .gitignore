@@ -11,6 +11,9 @@ hdsign-watcher/build/
 hdsign-watcher/dist_agent/
 hdsign-watcher/build_agent/
 hdsign-watcher/*.spec
+# 배포용 exe 사본 — git 이력 비대화 방지(로컬 빌드본을 public 에 두고 gh-pages 로 배포).
+# 에이전트 재빌드 시: dist_agent → frontend/public 로 복사 후 npm run deploy.
+frontend/public/hdsign_easyform_agent.exe
 hdsign-watcher/hdsign_worksheet.spec
 hdsign-watcher/hdsign_watcher.spec
 

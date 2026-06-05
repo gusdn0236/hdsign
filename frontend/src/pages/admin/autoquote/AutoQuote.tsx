@@ -1331,7 +1331,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       const probe = await probeEasyformAgent();
       if (!probe || !probe.easyform) {
         cdlg(
-          '이 PC 에서 이지폼 자동기입을 쓸 수 없습니다.<br>작업뷰어 에이전트가 트레이에 떠 있어야 합니다(이지폼이 설치된 PC).',
+          'HD사인지시서(사무용) 혹은 명세서전용 프로그램이 켜져있지 않습니다.<br>실행 후 다시 시도해주세요.' +
+            '<br><br><span style="font-size:12px;color:#6b7785">프로그램이 없으신가요? 명세서 작성만 하시려면 ' +
+            '<a href="/hdsign_easyform_agent.exe" download ' +
+            'style="color:#0a9396;font-weight:700;text-decoration:underline">다운로드</a> 를 눌러주세요.</span>',
           [{ label: '확인', sec: true }],
         );
         return;
