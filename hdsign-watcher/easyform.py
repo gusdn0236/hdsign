@@ -68,6 +68,8 @@ try:
         _KEYEVENTF_KEYUP = 0x0002
         _MOUSEEVENTF_LEFTDOWN = 0x0002
         _MOUSEEVENTF_LEFTUP = 0x0004
+        _MOUSEEVENTF_RIGHTDOWN = 0x0008
+        _MOUSEEVENTF_RIGHTUP = 0x0010
         _MOUSEEVENTF_MOVE = 0x0001
         _MOUSEEVENTF_ABSOLUTE = 0x8000
         _MOUSEEVENTF_WHEEL = 0x0800
@@ -127,15 +129,28 @@ try:
             ny = int(py * 65535 / max(1, EF_SCREEN_H - 1))
             mv = _EF_MI(nx, ny, 0, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, 0, None)
             _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=mv))])
-            time.sleep(0.03)
+            time.sleep(0.012)
             d = _EF_MI(nx, ny, 0, _MOUSEEVENTF_LEFTDOWN | _MOUSEEVENTF_ABSOLUTE, 0, None)
             u = _EF_MI(nx, ny, 0, _MOUSEEVENTF_LEFTUP | _MOUSEEVENTF_ABSOLUTE, 0, None)
             _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=d)), _EF_IN(_INPUT_MOUSE, _EF_U(mi=u))])
 
         def ef_double_click(x: int, y: int) -> None:
             ef_click(x, y)
-            time.sleep(0.05)
+            time.sleep(0.03)
             ef_click(x, y)
+
+        def ef_right_click(x: int, y: int) -> None:
+            # 절대좌표 주입 우클릭(컨텍스트 메뉴 열기). 이지폼이 Ctrl+V 를 막아 '붙여넣기' 메뉴로 대체.
+            px = int(x * EF_DPI_SCALE)
+            py = int(y * EF_DPI_SCALE)
+            nx = int(px * 65535 / max(1, EF_SCREEN_W - 1))
+            ny = int(py * 65535 / max(1, EF_SCREEN_H - 1))
+            mv = _EF_MI(nx, ny, 0, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, 0, None)
+            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=mv))])
+            time.sleep(0.012)
+            d = _EF_MI(nx, ny, 0, _MOUSEEVENTF_RIGHTDOWN | _MOUSEEVENTF_ABSOLUTE, 0, None)
+            u = _EF_MI(nx, ny, 0, _MOUSEEVENTF_RIGHTUP | _MOUSEEVENTF_ABSOLUTE, 0, None)
+            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=d)), _EF_IN(_INPUT_MOUSE, _EF_U(mi=u))])
 
         # (행 초과 스크롤은 휠 대신 '비고 칸 클릭 → Enter = 1행 이동'(easyform 그리드 동작)을 쓴다.
         #  휠 1노치는 기본 3줄이라 여러 행을 내려 버렸음 — 사용자 제공 방법이 정확.)
@@ -333,6 +348,11 @@ EF_CELLS = [
 EF_WHITEBOX = (756, 417)   # "현재 □ 줄 선택됨" 흰 박스 — 더블클릭 후 '2' 입력
 EF_INSERT_BTN = (745, 456)  # "삽입" 버튼 — 행 수만큼 클릭
 
+# 이지폼이 Ctrl+V 를 막아, 셀 채우기는 [좌클릭 → 우클릭 → '붙여넣기' 메뉴 클릭] 으로 한다.
+# 우클릭 지점(=셀 좌표)에서 컨텍스트 메뉴 '붙여넣기' 항목까지의 논리좌표 오프셋(dx, dy).
+# F7 측정값: 우클릭점(207,301) → 붙여넣기(263,391) ⇒ (56, 90). (0,0)이면 Ctrl+V 폴백.
+EF_PASTE_OFFSET = (56, 90)
+
 # 채울 7칸: (grid 키, EF_COLS 인덱스, 숫자 여부). 월일·비고는 건드리지 않는다(월일=자동).
 EF_FILL_SEQ = [
     ("item_code", 1, False), ("item", 2, False), ("spec", 3, False),
@@ -360,15 +380,15 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
     try:
         # 0) 첫 행 품목칸 클릭 — 그리드 활성화 + 첫 행 월일 자동기입 트리거
         ef_click(*EF_CELLS[0][EF_COLS.index("item")])
-        time.sleep(0.15)
+        time.sleep(0.06)
         if ef_aborted():
             return False, abort_msg
 
         # 1) 흰 박스 더블클릭 → '2' 입력(삽입 위치=둘째 줄: 월일행이 맨 위 유지)
         ef_double_click(*EF_WHITEBOX)
-        time.sleep(0.1)
+        time.sleep(0.05)
         ef_key(0x32)  # '2'
-        time.sleep(0.1)
+        time.sleep(0.05)
         if ef_aborted():
             return False, abort_msg
 
@@ -377,9 +397,9 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
             if ef_aborted():
                 return False, abort_msg
             ef_click(*EF_INSERT_BTN)
-            time.sleep(0.12)
+            time.sleep(0.06)
 
-        time.sleep(0.2)
+        time.sleep(0.1)
 
         # 3) 행마다 7칸 클릭+붙여넣기 (월일은 행 진입 시 자동, 비고는 건드리지 않음).
         #    보이는 cap 행은 그 좌표에, cap 을 넘는 행은 '마지막 보이는 행의 비고 칸 클릭 → Enter'
@@ -394,9 +414,9 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
             else:
                 # 한 행 스크롤: 비고 칸 클릭 → Enter(행 이동, 저장 아님) → 다음 행이 마지막 위치에.
                 ef_click(*remark_xy)
-                time.sleep(0.1)
+                time.sleep(0.05)
                 ef_key(0x0D)  # VK_RETURN
-                time.sleep(0.25)
+                time.sleep(0.14)
                 cells = last_row_cells
             for key_name, col_idx, is_num in EF_FILL_SEQ:
                 if ef_aborted():
@@ -407,12 +427,22 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
                 if val == "":
                     continue  # 빈 값은 칸을 건드리지 않음
                 x, y = cells[col_idx]
-                ef_click(x, y)
-                time.sleep(0.08)            # 셀 활성화 대기(batch.py 검증 타이밍)
                 ef_set_clipboard(val)
-                time.sleep(0.02)
-                ef_paste()
-                time.sleep(0.05)
+                time.sleep(0.01)
+                if EF_PASTE_OFFSET == (0, 0):
+                    # 오프셋 미설정 — Ctrl+V 폴백(이지폼이 막았으면 셀이 빈 채로 남음).
+                    ef_click(x, y)
+                    time.sleep(0.04)
+                    ef_paste()
+                    time.sleep(0.03)
+                else:
+                    # 이지폼이 Ctrl+V 차단 → 좌클릭(셀 선택) → 우클릭(메뉴) → '붙여넣기' 클릭.
+                    ef_click(x, y)
+                    time.sleep(0.035)
+                    ef_right_click(x, y)
+                    time.sleep(0.1)  # 컨텍스트 메뉴 뜨는 대기
+                    ef_click(x + EF_PASTE_OFFSET[0], y + EF_PASTE_OFFSET[1])  # '붙여넣기' 항목
+                    time.sleep(0.04)
 
         # 4) 마지막 셀 확정 — 저장/Enter 안 함. cap 이하면 여유분(다음) 행, 넘으면 마지막 보이는 행 재클릭.
         commit_cells = EF_CELLS[min(n, cap - 1)] if n <= cap else last_row_cells
