@@ -1333,17 +1333,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const sx = nw / dw,
       sy = nh / dh;
 
-    // ── 오른쪽 명세서(표) 메트릭 — 사진 높이에 맞춰 글자 크기를 정한다(사진과 함께 한 장으로). ──
-    const tfs = Math.min(40, Math.max(22, Math.round(nh / 42)));
-    const cols: { key: string; label: string; w: number; align: 'left' | 'center' | 'right' }[] = [
-      { key: '번호', label: '', w: tfs * 2.0, align: 'center' },
-      { key: '품목코드', label: '품목코드', w: tfs * 4.6, align: 'left' },
-      { key: '품목', label: '품목', w: tfs * 12, align: 'left' },
-      { key: '규격', label: '규격', w: tfs * 4.4, align: 'left' },
-      { key: '수량', label: '수량', w: tfs * 3.0, align: 'right' },
-      { key: '단가', label: '단가', w: tfs * 5.6, align: 'right' },
-      { key: '공급가액', label: '공급가액', w: tfs * 6.4, align: 'right' },
+    // ── 오른쪽 명세서(표) 메트릭 — 표 너비가 사진 너비의 약 2/3 가 되도록 글자 크기를 정한다.
+    //    (사진:표 ≈ 3:2 — 작성 화면 비율. 예전엔 nh/42·상한40 이라 고해상 사진에서 표가 너무 작았음.) ──
+    const colSpec: { key: string; label: string; m: number; align: 'left' | 'center' | 'right' }[] = [
+      { key: '번호', label: '', m: 2.0, align: 'center' },
+      { key: '품목코드', label: '품목코드', m: 4.6, align: 'left' },
+      { key: '품목', label: '품목', m: 12, align: 'left' },
+      { key: '규격', label: '규격', m: 4.4, align: 'left' },
+      { key: '수량', label: '수량', m: 3.0, align: 'right' },
+      { key: '단가', label: '단가', m: 5.6, align: 'right' },
+      { key: '공급가액', label: '공급가액', m: 6.4, align: 'right' },
     ];
+    const mSum = colSpec.reduce((s, c) => s + c.m, 0) + 1.2; // 열 가중치 합 + 좌우 패딩(tfs*0.6*2)
+    const tfs = Math.max(22, Math.round((nw * (2 / 3)) / mSum)); // 표폭 ≈ 사진폭 × 2/3
+    const cols = colSpec.map((c) => ({ key: c.key, label: c.label, w: tfs * c.m, align: c.align }));
     const tpad = tfs * 0.6;
     const tw = cols.reduce((s, c) => s + c.w, 0) + tpad * 2;
     const titleH = tfs * 2.6,
