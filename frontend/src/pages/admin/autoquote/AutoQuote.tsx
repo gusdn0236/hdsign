@@ -661,6 +661,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           // 입력 중인 핀의 점을 클릭하면 입력을 닫고 삭제버튼을 띄운다(삭제버튼은 active 핀엔 안 뜨므로).
           if (activeRef.current === pd.i) setActive(null);
           setSelPin((s) => (s === pd.i ? null : pd.i));
+        } else {
+          // 점을 끌어다 놓음 → 아직 말풍선이 없던(수기) 핀이면 그때 말풍선을 펼친다.
+          // 점 '우상단'에, 우측 공간이 부족하면 '좌상단'에(번호 동그라미 드롭과 동일 규칙).
+          setPins((prev) =>
+            prev.map((p, i) => {
+              if (i !== pd.i || p.dragged) return p;
+              const z2 = zoomRef.current || 1;
+              const off = 70 / z2;
+              const halfW = 180 / z2;
+              const dw = imgRef.current?.clientWidth ?? 0;
+              let lx = p.ax + off;
+              const ly = p.ay - off;
+              if (dw && lx + halfW > dw) lx = p.ax - off;
+              return { ...p, lx, ly, dragged: true };
+            }),
+          );
         }
         pinDrag.current = null;
       } else if (bubbleDrag.current) {
@@ -2396,6 +2412,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               {/* 말풍선 + 입력 */}
               {pins.map((p, i) => {
                 const isActive = i === active;
+                // 수기(표) 핀은 처음엔 점만 — 말풍선 숨김. 점을 드래그해 놓으면 dragged=true 가 되며 펼쳐진다.
+                if (!p.dragged && !isActive) return null;
                 // 입력 중에는 현재 필드명만 안내. 끝나면 2줄: (위) 품목 규격, (아래) 단가원 ×수량개 = 합계원.
                 const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
                 const dp = num(p.vals['단가']);
