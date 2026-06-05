@@ -7,6 +7,7 @@ import AcrylCalc      from './AcrylCalc.jsx'
 import GomuCalc       from './GomuCalc.jsx'
 import GoldSilverCalc from './GoldSilverCalc.jsx'
 import QuickUpload    from './QuickUpload.jsx'
+import PriceLookup     from './PriceLookup.tsx'
 import './Calc.css'
 
 /**
@@ -23,6 +24,8 @@ export default function CalcLayout() {
     return (
         <div className="calc-shell">
             <main className="calc-main">
+                <PriceLookup />
+
                 <AcrylCalc prices={prices} />
                 <ChannelCalc prices={prices} />
 
