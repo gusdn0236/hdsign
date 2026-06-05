@@ -746,6 +746,12 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             origin = self._origin_allowed()
             self._send_json(200, {"ok": True, "version": 1}, origin)
             return
+        # 이지폼 자동기입 feature-detect — 에이전트가 떠 있고 이 PC 가 Win32 가능할 때만 true.
+        if parsed.path == "/easyform/probe":
+            origin = self._origin_allowed()
+            self._send_json(200, {"ok": True, "easyform": EASYFORM_AVAILABLE,
+                                  "hotkey": EF_HOTKEY_LABEL}, origin)
+            return
         # /open, /open-folder 는 비-단순(custom header) POST 만 허용 → CSRF 노출 최소화.
         # 그래도 GET 으로 들어오는 단순 fetch 케이스를 친절히 안내.
         if parsed.path in ("/open", "/open-folder"):
@@ -763,7 +769,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             self.send_response(403)
             self.end_headers()
             return
-        if parsed.path not in ("/open", "/open-folder"):
+        if parsed.path not in ("/open", "/open-folder", "/easyform/fill"):
             self.send_response(404)
             self._send_cors(origin)
             self.end_headers()
@@ -772,6 +778,11 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
         # custom header 검사 — preflight 우회 시도 차단(X-HDSign-Field 가 없으면 거부).
         if self.headers.get("X-HDSign-Field") != "1":
             self._send_json(400, {"message": "X-HDSign-Field 헤더 필요"}, origin)
+            return
+
+        # 이지폼 자동기입 — grid 를 받아 스테이징(arm)만. 실제 실행은 사용자가 이지폼 창에서 핫키.
+        if parsed.path == "/easyform/fill":
+            self._handle_easyform_fill(origin)
             return
 
         order_number = ""
@@ -905,6 +916,364 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
                         else "거래처 폴더를 열었습니다."),
         }
 
+    # 이지폼 자동기입 셀 키 — 정확히 이 7개만 받는다(월일=자동·비고=미사용). 그 밖의 키(특히
+    # save/enter/commit 같은 '확정 지시'로 보이는 것)는 무시·거부 → IRON LAW 심층방어.
+    _EF_ROW_KEYS = ("item_code", "item", "spec", "qty", "unit_price", "supply", "tax")
+
+    def _handle_easyform_fill(self, origin: str | None) -> None:
+        if not EASYFORM_AVAILABLE:
+            self._send_json(200, {"staged": False,
+                                  "message": "이 PC 에서는 이지폼 자동기입을 쓸 수 없습니다."}, origin)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(length) if length > 0 else b""
+            body = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            self._send_json(400, {"staged": False, "message": "본문 파싱 실패"}, origin)
+            return
+        rows_in = body.get("rows") if isinstance(body, dict) else None
+        if not isinstance(rows_in, list) or not rows_in:
+            self._send_json(400, {"staged": False, "message": "rows 가 비어 있습니다."}, origin)
+            return
+        # 허용된 7개 셀 키만 추려 sanitized 행 구성(나머지는 무시). 값은 모두 문자열화.
+        rows: list[dict] = []
+        for r in rows_in:
+            if not isinstance(r, dict):
+                continue
+            rows.append({k: ("" if r.get(k) is None else str(r.get(k)))
+                         for k in self._EF_ROW_KEYS})
+        if not rows:
+            self._send_json(400, {"staged": False, "message": "유효한 행이 없습니다."}, origin)
+            return
+        cap = len(EF_CELLS)
+        if len(rows) > cap:
+            self._send_json(200, {"staged": False,
+                                  "message": f"행이 {len(rows)}개로 한도({cap}행)를 넘어 보낼 수 없습니다."},
+                            origin)
+            return
+        ef_stage_job(rows)
+        logging.info("이지폼 자동기입 스테이징 — %d행, %s 대기", len(rows), EF_HOTKEY_LABEL)
+        self._send_json(200, {
+            "staged": True,
+            "count": len(rows),
+            "hotkey": EF_HOTKEY_LABEL,
+            "message": f"이지폼 '매출 거래명세서' 새로작성 → 거래처 선택 후, 그 창에서 {EF_HOTKEY_LABEL} 키를 누르면 {len(rows)}행이 자동 기입됩니다.",
+        }, origin)
+
+
+# ─── 이지폼 자동기입 (slice-14) ────────────────────────────────────────────
+#
+# 자동견적 명세서(grid)를 이지폼 '매출 거래명세서' 새로작성 화면에 셀 단위로 자동 기입한다.
+# IRON LAW: Enter/저장(F5)/전자전송(F11) 등 **확정 키는 절대 보내지 않는다**. 매크로가 쓰는
+# 입력은 ① 셀 클릭(SetCursorPos+좌클릭) ② 흰 박스에 행수기준 '2' 한 글자 ③ Ctrl+V(붙여넣기)
+# 뿐이다. 최종 저장/전자발행은 사람이 직접 확인 후 누른다.
+#
+# 좌표계: easyform_pick.py / easyform_layout.json 과 동일한 **논리 픽셀**. 클릭 직전 DPI_SCALE
+# 을 곱해 물리 좌표로 변환한다(=batch.py 규약). 좌표는 이지폼 창 위치에 의존하므로, 캡처할 때와
+# 같은 위치/크기로 창을 둬야 한다.
+
+EASYFORM_AVAILABLE = False
+try:
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        _user32 = ctypes.WinDLL("user32", use_last_error=True)
+        _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                _user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+        def _ef_scale() -> float:
+            try:
+                gdi32 = ctypes.windll.gdi32
+                hdc = _user32.GetDC(0)
+                dpi = gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+                _user32.ReleaseDC(0, hdc)
+                return dpi / 96.0
+            except Exception:
+                return 1.0
+
+        EF_DPI_SCALE = _ef_scale()
+
+        _user32.OpenClipboard.argtypes = [wintypes.HWND]; _user32.OpenClipboard.restype = wintypes.BOOL
+        _user32.EmptyClipboard.restype = wintypes.BOOL
+        _user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]; _user32.SetClipboardData.restype = wintypes.HANDLE
+        _kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]; _kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+        _kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]; _kernel32.GlobalLock.restype = wintypes.LPVOID
+        _kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]; _kernel32.GlobalUnlock.restype = wintypes.BOOL
+        _user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]; _user32.SetCursorPos.restype = wintypes.BOOL
+        _user32.GetForegroundWindow.restype = wintypes.HWND
+        _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]; _user32.GetWindowTextW.restype = ctypes.c_int
+        _user32.GetAsyncKeyState.argtypes = [ctypes.c_int]; _user32.GetAsyncKeyState.restype = ctypes.c_short
+        _user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT]
+        _user32.MessageBoxW.restype = ctypes.c_int
+
+        _CF_UNICODETEXT = 13
+        _GMEM_MOVEABLE = 0x0002
+        _INPUT_MOUSE = 0
+        _INPUT_KEYBOARD = 1
+        _KEYEVENTF_KEYUP = 0x0002
+        _MOUSEEVENTF_LEFTDOWN = 0x0002
+        _MOUSEEVENTF_LEFTUP = 0x0004
+
+        class _EF_MI(ctypes.Structure):
+            _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                        ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                        ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+        class _EF_KI(ctypes.Structure):
+            _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
+                        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+        class _EF_U(ctypes.Union):
+            _fields_ = [("mi", _EF_MI), ("ki", _EF_KI), ("pad", ctypes.c_byte * 32)]
+
+        class _EF_IN(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", _EF_U)]
+
+        def _ef_send(inputs):
+            arr = (_EF_IN * len(inputs))(*inputs)
+            _user32.SendInput(len(inputs), ctypes.byref(arr), ctypes.sizeof(_EF_IN))
+
+        def _ef_open_clipboard(retries: int = 15) -> bool:
+            for _ in range(retries):
+                if _user32.OpenClipboard(None):
+                    return True
+                time.sleep(0.02)
+            return False
+
+        def ef_set_clipboard(text: str) -> None:
+            if not _ef_open_clipboard():
+                return
+            try:
+                _user32.EmptyClipboard()
+                data = (text + "\0").encode("utf-16-le")
+                h = _kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
+                ptr = _kernel32.GlobalLock(h)
+                ctypes.memmove(ptr, data, len(data))
+                _kernel32.GlobalUnlock(h)
+                _user32.SetClipboardData(_CF_UNICODETEXT, h)
+            finally:
+                _user32.CloseClipboard()
+
+        def ef_click(x: int, y: int) -> None:
+            _user32.SetCursorPos(int(x * EF_DPI_SCALE), int(y * EF_DPI_SCALE))
+            time.sleep(0.03)
+            d = _EF_MI(0, 0, 0, _MOUSEEVENTF_LEFTDOWN, 0, None)
+            u = _EF_MI(0, 0, 0, _MOUSEEVENTF_LEFTUP, 0, None)
+            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=m)) for m in (d, u)])
+
+        def ef_double_click(x: int, y: int) -> None:
+            ef_click(x, y)
+            time.sleep(0.05)
+            ef_click(x, y)
+
+        def ef_key(vk: int, mods=None) -> None:
+            mods = mods or []
+            seq = []
+            for m in mods:
+                seq.append(_EF_IN(_INPUT_KEYBOARD, _EF_U(ki=_EF_KI(m, 0, 0, 0, None))))
+            seq.append(_EF_IN(_INPUT_KEYBOARD, _EF_U(ki=_EF_KI(vk, 0, 0, 0, None))))
+            seq.append(_EF_IN(_INPUT_KEYBOARD, _EF_U(ki=_EF_KI(vk, 0, _KEYEVENTF_KEYUP, 0, None))))
+            for m in reversed(mods):
+                seq.append(_EF_IN(_INPUT_KEYBOARD, _EF_U(ki=_EF_KI(m, 0, _KEYEVENTF_KEYUP, 0, None))))
+            _ef_send(seq)
+
+        def ef_paste() -> None:
+            ef_key(0x56, [0x11])  # Ctrl(0x11) + V(0x56) — IRON LAW 허용 키시퀀스
+
+        def ef_foreground_title() -> str:
+            h = _user32.GetForegroundWindow()
+            buf = ctypes.create_unicode_buffer(256)
+            _user32.GetWindowTextW(h, buf, 256)
+            return buf.value
+
+        def ef_messagebox(text: str, title: str = "HD사인 이지폼") -> None:
+            # MB_OK(0) | MB_TOPMOST(0x40000) | MB_SETFOREGROUND(0x10000)
+            try:
+                _user32.MessageBoxW(None, text, title, 0x50000)
+            except Exception:
+                pass
+
+        EASYFORM_AVAILABLE = True
+except Exception as _ef_e:  # noqa: BLE001 — Win32 초기화 실패 시 기능만 비활성
+    logging.warning("이지폼 자동기입 비활성(Win32 초기화 실패): %s", _ef_e)
+    EASYFORM_AVAILABLE = False
+
+
+# ── 셀 좌표 (논리 픽셀) — easyform_layout.json 의 90셀 + pick 으로 찍은 컨트롤 2개 ──
+# 열 순서: month_day, item_code, item, spec, qty, unit_price, supply, tax, remark
+EF_COLS = ["month_day", "item_code", "item", "spec", "qty", "unit_price", "supply", "tax", "remark"]
+EF_CELLS = [
+    [(27, 297), (82, 300), (200, 301), (319, 300), (374, 302), (429, 302), (500, 302), (572, 303), (643, 301)],
+    [(29, 319), (83, 321), (202, 322), (319, 321), (371, 321), (428, 322), (495, 321), (566, 321), (637, 324)],
+    [(27, 341), (85, 342), (208, 342), (324, 342), (375, 342), (430, 341), (493, 341), (565, 342), (644, 345)],
+    [(29, 360), (84, 364), (207, 364), (321, 365), (373, 361), (427, 361), (500, 363), (577, 363), (646, 363)],
+    [(27, 381), (82, 381), (197, 383), (323, 383), (372, 383), (426, 382), (494, 382), (568, 384), (643, 384)],
+    [(28, 404), (88, 405), (202, 407), (326, 405), (372, 405), (430, 401), (493, 402), (567, 404), (643, 404)],
+    [(26, 421), (82, 424), (211, 422), (321, 422), (375, 424), (430, 426), (494, 425), (568, 424), (638, 424)],
+    [(30, 445), (87, 445), (212, 444), (326, 445), (373, 445), (428, 444), (493, 446), (566, 446), (648, 446)],
+    [(28, 467), (88, 467), (207, 466), (319, 466), (378, 466), (427, 466), (501, 468), (571, 467), (644, 469)],
+    [(29, 486), (86, 486), (203, 487), (323, 488), (372, 490), (431, 491), (490, 487), (567, 487), (643, 487)],
+]
+EF_WHITEBOX = (756, 417)   # "현재 □ 줄 선택됨" 흰 박스 — 더블클릭 후 '2' 입력
+EF_INSERT_BTN = (745, 456)  # "삽입" 버튼 — 행 수만큼 클릭
+
+# 채울 7칸: (grid 키, EF_COLS 인덱스, 숫자 여부). 월일·비고는 건드리지 않는다(월일=자동).
+EF_FILL_SEQ = [
+    ("item_code", 1, False), ("item", 2, False), ("spec", 3, False),
+    ("qty", 4, True), ("unit_price", 5, True), ("supply", 6, True), ("tax", 7, True),
+]
+
+
+def _ef_num(s: str) -> str:
+    """숫자 셀 값 — 콤마/공백 제거(이지폼 숫자칸이 '15,000' 붙여넣기를 거부할 수 있어 '15000' 으로)."""
+    return (s or "").replace(",", "").replace(" ", "").strip()
+
+
+def run_easyform_fill(rows: list[dict]) -> tuple[bool, str]:
+    """이지폼 새로작성 그리드에 rows 를 셀 단위로 기입. (성공여부, 메시지)."""
+    if not EASYFORM_AVAILABLE:
+        return False, "이 PC 에서는 이지폼 자동기입을 쓸 수 없습니다(Win32 미초기화)."
+    n = len(rows)
+    if n == 0:
+        return False, "기입할 행이 없습니다."
+    cap = len(EF_CELLS)  # 10
+    if n > cap:
+        return False, (f"행이 {n}개로 자동기입 한도({cap}행)를 넘습니다. "
+                       f"먼저 {cap}행 이하로 나눠 작성해 주세요. (현재 버전 미지원)")
+
+    # 0) 첫 행 품목칸 클릭 — 그리드 활성화 + 첫 행 월일 자동기입 트리거
+    ef_click(*EF_CELLS[0][EF_COLS.index("item")])
+    time.sleep(0.15)
+
+    # 1) 흰 박스 더블클릭 → '2' 입력(삽입 위치=둘째 줄: 월일행이 맨 위 유지)
+    ef_double_click(*EF_WHITEBOX)
+    time.sleep(0.1)
+    ef_key(0x32)  # '2'
+    time.sleep(0.1)
+
+    # 2) 삽입 N번 — 기존 1행 + N = N+1행(마지막 1행은 여유분)
+    for _ in range(n):
+        ef_click(*EF_INSERT_BTN)
+        time.sleep(0.12)
+
+    time.sleep(0.2)
+
+    # 3) 행마다 7칸 클릭+붙여넣기 (월일은 행 진입 시 자동, 비고는 건드리지 않음)
+    for r in range(n):
+        row = rows[r]
+        for key_name, col_idx, is_num in EF_FILL_SEQ:
+            val = str(row.get(key_name, "") or "")
+            if is_num:
+                val = _ef_num(val)
+            if val == "":
+                continue  # 빈 값은 칸을 건드리지 않음
+            x, y = EF_CELLS[r][col_idx]
+            ef_click(x, y)
+            time.sleep(0.08)            # 셀 활성화 대기(batch.py 검증 타이밍)
+            ef_set_clipboard(val)
+            time.sleep(0.02)
+            ef_paste()
+            time.sleep(0.05)
+
+    # 4) 마지막 셀 확정 — 여유분(다음) 행 품목칸 클릭(저장/Enter 안 함). 한도면 마지막 행 재클릭.
+    commit_r = min(n, cap - 1)
+    ef_click(*EF_CELLS[commit_r][EF_COLS.index("item")])
+    return True, f"{n}개 행을 기입했습니다. 내용 확인 후 직접 저장(F5)하세요."
+
+
+# ── 스테이징 + 핫키 트리거 ──────────────────────────────────────────────────
+# 웹 '이지폼 입력' 버튼이 grid 를 POST 하면 여기 담아두고(arm), 사용자가 이지폼 창에서 핫키를
+# 누르면 그때 실행한다. 이렇게 분리하는 이유: 클릭이 정확한 창에 떨어지려면 실행 순간 이지폼이
+# 최상위여야 하는데, 웹 버튼을 누른 직후엔 브라우저가 최상위이기 때문.
+_EF_LOCK = threading.Lock()
+_EF_JOB: dict | None = None          # {"rows": [...], "armed_at": ts}
+_EF_RUNNING = False
+EF_JOB_TTL = 1800                    # 30분 지나면 자동 만료(새로작성·거래처 선택 여유)
+EF_HOTKEY_VK = 0x75                  # F6 (이지폼 단축키 F2/F5/F8/F9/F11/F12/Esc 와 충돌 없음)
+EF_HOTKEY_LABEL = "F6"
+
+
+def ef_stage_job(rows: list[dict]) -> None:
+    global _EF_JOB
+    with _EF_LOCK:
+        _EF_JOB = {"rows": rows, "armed_at": time.time()}
+
+
+def _ef_take_job() -> dict | None:
+    global _EF_JOB
+    with _EF_LOCK:
+        job = _EF_JOB
+        if job is None:
+            return None
+        if time.time() - job["armed_at"] > EF_JOB_TTL:
+            _EF_JOB = None
+            return None
+        _EF_JOB = None
+        return job
+
+
+def _ef_is_easyform_foreground() -> bool:
+    title = ef_foreground_title()
+    return ("이지폼" in title) or ("거래명세서" in title)
+
+
+def _ef_hotkey_watcher() -> None:
+    """핫키 폴링 — 눌리는 순간(엣지) + 스테이징된 작업 + 이지폼이 최상위일 때만 실행."""
+    global _EF_RUNNING
+    was_down = False
+    while True:
+        time.sleep(0.03)
+        down = bool(_user32.GetAsyncKeyState(EF_HOTKEY_VK) & 0x8000)
+        edge = down and not was_down
+        was_down = down
+        if not edge or _EF_RUNNING:
+            continue
+        with _EF_LOCK:
+            has_job = _EF_JOB is not None
+        if not has_job:
+            continue  # 무장 안 된 상태의 핫키는 무시(오발사 방지)
+        if not _ef_is_easyform_foreground():
+            ef_messagebox(
+                "이지폼 '매출 거래명세서' 새로작성 창을 맨 앞에 두고 다시 " + EF_HOTKEY_LABEL + " 를 누르세요.",
+                "이지폼 자동기입",
+            )
+            continue
+        job = _ef_take_job()
+        if job is None:
+            continue
+        _EF_RUNNING = True
+        try:
+            ok, msg = run_easyform_fill(job["rows"])
+        except Exception as e:  # noqa: BLE001
+            ok, msg = False, f"자동기입 중 오류: {e}"
+            logging.exception("이지폼 자동기입 오류")
+        finally:
+            _EF_RUNNING = False
+        ef_messagebox(
+            ("작성이 완료되었습니다.\n\n" + msg) if ok else ("기입 실패\n\n" + msg),
+            "이지폼 자동기입",
+        )
+        logging.info("이지폼 자동기입 %s — %s", "성공" if ok else "실패", msg)
+
+
+def start_easyform_watcher() -> None:
+    if not EASYFORM_AVAILABLE:
+        logging.info("이지폼 자동기입: 비활성(이 PC 는 Win32 미초기화 — 기능 숨김)")
+        return
+    threading.Thread(target=_ef_hotkey_watcher, daemon=True).start()
+    logging.info("이지폼 자동기입: 대기(DPI %.2fx). 웹에서 보낸 뒤 이지폼 창에서 %s 로 실행.",
+                 EF_DPI_SCALE, EF_HOTKEY_LABEL)
+
 
 # ─── 메인 ────────────────────────────────────────────────────────────────
 
@@ -920,6 +1289,7 @@ def serve_forever(config: dict) -> None:
     logging.info("FlexiSIGN: %s (실행 중일 때만 .fs 를 그 창에서 엶 — 새로 띄우지 않음)",
                  _fs or "(경로 미발견)")
     logging.info("허용 origin: %s", ", ".join(config.get("allowed_origins") or []))
+    start_easyform_watcher()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -1,15 +1,16 @@
 /**
- * 자동견적 Slice 4 — 로컬 easyform 자동기입 에이전트 클라이언트 (선택적 · feature-detected).
+ * 자동견적 Slice 14 — 로컬 이지폼 자동기입 에이전트 클라이언트 (선택적 · feature-detected).
  *
- * 이 모듈은 PC 에 설치된 로컬 에이전트(127.0.0.1:17345)를 **탐지**하고, 승인된 견적 라인을
- * easyform 의 셀로 **매핑**해 전송한다. 그 이상은 하지 않는다.
+ * PC 에 떠 있는 작업뷰어 에이전트(127.0.0.1:17345)를 **탐지**하고, 명세서 grid 를 이지폼 셀로
+ * **매핑해 전송(스테이징)** 한다. 실제 기입은 사용자가 이지폼 '매출 거래명세서' 새로작성 창에서
+ * 핫키(F6)를 눌렀을 때 에이전트가 수행한다 — 클릭이 정확한 창에 떨어지도록 실행 순간 이지폼이
+ * 최상위여야 하기 때문(웹 버튼 직후엔 브라우저가 최상위).
  *
- * IRON LAW (anti-scenario 7): 프론트엔드는 **셀 입력만** 요청한다. Enter/저장/확정 등
- * 커밋을 요청하는 어떤 토큰도 본문에 담지 않으며, 사람이 easyform 에서 직접 확정한다.
- * Win32 키시퀀스(절대 VK_RETURN/save 안 보냄; ALLOWED_VKS={Ctrl,V})는 로컬 에이전트가
- * 이미 구현·검증한 영역이다 — 여기서는 재구현하지 않고, 셀 데이터만 넘긴다.
+ * IRON LAW (anti-scenario 7): 프론트엔드는 **셀 입력만** 요청한다. Enter/저장(F5)/전자전송(F11)
+ * 등 커밋을 요청하는 어떤 토큰도 본문에 담지 않으며, 사람이 이지폼에서 직접 확정한다. 에이전트가
+ * 쓰는 Win32 입력도 셀 클릭 + '2' 한 글자(삽입 위치) + Ctrl+V 뿐이다.
  *
- * 에이전트 부재 PC 에서는 호출부가 probe 실패로 기능 자체를 숨긴다(HIDDEN, not disabled).
+ * 에이전트 부재 PC 에서는 호출부가 probe 실패로 기능을 숨긴다(HIDDEN, not disabled).
  * 선례: OrderAdmin.jsx / FieldViewer.jsx 의 AGENT_URL + AbortController(~1.5s) + cache:'no-store'.
  */
 
@@ -17,59 +18,53 @@
 const AGENT_URL =
   import.meta.env.VITE_HDSIGN_AGENT_URL || 'http://127.0.0.1:17345';
 
-/** easyform 한 행으로 채워질 셀들(품목코드·품목·규격·수량·단가). */
+/**
+ * 이지폼 한 행으로 채워질 셀들 — 정확히 이 7개(월일=자동·비고=미사용은 제외).
+ * 모두 문자열(이지폼 셀에 붙여넣을 표시값). 숫자칸의 콤마 제거는 에이전트가 한다.
+ */
 export interface EasyformRow {
   item_code: string;
   item: string;
   spec: string;
-  qty: number;
-  unit_price: number;
+  qty: string;
+  unit_price: string;
+  supply: string;
+  tax: string;
 }
 
-/** 매핑 입력 — 컴포넌트의 PricedLine 과 구조적으로 호환되는 최소 모양. */
-export interface PricedLineLike {
-  entry: {
-    category: string;
-    w?: string;
-    h?: string;
-    coats?: string;
-    qty?: string;
-    brandText?: string;
-  };
-  result: { unitPrice: number };
+/** AutoQuote 의 buildGrid() 한 행(한글 키) 모양 — 매핑 입력. */
+export interface GridRow {
+  품목코드?: string;
+  품목?: string;
+  규격?: string;
+  수량?: string;
+  단가?: string;
+  공급가액?: string;
+  세액?: string;
+  [k: string]: string | undefined;
 }
 
-/**
- * easyform 한 행에 허용되는 데이터 필드 — 정확히 이 5개뿐.
- * 이 집합 밖의 키는 '셀 데이터'가 아니라 '지시(directive)'로 간주해 전송을 거부한다.
- */
+/** 이지폼 행에 허용되는 데이터 필드 — 정확히 이 7개뿐. 이 밖의 키는 '지시'로 보고 거부한다. */
 const ALLOWED_ROW_KEYS: ReadonlyArray<keyof EasyformRow> = [
   'item_code',
   'item',
   'spec',
   'qty',
   'unit_price',
+  'supply',
+  'tax',
 ];
 
 /**
  * IRON LAW 가드(구조적): 전송 본문은 정확히 `{ rows: EasyformRow[] }` 여야 한다.
- *
- * 과거 가드는 직렬화된 본문 전체를 정규식으로 훑어 'ENTER/SAVE/저장/commit' 글자가
- * 있으면 막았는데, 이는 셀 데이터(spec=brandText)에 자연스레 들어가는 합법적 간판
- * 텍스트(예: "MEDICAL CENTER"→'enter', "세이브존 SAVEZONE", "저장창고")까지 오탐해
- * 정상 채우기를 막았다. 막아야 할 것은 '커밋 지시'이지, 셀 값 속 지시처럼 보이는
- * 글자가 아니다.
- *
- * 따라서 자유텍스트 '값'은 절대 검사하지 않고, '구조'만 검증한다 — 최상위에 `rows`
- * 외의 키가 있거나(예: save/commit/enter/return/keys), 어떤 행에 허용된 5개 데이터
- * 필드 밖의 키가 있으면 거부한다. buildEasyformRows 는 그 5개 필드만 방출하므로 이
- * 가드는 콘텐츠 필터가 아니라 심층방어(defense-in-depth)다(anti-scenario 7).
+ * 자유텍스트 '값'은 검사하지 않고(간판 텍스트에 enter/save 가 우연히 들어갈 수 있으므로),
+ * '구조'만 본다 — 최상위 rows 외 키가 있거나, 행에 허용 7필드 밖의 키가 있으면 거부.
  */
 export function assertNoCommitDirective(payload: { rows: EasyformRow[] }): void {
   const topKeys = Object.keys(payload).filter((k) => k !== 'rows');
   if (topKeys.length > 0) {
     throw new Error(
-      `IRON LAW 위반: 전송 본문에 허용되지 않은 최상위 지시 필드(${topKeys.join(', ')})가 있습니다.`,
+      `IRON LAW 위반: 본문에 허용되지 않은 최상위 지시 필드(${topKeys.join(', ')})가 있습니다.`,
     );
   }
   if (!Array.isArray(payload.rows)) {
@@ -86,44 +81,36 @@ export function assertNoCommitDirective(payload: { rows: EasyformRow[] }): void 
   }
 }
 
-/** 규격 문자열: `${w}x${h}` + (유효 도수 1~7 시 `· N도`) + (브랜드텍스트 식별용). */
-function buildSpec(e: PricedLineLike['entry']): string {
-  const parts: string[] = [];
-  if (e.w && e.h) parts.push(`${e.w}x${e.h}`);
-  else if (e.w) parts.push(String(e.w));
-  else if (e.h) parts.push(String(e.h));
-  const coats = Number(e.coats);
-  if (Number.isFinite(coats) && coats >= 1 && coats <= 7) {
-    parts.push(`${coats}도`);
-  }
-  const brand = (e.brandText ?? '').trim();
-  if (brand) parts.push(brand);
-  return parts.join(' · ');
+/**
+ * buildGrid() 결과(한글 키 9칸) → 이지폼 행(영문 키 7칸) 매핑.
+ * 7칸 모두 빈 행은 떨군다(삽입 클릭 수 = 데이터 행 수가 되도록).
+ */
+export function gridToEasyformRows(grid: GridRow[]): EasyformRow[] {
+  return grid
+    .map((g) => ({
+      item_code: g['품목코드'] ?? '',
+      item: g['품목'] ?? '',
+      spec: g['규격'] ?? '',
+      qty: g['수량'] ?? '',
+      unit_price: g['단가'] ?? '',
+      supply: g['공급가액'] ?? '',
+      tax: g['세액'] ?? '',
+    }))
+    .filter((r) => ALLOWED_ROW_KEYS.some((k) => String(r[k]).trim() !== ''));
+}
+
+/** 에이전트 probe 응답. */
+export interface EasyformProbe {
+  ok: boolean;
+  easyform: boolean;   // 이 PC 가 Win32 자동기입 가능한가
+  hotkey: string;      // 실행 핫키 라벨(예: 'F6')
 }
 
 /**
- * 승인된 견적 라인 → easyform 행 매핑. 순수 함수(네트워크 없음).
- * item_code 는 추적용 라인 코드(AQ-1, AQ-2 …) — easyform 의 품목 마스터 코드가 아니라
- * 직원이 어떤 견적 라인에서 왔는지 식별하는 용도다. 단가는 라인 단가(unitPrice)를 쓴다.
+ * 로컬 에이전트 탐지: `${AGENT_URL}/easyform/probe` 를 ~1.5s 타임아웃 + no-store 로 찔러본다.
+ * 실패/중단/부재 → null → 호출부가 기능을 숨긴다.
  */
-export function buildEasyformRows(lines: PricedLineLike[]): EasyformRow[] {
-  return lines.map((line, i) => ({
-    item_code: `AQ-${i + 1}`,
-    item: line.entry.category,
-    spec: buildSpec(line.entry),
-    qty: (() => {
-      const q = Number(line.entry.qty);
-      return Number.isFinite(q) && q > 0 ? q : 1;
-    })(),
-    unit_price: Math.round(line.result.unitPrice),
-  }));
-}
-
-/**
- * 로컬 에이전트 탐지: `${AGENT_URL}/easyform/probe` 를 ~1.5s AbortController 타임아웃 +
- * cache:'no-store' 로 한 번 찔러본다. 실패/중단/부재 → false → 호출부가 기능을 숨긴다.
- */
-export async function probeEasyformAgent(): Promise<boolean> {
+export async function probeEasyformAgent(): Promise<EasyformProbe | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 1500);
   try {
@@ -131,30 +118,40 @@ export async function probeEasyformAgent(): Promise<boolean> {
       signal: ctrl.signal,
       cache: 'no-store',
     });
-    return res.ok;
+    if (!res.ok) return null;
+    const j = (await res.json()) as Partial<EasyformProbe>;
+    return { ok: !!j.ok, easyform: !!j.easyform, hotkey: j.hotkey || 'F6' };
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
+/** 에이전트 스테이징 응답. */
+export interface EasyformStaged {
+  staged: boolean;
+  count?: number;
+  hotkey?: string;
+  message?: string;
+}
+
 /**
- * 셀 채우기(FILL-ONLY): { rows } 만 POST 한다. 저장/Enter/확정/commit 지시는 절대 넣지 않는다.
+ * 셀 채우기 요청(STAGE-ONLY): { rows } 만 POST 한다. 저장/Enter/확정 지시는 절대 넣지 않는다.
  * 전송 직전 IRON LAW 가드를 통과해야 하며, 위반 시 네트워크 호출 없이 throw 한다.
+ * 응답은 즉시 돌아오고(실제 기입은 사용자가 이지폼 창에서 핫키로), staged/hotkey/count 를 담는다.
  */
-export async function fillEasyform(rows: EasyformRow[]): Promise<void> {
+export async function fillEasyform(rows: EasyformRow[]): Promise<EasyformStaged> {
   const payload = { rows };
-  // 네트워크 호출 전에 구조 가드를 통과해야 한다(위반 시 fetch 없이 throw).
-  assertNoCommitDirective(payload);
-  const body = JSON.stringify(payload);
+  assertNoCommitDirective(payload); // 위반 시 fetch 없이 throw
   const res = await fetch(`${AGENT_URL}/easyform/fill`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
     cache: 'no-store',
-    body,
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    throw new Error(`easyform 셀 채우기 실패 (${res.status}).`);
+    throw new Error(`이지폼 전송 실패 (${res.status}).`);
   }
+  return (await res.json()) as EasyformStaged;
 }

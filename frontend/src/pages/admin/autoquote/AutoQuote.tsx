@@ -21,10 +21,12 @@ import {
   getOrder,
   getEstimate,
   putEstimate,
+  markEasyformUploaded,
   readText,
   type Evidence,
   type OrderContext,
 } from './annot/api';
+import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean } from './itemCodes';
 import './AutoQuote.css';
 
@@ -1237,6 +1239,64 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     }
   };
 
+  // ---- 이지폼 자동기입 (slice-14) --------------------------------------
+  // grid 를 로컬 에이전트로 보내 스테이징(arm)만 한다. 실제 기입은 사용자가 이지폼 '매출
+  // 거래명세서' 새로작성 → 거래처 선택 후, 그 창에서 핫키(F6)를 눌렀을 때 에이전트가 수행.
+  const [efBusy, setEfBusy] = useState(false);
+  const sendToEasyform = async () => {
+    if (!order) {
+      cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const rows = gridToEasyformRows(buildGrid());
+    if (rows.length === 0) {
+      cdlg('기입할 행이 없습니다. 먼저 명세서를 작성하세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    setEfBusy(true);
+    try {
+      const probe = await probeEasyformAgent();
+      if (!probe || !probe.easyform) {
+        cdlg(
+          '이 PC 에서 이지폼 자동기입을 쓸 수 없습니다.<br>작업뷰어 에이전트가 트레이에 떠 있어야 합니다(이지폼이 설치된 PC).',
+          [{ label: '확인', sec: true }],
+        );
+        return;
+      }
+      const res = await fillEasyform(rows);
+      if (!res.staged) {
+        cdlg(res.message || '이지폼으로 보내지 못했습니다.', [{ label: '확인', sec: true }]);
+        return;
+      }
+      const hk = res.hotkey || 'F6';
+      cdlg(
+        `이지폼 <b>매출 거래명세서 → 새로작성 → 거래처 선택</b> 후,<br>` +
+          `그 창을 맨 앞에 두고 <b>[${hk}]</b> 키를 누르면 <b>${res.count}행</b>이 자동 기입됩니다.<br>` +
+          `(월일은 자동, 저장은 직접 확인 후 F5)<br><br>` +
+          `다 채워졌으면 아래 <b>[기입 완료]</b> 를 눌러 “이지폼” 배지를 표시하세요.`,
+        [
+          {
+            label: '기입 완료',
+            fn: () => {
+              markEasyformUploaded(token, order.id)
+                .then(() => {
+                  setOrder((o) => (o ? { ...o, easyformUploadedAt: new Date().toISOString() } : o));
+                  onSaved?.();
+                })
+                .catch((e) => console.error(e));
+            },
+          },
+          { label: '닫기', sec: true },
+        ],
+      );
+    } catch (e) {
+      console.error(e);
+      cdlg('이지폼 전송에 실패했습니다.', [{ label: '확인', sec: true }]);
+    } finally {
+      setEfBusy(false);
+    }
+  };
+
   // ---- 공유 (Canvas 합성 → 클립보드) ------------------------------------
   // 참고사진이 있으면 포함 여부를 먼저 묻는다. 포함 시 2장(① 지시서+말풍선+명세서, ② 참고사진)으로 저장.
   const captureShare = () => {
@@ -2352,16 +2412,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             <button className="aq-btn sh" onClick={captureShare}>
               공유하기
             </button>
-            <button
-              className="aq-btn ef"
-              onClick={() =>
-                cdlg(
-                  '이지폼 새로작성 → 거래처 선택 → 시작하기 후, 각 행을 월일·품목코드·품목·규격·수량·단가·공급가액·세액·비고 9칸 모두 자동 기입합니다. (매크로는 slice-14에서 연결)',
-                  [{ label: '확인' }],
-                )
-              }
-            >
-              이지폼 입력
+            <button className="aq-btn ef" onClick={sendToEasyform} disabled={efBusy || !order}>
+              {efBusy ? '보내는 중…' : '이지폼 입력'}
             </button>
           </div>
         </div>
