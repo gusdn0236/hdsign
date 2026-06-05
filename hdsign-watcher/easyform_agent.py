@@ -91,7 +91,7 @@ def main():
     root = tk.Tk()
     root.title("명세서 자동작성")
     root.resizable(False, False)
-    root.geometry("440x172")
+    root.geometry("460x184")
     root.configure(bg="#ffffff")
     # 상단 주황 헤더 바(로고)
     head = tk.Frame(root, bg=ORANGE, height=int(46))
@@ -100,15 +100,13 @@ def main():
              fg="#ffffff", bg=ORANGE, padx=16, pady=10).pack(anchor="w")
     frame = tk.Frame(root, bg="#ffffff", padx=18, pady=14)
     frame.pack(fill="both", expand=True)
-    tk.Label(frame, text="✅ 실행 중", font=("맑은 고딕", 12, "bold"),
-             fg=ORANGE_DARK, bg="#ffffff").pack(anchor="w")
     tk.Label(frame,
-             text="hdsigncraft.com 명세서작성 → [이지폼 입력] 시 자동으로 동작합니다.\n"
-                  "이 창은 최소화해 두세요. (닫으면 종료됩니다)",
-             font=("맑은 고딕", 10), fg="#444444", bg="#ffffff", justify="left").pack(anchor="w", pady=(8, 0))
-    status = ("이지폼 자동기입 준비됨." if easyform.EASYFORM_AVAILABLE
-              else "⚠ 이 PC 에서는 자동기입 불가(Windows 전용).")
-    tk.Label(frame, text=status, font=("맑은 고딕", 9), fg="#6b7785", bg="#ffffff").pack(anchor="w", pady=(8, 0))
+             text="홈페이지에서 명세서 작성 시 자동으로 작성을 도와드립니다.\n창을 닫으면 종료됩니다.",
+             font=("맑은 고딕", 11), fg="#333333", bg="#ffffff", justify="left").pack(anchor="w")
+    ready = easyform.EASYFORM_AVAILABLE
+    status = "✅ 이지폼 자동기입 준비됨" if ready else "⚠ 이 PC 에서는 자동기입 불가(Windows 전용)"
+    tk.Label(frame, text=status, font=("맑은 고딕", 12, "bold"),
+             fg=(ORANGE_DARK if ready else "#b91c1c"), bg="#ffffff").pack(anchor="w", pady=(14, 0))
 
     threading.Thread(target=_serve, daemon=True).start()
     logging.info("명세서 자동작성 에이전트 — http://127.0.0.1:%d 대기", PORT)
