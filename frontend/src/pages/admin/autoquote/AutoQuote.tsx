@@ -1947,11 +1947,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <button
                 type="button"
                 className={'aq-toolbtn aq-ocrbtn' + (mode === 'ocr' ? ' on' : '')}
-                title="글자수 — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 3)"
+                title="글자AI — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 3). 글자수 모드에서 또 누르면 박스→연필→지우개 순환"
                 onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setMode((m) => (m === 'ocr' ? 'cursor' : 'ocr'))}
+                onClick={() =>
+                  // 키 3 과 동일: 글자수 모드가 아니면 진입, 이미면 박스→연필→지우개 순환.
+                  modeRef.current === 'ocr'
+                    ? setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'))
+                    : setMode('ocr')
+                }
               >
-                글자수
+                글자AI
               </button>
             </div>
           )}
