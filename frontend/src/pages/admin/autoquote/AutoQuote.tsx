@@ -1375,13 +1375,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
       return;
     }
-    const rows = gridToEasyformRows(buildGrid());
+    const grid = buildGrid();
+    const rows = gridToEasyformRows(grid);
     if (rows.length === 0) {
       cdlg('기입할 행이 없습니다. 먼저 명세서를 작성하세요.', [{ label: '확인', sec: true }]);
       return;
     }
     setEfBusy(true);
     try {
+      // 이지폼 입력 = 확정 명세서. 임시저장을 안 했어도 서버(MySQL autoquote_estimate)에 저장해
+      // 매출 데이터로 남긴다. 저장 실패해도 이지폼 입력은 계속(이후 markEasyformUploaded 가 완료시각).
+      try {
+        await putEstimate(token, order.id, { grid, total, savedFrom: 'easyform' });
+        setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
+        onSaved?.();
+      } catch (e) {
+        console.error('이지폼 입력 시 명세서 저장 실패', e);
+      }
       const probe = await probeEasyformAgent();
       if (!probe || !probe.easyform) {
         cdlg(
