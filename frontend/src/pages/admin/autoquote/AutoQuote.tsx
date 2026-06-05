@@ -1057,8 +1057,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const z = zoomRef.current || 1;
     const x = (e.clientX - (st?.left ?? 0)) / z; // 화면→콘텐츠(지시서) 좌표.
     const y = (e.clientY - (st?.top ?? 0)) / z;
-    setPins((prev) => prev.map((p, idx) => (idx === i ? { ...p, ax: x, ay: y, lx: x, ly: y, dragged: false } : p)));
-    setSelPin(i);
+    // 점은 드롭 지점에, 말풍선은 점 '우상단'에(자리 없으면 좌상단). 점→말풍선 리더선(dragged).
+    const off = 70 / z; // 화면상 ~70px 만큼 우상단으로
+    const halfW = 180 / z; // 말풍선 화면폭(~360px)의 절반 — 우측 경계 판정용
+    const dw = imgRef.current?.clientWidth ?? 0;
+    let lx = x + off;
+    const ly = y - off;
+    if (dw && lx + halfW > dw) lx = x - off; // 우측 공간 부족 → 좌상단
+    setPins((prev) => prev.map((p, idx) => (idx === i ? { ...p, ax: x, ay: y, lx, ly, dragged: true } : p)));
+    setSelPin(null); // 드롭 시 삭제버튼 열지 않음 — 핀+말풍선만 생성
   };
 
   const total = pins.reduce((s, p) => s + (num(p.vals['단가']) || 0) * (num(p.vals['수량']) || 1), 0);
