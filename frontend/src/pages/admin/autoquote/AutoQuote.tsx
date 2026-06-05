@@ -329,6 +329,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
 
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string } | null>(null);
+  const [lpi, setLpi] = useState(0); // 단가찾아보기 모달 — 현재 후보의 사진 인덱스(다장 갤러리)
 
   const stageRef = useRef<HTMLDivElement>(null);
   const stagewrapRef = useRef<HTMLDivElement>(null);
@@ -1403,6 +1404,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         }),
       );
       const q = `"${(code + ' ' + item).trim() || '품목'}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
+      setLpi(0);
       setLookup({ refs, ri: 0, q });
       setStatus('');
     } catch (e) {
@@ -2849,11 +2851,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               <b>단가 찾아보기</b>
               <span className="aq-q">{lookup.q} · 예측 단가·근거</span>
               <span className="aq-nav">
-                <button onClick={() => setLookup((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1 } : l))}>‹</button>
+                <button
+                  onClick={() => {
+                    setLpi(0);
+                    setLookup((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1 } : l));
+                  }}
+                >
+                  ‹
+                </button>
                 <span style={{ fontSize: 12.5, color: '#6b7785' }}>
                   {lookup.refs.length ? `${lookup.ri + 1} / ${lookup.refs.length}` : '0'}
                 </span>
-                <button onClick={() => setLookup((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1 } : l))}>
+                <button
+                  onClick={() => {
+                    setLpi(0);
+                    setLookup((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1 } : l));
+                  }}
+                >
                   ›
                 </button>
                 <button className="aq-x" onClick={() => setLookup(null)}>
@@ -2872,14 +2886,53 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               (() => {
                 const R = lookup.refs[lookup.ri];
                 const ev = R.evidence;
-                const photo =
-                  ev?.photo_available && ev.photo_base64
-                    ? `data:${ev.photo_content_type || 'image/jpeg'};base64,${ev.photo_base64}`
-                    : null;
+                // 다장(many-to-many) 지원: ev.photos 있으면 그걸, 없으면 단일 photo_base64 폴백.
+                const phs =
+                  ev?.photos && ev.photos.length
+                    ? ev.photos
+                    : ev?.photo_base64
+                      ? [{ content_type: ev.photo_content_type || 'image/jpeg', base64: ev.photo_base64 }]
+                      : [];
+                const cur = phs.length ? phs[Math.min(lpi, phs.length - 1)] : null;
+                const photo = cur ? `data:${cur.content_type || 'image/jpeg'};base64,${cur.base64}` : null;
                 return (
                   <div className="aq-mbody">
-                    <div className="aq-mleft">
+                    <div className="aq-mleft" style={{ position: 'relative' }}>
                       {photo ? <img src={photo} alt="과거 작업지시서" /> : <div className="none">사진 없음</div>}
+                      {phs.length > 1 && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: 8,
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            background: 'rgba(0,0,0,0.6)',
+                            color: '#fff',
+                            borderRadius: 16,
+                            padding: '4px 10px',
+                            fontSize: 13,
+                          }}
+                        >
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16 }}
+                            onClick={() => setLpi((i) => (i > 0 ? i - 1 : phs.length - 1))}
+                          >
+                            ‹
+                          </button>
+                          <span>
+                            지시서 {Math.min(lpi, phs.length - 1) + 1} / {phs.length}
+                          </span>
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16 }}
+                            onClick={() => setLpi((i) => (i < phs.length - 1 ? i + 1 : 0))}
+                          >
+                            ›
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="aq-mright">
                       <div className="aq-rinfo">

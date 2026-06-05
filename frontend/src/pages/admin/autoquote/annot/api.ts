@@ -85,6 +85,8 @@ export interface Evidence {
   photo_available: boolean;
   photo_content_type?: string;
   photo_base64?: string;
+  /** many-to-many: 한 명세서의 여러 지시서 사진(메인 + 보조). 첫 장 = photo_base64. */
+  photos?: { content_type: string; base64: string }[];
   grid: EvidenceGridRow[];
 }
 

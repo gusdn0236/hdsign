@@ -60,7 +60,15 @@ public class InvoiceEvidenceService {
             @JsonProperty("grid") List<GridRow> grid,
             @JsonProperty("photo_available") boolean photoAvailable,
             @JsonProperty("photo_content_type") String photoContentType,
-            @JsonProperty("photo_base64") String photoBase64) {
+            @JsonProperty("photo_base64") String photoBase64,
+            // many-to-many: 한 명세서에 여러 지시서 사진(메인 + _2,_3..). 첫 장은 photo_base64 와 동일.
+            @JsonProperty("photos") List<PhotoItem> photos) {
+    }
+
+    /** 사진 한 장(다장 응답용). */
+    public record PhotoItem(
+            @JsonProperty("content_type") String contentType,
+            @JsonProperty("base64") String base64) {
     }
 
     /** 파일명이 화이트리스트(easyform_*.json)에 맞는가 — 컨트롤러가 400 판정에 쓴다. */
@@ -112,7 +120,12 @@ public class InvoiceEvidenceService {
             }
         }
         Object idx = idxNode.isNumber() ? (Object) idxNode.asInt() : idxNode.asText();
-        Photo photo = loadPhoto(file, invoiceIdx);
+        List<Photo> photos = loadPhotos(file, invoiceIdx);
+        Photo first = photos.isEmpty() ? null : photos.get(0);
+        List<PhotoItem> items = new ArrayList<>();
+        for (Photo p : photos) {
+            items.add(new PhotoItem(p.contentType(), p.base64()));
+        }
         return new Evidence(
                 idx,
                 file,
@@ -120,17 +133,38 @@ public class InvoiceEvidenceService {
                 text(inv, "client"),
                 text(inv, "total"),
                 grid,
-                photo != null,
-                photo == null ? null : photo.contentType,
-                photo == null ? null : photo.base64);
+                first != null,
+                first == null ? null : first.contentType(),
+                first == null ? null : first.base64(),
+                items);
     }
 
-    /** {@code <stem>_<idx>.{jpg|jpeg|png}} 규칙으로 작업지시서 사진 best-effort 조회. */
-    private Photo loadPhoto(String file, String invoiceIdx) {
+    /**
+     * 작업지시서 사진들 조회: 메인 {@code <stem>_<idx>.{ext}} + 보조 {@code <stem>_<idx>_2.{ext}}, _3..
+     * (many-to-many — 한 명세서에 여러 지시서). 메인이 없으면 빈 리스트(사진 없음).
+     */
+    private List<Photo> loadPhotos(String file, String invoiceIdx) {
         String stem = file.endsWith(".json") ? file.substring(0, file.length() - ".json".length()) : file;
+        List<Photo> out = new ArrayList<>();
+        Photo main = loadOne(stem + "_" + invoiceIdx);
+        if (main == null) {
+            return out;
+        }
+        out.add(main);
+        for (int n = 2; n <= 6; n++) {
+            Photo p = loadOne(stem + "_" + invoiceIdx + "_" + n);
+            if (p == null) {
+                break;
+            }
+            out.add(p);
+        }
+        return out;
+    }
+
+    /** {@code <base>.{jpg|jpeg|png}} best-effort 한 장 로드. */
+    private Photo loadOne(String base) {
         for (String ext : PHOTO_EXTS) {
-            String name = stem + "_" + invoiceIdx + "." + ext;
-            byte[] bytes = dataSource.load(name);
+            byte[] bytes = dataSource.load(base + "." + ext);
             if (bytes != null && bytes.length > 0) {
                 String ct = "png".equals(ext) ? "image/png" : "image/jpeg";
                 return new Photo(ct, java.util.Base64.getEncoder().encodeToString(bytes));
