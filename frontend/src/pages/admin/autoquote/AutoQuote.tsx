@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
 // @ts-expect-error - Vite ?url 자산 임포트(타입 선언 없음). 앱 다른 곳(PdfViewer)과 동일 패턴.
@@ -314,6 +315,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
   const [gridEditing, setGridEditing] = useState(false); // 우측 명세서 표를 수기 편집(셀 포커스) 중 — 다음행 하이라이트 끔
   const [visionQuota, setVisionQuota] = useState<VisionQuota | null>(null); // 글자AI 일일 한도(서버) — 버튼 옆 표시·사전 차단
+  // 우측 표 품목코드 자동완성(말풍선과 동일) — 표는 overflow 클리핑이라 포털+fixed 로 띄운다.
+  const [gridAc, setGridAc] = useState<{ row: number; idx: number; left: number; top: number; width: number } | null>(null);
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
@@ -1140,6 +1143,62 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (next) {
       next.focus();
       next.select();
+    }
+  };
+
+  // ---- 우측 표 품목코드 자동완성(말풍선과 동일 동작) -----------------------
+  const focusGridCell = (row: number, col: number) => {
+    (document.querySelector(`input[data-gr="${row}"][data-gc="${col}"]`) as HTMLInputElement | null)?.focus();
+  };
+  // 입력칸 위치(fixed) + 초기 하이라이트(혹시-인가요면 그 항목) 잡기.
+  const openGridAc = (row: number, inputEl: HTMLInputElement) => {
+    const r = inputEl.getBoundingClientRect();
+    const ms = matchCodes(inputEl.value);
+    const dym = didYouMean(inputEl.value, ms);
+    setGridAc({
+      row,
+      idx: dym ? ms.indexOf(dym) : -1,
+      left: r.left,
+      top: r.bottom,
+      width: Math.max(r.width, 200),
+    });
+  };
+  const applyGridCode = (row: number, code: string) => {
+    setCell(row, '품목코드', code);
+    setGridAc(null);
+    setTimeout(() => focusGridCell(row, 1), 0); // 품목 칸으로
+  };
+  // 품목코드 칸 키 — 드롭다운 탐색(↓↑)/적용(Enter)/닫기(Esc). 선택 없으면 Enter=오른쪽 이동.
+  const onGridCodeKey = (e: React.KeyboardEvent, row: number) => {
+    const cur = pinsRef.current[row]?.vals['품목코드'] || '';
+    const ms = matchCodes(cur);
+    if (e.key === 'ArrowDown' && ms.length) {
+      e.preventDefault();
+      setGridAc((g) => (g ? { ...g, idx: Math.min(g.idx + 1, ms.length - 1) } : g));
+      return;
+    }
+    if (e.key === 'ArrowUp' && ms.length) {
+      e.preventDefault();
+      setGridAc((g) => (g ? { ...g, idx: Math.max(g.idx - 1, -1) } : g));
+      return;
+    }
+    if (e.key === 'Escape') {
+      setGridAc(null);
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const idx = gridAc && gridAc.row === row ? gridAc.idx : -1;
+      const dym = didYouMean(cur, ms);
+      if (idx >= 0 && ms[idx]) {
+        applyGridCode(row, ms[idx]); // 하이라이트(또는 혹시-인가요)된 표준코드 적용
+      } else if (dym) {
+        applyGridCode(row, dym);
+      } else {
+        setGridAc(null);
+        focusGridCell(row, 1); // 그대로 두고 다음 칸
+      }
+      return;
     }
   };
 
@@ -2584,7 +2643,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                         )}
                       </td>
                       <td>
-                        <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} data-gr={i} data-gc={0} onKeyDown={(e) => onGridKey(e, i, 0)} />
+                        <input
+                          value={v['품목코드'] || ''}
+                          onChange={(e) => {
+                            setCell(i, '품목코드', e.target.value);
+                            openGridAc(i, e.currentTarget);
+                          }}
+                          onFocus={(e) => openGridAc(i, e.currentTarget)}
+                          onBlur={() => setTimeout(() => setGridAc((g) => (g && g.row === i ? null : g)), 150)}
+                          onKeyDown={(e) => onGridCodeKey(e, i)}
+                          data-gr={i}
+                          data-gc={0}
+                        />
                       </td>
                       <td className="it">
                         <input value={v['품목'] || ''} onChange={(e) => setCell(i, '품목', e.target.value)} data-gr={i} data-gc={1} onKeyDown={(e) => onGridKey(e, i, 1)} />
@@ -2635,6 +2705,51 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           </div>
         </div>
       </div>
+
+      {/* 우측 표 품목코드 자동완성 드롭다운 — 표 overflow 클리핑 회피로 포털+fixed. 말풍선과 동일 UI. */}
+      {gridAc &&
+        pins[gridAc.row] &&
+        (() => {
+          const cur = pins[gridAc.row].vals['품목코드'] || '';
+          const ms = matchCodes(cur);
+          if (!ms.length) return null;
+          const dym = didYouMean(cur, ms);
+          return createPortal(
+            <div
+              className="aq-acdrop"
+              style={{
+                position: 'fixed',
+                left: gridAc.left,
+                top: gridAc.top + 2,
+                width: gridAc.width,
+                zIndex: 3000,
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {dym && gridAc.idx === ms.indexOf(dym) && (
+                <div className="aq-achint">
+                  혹시 <b>{dym}</b> 인가요? · Enter 적용
+                </div>
+              )}
+              <div className="aq-aclist">
+                {ms.map((c, k) => (
+                  <div
+                    key={c}
+                    className={'aq-acitem' + (k === gridAc.idx ? ' on' : '')}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      applyGridCode(gridAc.row, c);
+                    }}
+                  >
+                    {c}
+                  </div>
+                ))}
+              </div>
+              {ms.length > 5 && <div className="aq-acmore">+{ms.length - 5}개 더 · ↓로 탐색</div>}
+            </div>,
+            document.body,
+          );
+        })()}
 
       {/* 단가 찾아보기 모달 */}
       {lookup && (
