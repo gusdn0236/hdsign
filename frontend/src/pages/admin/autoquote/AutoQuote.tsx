@@ -736,6 +736,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (!imgSrc) return;
+      // 품목코드 자동완성 드롭다운 위에서 휠 = 드롭다운 스크롤(줌 아님). preventDefault 전에 양보.
+      if ((e.target as HTMLElement | null)?.closest?.('.aq-acdrop')) return;
       e.preventDefault();
       const rect = stageRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -1120,6 +1122,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
           : { ...next[i], vals: { ...next[i].vals, [key]: value } };
       return next;
     });
+  };
+
+  // 우측 명세서 표 Enter 이동 — 편집칸 품목코드(0)·품목(1)·규격(2)·수량(3)·단가(4). 공급가액=읽기전용 제외.
+  // Enter 시 그 행의 다른 칸이 비어 있어도 '오른쪽으로만' 이동, 마지막(단가)에서는 다음 줄 품목코드로.
+  const GRID_COLS = 5;
+  const onGridKey = (e: React.KeyboardEvent, row: number, col: number) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    let nr = row;
+    let nc = col + 1;
+    if (nc >= GRID_COLS) {
+      nr = row + 1;
+      nc = 0;
+    }
+    const next = document.querySelector<HTMLInputElement>(`input[data-gr="${nr}"][data-gc="${nc}"]`);
+    if (next) {
+      next.focus();
+      next.select();
+    }
   };
 
   // 표의 번호 동그라미를 사진(지시서) 위로 드롭 → 그 행(핀)을 드롭 지점에 배치(제자리 말풍선). 역방향 작성.
@@ -2553,19 +2574,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
                         )}
                       </td>
                       <td>
-                        <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} />
+                        <input value={v['품목코드'] || ''} onChange={(e) => setCell(i, '품목코드', e.target.value)} data-gr={i} data-gc={0} onKeyDown={(e) => onGridKey(e, i, 0)} />
                       </td>
                       <td className="it">
-                        <input value={v['품목'] || ''} onChange={(e) => setCell(i, '품목', e.target.value)} />
+                        <input value={v['품목'] || ''} onChange={(e) => setCell(i, '품목', e.target.value)} data-gr={i} data-gc={1} onKeyDown={(e) => onGridKey(e, i, 1)} />
                       </td>
                       <td>
-                        <input value={v['규격'] || ''} onChange={(e) => setCell(i, '규격', e.target.value)} />
+                        <input value={v['규격'] || ''} onChange={(e) => setCell(i, '규격', e.target.value)} data-gr={i} data-gc={2} onKeyDown={(e) => onGridKey(e, i, 2)} />
                       </td>
                       <td>
-                        <input value={v['수량'] || ''} onChange={(e) => setCell(i, '수량', e.target.value)} />
+                        <input value={v['수량'] || ''} onChange={(e) => setCell(i, '수량', e.target.value)} data-gr={i} data-gc={3} onKeyDown={(e) => onGridKey(e, i, 3)} />
                       </td>
                       <td className="p">
-                        <input value={v['단가'] || ''} onChange={(e) => setCell(i, '단가', e.target.value)} />
+                        <input value={v['단가'] || ''} onChange={(e) => setCell(i, '단가', e.target.value)} data-gr={i} data-gc={4} onKeyDown={(e) => onGridKey(e, i, 4)} />
                       </td>
                       <td className="p">
                         {/* 공급가액 = 단가×수량 (총액). 읽기전용 — 단가·수량은 말풍선/위 칸에서 수정. */}
