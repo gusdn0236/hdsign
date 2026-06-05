@@ -611,18 +611,18 @@
   border: 1px solid #b91c1c;
 }
 
-/* 자동견적 명세서 태그 — hdsign teal. 명세서가 작성돼 있으면 항상 표시. */
+/* 임시저장 태그 — 앰버(작성 중·아직 이지폼 미입력). 명세서를 임시저장하면 표시. */
 .row-badge.badge-estimate {
   color: #fff;
-  background: #005f73;
-  border: 1px solid #004a5a;
+  background: #d97706;
+  border: 1px solid #b45309;
 }
 
-/* 이지폼 업로드 태그 — teal2(밝은 청록). 이지폼에 자동기입 완료 시 표시. */
+/* 명세서작성완료 태그 — 그린(이지폼 자동기입 완료). 매크로 입력 후 표시. */
 .row-badge.badge-easyform {
   color: #fff;
-  background: #0a9396;
-  border: 1px solid #097a7d;
+  background: #16a34a;
+  border: 1px solid #15803d;
 }
 
 /* 상세 모달 제목 아래 자동견적 배지 행. */
@@ -1061,6 +1061,25 @@
 .order-card:focus-visible {
   outline: 2px solid #18181b;
   outline-offset: 2px;
+}
+
+/* 명세서 상태 띠 — 카드를 색 테두리로 '둘러' 한눈에 보이게.
+   임시저장(앰버) → 명세서작성완료(그린, 이지폼 자동기입됨). */
+.order-card--estimate {
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.28), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+.order-card--ef-done {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.32), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+.order-card--estimate:hover {
+  border-color: #b45309;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.4), 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+.order-card--ef-done:hover {
+  border-color: #15803d;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.45), 0 6px 18px rgba(0, 0, 0, 0.08);
 }
 
 /* 요청 유형별 상단 컬러 스트라이프 — 표 행은 좌측, 카드는 상단으로 위치만 다름.

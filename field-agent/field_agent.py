@@ -13,6 +13,7 @@ import difflib
 import json
 import logging
 import os
+import queue
 import re
 import ssl
 import subprocess
@@ -953,7 +954,11 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
                             origin)
             return
         ef_stage_job(rows)
-        logging.info("이지폼 자동기입 스테이징 — %d행, %s 대기", len(rows), EF_HOTKEY_LABEL)
+        try:
+            _EF_UI_QUEUE.put(("show", len(rows)))  # 떠 있는 '채우기' 버튼창 표시
+        except Exception:
+            pass
+        logging.info("이지폼 자동기입 스테이징 — %d행, 버튼창/%s 대기", len(rows), EF_HOTKEY_LABEL)
         self._send_json(200, {
             "staged": True,
             "count": len(rows),
@@ -1022,6 +1027,13 @@ try:
         _KEYEVENTF_KEYUP = 0x0002
         _MOUSEEVENTF_LEFTDOWN = 0x0002
         _MOUSEEVENTF_LEFTUP = 0x0004
+        _MOUSEEVENTF_MOVE = 0x0001
+        _MOUSEEVENTF_ABSOLUTE = 0x8000
+
+        _user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        _user32.GetSystemMetrics.restype = ctypes.c_int
+        EF_SCREEN_W = _user32.GetSystemMetrics(0) or 1920  # SM_CXSCREEN(물리 px, PMv2 aware)
+        EF_SCREEN_H = _user32.GetSystemMetrics(1) or 1080  # SM_CYSCREEN
 
         class _EF_MI(ctypes.Structure):
             _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
@@ -1065,11 +1077,18 @@ try:
                 _user32.CloseClipboard()
 
         def ef_click(x: int, y: int) -> None:
-            _user32.SetCursorPos(int(x * EF_DPI_SCALE), int(y * EF_DPI_SCALE))
+            # 논리좌표 → 물리 px → 절대좌표(0..65535). 모든 마우스 입력을 SendInput 으로 '주입'한다
+            # (SetCursorPos 아님) → 입력가드(LL 훅)가 우리 클릭은 통과시키고 사용자 물리 입력만 차단 가능.
+            px = int(x * EF_DPI_SCALE)
+            py = int(y * EF_DPI_SCALE)
+            nx = int(px * 65535 / max(1, EF_SCREEN_W - 1))
+            ny = int(py * 65535 / max(1, EF_SCREEN_H - 1))
+            mv = _EF_MI(nx, ny, 0, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, 0, None)
+            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=mv))])
             time.sleep(0.03)
-            d = _EF_MI(0, 0, 0, _MOUSEEVENTF_LEFTDOWN, 0, None)
-            u = _EF_MI(0, 0, 0, _MOUSEEVENTF_LEFTUP, 0, None)
-            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=m)) for m in (d, u)])
+            d = _EF_MI(nx, ny, 0, _MOUSEEVENTF_LEFTDOWN | _MOUSEEVENTF_ABSOLUTE, 0, None)
+            u = _EF_MI(nx, ny, 0, _MOUSEEVENTF_LEFTUP | _MOUSEEVENTF_ABSOLUTE, 0, None)
+            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=d)), _EF_IN(_INPUT_MOUSE, _EF_U(mi=u))])
 
         def ef_double_click(x: int, y: int) -> None:
             ef_click(x, y)
@@ -1102,6 +1121,148 @@ try:
                 _user32.MessageBoxW(None, text, title, 0x50000)
             except Exception:
                 pass
+
+        def ef_confirm(text: str, title: str = "이지폼 자동기입") -> bool:
+            # MB_YESNO(0x4)|MB_ICONQUESTION(0x20)|MB_SETFOREGROUND(0x10000)|MB_TOPMOST(0x40000) → IDYES(6)
+            try:
+                return _user32.MessageBoxW(None, text, title, 0x50024) == 6
+            except Exception:
+                return False
+
+        # ── 이지폼 창 찾아 앞으로 ── '채우기' 버튼 클릭 시 이지폼을 최상위로 끌어와 클릭이 정확히 떨어지게.
+        _EF_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        _user32.EnumWindows.argtypes = [_EF_WNDENUMPROC, wintypes.LPARAM]
+        _user32.EnumWindows.restype = wintypes.BOOL
+        _user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        _user32.IsWindowVisible.restype = wintypes.BOOL
+        _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        _user32.SetForegroundWindow.restype = wintypes.BOOL
+        _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        _user32.ShowWindow.restype = wintypes.BOOL
+        _user32.IsIconic.argtypes = [wintypes.HWND]
+        _user32.IsIconic.restype = wintypes.BOOL
+
+        def _ef_find_easyform_hwnd():
+            matches: list = []
+
+            def _cb(hwnd, lparam):
+                if not _user32.IsWindowVisible(hwnd):
+                    return True
+                b = ctypes.create_unicode_buffer(256)
+                _user32.GetWindowTextW(hwnd, b, 256)
+                t = b.value or ""
+                if ("거래명세서" in t) or ("이지폼" in t):
+                    matches.append((hwnd, t))
+                return True
+
+            _user32.EnumWindows(_EF_WNDENUMPROC(_cb), 0)
+            if not matches:
+                return None
+            for hwnd, t in matches:   # '매출 거래명세서' 폼 우선
+                if "거래명세서" in t:
+                    return hwnd
+            return matches[0][0]      # 없으면 메인 앱 창
+
+        def ef_focus_easyform() -> bool:
+            hwnd = _ef_find_easyform_hwnd()
+            if not hwnd:
+                return False
+            try:
+                if _user32.IsIconic(hwnd):
+                    _user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                _user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+            return True
+
+        # ── 입력 가드: 매크로 중 사용자 물리 마우스/키보드 차단 + ESC 즉시 중단 ──
+        # 저수준 훅(WH_MOUSE_LL/WH_KEYBOARD_LL)으로 '주입(SendInput)되지 않은' 물리 입력을 삼킨다.
+        # 우리 매크로의 클릭/키는 INJECTED 플래그가 있어 통과. 직원이 실수로 마우스를 움직여도
+        # 엉뚱한 클릭이 안 되고, ESC 는 잡아서(이지폼에 안 흘려보냄 → 폼이 안 닫힘) 중단 신호로만 쓴다.
+        # Ctrl+Alt+Del 은 시스템 예약이라 항상 동작 → 영구 잠김 위험 없음. 매크로 종료 시 항상 해제.
+        _WH_MOUSE_LL = 14
+        _WH_KEYBOARD_LL = 13
+        _WM_QUIT = 0x0012
+        _LLMHF_INJECTED = 0x00000001
+        _LLKHF_INJECTED = 0x00000010
+        _VK_ESCAPE = 0x1B
+        _LRESULT = ctypes.c_ssize_t
+        _HOOKPROC = ctypes.WINFUNCTYPE(_LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+        class _EF_KBDLL(ctypes.Structure):
+            _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD),
+                        ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+        class _EF_MSLL(ctypes.Structure):
+            _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD),
+                        ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+        _user32.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+        _user32.SetWindowsHookExW.restype = wintypes.HHOOK
+        _user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        _user32.CallNextHookEx.restype = _LRESULT
+        _user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+        _user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+        _user32.GetMessageW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.UINT]
+        _user32.GetMessageW.restype = ctypes.c_int
+        _user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        _user32.PostThreadMessageW.restype = wintypes.BOOL
+        _kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+        _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+        _EF_ABORT = threading.Event()
+        _EF_GUARD_TID = 0
+        _ef_hook_refs: list = []  # 콜백 GC 방지(살아 있어야 훅이 유효)
+
+        def _ef_mouse_proc(nCode, wParam, lParam):
+            if nCode >= 0:
+                ms = ctypes.cast(lParam, ctypes.POINTER(_EF_MSLL)).contents
+                if not (ms.flags & _LLMHF_INJECTED):
+                    return 1  # 사용자 물리 마우스 차단(주입된 우리 입력만 통과)
+            return _user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+        def _ef_kbd_proc(nCode, wParam, lParam):
+            if nCode >= 0:
+                kb = ctypes.cast(lParam, ctypes.POINTER(_EF_KBDLL)).contents
+                if not (kb.flags & _LLKHF_INJECTED):
+                    if kb.vkCode == _VK_ESCAPE:
+                        _EF_ABORT.set()  # ESC → 중단 신호
+                    return 1  # 사용자 물리 키 차단(ESC 도 삼켜 이지폼 폼이 닫히지 않게)
+            return _user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+        def _ef_guard_thread():
+            global _EF_GUARD_TID
+            _EF_GUARD_TID = _kernel32.GetCurrentThreadId()
+            hInst = _kernel32.GetModuleHandleW(None)
+            mp = _HOOKPROC(_ef_mouse_proc)
+            kp = _HOOKPROC(_ef_kbd_proc)
+            _ef_hook_refs[:] = [mp, kp]
+            hM = _user32.SetWindowsHookExW(_WH_MOUSE_LL, mp, hInst, 0)
+            hK = _user32.SetWindowsHookExW(_WH_KEYBOARD_LL, kp, hInst, 0)
+            msg = wintypes.MSG()
+            while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                pass  # WM_QUIT(0) 오면 루프 종료
+            if hM:
+                _user32.UnhookWindowsHookEx(hM)
+            if hK:
+                _user32.UnhookWindowsHookEx(hK)
+
+        def ef_guard_start() -> None:
+            _EF_ABORT.clear()
+            threading.Thread(target=_ef_guard_thread, daemon=True).start()
+            time.sleep(0.06)  # 훅 설치 + 메시지 큐 생성 잠깐 대기
+
+        def ef_guard_stop() -> None:
+            global _EF_GUARD_TID
+            if _EF_GUARD_TID:
+                _user32.PostThreadMessageW(_EF_GUARD_TID, _WM_QUIT, 0, 0)
+                _EF_GUARD_TID = 0
+
+        def ef_aborted() -> bool:
+            return _EF_ABORT.is_set()
 
         EASYFORM_AVAILABLE = True
 except Exception as _ef_e:  # noqa: BLE001 — Win32 초기화 실패 시 기능만 비활성
@@ -1151,43 +1312,56 @@ def run_easyform_fill(rows: list[dict]) -> tuple[bool, str]:
         return False, (f"행이 {n}개로 자동기입 한도({cap}행)를 넘습니다. "
                        f"먼저 {cap}행 이하로 나눠 작성해 주세요. (현재 버전 미지원)")
 
-    # 0) 첫 행 품목칸 클릭 — 그리드 활성화 + 첫 행 월일 자동기입 트리거
-    ef_click(*EF_CELLS[0][EF_COLS.index("item")])
-    time.sleep(0.15)
+    abort_msg = "ESC 로 중단했습니다. (일부만 입력됐을 수 있어요 — 이지폼에서 확인 후 저장 마세요)"
+    # 입력 가드 ON — 사용자 물리 마우스/키보드 차단, ESC 누르면 ef_aborted()=True. 끝나면 항상 해제.
+    ef_guard_start()
+    try:
+        # 0) 첫 행 품목칸 클릭 — 그리드 활성화 + 첫 행 월일 자동기입 트리거
+        ef_click(*EF_CELLS[0][EF_COLS.index("item")])
+        time.sleep(0.15)
+        if ef_aborted():
+            return False, abort_msg
 
-    # 1) 흰 박스 더블클릭 → '2' 입력(삽입 위치=둘째 줄: 월일행이 맨 위 유지)
-    ef_double_click(*EF_WHITEBOX)
-    time.sleep(0.1)
-    ef_key(0x32)  # '2'
-    time.sleep(0.1)
+        # 1) 흰 박스 더블클릭 → '2' 입력(삽입 위치=둘째 줄: 월일행이 맨 위 유지)
+        ef_double_click(*EF_WHITEBOX)
+        time.sleep(0.1)
+        ef_key(0x32)  # '2'
+        time.sleep(0.1)
+        if ef_aborted():
+            return False, abort_msg
 
-    # 2) 삽입 N번 — 기존 1행 + N = N+1행(마지막 1행은 여유분)
-    for _ in range(n):
-        ef_click(*EF_INSERT_BTN)
-        time.sleep(0.12)
+        # 2) 삽입 N번 — 기존 1행 + N = N+1행(마지막 1행은 여유분)
+        for _ in range(n):
+            if ef_aborted():
+                return False, abort_msg
+            ef_click(*EF_INSERT_BTN)
+            time.sleep(0.12)
 
-    time.sleep(0.2)
+        time.sleep(0.2)
 
-    # 3) 행마다 7칸 클릭+붙여넣기 (월일은 행 진입 시 자동, 비고는 건드리지 않음)
-    for r in range(n):
-        row = rows[r]
-        for key_name, col_idx, is_num in EF_FILL_SEQ:
-            val = str(row.get(key_name, "") or "")
-            if is_num:
-                val = _ef_num(val)
-            if val == "":
-                continue  # 빈 값은 칸을 건드리지 않음
-            x, y = EF_CELLS[r][col_idx]
-            ef_click(x, y)
-            time.sleep(0.08)            # 셀 활성화 대기(batch.py 검증 타이밍)
-            ef_set_clipboard(val)
-            time.sleep(0.02)
-            ef_paste()
-            time.sleep(0.05)
+        # 3) 행마다 7칸 클릭+붙여넣기 (월일은 행 진입 시 자동, 비고는 건드리지 않음)
+        for r in range(n):
+            for key_name, col_idx, is_num in EF_FILL_SEQ:
+                if ef_aborted():
+                    return False, abort_msg
+                val = str(rows[r].get(key_name, "") or "")
+                if is_num:
+                    val = _ef_num(val)
+                if val == "":
+                    continue  # 빈 값은 칸을 건드리지 않음
+                x, y = EF_CELLS[r][col_idx]
+                ef_click(x, y)
+                time.sleep(0.08)            # 셀 활성화 대기(batch.py 검증 타이밍)
+                ef_set_clipboard(val)
+                time.sleep(0.02)
+                ef_paste()
+                time.sleep(0.05)
 
-    # 4) 마지막 셀 확정 — 여유분(다음) 행 품목칸 클릭(저장/Enter 안 함). 한도면 마지막 행 재클릭.
-    commit_r = min(n, cap - 1)
-    ef_click(*EF_CELLS[commit_r][EF_COLS.index("item")])
+        # 4) 마지막 셀 확정 — 여유분(다음) 행 품목칸 클릭(저장/Enter 안 함). 한도면 마지막 행 재클릭.
+        commit_r = min(n, cap - 1)
+        ef_click(*EF_CELLS[commit_r][EF_COLS.index("item")])
+    finally:
+        ef_guard_stop()  # 입력 가드 OFF — 사용자 입력 복구(항상 실행)
     return True, f"{n}개 행을 기입했습니다. 내용 확인 후 직접 저장(F5)하세요."
 
 
@@ -1199,8 +1373,9 @@ _EF_LOCK = threading.Lock()
 _EF_JOB: dict | None = None          # {"rows": [...], "armed_at": ts}
 _EF_RUNNING = False
 EF_JOB_TTL = 1800                    # 30분 지나면 자동 만료(새로작성·거래처 선택 여유)
-EF_HOTKEY_VK = 0x75                  # F6 (이지폼 단축키 F2/F5/F8/F9/F11/F12/Esc 와 충돌 없음)
+EF_HOTKEY_VK = 0x75                  # F6 (이지폼 단축키 F2/F5/F8/F9/F11/F12/Esc 와 충돌 없음) — 보조 트리거
 EF_HOTKEY_LABEL = "F6"
+_EF_UI_QUEUE: "queue.Queue" = queue.Queue()  # HTTP 스레드 → tk UI 스레드 신호(스테이징되면 버튼창 표시)
 
 
 def ef_stage_job(rows: list[dict]) -> None:
@@ -1228,42 +1403,24 @@ def _ef_is_easyform_foreground() -> bool:
 
 
 def _ef_hotkey_watcher() -> None:
-    """핫키 폴링 — 눌리는 순간(엣지) + 스테이징된 작업 + 이지폼이 최상위일 때만 실행."""
-    global _EF_RUNNING
+    """핫키(F6, 보조) 폴링 — 눌리는 순간(엣지) + 스테이징된 작업이 있으면 UI 트리거만 보낸다.
+    실제 확인창·딤 오버레이·실행은 버튼과 동일하게 run_easyform_ui 의 on_fill 이 처리(중복 제거)."""
     was_down = False
     while True:
         time.sleep(0.03)
         down = bool(_user32.GetAsyncKeyState(EF_HOTKEY_VK) & 0x8000)
         edge = down and not was_down
         was_down = down
-        if not edge or _EF_RUNNING:
+        if not edge:
             continue
         with _EF_LOCK:
             has_job = _EF_JOB is not None
         if not has_job:
             continue  # 무장 안 된 상태의 핫키는 무시(오발사 방지)
-        if not _ef_is_easyform_foreground():
-            ef_messagebox(
-                "이지폼 '매출 거래명세서' 새로작성 창을 맨 앞에 두고 다시 " + EF_HOTKEY_LABEL + " 를 누르세요.",
-                "이지폼 자동기입",
-            )
-            continue
-        job = _ef_take_job()
-        if job is None:
-            continue
-        _EF_RUNNING = True
         try:
-            ok, msg = run_easyform_fill(job["rows"])
-        except Exception as e:  # noqa: BLE001
-            ok, msg = False, f"자동기입 중 오류: {e}"
-            logging.exception("이지폼 자동기입 오류")
-        finally:
-            _EF_RUNNING = False
-        ef_messagebox(
-            ("작성이 완료되었습니다.\n\n" + msg) if ok else ("기입 실패\n\n" + msg),
-            "이지폼 자동기입",
-        )
-        logging.info("이지폼 자동기입 %s — %s", "성공" if ok else "실패", msg)
+            _EF_UI_QUEUE.put(("trigger",))
+        except Exception:
+            pass
 
 
 def start_easyform_watcher() -> None:
@@ -1271,8 +1428,182 @@ def start_easyform_watcher() -> None:
         logging.info("이지폼 자동기입: 비활성(이 PC 는 Win32 미초기화 — 기능 숨김)")
         return
     threading.Thread(target=_ef_hotkey_watcher, daemon=True).start()
-    logging.info("이지폼 자동기입: 대기(DPI %.2fx). 웹에서 보낸 뒤 이지폼 창에서 %s 로 실행.",
+    logging.info("이지폼 자동기입: 대기(DPI %.2fx). 웹에서 보낸 뒤 '채우기' 버튼 또는 %s.",
                  EF_DPI_SCALE, EF_HOTKEY_LABEL)
+
+
+def run_easyform_ui() -> None:
+    """이지폼 자동기입 UI(tkinter). 메인 스레드에서 mainloop 으로 돈다(서버는 데몬 스레드).
+      ① 코너 '채우기' 버튼창(root) — 웹이 grid 를 보내면 표시. 누르면 이지폼 포커스 후 매크로 실행.
+      ② 풀스크린 딤(dim) + 중앙 패널(panel) — 매크로 중 화면을 살짝 어둡게 + 🔒 잠금/ESC 안내.
+         완료되면 패널이 '자동작성이 완료되었습니다 + [확인]' 로 바뀌고, 확인 누르면 딤이 풀린다.
+    딤/패널은 WS_EX_NOACTIVATE 로 띄워 포커스를 안 뺏는다(이지폼이 최상위 유지 → 주입 키 정상)."""
+    import tkinter as tk
+
+    s = EF_DPI_SCALE
+    root = tk.Tk()
+    root.title("HD사인 이지폼 자동기입")
+    root.attributes("-topmost", True)
+    root.resizable(False, False)
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    w, h = int(370 * s), int(195 * s)
+    root.geometry(f"{w}x{h}+{max(0, sw - w - int(28 * s))}+{max(0, sh - h - int(72 * s))}")
+
+    frame = tk.Frame(root, bg="#ffffff", padx=int(14 * s), pady=int(12 * s))
+    frame.pack(fill="both", expand=True)
+    tk.Label(frame, text="이지폼 자동기입", font=("맑은 고딕", int(12 * s), "bold"),
+             fg="#0a3d4a", bg="#ffffff").pack(anchor="w")
+    info_lbl = tk.Label(frame, text="", font=("맑은 고딕", int(10 * s)), fg="#333333",
+                        bg="#ffffff", justify="left", wraplength=w - int(42 * s))
+    info_lbl.pack(anchor="w", pady=(int(6 * s), int(10 * s)))
+    btn = tk.Button(frame, text="이지폼에 채우기 ▶", font=("맑은 고딕", int(13 * s), "bold"),
+                    bg="#0a9396", fg="white", activebackground="#097a7d", activeforeground="white",
+                    relief="flat", padx=int(14 * s), pady=int(8 * s), cursor="hand2")
+    btn.pack(fill="x")
+
+    # ── 풀스크린 딤(반투명 검정) ──
+    dim = tk.Toplevel(root)
+    dim.overrideredirect(True)
+    dim.geometry(f"{sw}x{sh}+0+0")
+    dim.configure(bg="#000000")
+    dim.attributes("-alpha", 0.45)
+    dim.attributes("-topmost", True)
+    dim.withdraw()
+
+    # ── 중앙 패널(불투명 카드) — 실행 안내 / 완료 두 화면 ──
+    panel = tk.Toplevel(root)
+    panel.overrideredirect(True)
+    panel.configure(bg="#1f2937")
+    pw, ph = int(560 * s), int(220 * s)
+    panel.geometry(f"{pw}x{ph}+{(sw - pw) // 2}+{(sh - ph) // 2}")
+    panel.attributes("-topmost", True)
+
+    run_frame = tk.Frame(panel, bg="#1f2937")
+    tk.Label(run_frame, text="🔒", font=("Segoe UI Emoji", int(34 * s)),
+             fg="#fbbf24", bg="#1f2937").pack(pady=(int(20 * s), int(4 * s)))
+    tk.Label(run_frame, text="자동입력 중에는 마우스가 잠깁니다.", font=("맑은 고딕", int(14 * s), "bold"),
+             fg="#ffffff", bg="#1f2937").pack()
+    tk.Label(run_frame, text="중단하시려면 ESC 를 눌러주세요.", font=("맑은 고딕", int(12 * s)),
+             fg="#fca5a5", bg="#1f2937").pack(pady=(int(6 * s), 0))
+
+    done_frame = tk.Frame(panel, bg="#1f2937")
+    done_lbl = tk.Label(done_frame, text="", font=("맑은 고딕", int(15 * s), "bold"),
+                        fg="#ffffff", bg="#1f2937", justify="center", wraplength=pw - int(60 * s))
+    done_lbl.pack(pady=(int(26 * s), int(14 * s)))
+    done_btn = tk.Button(done_frame, text="확인", font=("맑은 고딕", int(13 * s), "bold"),
+                         bg="#0a9396", fg="white", activebackground="#097a7d", activeforeground="white",
+                         relief="flat", padx=int(26 * s), pady=int(7 * s), cursor="hand2")
+    done_btn.pack()
+    panel.withdraw()
+
+    def _set_exstyle(win, add=0, remove=0):
+        try:
+            win.update_idletasks()
+            hwnd = win.winfo_id()
+            u = ctypes.windll.user32
+            GWL_EXSTYLE = -20
+            cur = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            u.SetWindowLongW(hwnd, GWL_EXSTYLE, (cur | add) & ~remove)
+        except Exception:
+            pass
+
+    _WS_EX_NOACTIVATE = 0x08000000
+    _WS_EX_TOPMOST = 0x00000008
+    _WS_EX_TOOLWINDOW = 0x00000080
+    busy = {"v": False}
+
+    def show_overlay():
+        run_frame.pack(fill="both", expand=True)
+        done_frame.pack_forget()
+        dim.deiconify()
+        panel.deiconify()
+        # 포커스 안 뺏게 NOACTIVATE + 작업표시줄 숨김 + 항상위
+        _set_exstyle(dim, add=_WS_EX_NOACTIVATE | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW)
+        _set_exstyle(panel, add=_WS_EX_NOACTIVATE | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW)
+        dim.lift()
+        panel.lift()
+
+    def show_done(ok, msg):
+        run_frame.pack_forget()
+        done_lbl.config(text=("✅ 자동작성이 완료되었습니다." if ok else "⏹ 중단되었습니다.") +
+                        ("" if ok else f"\n{msg}"),
+                        fg="#ffffff" if ok else "#fca5a5")
+        done_frame.pack(fill="both", expand=True)
+        # 완료 화면은 클릭 받아야 하니 NOACTIVATE 해제(매크로 끝나 입력 잠금도 풀린 상태)
+        _set_exstyle(panel, remove=_WS_EX_NOACTIVATE)
+        panel.lift()
+        panel.attributes("-topmost", True)
+
+    def hide_overlay():
+        panel.withdraw()
+        dim.withdraw()
+        busy["v"] = False
+
+    def set_staged(count):
+        busy["v"] = False
+        info_lbl.config(
+            text=f"이지폼 [새로작성 → 거래처 선택] 후\n아래 버튼을 누르면 {count}행이 자동 입력됩니다.",
+            fg="#333333")
+        btn.config(text="이지폼에 채우기 ▶", state="normal", bg="#0a9396")
+        root.deiconify()
+        root.lift()
+        root.attributes("-topmost", True)
+
+    def on_fill():
+        if busy["v"]:
+            return
+        if not ef_confirm("자동작성을 시작하시겠습니까?\n\n시작하면 입력이 끝날 때까지 마우스가 잠깁니다.\n(중단하려면 ESC)"):
+            return
+        if not ef_focus_easyform():
+            ef_messagebox("이지폼 '매출 거래명세서' 창을 먼저 띄우세요(새로작성 → 거래처 선택).",
+                          "이지폼 자동기입")
+            return
+        job = _ef_take_job()
+        if job is None:
+            ef_messagebox("대기 중인 작업이 없습니다(만료). 홈페이지에서 다시 [이지폼 입력] 을 누르세요.",
+                          "이지폼 자동기입")
+            root.withdraw()
+            return
+        busy["v"] = True
+        root.withdraw()       # 코너 버튼창 숨김
+        show_overlay()        # 딤 + 잠금 안내
+        ef_focus_easyform()   # 이지폼 다시 최상위(키 주입이 이지폼으로 가게)
+
+        def worker():
+            time.sleep(0.4)
+            try:
+                ok, msg = run_easyform_fill(job["rows"])
+            except Exception as e:  # noqa: BLE001
+                ok, msg = False, f"오류: {e}"
+                logging.exception("이지폼 자동기입 오류(UI)")
+            _EF_UI_QUEUE.put(("result", ok, msg))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    btn.config(command=on_fill)
+    done_btn.config(command=hide_overlay)
+    root.protocol("WM_DELETE_WINDOW", root.withdraw)  # X = 숨김(종료 아님)
+    root.withdraw()
+
+    def poll():
+        try:
+            while True:
+                cmd = _EF_UI_QUEUE.get_nowait()
+                if cmd[0] == "show":
+                    set_staged(cmd[1])
+                elif cmd[0] == "trigger":   # F6 보조 트리거 → 버튼과 동일 흐름
+                    on_fill()
+                elif cmd[0] == "result":
+                    ok, msg = cmd[1], cmd[2]
+                    show_done(ok, msg)  # 딤 유지, 패널에 완료/중단 + [확인]
+                    logging.info("이지폼 자동기입(UI) %s — %s", "성공" if ok else "실패/중단", msg)
+        except queue.Empty:
+            pass
+        root.after(120, poll)
+
+    root.after(120, poll)
+    logging.info("이지폼 '채우기' 버튼창 준비됨(평소 숨김, 스테이징 시 표시).")
+    root.mainloop()
 
 
 # ─── 메인 ────────────────────────────────────────────────────────────────
@@ -1305,7 +1636,17 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     config = load_config()
-    serve_forever(config)
+    if EASYFORM_AVAILABLE:
+        # 서버는 데몬 스레드, 이지폼 '채우기' UI(tkinter)는 메인 스레드 mainloop 으로.
+        threading.Thread(target=serve_forever, args=(config,), daemon=True, name="http").start()
+        try:
+            run_easyform_ui()
+        except Exception as e:  # noqa: BLE001 — UI 실패해도 서버는 계속(파일 열기 등 기존 기능 유지)
+            logging.warning("이지폼 버튼 UI 시작 실패(%s) — 서버만 유지", e)
+            while True:
+                time.sleep(3600)
+    else:
+        serve_forever(config)
 
 
 if __name__ == "__main__":

@@ -1386,7 +1386,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       <div
         key={order.id}
         data-order-company={order.clientCompanyName || ""}
-        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
+        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""} ${easyformUploaded ? "order-card--ef-done" : hasEstimate ? "order-card--estimate" : ""}`}
         onClick={openCard}
         role="button"
         tabIndex={0}
@@ -1435,12 +1435,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               {hasWorksheetChange && (
                 <span className="row-badge badge-worksheet" title={worksheetChangeTitle}>변경</span>
               )}
-              {hasEstimate && (
-                <span className="row-badge badge-estimate" title="자동견적 명세서가 작성되어 있습니다">명세서</span>
-              )}
-              {easyformUploaded && (
-                <span className="row-badge badge-easyform" title="이지폼에 업로드되었습니다">이지폼</span>
-              )}
+              {/* 임시저장(estimate 저장됨) → 이지폼 자동기입 완료(명세서작성완료) 로 진행. 완료면 완료만 표시. */}
+              {easyformUploaded ? (
+                <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">명세서작성완료</span>
+              ) : hasEstimate ? (
+                <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">임시저장</span>
+              ) : null}
             </div>
           )}
         </div>
@@ -2115,12 +2115,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
               {(selectedOrder.hasEstimate || selectedOrder.easyformUploadedAt) && (
                 <div className="modal-badges">
-                  {selectedOrder.hasEstimate && (
-                    <span className="row-badge badge-estimate" title="자동견적 명세서가 작성되어 있습니다">명세서</span>
-                  )}
-                  {selectedOrder.easyformUploadedAt && (
-                    <span className="row-badge badge-easyform" title="이지폼에 업로드되었습니다">이지폼</span>
-                  )}
+                  {selectedOrder.easyformUploadedAt ? (
+                    <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">명세서작성완료</span>
+                  ) : selectedOrder.hasEstimate ? (
+                    <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">임시저장</span>
+                  ) : null}
                 </div>
               )}
 

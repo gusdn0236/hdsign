@@ -1230,7 +1230,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       await putEstimate(token, order.id, { grid: buildGrid(), total, savedFrom: 'autoquote' });
       setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
       onSaved?.();
-      cdlg('명세서가 저장됐어요. 주문 카드/모달에 “명세서” 배지가 표시됩니다.', [{ label: '확인' }]);
+      cdlg('임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.', [{ label: '확인' }]);
     } catch (e) {
       console.error(e);
       cdlg('저장에 실패했습니다.', [{ label: '확인', sec: true }]);
@@ -2407,7 +2407,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               <b>{total.toLocaleString()}원</b>
             </div>
             <button className="aq-btn ef" onClick={save} disabled={saving || !order}>
-              {saving ? '저장 중…' : '저장'}
+              {saving ? '임시저장 중…' : '임시저장'}
             </button>
             <button className="aq-btn sh" onClick={captureShare}>
               공유하기
