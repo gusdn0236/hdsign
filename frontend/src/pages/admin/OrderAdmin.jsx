@@ -1439,7 +1439,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               {easyformUploaded ? (
                 <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">명세서작성완료</span>
               ) : hasEstimate ? (
-                <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">임시저장</span>
+                <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">명세서 임시저장</span>
               ) : null}
             </div>
           )}
@@ -2118,7 +2118,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   {selectedOrder.easyformUploadedAt ? (
                     <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">명세서작성완료</span>
                   ) : selectedOrder.hasEstimate ? (
-                    <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">임시저장</span>
+                    <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">명세서 임시저장</span>
                   ) : null}
                 </div>
               )}
