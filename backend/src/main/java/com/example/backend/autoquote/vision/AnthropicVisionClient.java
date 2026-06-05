@@ -71,9 +71,12 @@ public class AnthropicVisionClient implements VisionClient {
             + "all three parts of EVERY block. Distinguish look-alike jamo precisely: vowels ㅓ/ㅕ, ㅏ/ㅑ, "
             + "ㅗ/ㅛ, ㅜ/ㅠ, ㅐ/ㅔ, ㅡ/ㅢ; final consonants ㄹ/ㅌ/ㄷ, ㅁ/ㅂ, ㄴ/ㄱ, ㅇ/ㅎ. Count vowel strokes "
             + "(e.g. ㅓ has one short stroke, ㅕ has two) and check the 받침 shape carefully. "
-            + "When strokes are genuinely ambiguous, prefer the reading that forms a valid, natural Korean "
-            + "word or phrase over a meaningless string — but NEVER overwrite text that is clearly drawn, and "
-            + "never invent or auto-complete characters that are not present. "
+            + "Read EXACTLY the characters drawn, one syllable block at a time, even if they form a fragment, "
+            + "a partial word, or a meaningless string — sign lettering is very often partial or non-dictionary "
+            + "text. Do NOT 'correct' the reading toward a real or natural Korean word, and do NOT guess, "
+            + "auto-complete, or substitute a plausible word. If a stroke is genuinely unclear, choose the jamo "
+            + "that best matches the DRAWN shape — never the one that merely forms a real word. Transcribe only "
+            + "what is actually present; never invent or auto-complete characters that are not there. "
             + "If there is no legible lettering, return an empty string. Call the " + READ_TEXT_TOOL + " tool.";
 
     private final String apiKey;
