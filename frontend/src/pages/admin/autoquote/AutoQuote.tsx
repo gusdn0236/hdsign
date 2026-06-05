@@ -181,6 +181,18 @@ function todayMD(): string {
   return ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
 }
 
+/**
+ * 글자AI(OCR)로 읽은 텍스트를 품목 칸에 넣을 때 길이 축약 — 한글/혼합은 10자, 순수 영문은 20자
+ * 초과 시 … 부착(이지폼 품목 50Byte 미만 제한 회피). 수량(글자수)은 원문 전체 기준으로 따로 보존하고,
+ * 단가 계산은 수량 기준이라 영향 없다. 수기 입력엔 적용 안 함(createPinFromOcr 에서만 호출).
+ */
+function ocrTruncItem(s: string): string {
+  const t = (s || '').trim();
+  const chars = Array.from(t);
+  const max = /[가-힣]/.test(t) ? 10 : 20; // 한글 또는 한글+영문 혼합=10, 순수 영문=20
+  return chars.length > max ? chars.slice(0, max).join('') + '…' : t;
+}
+
 /** 글자수 모드 연필·지우개 굵기(화면 px). 콘텐츠 lineWidth = 이 값 / zoom 으로 화면상 일정하게. */
 const BRUSH_SCREEN_PX: Record<'s' | 'm' | 'l', number> = { s: 12, m: 26, l: 46 };
 
@@ -1725,7 +1737,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       // 품목=읽은 글자, 수량=글자수(둘 다 prefill — 단계 진행 시 입력칸에 채워져 나옴).
       const next = [
         ...prev,
-        { ax, ay, lx: ax + 36, ly: ay - 28, dragged: true, vals: { 품목: text, 수량: String(qty) }, fi: 0 },
+        { ax, ay, lx: ax + 36, ly: ay - 28, dragged: true, vals: { 품목: ocrTruncItem(text), 수량: String(qty) }, fi: 0 },
       ];
       setActive(next.length - 1);
       return next;
