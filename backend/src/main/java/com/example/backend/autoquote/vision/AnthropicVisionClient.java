@@ -81,7 +81,9 @@ public class AnthropicVisionClient implements VisionClient {
 
     private final String apiKey;
     private final String model;
-    /** 글자읽기 전용 모델 — OCR+글자수엔 가장 저렴한 Haiku 로 충분(전체 추출은 {@link #model}). */
+    /** 글자읽기 전용 모델 — 조각/비단어 정확도 평가 위해 Sonnet 으로 상향(2026-06, 한 달 시범).
+     *  사용량 20~30건/일 × 1~5회면 월 수천~1.5만원 수준. 비용 부담되면 count-model 을 다시
+     *  claude-haiku-4-5-20251001 로(코드 기본값 또는 env autoquote.vision.count-model). */
     private final String countModel;
     private final long perCallTimeoutMs;
 
@@ -92,7 +94,7 @@ public class AnthropicVisionClient implements VisionClient {
     public AnthropicVisionClient(
             @Value("${autoquote.vision.api-key:${ANTHROPIC_API_KEY:}}") String apiKey,
             @Value("${autoquote.vision.model:${ANTHROPIC_MODEL:claude-sonnet-4-6}}") String model,
-            @Value("${autoquote.vision.count-model:claude-haiku-4-5-20251001}") String countModel,
+            @Value("${autoquote.vision.count-model:claude-sonnet-4-6}") String countModel,
             @Value("${autoquote.vision.timeout-ms:60000}") long perCallTimeoutMs) {
         this(apiKey, model, countModel, perCallTimeoutMs, null);
     }
