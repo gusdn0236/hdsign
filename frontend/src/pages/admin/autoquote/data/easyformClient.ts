@@ -14,9 +14,12 @@
  * 선례: OrderAdmin.jsx / FieldViewer.jsx 의 AGENT_URL + AbortController(~1.5s) + cache:'no-store'.
  */
 
-/** 로컬 에이전트 주소 — 기존 어드민 선례와 동일한 env 키/기본값. */
+/**
+ * 이지폼 자동기입은 **사무 워처(hdsign-watcher)** 가 호스트한다(포트 5577 — OrderAdmin 의 /ping 과 동일).
+ * 현장 에이전트(17345)가 아니라 워처에 통합 — 사무실은 상시 켜두는 워처 1개만으로 동작(별도 exe 없음).
+ */
 const AGENT_URL =
-  import.meta.env.VITE_HDSIGN_AGENT_URL || 'http://127.0.0.1:17345';
+  import.meta.env.VITE_HDSIGN_WATCHER_URL || 'http://127.0.0.1:5577';
 
 /**
  * 이지폼 한 행으로 채워질 셀들 — 정확히 이 7개(월일=자동·비고=미사용은 제외).

@@ -46,6 +46,8 @@ try:
 except Exception:  # noqa: BLE001 — certifi 미설치/번들 누락 시 시스템 인증서로 폴백
     pass
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import easyform  # 이지폼 자동기입(명세서 → 이지폼 셀 자동입력). 워처가 호스트(같은 프로세스).
 from pathlib import Path
 
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -645,7 +647,17 @@ class _PingHandler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-HDSign-Field")
         self.send_header("Cache-Control", "no-store")
+
+    def _send_json(self, status, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self._cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler 규약)
         if self.path == "/ping":
@@ -654,6 +666,9 @@ class _PingHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(b'{"ok":true,"app":"hdsign_worksheet"}')
+        elif self.path == "/easyform/probe":
+            # 이지폼 자동기입 feature-detect — 관리자 명세서작성 모달이 호출.
+            self._send_json(200, easyform.handle_probe())
         else:
             self.send_response(404)
             self._cors()
@@ -662,6 +677,18 @@ class _PingHandler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(self.path)
+        if parsed.path == "/easyform/fill":
+            # 명세서 grid 를 받아 스테이징(arm)만 — 실제 기입은 사용자가 '채우기' 버튼/F6.
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(length) if length > 0 else b""
+                body = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                self._send_json(400, {"staged": False, "message": "본문 파싱 실패"})
+                return
+            status, payload = easyform.handle_fill(body)
+            self._send_json(status, payload)
+            return
         if parsed.path == "/clip-qr":
             qs = parse_qs(parsed.query)
             order = (qs.get("order") or [""])[0].strip()
@@ -8149,6 +8176,11 @@ class App(tk.Tk):
 def main():
     app = App()
     app.protocol("WM_DELETE_WINDOW", app.on_close)
+    # 이지폼 자동기입 '채우기' UI 를 워처 GUI(같은 tk root)에 붙인다(별도 exe 없음).
+    try:
+        easyform.install(app)
+    except Exception as e:  # noqa: BLE001 — easyform 실패해도 워처 본기능은 계속.
+        ui_log(f"이지폼 자동기입 UI 설치 실패: {e}")
     app.after(300, app.start_watcher)
     app.mainloop()
 
