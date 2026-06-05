@@ -508,10 +508,11 @@ def handle_fill(body: dict) -> "tuple[int, dict]":
 
 
 # ── GUI 설치 (워처 tk root 에 붙임) ──────────────────────────────────────────
-def install(root) -> None:
+def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     """워처의 tkinter root 에 이지폼 '채우기' UI 를 붙인다(별도 mainloop 없음). F6 워처도 시작.
       ① 코너 '채우기' 버튼창(win, Toplevel) — 웹이 grid 를 보내면 표시.
-      ② 풀스크린 딤 + 중앙 패널 — 매크로 중 화면을 살짝 어둡게 + 🔒 잠금/ESC 안내, 완료 시 [확인]."""
+      ② 풀스크린 딤 + 중앙 패널 — 매크로 중 화면을 살짝 어둡게 + 🔒 잠금/ESC 안내, 완료 시 [확인].
+    accent/accent_dark = 버튼 색(워처=기본 청록, 명세서자동작성 에이전트=주황으로 호출)."""
     if not EASYFORM_AVAILABLE:
         logging.info("이지폼 자동기입: 비활성(이 PC 는 Win32 미초기화 — 기능 숨김)")
         return
@@ -535,7 +536,7 @@ def install(root) -> None:
                         bg="#ffffff", justify="left", wraplength=w - int(42 * s))
     info_lbl.pack(anchor="w", pady=(int(6 * s), int(10 * s)))
     btn = tk.Button(frame, text="이지폼 자동기입 시작하기 ▶", font=("맑은 고딕", int(13 * s), "bold"),
-                    bg="#0a9396", fg="white", activebackground="#097a7d", activeforeground="white",
+                    bg=accent, fg="white", activebackground=accent_dark, activeforeground="white",
                     relief="flat", padx=int(14 * s), pady=int(8 * s), cursor="hand2")
     btn.pack(fill="x")
 
@@ -570,7 +571,7 @@ def install(root) -> None:
                         fg="#ffffff", bg="#1f2937", justify="center", wraplength=pw - int(60 * s))
     done_lbl.pack(pady=(int(26 * s), int(14 * s)))
     done_btn = tk.Button(done_frame, text="확인", font=("맑은 고딕", int(13 * s), "bold"),
-                         bg="#0a9396", fg="white", activebackground="#097a7d", activeforeground="white",
+                         bg=accent, fg="white", activebackground=accent_dark, activeforeground="white",
                          relief="flat", padx=int(26 * s), pady=int(7 * s), cursor="hand2")
     done_btn.pack()
     panel.withdraw()
@@ -638,7 +639,7 @@ def install(root) -> None:
         info_lbl.config(
             text="이지폼 [새로작성 → 거래처 선택] 후\n아래 버튼을 누르면 해당 명세서가 자동입력됩니다.",
             fg="#333333")
-        btn.config(text="이지폼 자동기입 시작하기 ▶", state="normal", bg="#0a9396")
+        btn.config(text="이지폼 자동기입 시작하기 ▶", state="normal", bg=accent)
         win.deiconify()
         win.lift()
         win.attributes("-topmost", True)

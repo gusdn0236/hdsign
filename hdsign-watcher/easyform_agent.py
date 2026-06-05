@@ -85,14 +85,23 @@ def _serve():
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 
+    ORANGE = "#F57C00"       # 이지폼 컨셉(주황 + 흰글씨)
+    ORANGE_DARK = "#E65100"
+
     root = tk.Tk()
-    root.title("HD사인 이지폼 자동입력")
+    root.title("명세서 자동작성")
     root.resizable(False, False)
-    root.geometry("420x150")
-    frame = tk.Frame(root, bg="#ffffff", padx=18, pady=16)
+    root.geometry("440x172")
+    root.configure(bg="#ffffff")
+    # 상단 주황 헤더 바(로고)
+    head = tk.Frame(root, bg=ORANGE, height=int(46))
+    head.pack(fill="x")
+    tk.Label(head, text="📝  명세서 자동작성", font=("맑은 고딕", 13, "bold"),
+             fg="#ffffff", bg=ORANGE, padx=16, pady=10).pack(anchor="w")
+    frame = tk.Frame(root, bg="#ffffff", padx=18, pady=14)
     frame.pack(fill="both", expand=True)
-    tk.Label(frame, text="✅ 이지폼 자동입력 에이전트 실행 중", font=("맑은 고딕", 12, "bold"),
-             fg="#0a7d3a", bg="#ffffff").pack(anchor="w")
+    tk.Label(frame, text="✅ 실행 중", font=("맑은 고딕", 12, "bold"),
+             fg=ORANGE_DARK, bg="#ffffff").pack(anchor="w")
     tk.Label(frame,
              text="hdsigncraft.com 명세서작성 → [이지폼 입력] 시 자동으로 동작합니다.\n"
                   "이 창은 최소화해 두세요. (닫으면 종료됩니다)",
@@ -102,9 +111,9 @@ def main():
     tk.Label(frame, text=status, font=("맑은 고딕", 9), fg="#6b7785", bg="#ffffff").pack(anchor="w", pady=(8, 0))
 
     threading.Thread(target=_serve, daemon=True).start()
-    logging.info("이지폼 자동입력 에이전트 — http://127.0.0.1:%d 대기", PORT)
+    logging.info("명세서 자동작성 에이전트 — http://127.0.0.1:%d 대기", PORT)
     try:
-        easyform.install(root)  # '이지폼 자동기입 시작하기' 버튼 UI + F6 워처 부착
+        easyform.install(root, accent=ORANGE, accent_dark=ORANGE_DARK)  # 주황 테마 버튼 UI + F6
     except Exception as e:  # noqa: BLE001
         logging.warning("이지폼 UI 설치 실패: %s", e)
     root.mainloop()

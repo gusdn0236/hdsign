@@ -1331,10 +1331,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       const probe = await probeEasyformAgent();
       if (!probe || !probe.easyform) {
         cdlg(
-          'HD사인지시서(사무용) 혹은 명세서전용 프로그램이 켜져있지 않습니다.<br>실행 후 다시 시도해주세요.' +
-            '<br><br><span style="font-size:12px;color:#6b7785">프로그램이 없으신가요? 명세서 작성만 하시려면 ' +
-            '<a href="/hdsign_easyform_agent.exe" download ' +
-            'style="color:#0a9396;font-weight:700;text-decoration:underline">다운로드</a> 를 눌러주세요.</span>',
+          '<b>HD사인지시서(사무용)</b> 또는 <b>명세서 자동작성</b> 프로그램이 켜져 있지 않습니다.<br>' +
+            '아래 중 하나를 실행한 뒤 다시 시도해주세요.' +
+            '<div style="display:flex;gap:24px;justify-content:center;margin:18px 0 6px">' +
+            '<div style="text-align:center;width:104px">' +
+            '<div style="width:54px;height:54px;border-radius:13px;background:#0a9396;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto">🖥️</div>' +
+            '<div style="font-size:11.5px;font-weight:700;margin-top:7px;line-height:1.3">HD사인지시서<br>(사무용)</div>' +
+            '</div>' +
+            '<div style="text-align:center;width:104px">' +
+            '<div style="width:54px;height:54px;border-radius:13px;background:#F57C00;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto">📝</div>' +
+            '<div style="font-size:11.5px;font-weight:700;margin-top:7px;color:#F57C00;line-height:1.3">명세서 자동작성</div>' +
+            '<a href="/hdsign_easyform_agent.exe" download="명세서자동작성.exe" ' +
+            'style="display:inline-block;margin-top:6px;font-size:11.5px;color:#fff;background:#F57C00;padding:3px 11px;border-radius:6px;font-weight:700;text-decoration:none">다운로드 ↓</a>' +
+            '</div></div>' +
+            '<div style="font-size:11px;color:#6b7785;margin-top:8px">둘 중 하나만 켜져 있으면 됩니다. 프로그램이 없으면 위 주황(명세서 자동작성)에서 받으세요.</div>',
           [{ label: '확인', sec: true }],
         );
         return;
