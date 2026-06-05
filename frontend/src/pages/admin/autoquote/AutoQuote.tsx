@@ -1556,7 +1556,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       }
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        cdlg('✓ 사진+말풍선+명세서가 복사됐어요. 카톡에서 Ctrl+V 로 붙여넣으세요.', [{ label: '확인' }]);
+        cdlg('✅ 작업지시서+명세서가 복사됐어요! 📋 카톡에서 Ctrl+V 로 붙여넣어주세요.', [{ label: '확인' }]);
       } catch {
         dlBlob(blob, '견적.png');
         cdlg('클립보드 복사가 막혀 이미지로 저장했어요.', [{ label: '확인' }]);
