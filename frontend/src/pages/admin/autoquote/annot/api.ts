@@ -52,6 +52,26 @@ export async function predict(
   return res.json();
 }
 
+/**
+ * 단가 찾아보기 — 한 품목의 품목코드 기준 과거 단가 후보들을 ①같은거래처 ②타거래처 ③관련 순으로.
+ * predict 와 달리 한 품목에 대해 여러 후보(리스트)를 돌려준다. 미프로비저닝(503)이면 null.
+ */
+export async function lookupPrices(
+  token: string | null | undefined,
+  client: string,
+  item: PredictItem,
+  limit = 8,
+): Promise<Prediction[] | null> {
+  const res = await fetch(`${BASE_URL}/api/admin/autoquote/predict/lookup`, {
+    method: 'POST',
+    headers: authHeaders(token, true),
+    body: JSON.stringify({ client, item, limit }),
+  });
+  if (res.status === 503) return null; // corpus 미프로비저닝
+  if (!res.ok) throw new Error(`단가 찾아보기 실패 (${res.status})`);
+  return res.json();
+}
+
 export interface EvidenceGridRow {
   item_code?: string;
   item?: string;

@@ -77,6 +77,118 @@ public class PricePredictor {
         return index() != null;
     }
 
+    /**
+     * 단가 찾아보기 — 한 품목의 <b>품목코드</b> 기준 과거 단가 후보들을 우선순위로 나열.
+     * ① 같은 거래처 + 같은 품목코드 → ② 타거래처 + 같은 품목코드(각 그룹 안에서 사이즈 근접도 순),
+     * ③ 같은 품목코드 이력이 전혀 없으면 '관련'(품목 토큰 유사) 폴백. 사이즈만 비슷한 다른 품목코드는
+     * 섞지 않는다. 가격은 과거 실거래 단가(스케일 안 함) — 사용자가 사이즈별 실값을 보고 고른다.
+     * 코퍼스 미프로비저닝이면 {@code null}.
+     */
+    public List<Prediction> lookup(String client, Item it, int limit) {
+        Index idx = index();
+        if (idx == null) {
+            return null;
+        }
+        int cap = Math.max(1, Math.min(limit, 30));
+        String specBlob = specBlob(it);
+        Long qsz = sizeVal(it.text(), specBlob);
+        String cl = cnorm(client);
+        String codeNorm = ccode(it.material());
+
+        List<Prediction> out = new ArrayList<>();
+        List<Line> coded = codeNorm.isBlank() ? null : idx.byCode.get(codeNorm);
+        if (coded != null && !coded.isEmpty()) {
+            List<Line> same = new ArrayList<>();
+            List<Line> other = new ArrayList<>();
+            for (Line r : coded) {
+                (cl.equals(r.cl) ? same : other).add(r);
+            }
+            sortBySizeProximity(same, qsz);
+            sortBySizeProximity(other, qsz);
+            for (Line r : same) {
+                out.add(toLookupPrediction(r, qsz, "이력", it));
+                if (out.size() >= cap) return out;
+            }
+            for (Line r : other) {
+                out.add(toLookupPrediction(r, qsz, "타거래처", it));
+                if (out.size() >= cap) return out;
+            }
+            return out;
+        }
+
+        // 동일 품목코드 이력 없음 → '관련'(품목 토큰 자카드 ≥ 0.34) 폴백. 사이즈 근접도로 2차 정렬.
+        Set<String> qtok = itoks(it.text(), specBlob);
+        List<Scored> rel = new ArrayList<>();
+        for (List<Line> lines : idx.byClient.values()) {
+            for (Line r : lines) {
+                double j = jaccard(qtok, r.itok);
+                if (j >= JACCARD_MIN) {
+                    rel.add(new Scored(r, j * 0.7 + sizeProximity(qsz, r.sz) * 0.3));
+                }
+            }
+        }
+        rel.sort((a, b) -> Double.compare(b.score, a.score));
+        for (Scored s : rel) {
+            out.add(toLookupPrediction(s.line, qsz, "관련", it));
+            if (out.size() >= cap) break;
+        }
+        return out;
+    }
+
+    private Prediction toLookupPrediction(Line r, Long qsz, String src, Item it) {
+        double prox = sizeProximity(qsz, r.sz);
+        String reason = buildLookupReason(r, src, prox);
+        // 과거 실거래 단가(r.up)를 그대로 — 사용자가 사이즈별 실값을 비교해 고른다(스케일 안 함).
+        return new Prediction(safe(r.item), n(r.spec), it.qty(), r.up, r.idx, r.file, src, round3(prox), reason);
+    }
+
+    private String buildLookupReason(Line r, String src, double prox) {
+        String where = switch (src) {
+            case "이력" -> "같은 거래처";
+            case "타거래처" -> "타거래처";
+            default -> "관련 품목";
+        };
+        StringBuilder sb = new StringBuilder();
+        sb.append(where);
+        if (r.code != null && !r.code.isBlank()) {
+            sb.append(" · 품목코드 ").append(r.code.trim());
+        }
+        sb.append(" · ").append(safe(r.item));
+        if (r.spec != null && !r.spec.isBlank()) {
+            sb.append("(").append(r.spec.trim()).append(")");
+        }
+        sb.append(" · 단가 ").append(r.up).append("원");
+        sb.append(" · 사이즈 근접 ").append(round3(prox));
+        sb.append(" · 근거 idx=").append(String.valueOf(r.idx)).append(", file=").append(r.file);
+        return sb.toString();
+    }
+
+    /** 사이즈 근접도 0..1(둘 다 양수면 min/max, 정보 부족이면 0.5). 클수록 가깝다. */
+    private static double sizeProximity(Long qsz, Long sz) {
+        if (qsz != null && qsz > 0 && sz != null && sz > 0) {
+            long lo = Math.min(qsz, sz);
+            long hi = Math.max(qsz, sz);
+            return (double) lo / hi;
+        }
+        return 0.5;
+    }
+
+    private static void sortBySizeProximity(List<Line> lines, Long qsz) {
+        lines.sort((a, b) -> Double.compare(sizeProximity(qsz, b.sz), sizeProximity(qsz, a.sz)));
+    }
+
+    private static String specBlob(Item it) {
+        return blank(it.material()) ? n(it.size()) : it.material() + " " + n(it.size());
+    }
+
+    /** 품목코드 정규화(프론트 normCode 와 동일 규칙: 공백/슬래시 제거 + 라틴 대문자). 한글은 불변. */
+    static String ccode(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.trim().replaceAll("[\\s/]", "").toUpperCase();
+    }
+
     /** 여러 견적 라인을 예측. 코퍼스 미프로비저닝이면 {@code null}(호출부가 503 처리). */
     public List<Prediction> predict(String client, List<Item> items) {
         Index idx = index();
@@ -207,9 +319,10 @@ public class PricePredictor {
     private Index build(JsonNode root) {
         Map<String, List<Line>> byClient = new LinkedHashMap<>();
         Map<String, List<Line>> byItem = new LinkedHashMap<>();
+        Map<String, List<Line>> byCode = new LinkedHashMap<>();
         JsonNode bc = root.get("by_client");
         if (bc == null || !bc.isObject()) {
-            return new Index(byClient, byItem);
+            return new Index(byClient, byItem, byCode);
         }
         var fields = bc.fields();
         while (fields.hasNext()) {
@@ -217,19 +330,23 @@ public class PricePredictor {
             String clientNorm = e.getKey();
             List<Line> lines = new ArrayList<>();
             for (JsonNode ln : e.getValue()) {
-                Line line = toLine(ln);
+                Line line = toLine(ln, clientNorm);
                 if (line == null) {
                     continue;
                 }
                 lines.add(line);
                 byItem.computeIfAbsent(inorm(line.item), k -> new ArrayList<>()).add(line);
+                String cc = ccode(line.code);
+                if (!cc.isBlank()) {
+                    byCode.computeIfAbsent(cc, k -> new ArrayList<>()).add(line);
+                }
             }
             byClient.put(clientNorm, lines);
         }
-        return new Index(byClient, byItem);
+        return new Index(byClient, byItem, byCode);
     }
 
-    private Line toLine(JsonNode ln) {
+    private Line toLine(JsonNode ln, String clientNorm) {
         if (!ln.hasNonNull("up")) {
             return null;
         }
@@ -239,12 +356,13 @@ public class PricePredictor {
         }
         String item = text(ln, "item");
         String spec = text(ln, "spec");
+        String code = text(ln, "code");
         Long sz = ln.hasNonNull("sz") ? ln.get("sz").asLong() : null;
         Object idx = ln.hasNonNull("idx")
                 ? (ln.get("idx").isNumber() ? (Object) ln.get("idx").asInt() : ln.get("idx").asText())
                 : null;
         String file = text(ln, "file");
-        return new Line(idx, file, item, spec, up, sz, itoks(item, spec));
+        return new Line(idx, file, item, spec, up, sz, itoks(item, spec), code, clientNorm);
     }
 
     // ---- 포팅된 정규화/토큰/사이즈 함수 (build_learn_corpus.py) -------------
@@ -350,12 +468,13 @@ public class PricePredictor {
     // ---- 내부 자료구조 ------------------------------------------------------
 
     private record Line(Object idx, String file, String item, String spec, int up, Long sz,
-                        Set<String> itok) {
+                        Set<String> itok, String code, String cl) {
     }
 
     private record Scored(Line line, double score) {
     }
 
-    private record Index(Map<String, List<Line>> byClient, Map<String, List<Line>> byItem) {
+    private record Index(Map<String, List<Line>> byClient, Map<String, List<Line>> byItem,
+                         Map<String, List<Line>> byCode) {
     }
 }

@@ -48,6 +48,10 @@ public class AdminAutoQuotePredictController {
     public record ItemRequest(String text, String material, String size, String qty) {
     }
 
+    /** 단가 찾아보기 요청: 거래처 + 품목 1개 + (선택) 최대 개수. */
+    public record LookupRequest(String client, ItemRequest item, Integer limit) {
+    }
+
     @PostMapping(value = "/predict", consumes = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> predict(@RequestBody(required = false) PredictRequest req) {
@@ -63,6 +67,28 @@ public class AdminAutoQuotePredictController {
         List<PricePredictor.Prediction> out = predictor.predict(req.client(), items);
         if (out == null) {
             // priced_index 미프로비저닝 → graceful 503(기밀 누수 없음).
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("error", "autoquote_data_unavailable"));
+        }
+        return ResponseEntity.ok(out);
+    }
+
+    /**
+     * 단가 찾아보기 — 한 품목의 품목코드 기준 과거 단가 후보들을 ①같은거래처 ②타거래처 ③관련 순으로.
+     * predict 와 달리 한 품목에 대해 <b>여러 후보(리스트)</b>를 돌려준다.
+     */
+    @PostMapping(value = "/predict/lookup", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> lookup(@RequestBody(required = false) LookupRequest req) {
+        if (req == null || req.item() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "missing_field", "message", "item 은 필수입니다."));
+        }
+        ItemRequest i = req.item();
+        PricePredictor.Item it = new PricePredictor.Item(i.text(), i.material(), i.size(), i.qty());
+        int limit = req.limit() != null ? req.limit() : 8;
+        List<PricePredictor.Prediction> out = predictor.lookup(req.client(), it, limit);
+        if (out == null) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "autoquote_data_unavailable"));
         }

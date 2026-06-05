@@ -17,7 +17,7 @@ import {
   charCount,
 } from './annot/calc';
 import {
-  predict,
+  lookupPrices,
   evidence as fetchEvidence,
   getOrder,
   getEstimate,
@@ -1350,24 +1350,30 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     const client = order?.clientCompanyName || '';
     setStatus('과거 단가 조회 중…');
     try {
-      const preds = await predict(token, client, [
-        { text: `${code} ${item}`.trim(), material: code, size: spec, qty },
-      ]);
+      // 품목코드 기준 후보 리스트(①같은거래처 ②타거래처 ③관련). 한 품목→여러 후보.
+      const preds = await lookupPrices(token, client, {
+        text: `${code} ${item}`.trim(),
+        material: code,
+        size: spec,
+        qty,
+      });
       if (preds == null) {
         cdlg('학습 데이터(코퍼스)가 서버에 아직 없습니다. 관리자에게 R2 업로드를 요청하세요.', [{ label: '확인', sec: true }]);
         setStatus('');
         return;
       }
-      const refs: LookupRef[] = [];
-      for (const pr of preds) {
-        let ev: Evidence | null = null;
-        try {
-          ev = await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
-        } catch {
-          ev = null;
-        }
-        refs.push({ reason: pr.reason, src: pr.src, price: pr.price, evidence: ev, hitPrice: pr.price });
-      }
+      // 후보별 근거(과거 지시서 사진 + 명세서 grid)를 병렬로 로드(순차면 N배 느림). 실패는 null.
+      const refs: LookupRef[] = await Promise.all(
+        preds.map(async (pr) => {
+          let ev: Evidence | null = null;
+          try {
+            ev = await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
+          } catch {
+            ev = null;
+          }
+          return { reason: pr.reason, src: pr.src, price: pr.price, evidence: ev, hitPrice: pr.price };
+        }),
+      );
       const q = `"${(code + ' ' + item).trim() || '품목'}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
       setLookup({ refs, ri: 0, q });
       setStatus('');
