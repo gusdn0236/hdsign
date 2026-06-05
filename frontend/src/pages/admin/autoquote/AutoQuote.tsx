@@ -1153,27 +1153,39 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   };
 
   const splitMixed = (p: Pin, item: string) => {
+    // 한글/영문을 두 '완성' 행으로 분리. runCalc(계산)에서 호출되므로 규격은 이미 입력돼 있어
+    // 각 언어 단가·수량까지 바로 계산해 채운다. 기존행=한글만, 새 행=영문만.
     const ko = item.replace(/[^가-힣\s]/g, '').replace(/\s+/g, ' ').trim();
+    const en = item.replace(/[^A-Za-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    const code = p.vals['품목코드'] || '';
+    const spec = p.vals['규격'] || '';
     const idx = active!;
     setPins((prev) => {
-      const cur = { ...prev[idx], vals: { ...prev[idx].vals } };
-      if (ko) cur.vals['품목'] = ko; // 현재 핀 = 한글만
+      const autoKo = computeAuto(code, ko, spec); // {unit, qty} | null
+      const autoEn = computeAuto(code, en, spec);
+      const koVals: Record<string, string> = { ...prev[idx].vals, 품목: ko };
+      koVals['수량'] = String(autoKo ? autoKo.qty : charCount(ko, 'all'));
+      if (autoKo) koVals['단가'] = String(autoKo.unit);
+      const enVals: Record<string, string> = { 품목코드: code, 품목: en, 규격: spec };
+      enVals['수량'] = String(autoEn ? autoEn.qty : charCount(en, 'all'));
+      if (autoEn) enVals['단가'] = String(autoEn.unit);
+      const cur: Pin = { ...prev[idx], vals: koVals, fi: FIELDS.length, splitPending: false };
       const np: Pin = {
         ax: p.ax,
         ay: p.ay,
         lx: p.lx + 18,
         ly: p.ly + (p.dragged ? 46 : 36),
         dragged: p.dragged,
-        vals: { 품목코드: p.vals['품목코드'] || '', 규격: p.vals['규격'] || '' },
-        fi: 1, // 품목부터 입력
-        splitPending: true, // 품목 입력 후 단가로 점프
+        vals: enVals,
+        fi: FIELDS.length, // 다 채워진 완성행 — 입력 안 열고 표/말풍선에 바로 표시
+        splitPending: false,
       };
       const next = [...prev];
       next[idx] = cur;
       next.splice(idx + 1, 0, np);
       return next;
     });
-    setActive(idx + 1);
+    setActive(null);
     setDraft('');
   };
 
