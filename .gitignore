@@ -7,6 +7,10 @@ tmp_mail_test/
 # 빌드는 hdsign-watcher/build.bat 로 로컬에서 재생성, 배포는 별도 경로(공유폴더 등) 사용.
 hdsign-watcher/dist/
 hdsign-watcher/build/
+# 이지폼 자동입력 경량 에이전트(개인 PC용) 빌드 산출물
+hdsign-watcher/dist_agent/
+hdsign-watcher/build_agent/
+hdsign-watcher/*.spec
 hdsign-watcher/hdsign_worksheet.spec
 hdsign-watcher/hdsign_watcher.spec
 
