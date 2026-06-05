@@ -1,1 +1,0 @@
-import{j as a}from"./index-fhP94kSG.js";import{G as o}from"./GalleryPage-Bdorc8Jl.js";const t=[{name:"타카채널",subCategory:"타카채널",description:"타카 방식으로 제작된 알루미늄 채널 간판입니다."},{name:"일체형채널",subCategory:"일체형채널",description:"본체와 발광부가 하나로 제작된 알루미늄 일체형 채널 간판입니다."}],s=()=>a.jsx(o,{category:"aluminum",categoryTabs:t});export{s as default};
