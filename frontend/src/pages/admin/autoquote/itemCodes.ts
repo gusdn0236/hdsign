@@ -40,6 +40,19 @@ export function normCode(s: string): string {
 const NORMED = ITEM_CODES.map(normCode);
 const SORTED = NORMED.map((c) => [...c].sort().join(''));
 
+/**
+ * 자재 그룹·두께 정렬 키 — 같은 자재끼리 묶고(두께 뺀 base) 두께(2T<3T<5T…, 1.2T 등 소수 포함)
+ * 오름차순으로 보이게. 두께 없는 코드는 그 그룹 맨 끝(Infinity).
+ */
+function codeKey(norm: string): { base: string; tk: number } {
+  const m = norm.match(/(\d+(?:\.\d+)?)T/); // 첫 두께(예: 3T, 1.2T, 10T)
+  return {
+    tk: m ? parseFloat(m[1]) : Number.POSITIVE_INFINITY,
+    base: norm.replace(/(\d+(?:\.\d+)?)T/, ''), // 두께 제거 = 자재 base(그룹)
+  };
+}
+const KEYS = NORMED.map(codeKey);
+
 /** 입력과 비슷한 품목코드를 빈도·일치도 순으로. (정확>접두>부분>글자재배열) */
 export function matchCodes(query: string): string[] {
   const q = normCode(query);
@@ -55,7 +68,15 @@ export function matchCodes(query: string): string[] {
     else if (SORTED[i] === qs) s = 50; // 같은 글자 재배열(3T아크릴 ↔ 아크릴3T)
     if (s) out.push({ code: ITEM_CODES[i], s, i });
   }
-  out.sort((a, b) => b.s - a.s || a.i - b.i);
+  // 일치도(정확>접두>부분>재배열) 우선, 같은 점수 안에서는 자재 base 로 묶고 두께 오름차순.
+  out.sort((a, b) => {
+    if (b.s !== a.s) return b.s - a.s;
+    const ka = KEYS[a.i];
+    const kb = KEYS[b.i];
+    if (ka.base !== kb.base) return ka.base.localeCompare(kb.base, 'ko');
+    if (ka.tk !== kb.tk) return ka.tk - kb.tk;
+    return a.i - b.i;
+  });
   return out.map((x) => x.code);
 }
 
