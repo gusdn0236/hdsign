@@ -137,18 +137,8 @@ try:
             time.sleep(0.05)
             ef_click(x, y)
 
-        def ef_wheel_down(x: int, y: int, notches: int = 1) -> None:
-            # (x,y) 위로 커서 이동(주입) 후 휠 down — 그리드 한 행씩 스크롤. batch.py 검증: 1노치≈1행.
-            px = int(x * EF_DPI_SCALE)
-            py = int(y * EF_DPI_SCALE)
-            nx = int(px * 65535 / max(1, EF_SCREEN_W - 1))
-            ny = int(py * 65535 / max(1, EF_SCREEN_H - 1))
-            mv = _EF_MI(nx, ny, 0, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, 0, None)
-            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=mv))])
-            time.sleep(0.03)
-            delta = (-120 * notches) & 0xFFFFFFFF  # 음수=아래로(WHEEL_DELTA=120)
-            wh = _EF_MI(0, 0, delta, _MOUSEEVENTF_WHEEL, 0, None)
-            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=wh))])
+        # (행 초과 스크롤은 휠 대신 '비고 칸 클릭 → Enter = 1행 이동'(easyform 그리드 동작)을 쓴다.
+        #  휠 1노치는 기본 3줄이라 여러 행을 내려 버렸음 — 사용자 제공 방법이 정확.)
 
         def ef_key(vk: int, mods=None) -> None:
             mods = mods or []
@@ -392,8 +382,8 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
         time.sleep(0.2)
 
         # 3) 행마다 7칸 클릭+붙여넣기 (월일은 행 진입 시 자동, 비고는 건드리지 않음).
-        #    보이는 cap 행은 그 좌표에, cap 을 넘는 행은 한 행씩 휠 스크롤하며 '마지막 보이는 행'
-        #    위치(EF_CELLS[cap-1])에 채운다(batch.py 읽기 Phase2 의 쓰기판).
+        #    보이는 cap 행은 그 좌표에, cap 을 넘는 행은 '마지막 보이는 행의 비고 칸 클릭 → Enter'
+        #    로 한 행 내린 뒤(easyform 그리드 동작) 그 마지막 위치(EF_CELLS[cap-1])에 채운다.
         remark_xy = EF_CELLS[cap - 1][EF_COLS.index("remark")]
         last_row_cells = EF_CELLS[cap - 1]
         for r in range(n):
@@ -402,8 +392,11 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
             if r < cap:
                 cells = EF_CELLS[r]
             else:
-                ef_wheel_down(*remark_xy, 1)  # 한 행 스크롤 → 다음 행이 마지막 위치에 나타남
-                time.sleep(0.3)
+                # 한 행 스크롤: 비고 칸 클릭 → Enter(행 이동, 저장 아님) → 다음 행이 마지막 위치에.
+                ef_click(*remark_xy)
+                time.sleep(0.1)
+                ef_key(0x0D)  # VK_RETURN
+                time.sleep(0.25)
                 cells = last_row_cells
             for key_name, col_idx, is_num in EF_FILL_SEQ:
                 if ef_aborted():
