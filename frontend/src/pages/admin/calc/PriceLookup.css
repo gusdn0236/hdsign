@@ -99,3 +99,22 @@
   cursor: pointer;
   font-size: 16px;
 }
+
+/* 검색한 품목코드/단가에 해당하는 과거 명세서 행 — 한눈에 보이게 하이라이트 */
+.pl-modal .aq-rtbl tr.pl-hit td {
+  background: #fff3bf;
+  font-weight: 700;
+}
+
+/* 후보 넘기기 ‹ › 버튼 크게 + 닫기(X)와 간격 */
+.pl-modal .aq-nav button:not(.aq-x) {
+  font-size: 26px;
+  width: 42px;
+  height: 36px;
+  line-height: 1;
+  border-radius: 8px;
+}
+.pl-modal .aq-nav .aq-x {
+  margin-left: 24px;
+  font-size: 20px;
+}

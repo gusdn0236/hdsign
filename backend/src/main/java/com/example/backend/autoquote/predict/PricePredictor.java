@@ -91,7 +91,7 @@ public class PricePredictor {
         }
         int cap = Math.max(1, Math.min(limit, 30));
         String specBlob = specBlob(it);
-        Long qsz = sizeVal(it.text(), specBlob);
+        int[] qd = sizeDims(it.text(), specBlob); // 쿼리 가로·세로(높이형은 (h,h)). null=규격 없음
         String qtype = sizeType(it.text(), specBlob); // "height"(h:100/100) | "area"(가로*세로) | "none"
         String cl = cnorm(client);
         String codeNorm = ccode(it.material());
@@ -104,15 +104,15 @@ public class PricePredictor {
             for (Line r : coded) {
                 (cl.equals(r.cl) ? same : other).add(r);
             }
-            // 규격 타입(높이 vs 가로*세로)이 같은 것을 먼저, 그 안에서 사이즈 근접도 순.
-            sortByTypeThenProximity(same, qsz, qtype);
-            sortByTypeThenProximity(other, qsz, qtype);
+            // 규격 타입(높이 vs 가로*세로)이 같은 것을 먼저, 그 안에서 가로·세로 차원 근접도 순.
+            sortByTypeThenProximity(same, qd, qtype);
+            sortByTypeThenProximity(other, qd, qtype);
             for (Line r : same) {
-                out.add(toLookupPrediction(r, qsz, "이력", it));
+                out.add(toLookupPrediction(r, qd, "이력", it));
                 if (out.size() >= cap) return out;
             }
             for (Line r : other) {
-                out.add(toLookupPrediction(r, qsz, "타거래처", it));
+                out.add(toLookupPrediction(r, qd, "타거래처", it));
                 if (out.size() >= cap) return out;
             }
             return out;
@@ -125,20 +125,20 @@ public class PricePredictor {
             for (Line r : lines) {
                 double j = jaccard(qtok, r.itok);
                 if (j >= JACCARD_MIN) {
-                    rel.add(new Scored(r, j * 0.7 + sizeProximity(qsz, r.sz) * 0.3));
+                    rel.add(new Scored(r, j * 0.7 + dimProximity(qd, r.dims) * 0.3));
                 }
             }
         }
         rel.sort((a, b) -> Double.compare(b.score, a.score));
         for (Scored s : rel) {
-            out.add(toLookupPrediction(s.line, qsz, "관련", it));
+            out.add(toLookupPrediction(s.line, qd, "관련", it));
             if (out.size() >= cap) break;
         }
         return out;
     }
 
-    private Prediction toLookupPrediction(Line r, Long qsz, String src, Item it) {
-        double prox = sizeProximity(qsz, r.sz);
+    private Prediction toLookupPrediction(Line r, int[] qd, String src, Item it) {
+        double prox = dimProximity(qd, r.dims);
         String reason = buildLookupReason(r, src, prox);
         // 과거 실거래 단가(r.up)를 그대로 — 사용자가 사이즈별 실값을 비교해 고른다(스케일 안 함).
         return new Prediction(safe(r.item), n(r.spec), it.qty(), r.up, r.idx, r.file, src, round3(prox), reason);
@@ -165,18 +165,49 @@ public class PricePredictor {
         return sb.toString();
     }
 
-    /** 사이즈 근접도 0..1(둘 다 양수면 min/max, 정보 부족이면 0.5). 클수록 가깝다. */
-    private static double sizeProximity(Long qsz, Long sz) {
-        if (qsz != null && qsz > 0 && sz != null && sz > 0) {
-            long lo = Math.min(qsz, sz);
-            long hi = Math.max(qsz, sz);
-            return (double) lo / hi;
+    /**
+     * 가로·세로 '차원' 근접도 0..1(클수록 비슷). 면적(곱) 하나만 보면 1200*400 와 692*692(같은 면적)
+     * 를 동일 취급하는데, 가로·세로를 각각 비율로 보고 기하평균하면 '모양까지 비슷한' 것을 고른다.
+     * 방향 무관(가로↔세로 뒤집힘 허용)으로 각 쌍을 정렬해 비교. 규격 없으면(둘 중 null) 0.5.
+     */
+    private static double dimProximity(int[] q, int[] r) {
+        if (q == null || r == null) {
+            return 0.5;
         }
-        return 0.5;
+        int qlo = Math.min(q[0], q[1]);
+        int qhi = Math.max(q[0], q[1]);
+        int rlo = Math.min(r[0], r[1]);
+        int rhi = Math.max(r[0], r[1]);
+        if (qlo <= 0 || qhi <= 0 || rlo <= 0 || rhi <= 0) {
+            return 0.5;
+        }
+        double plo = (double) Math.min(qlo, rlo) / Math.max(qlo, rlo);
+        double phi = (double) Math.min(qhi, rhi) / Math.max(qhi, rhi);
+        return Math.sqrt(plo * phi); // 기하평균 — 한 변만 비슷하면 점수가 크게 안 오름(모양 보존)
     }
 
-    /** 같은 규격 타입(높이/가로*세로)을 먼저, 그 안에서 사이즈 근접도 순. 타입 무관('none')이면 근접도만. */
-    private static void sortByTypeThenProximity(List<Line> lines, Long qsz, String qtype) {
+    /** 규격에서 가로·세로 추출: AxB→(A,B), h:NNN/단일→(N,N), 없으면 null. */
+    static int[] sizeDims(String item, String spec) {
+        String blob = ((item == null ? "" : item) + " " + (spec == null ? "" : spec)).toLowerCase();
+        Matcher a = P_AREA.matcher(blob);
+        if (a.find()) {
+            return new int[] {Integer.parseInt(a.group(1)), Integer.parseInt(a.group(2))};
+        }
+        Matcher h = P_HEIGHT.matcher(blob);
+        if (h.find()) {
+            int v = Integer.parseInt(h.group(1));
+            return new int[] {v, v};
+        }
+        Matcher any = P_ANY.matcher(blob);
+        if (any.find()) {
+            int v = Integer.parseInt(any.group(1));
+            return new int[] {v, v};
+        }
+        return null;
+    }
+
+    /** 같은 규격 타입(높이/가로*세로)을 먼저, 그 안에서 가로·세로 차원 근접도 순. */
+    private static void sortByTypeThenProximity(List<Line> lines, int[] qd, String qtype) {
         boolean typed = !"none".equals(qtype);
         lines.sort((a, b) -> {
             if (typed) {
@@ -186,7 +217,7 @@ public class PricePredictor {
                     return am ? -1 : 1; // 같은 타입을 앞으로
                 }
             }
-            return Double.compare(sizeProximity(qsz, b.sz), sizeProximity(qsz, a.sz));
+            return Double.compare(dimProximity(qd, b.dims), dimProximity(qd, a.dims));
         });
     }
 
@@ -387,7 +418,7 @@ public class PricePredictor {
                 ? (ln.get("idx").isNumber() ? (Object) ln.get("idx").asInt() : ln.get("idx").asText())
                 : null;
         String file = text(ln, "file");
-        return new Line(idx, file, item, spec, up, sz, itoks(item, spec), code, clientNorm);
+        return new Line(idx, file, item, spec, up, sz, itoks(item, spec), code, clientNorm, sizeDims(item, spec));
     }
 
     // ---- 포팅된 정규화/토큰/사이즈 함수 (build_learn_corpus.py) -------------
@@ -493,7 +524,7 @@ public class PricePredictor {
     // ---- 내부 자료구조 ------------------------------------------------------
 
     private record Line(Object idx, String file, String item, String spec, int up, Long sz,
-                        Set<String> itok, String code, String cl) {
+                        Set<String> itok, String code, String cl, int[] dims) {
     }
 
     private record Scored(Line line, double score) {

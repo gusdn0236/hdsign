@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../../../context/AuthContext.jsx';
 import { lookupPrices, evidence as fetchEvidence } from '../autoquote/annot/api';
 import type { Evidence } from '../autoquote/annot/api';
@@ -43,7 +43,7 @@ export default function PriceLookup() {
     setAcOpen(false);
     setMsg('');
     try {
-      const preds = await lookupPrices(token, client, { text: code, material: code, size: spec, qty: '' });
+      const preds = await lookupPrices(token, client, { text: code, material: code, size: spec, qty: '' }, 12);
       if (preds == null) {
         setMsg('학습 데이터(코퍼스)가 서버에 아직 없습니다.');
         setBusy(false);
@@ -185,17 +185,44 @@ export default function PriceLookup() {
       </div>
       {msg && <div className="pl-msg">{msg}</div>}
 
-      {lk && <LookupResult lk={lk} setLk={setLk} />}
+      {lk && <LookupResult lk={lk} setLk={setLk} searchCode={code} />}
     </div>
   );
 }
 
-function LookupResult({ lk, setLk }: { lk: LkState; setLk: (f: (l: LkState | null) => LkState | null) => void }) {
+function LookupResult({
+  lk,
+  setLk,
+  searchCode,
+}: {
+  lk: LkState;
+  setLk: (f: (l: LkState | null) => LkState | null) => void;
+  searchCode: string;
+}) {
   const close = () => setLk(() => null);
   const num = (v: unknown) => {
     const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
     return Number.isFinite(n) ? n : null;
   };
+  // 키보드 ← → 로 후보 넘기기, Esc 닫기 (입력칸 포커스 중이면 무시).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0 } : l));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setLk((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1, lpi: 0 } : l));
+      } else if (e.key === 'Escape') {
+        setLk(() => null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setLk]);
+  const ncode = (s: string) => (s || '').trim().replace(/[\s/]/g, '').toUpperCase();
   const R = lk.refs[lk.ri];
   const ev = R?.evidence;
   const phs =
@@ -211,7 +238,7 @@ function LookupResult({ lk, setLk }: { lk: LkState; setLk: (f: (l: LkState | nul
   };
 
   return (
-    <div className="aq-modal on" onClick={(e) => e.target === e.currentTarget && close()}>
+    <div className="aq-modal on pl-modal" onClick={(e) => e.target === e.currentTarget && close()}>
       <div className="aq-mbox">
         <div className="aq-mhead">
           <b>단가 찾아보기</b>
@@ -275,15 +302,21 @@ function LookupResult({ lk, setLk }: { lk: LkState; setLk: (f: (l: LkState | nul
                   </tr>
                 </thead>
                 <tbody>
-                  {(ev?.grid || []).map((g, j) => (
-                    <tr key={j}>
-                      <td>{g.item_code}</td>
-                      <td>{g.item}</td>
-                      <td>{g.spec}</td>
-                      <td>{g.qty}</td>
-                      <td className="p">{num(g.unit_price)?.toLocaleString() ?? g.unit_price}</td>
-                    </tr>
-                  ))}
+                  {(ev?.grid || []).map((g, j) => {
+                    // 검색한 품목코드와 같은 행, 또는 예측단가와 일치하는 행을 한눈에 하이라이트.
+                    const hit =
+                      (!!searchCode && ncode(g.item_code as string) === ncode(searchCode)) ||
+                      num(g.unit_price) === Math.round(Number(R.price));
+                    return (
+                      <tr key={j} className={hit ? 'pl-hit' : ''}>
+                        <td>{g.item_code}</td>
+                        <td>{g.item}</td>
+                        <td>{g.spec}</td>
+                        <td>{g.qty}</td>
+                        <td className="p">{num(g.unit_price)?.toLocaleString() ?? g.unit_price}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
