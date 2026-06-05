@@ -23,8 +23,11 @@ import {
   putEstimate,
   markEasyformUploaded,
   readText,
+  getVisionQuota,
+  DailyLimitError,
   type Evidence,
   type OrderContext,
+  type VisionQuota,
 } from './annot/api';
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean } from './itemCodes';
@@ -298,6 +301,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
   const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
   const [gridEditing, setGridEditing] = useState(false); // 우측 명세서 표를 수기 편집(셀 포커스) 중 — 다음행 하이라이트 끔
+  const [visionQuota, setVisionQuota] = useState<VisionQuota | null>(null); // 글자AI 일일 한도(서버) — 버튼 옆 표시·사전 차단
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
@@ -826,6 +830,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // 글자AI 일일 한도 — 진입 시(마운트) + 모드 전환 시 서버에서 '오늘 남은 횟수'를 새로 받아온다.
+  useEffect(() => {
+    getVisionQuota(token).then((q) => q && setVisionQuota(q));
+  }, [token, mode]);
 
   // 마스크 캔버스 크기를 표시 이미지(콘텐츠)에 맞춘다. 캔버스 width/height 변경은 내용을 비우므로
   // 새 이미지/리사이즈 시 마스크가 초기화된다.
@@ -1789,6 +1798,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
     const anchor = firstAnchorRef.current ?? { x: 30, y: 30 };
     readText(token, dataUrl, 'image/png')
       .then((r) => {
+        if (r.quota) setVisionQuota(r.quota); // 버튼 옆 '오늘 남은 횟수' 갱신
         const text = (r.text || '').trim();
         setStatus('');
         if (!text) {
@@ -1814,6 +1824,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
       .catch((e) => {
         console.error(e);
         setStatus('');
+        if (e instanceof DailyLimitError) {
+          setVisionQuota((q) => (q ? { ...q, used: q.limit, remaining: 0 } : (e.quota ?? null)));
+          cdlg(
+            `일일 한도 ${e.quota?.limit ?? visionQuota?.limit ?? 100}회가 모두 소진되었습니다.<br>관리자(현우)에게 문의하세요.`,
+            [{ label: '확인', sec: true }],
+          );
+          return;
+        }
         cdlg('글자읽기에 실패했어요. 잠시 후 다시 시도해 주세요.', [{ label: '확인', sec: true }]);
       })
       .finally(() => {
@@ -1824,6 +1842,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
 
   /** [읽기] / Enter — 마스크의 칠한 영역(bbox) 만 잘라 화이트아웃 후 OCR 호출. */
   const readMask = () => {
+    // 일일 한도 소진 시 호출 전에 차단(서버도 막지만 헛호출 방지).
+    if (visionQuota && visionQuota.remaining <= 0) {
+      cdlg(
+        `일일 한도 ${visionQuota.limit}회가 모두 소진되었습니다.<br>관리자(현우)에게 문의하세요.`,
+        [{ label: '확인', sec: true }],
+      );
+      return;
+    }
     const img = imgRef.current;
     const mask = maskRef.current;
     if (!img || !imgSrc || !mask) return;
@@ -2027,6 +2053,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
               >
                 글자AI
               </button>
+              {visionQuota && (
+                <span
+                  className="aq-ocrquota"
+                  title="글자AI 일일 한도(전체 공용). 자정(KST) 리셋."
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                    color: visionQuota.remaining <= 0 ? '#dc2626' : visionQuota.remaining <= 10 ? '#d97706' : '#6b7785',
+                  }}
+                >
+                  오늘 남은 횟수: {visionQuota.remaining}/{visionQuota.limit}
+                </span>
+              )}
             </div>
           )}
           {imgSrc && !showRef && mode === 'ocr' && (

@@ -83,9 +83,44 @@ export async function evidence(
   return res.json();
 }
 
-/** 글자읽기(OCR) 응답 — 박스 영역에서 읽은 간판 글자. 글자수는 프론트 charCount 로 센다. */
+/** 글자읽기 일일 한도 현황. */
+export interface VisionQuota {
+  used: number;
+  remaining: number;
+  limit: number;
+}
+
+/** 글자읽기(OCR) 응답 — 박스 영역에서 읽은 간판 글자 + (있으면) 갱신된 일일 한도 현황. */
 export interface ReadTextResult {
   text: string;
+  quota?: VisionQuota;
+}
+
+/** daily_limit(일일 한도 소진) 에러 식별용 — 호출부가 전용 안내를 띄운다. */
+export class DailyLimitError extends Error {
+  quota?: VisionQuota;
+  constructor(quota?: VisionQuota) {
+    super('daily_limit');
+    this.name = 'DailyLimitError';
+    this.quota = quota;
+  }
+}
+
+/** 글자읽기 일일 한도 현황 조회(버튼 옆 '오늘 남은 횟수' 표시·사전 차단용). 실패 시 null. */
+export async function getVisionQuota(
+  token: string | null | undefined,
+): Promise<VisionQuota | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/admin/autoquote/vision/quota`, {
+      headers: authHeaders(token),
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    return { used: +j.used, remaining: +j.remaining, limit: +j.limit };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -105,15 +140,27 @@ export async function readText(
   });
   if (!res.ok) {
     let code = '';
+    let body: Record<string, unknown> | null = null;
     try {
-      code = (await res.json())?.error || '';
+      body = await res.json();
+      code = String(body?.error || '');
     } catch {
       /* 본문 없음 */
+    }
+    if (res.status === 429 && code === 'daily_limit') {
+      throw new DailyLimitError(
+        body
+          ? { used: +(body.used as number), remaining: 0, limit: +(body.limit as number) }
+          : undefined,
+      );
     }
     throw new Error(`글자읽기 실패 (${res.status}${code ? ' ' + code : ''})`);
   }
   const j = await res.json();
-  return { text: typeof j?.text === 'string' ? j.text : '' };
+  const quota = j?.quota
+    ? { used: +j.quota.used, remaining: +j.quota.remaining, limit: +j.quota.limit }
+    : undefined;
+  return { text: typeof j?.text === 'string' ? j.text : '', quota };
 }
 
 export interface OrderContext {
