@@ -1341,26 +1341,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         cdlg(res.message || '이지폼으로 보내지 못했습니다.', [{ label: '확인', sec: true }]);
         return;
       }
-      const hk = res.hotkey || 'F6';
+      // 스테이징 성공 → '명세서작성완료' 배지 점등(이지폼으로 보냄). 별도 [기입 완료] 단계 제거.
+      markEasyformUploaded(token, order.id)
+        .then(() => {
+          setOrder((o) => (o ? { ...o, easyformUploadedAt: new Date().toISOString() } : o));
+          onSaved?.();
+        })
+        .catch((e) => console.error(e));
       cdlg(
         `이지폼 <b>매출 거래명세서 → 새로작성 → 거래처 선택</b> 후,<br>` +
-          `그 창을 맨 앞에 두고 <b>[${hk}]</b> 키를 누르면 <b>${res.count}행</b>이 자동 기입됩니다.<br>` +
-          `(월일은 자동, 저장은 직접 확인 후 F5)<br><br>` +
-          `다 채워졌으면 아래 <b>[기입 완료]</b> 를 눌러 “이지폼” 배지를 표시하세요.`,
-        [
-          {
-            label: '기입 완료',
-            fn: () => {
-              markEasyformUploaded(token, order.id)
-                .then(() => {
-                  setOrder((o) => (o ? { ...o, easyformUploadedAt: new Date().toISOString() } : o));
-                  onSaved?.();
-                })
-                .catch((e) => console.error(e));
-            },
-          },
-          { label: '닫기', sec: true },
-        ],
+          `<b>'이지폼 자동기입 시작하기 ▶'</b> 를 눌러주세요.`,
+        [{ label: '닫기', sec: true }],
       );
     } catch (e) {
       console.error(e);

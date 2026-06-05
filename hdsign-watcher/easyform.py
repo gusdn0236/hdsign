@@ -490,7 +490,7 @@ def handle_fill(body: dict) -> "tuple[int, dict]":
     logging.info("이지폼 자동기입 스테이징 — %d행, '채우기' 버튼/%s 대기", len(rows), EF_HOTKEY_LABEL)
     return 200, {
         "staged": True, "count": len(rows), "hotkey": EF_HOTKEY_LABEL,
-        "message": f"이지폼 새로작성 → 거래처 선택 후 '채우기' 버튼(또는 {EF_HOTKEY_LABEL})을 누르면 {len(rows)}행이 자동 입력됩니다.",
+        "message": f"이지폼 새로작성 → 거래처 선택 후 '이지폼 자동기입 시작하기' 버튼(또는 {EF_HOTKEY_LABEL})을 누르면 {len(rows)}행이 자동 입력됩니다.",
     }
 
 
@@ -521,7 +521,7 @@ def install(root) -> None:
     info_lbl = tk.Label(frame, text="", font=("맑은 고딕", int(10 * s)), fg="#333333",
                         bg="#ffffff", justify="left", wraplength=w - int(42 * s))
     info_lbl.pack(anchor="w", pady=(int(6 * s), int(10 * s)))
-    btn = tk.Button(frame, text="이지폼에 채우기 ▶", font=("맑은 고딕", int(13 * s), "bold"),
+    btn = tk.Button(frame, text="이지폼 자동기입 시작하기 ▶", font=("맑은 고딕", int(13 * s), "bold"),
                     bg="#0a9396", fg="white", activebackground="#097a7d", activeforeground="white",
                     relief="flat", padx=int(14 * s), pady=int(8 * s), cursor="hand2")
     btn.pack(fill="x")
@@ -542,6 +542,7 @@ def install(root) -> None:
     pw, ph = int(560 * s), int(220 * s)
     panel.geometry(f"{pw}x{ph}+{(sw - pw) // 2}+{(sh - ph) // 2}")
     panel.attributes("-topmost", True)
+    panel.attributes("-alpha", 0.97)  # 살짝만 투명 → WS_EX_LAYERED 적용(클릭통과 전제), 보기엔 불투명
 
     run_frame = tk.Frame(panel, bg="#1f2937")
     tk.Label(run_frame, text="🔒", font=("Segoe UI Emoji", int(34 * s)),
@@ -575,6 +576,7 @@ def install(root) -> None:
     _WS_EX_NOACTIVATE = 0x08000000
     _WS_EX_TOPMOST = 0x00000008
     _WS_EX_TOOLWINDOW = 0x00000080
+    _WS_EX_TRANSPARENT = 0x00000020  # 마우스 클릭 통과(밑의 이지폼으로 전달) — LAYERED 와 함께.
     busy = {"v": False}
 
     def show_overlay():
@@ -582,8 +584,10 @@ def install(root) -> None:
         done_frame.pack_forget()
         dim.deiconify()
         panel.deiconify()
-        _set_exstyle(dim, add=_WS_EX_NOACTIVATE | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW)
-        _set_exstyle(panel, add=_WS_EX_NOACTIVATE | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW)
+        # NOACTIVATE(포커스 안 뺏음) + TRANSPARENT(클릭 통과 → 매크로 클릭이 이지폼 셀에 떨어지게).
+        over = _WS_EX_NOACTIVATE | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW | _WS_EX_TRANSPARENT
+        _set_exstyle(dim, add=over)
+        _set_exstyle(panel, add=over)
         dim.lift()
         panel.lift()
 
@@ -593,7 +597,8 @@ def install(root) -> None:
                         ("" if ok else f"\n{msg}"),
                         fg="#ffffff" if ok else "#fca5a5")
         done_frame.pack(fill="both", expand=True)
-        _set_exstyle(panel, remove=_WS_EX_NOACTIVATE)  # 완료 화면은 클릭 받아야 하니 해제
+        # 완료 화면은 [확인] 클릭을 받아야 하니 클릭통과·비활성 해제.
+        _set_exstyle(panel, remove=_WS_EX_NOACTIVATE | _WS_EX_TRANSPARENT)
         panel.lift()
         panel.attributes("-topmost", True)
 
@@ -605,9 +610,9 @@ def install(root) -> None:
     def set_staged(count):
         busy["v"] = False
         info_lbl.config(
-            text=f"이지폼 [새로작성 → 거래처 선택] 후\n아래 버튼을 누르면 {count}행이 자동 입력됩니다.",
+            text="이지폼 [새로작성 → 거래처 선택] 후\n아래 버튼을 누르면 해당 명세서가 자동입력됩니다.",
             fg="#333333")
-        btn.config(text="이지폼에 채우기 ▶", state="normal", bg="#0a9396")
+        btn.config(text="이지폼 자동기입 시작하기 ▶", state="normal", bg="#0a9396")
         win.deiconify()
         win.lift()
         win.attributes("-topmost", True)
