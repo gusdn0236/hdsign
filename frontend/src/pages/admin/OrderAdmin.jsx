@@ -204,6 +204,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
     setTrashOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
   }, []);
+  // 이지폼 입력(확정) 시 — '명세서작성완료' 배지를 작업중·작업완료 목록 카드에 즉시 점등(재요청 없이).
+  const markEasyformDone = useCallback((id) => {
+    const now = new Date().toISOString();
+    const patch = (o) => (o.id === id ? { ...o, hasEstimate: true, easyformUploadedAt: now } : o);
+    setOrders((prev) => prev.map(patch));
+    setTrashOrders((prev) => prev.map(patch));
+  }, []);
   // 명세서작성 모달이 열린 동안 배경(/admin/orders) 스크롤 잠금.
   useEffect(() => {
     if (estimateOrderId == null) return undefined;
@@ -2603,6 +2610,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               orderId={estimateOrderId}
               onClose={() => setEstimateOrderId(null)}
               onSaved={() => markEstimateSaved(estimateOrderId)}
+              onEasyformUploaded={() => markEasyformDone(estimateOrderId)}
             />
           </Suspense>
         </div>

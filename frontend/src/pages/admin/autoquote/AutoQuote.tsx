@@ -287,9 +287,11 @@ interface AutoQuoteProps {
   onClose?: () => void;
   /** 저장 성공 시 호출 — 부모가 주문 목록의 명세서 배지를 즉시 갱신. */
   onSaved?: () => void;
+  /** 이지폼 입력(확정) 시 호출 — 부모가 목록 카드의 '명세서작성완료' 배지를 즉시 점등(작업중·작업완료 양쪽). */
+  onEasyformUploaded?: () => void;
 }
 
-export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: AutoQuoteProps = {}) {
+export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEasyformUploaded }: AutoQuoteProps = {}) {
   const { token } = useAuth();
   const [searchParams] = useSearchParams();
 
@@ -1482,6 +1484,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         .then(() => {
           setOrder((o) => (o ? { ...o, easyformUploadedAt: new Date().toISOString() } : o));
           onSaved?.();
+          onEasyformUploaded?.(); // 목록 카드 '명세서작성완료' 배지 즉시 점등(작업중·작업완료 양쪽)
         })
         .catch((e) => console.error(e));
       cdlg(
