@@ -319,6 +319,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [visionQuota, setVisionQuota] = useState<VisionQuota | null>(null); // 글자AI 일일 한도(서버) — 버튼 옆 표시·사전 차단
   // 우측 표 품목코드 자동완성(말풍선과 동일) — 표는 overflow 클리핑이라 포털+fixed 로 띄운다.
   const [gridAc, setGridAc] = useState<{ row: number; idx: number; left: number; top: number; width: number } | null>(null);
+  // 우측 표 단가칸 포커스 시 뜨는 계산기/단가찾아보기 툴바(말풍선과 동일). 포털+fixed.
+  const [gridTool, setGridTool] = useState<{ row: number; left: number; top: number } | null>(null);
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
@@ -1246,15 +1248,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const total = pins.reduce((s, p) => s + (num(p.vals['단가']) || 0) * (num(p.vals['수량']) || 1), 0);
 
   // ---- 계산기 ----------------------------------------------------------
+  // 계산기/단가찾아보기 결과를 적용할 대상. null=말풍선 active 핀 흐름, 숫자=우측 표 그 행.
+  const priceTargetRef = useRef<number | null>(null);
+
   const applyResult = (unit: number, qty: number, desc: string) => {
-    if (active == null) return;
+    const tgt = priceTargetRef.current != null ? priceTargetRef.current : active;
+    if (tgt == null) return;
     setPins((prev) =>
       prev.map((p, i) =>
-        i === active ? { ...p, vals: { ...p.vals, 수량: String(qty), 단가: String(unit) }, fi: FIELDS.length } : p,
+        i === tgt ? { ...p, vals: { ...p.vals, 수량: String(qty), 단가: String(unit) }, fi: FIELDS.length } : p,
       ),
     );
-    setActive(null);
-    setDraft('');
+    if (priceTargetRef.current == null) {
+      setActive(null);
+      setDraft('');
+    }
+    priceTargetRef.current = null;
     cdlg(
       `${desc}<br><b>${unit.toLocaleString()}원</b> × ${qty}자 = <b>${(unit * qty).toLocaleString()}원</b><br>` +
         `<span style="font-size:12px;color:#6b7785">수량·단가가 채워졌어요</span>`,
@@ -1262,14 +1271,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     );
   };
 
-  const splitMixed = (p: Pin, item: string) => {
+  const splitMixed = (p: Pin, item: string, idx: number) => {
     // 한글/영문을 두 '완성' 행으로 분리. runCalc(계산)에서 호출되므로 규격은 이미 입력돼 있어
     // 각 언어 단가·수량까지 바로 계산해 채운다. 기존행=한글만, 새 행=영문만.
     const ko = item.replace(/[^가-힣\s]/g, '').replace(/\s+/g, ' ').trim();
     const en = item.replace(/[^A-Za-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
     const code = p.vals['품목코드'] || '';
     const spec = p.vals['규격'] || '';
-    const idx = active!;
     setPins((prev) => {
       const autoKo = computeAuto(code, ko, spec); // {unit, qty} | null
       const autoEn = computeAuto(code, en, spec);
@@ -1299,9 +1307,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     setDraft('');
   };
 
-  const runCalc = () => {
-    if (active == null) return;
-    const p = pins[active];
+  const runCalc = (row?: number) => {
+    const tgt = row != null ? row : active;
+    if (tgt == null) return;
+    priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행에, 아니면 말풍선 흐름
+    const p = pins[tgt];
     const code = p.vals['품목코드'] || '';
     const item = p.vals['품목'] || '';
     const spec = p.vals['규격'] || '';
@@ -1327,7 +1337,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       };
       if (hasKo && hasEn) {
         cdlg('품목에 한글과 영문이 함께 있어요.<br><b>한글/영문을 분리</b>하시겠습니까?', [
-          { label: '분리하기', fn: () => splitMixed(p, item) },
+          { label: '분리하기', fn: () => splitMixed(p, item, tgt) },
           {
             label: '분리 안 함',
             sec: true,
@@ -1356,9 +1366,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   };
 
   // ---- 단가 찾아보기 (slice-11 predict + evidence) ----------------------
-  const openLookup = async () => {
-    if (active == null) return;
-    const p = pins[active];
+  const openLookup = async (row?: number) => {
+    const tgt = row != null ? row : active;
+    if (tgt == null) return;
+    priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행 단가에 적용
+    const p = pins[tgt];
     const code = p.vals['품목코드'] || '';
     const item = p.vals['품목'] || '';
     const spec = p.vals['규격'] || '';
@@ -1401,6 +1413,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   };
 
   const applyPrice = (price: number | string) => {
+    if (priceTargetRef.current != null) {
+      setCell(priceTargetRef.current, '단가', String(price)); // 우측 표 그 행 단가에 채움
+      priceTargetRef.current = null;
+      setLookup(null);
+      return;
+    }
     setDraft(String(price));
     setLookup(null);
     setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
@@ -2693,7 +2711,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                         <input value={v['수량'] || ''} onChange={(e) => setCell(i, '수량', e.target.value)} data-gr={i} data-gc={3} onKeyDown={(e) => onGridKey(e, i, 3)} />
                       </td>
                       <td className="p">
-                        <input value={v['단가'] || ''} onChange={(e) => setCell(i, '단가', e.target.value)} data-gr={i} data-gc={4} onKeyDown={(e) => onGridKey(e, i, 4)} />
+                        <input
+                          value={v['단가'] || ''}
+                          onChange={(e) => setCell(i, '단가', e.target.value)}
+                          onFocus={(e) => {
+                            const r = e.currentTarget.getBoundingClientRect();
+                            setGridTool({ row: i, left: r.left, top: r.bottom });
+                          }}
+                          onBlur={() => setTimeout(() => setGridTool((g) => (g && g.row === i ? null : g)), 200)}
+                          data-gr={i}
+                          data-gc={4}
+                          onKeyDown={(e) => onGridKey(e, i, 4)}
+                        />
                       </td>
                       <td className="p">
                         {/* 공급가액 = 단가×수량 (총액). 읽기전용 — 단가·수량은 말풍선/위 칸에서 수정. */}
@@ -2777,6 +2806,40 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
             document.body,
           );
         })()}
+
+      {/* 우측 표 단가칸 툴바 — 계산기 / 단가 찾아보기 (말풍선과 동일). 표 overflow 회피로 포털+fixed. */}
+      {gridTool &&
+        pins[gridTool.row] &&
+        createPortal(
+          <div
+            style={{ position: 'fixed', left: gridTool.left, top: gridTool.top + 3, zIndex: 3000, display: 'flex', gap: 6 }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            <button
+              className="aq-lookup calc"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const row = gridTool.row;
+                setGridTool(null);
+                runCalc(row);
+              }}
+            >
+              🧮 계산기
+            </button>
+            <button
+              className="aq-lookup"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const row = gridTool.row;
+                setGridTool(null);
+                openLookup(row);
+              }}
+            >
+              🔎 단가 찾아보기
+            </button>
+          </div>,
+          document.body,
+        )}
 
       {/* 단가 찾아보기 모달 */}
       {lookup && (

@@ -591,8 +591,10 @@
   background: #eef7f8;
 }
 .aq-acitem.on {
-  background: var(--teal);
-  color: #fff;
+  /* 포털(document.body) 드롭다운은 var(--teal) 스코프 밖이라 투명→흰바탕+흰글씨가 됐다.
+     변수 대신 연회색 리터럴 + 진한 글씨로 어디서든 보이게. */
+  background: #cdd5dd;
+  color: #1f2733;
 }
 .aq-acmore {
   padding: 5px 10px;

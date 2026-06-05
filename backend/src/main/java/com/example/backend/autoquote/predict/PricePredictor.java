@@ -92,6 +92,7 @@ public class PricePredictor {
         int cap = Math.max(1, Math.min(limit, 30));
         String specBlob = specBlob(it);
         Long qsz = sizeVal(it.text(), specBlob);
+        String qtype = sizeType(it.text(), specBlob); // "height"(h:100/100) | "area"(가로*세로) | "none"
         String cl = cnorm(client);
         String codeNorm = ccode(it.material());
 
@@ -103,8 +104,9 @@ public class PricePredictor {
             for (Line r : coded) {
                 (cl.equals(r.cl) ? same : other).add(r);
             }
-            sortBySizeProximity(same, qsz);
-            sortBySizeProximity(other, qsz);
+            // 규격 타입(높이 vs 가로*세로)이 같은 것을 먼저, 그 안에서 사이즈 근접도 순.
+            sortByTypeThenProximity(same, qsz, qtype);
+            sortByTypeThenProximity(other, qsz, qtype);
             for (Line r : same) {
                 out.add(toLookupPrediction(r, qsz, "이력", it));
                 if (out.size() >= cap) return out;
@@ -173,8 +175,31 @@ public class PricePredictor {
         return 0.5;
     }
 
-    private static void sortBySizeProximity(List<Line> lines, Long qsz) {
-        lines.sort((a, b) -> Double.compare(sizeProximity(qsz, b.sz), sizeProximity(qsz, a.sz)));
+    /** 같은 규격 타입(높이/가로*세로)을 먼저, 그 안에서 사이즈 근접도 순. 타입 무관('none')이면 근접도만. */
+    private static void sortByTypeThenProximity(List<Line> lines, Long qsz, String qtype) {
+        boolean typed = !"none".equals(qtype);
+        lines.sort((a, b) -> {
+            if (typed) {
+                boolean am = qtype.equals(sizeType(a.item, a.spec));
+                boolean bm = qtype.equals(sizeType(b.item, b.spec));
+                if (am != bm) {
+                    return am ? -1 : 1; // 같은 타입을 앞으로
+                }
+            }
+            return Double.compare(sizeProximity(qsz, b.sz), sizeProximity(qsz, a.sz));
+        });
+    }
+
+    /** 규격 타입: 곱하기(가로*세로[*z])면 "area", h:NNN/단일 숫자면 "height", 숫자 없으면 "none". */
+    static String sizeType(String item, String spec) {
+        String blob = ((item == null ? "" : item) + " " + (spec == null ? "" : spec)).toLowerCase();
+        if (P_AREA.matcher(blob).find()) {
+            return "area";
+        }
+        if (P_HEIGHT.matcher(blob).find() || P_ANY.matcher(blob).find()) {
+            return "height";
+        }
+        return "none";
     }
 
     private static String specBlob(Item it) {
