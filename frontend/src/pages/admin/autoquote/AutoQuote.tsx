@@ -297,6 +297,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
   const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
+  const [gridEditing, setGridEditing] = useState(false); // 우측 명세서 표를 수기 편집(셀 포커스) 중 — 다음행 하이라이트 끔
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
@@ -1900,7 +1901,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
   // 단, 어떤 행을 편집 중(active≠null)이면 그 행을 다 채우는 중이므로 다음 행은 칠하지 않는다.
   // → 현재 행 입력을 마쳐 active 가 풀리고 모드(2·3)가 유지될 때 비로소 다음 행이 칠해진다.
   const ocrTarget = pins.length; // 읽으면/그리면 새로 만들어질 말풍선·행 번호(0-based).
-  const showTgtRow = (mode === 'ocr' || mode === 'cursor') && active === null; // 다음 항목 행 하이라이트(글자수=3 · 말풍선=2 공통).
+  // 다음 항목 행 하이라이트(글자수=3 · 말풍선=2 공통). 핀 편집 중(active)이나 우측 표를 수기
+  // 편집 중(gridEditing)이면 끈다 — 표에서 n번 행 작성 중에 n+1 행이 미리 칠해지던 문제 방지.
+  const showTgtRow = (mode === 'ocr' || mode === 'cursor') && active === null && !gridEditing;
   const rows = Math.max(ROWS, pins.length + (showTgtRow ? 1 : 0));
   // 박스·연필·커서·grid 행 하이라이트 색 = 다음 말풍선 색. "지금 칠하는 게 N번으로 들어가겠구나".
   const ocrColor = pinColor(ocrTarget);
@@ -2396,7 +2399,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
             {order && <span className="aq-tag">{order.clientCompanyName || order.orderNumber}</span>}
           </div>
           <div className="aq-gridwrap">
-            <table className="aq-tbl">
+            <table
+              className="aq-tbl"
+              onFocus={() => setGridEditing(true)}
+              onBlur={(e) => {
+                // 표 안 셀끼리 이동(relatedTarget 이 표 내부)이면 유지, 표 밖으로 나가면 끔.
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setGridEditing(false);
+              }}
+            >
               {/* 화면엔 품목코드·품목·규격·수량·단가·공급가액(+번호). 월일·세액·비고는 숨김 —
                   저장(buildGrid)·이지폼 매크로에서는 9칸 모두 채운다. */}
               <colgroup>
