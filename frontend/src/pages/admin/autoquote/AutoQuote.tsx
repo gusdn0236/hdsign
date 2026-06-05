@@ -416,22 +416,29 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         // 기존 명세서가 있으면 grid 를 핀(앵커 없는 grid 행)으로 복원.
         const est = await getEstimate(token, id);
         if (alive && est?.estimate?.grid?.length) {
-          const restored: Pin[] = est.estimate.grid.map((g: Record<string, string>, i: number) => ({
-            ax: 30,
-            ay: 30 + i * 30,
-            lx: 30,
-            ly: 30 + i * 30,
-            dragged: false,
-            fi: FIELDS.length,
-            vals: {
-              월일: g['월일'] || '',
-              품목코드: g['품목코드'] || '',
-              품목: g['품목'] || '',
-              규격: g['규격'] || '',
-              수량: g['수량'] || '',
-              단가: g['단가'] || '',
-            },
-          }));
+          const restored: Pin[] = est.estimate.grid.map((g: Record<string, unknown>, i: number) => {
+            // 저장된 핀 위치(_ax…)가 있으면 원위치로, 없으면(옛 저장본) 좌상단 계단식 폴백.
+            const hasGeo = g._ax != null && g._ay != null;
+            const ax = hasGeo ? Number(g._ax) : 30;
+            const ay = hasGeo ? Number(g._ay) : 30 + i * 30;
+            return {
+              ax,
+              ay,
+              lx: hasGeo && g._lx != null ? Number(g._lx) : ax,
+              ly: hasGeo && g._ly != null ? Number(g._ly) : ay,
+              dragged: hasGeo ? !!g._dragged : false,
+              fi: FIELDS.length,
+              vals: {
+                월일: String(g['월일'] ?? ''),
+                품목코드: String(g['품목코드'] ?? ''),
+                품목: String(g['품목'] ?? ''),
+                규격: String(g['규격'] ?? ''),
+                수량: String(g['수량'] ?? ''),
+                단가: String(g['단가'] ?? ''),
+                비고: String(g['비고'] ?? ''),
+              },
+            };
+          });
           setPins(restored);
         }
       } catch (e) {
@@ -1216,6 +1223,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved }: Au
         공급가액: supply != null ? String(supply) : '',
         세액: supply != null ? String(Math.round(supply * 0.1)) : '',
         비고: p.vals['비고'] || '',
+        // 핀 위치(말풍선 ax,ay / 리더선 lx,ly / 드래그여부) — 재오픈 시 원위치 복원용.
+        // _ 접두사라 이지폼 셀(7키)·공유 합성과 무관(에이전트/매핑이 무시). 옛 저장본엔 없어 복원 시 폴백.
+        _ax: p.ax, _ay: p.ay, _lx: p.lx, _ly: p.ly, _dragged: p.dragged,
       };
     });
   };
