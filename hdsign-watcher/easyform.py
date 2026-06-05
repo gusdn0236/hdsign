@@ -562,21 +562,34 @@ def install(root) -> None:
     done_btn.pack()
     panel.withdraw()
 
+    # 견고한 exstyle 설정(selftest2 로 검증): GetAncestor 로 진짜 top-level HWND + WS_EX_LAYERED 명시 +
+    # SetWindowPos(FRAMECHANGED) 로 강제 반영. winfo_id() 만으론 클릭통과가 안 먹던 문제 해결.
+    _GWL_EXSTYLE = -20
+    _GA_ROOT = 2
+    _SWP_APPLY = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
+    try:
+        _GetWL = ctypes.windll.user32.GetWindowLongPtrW
+        _SetWL = ctypes.windll.user32.SetWindowLongPtrW
+    except AttributeError:
+        _GetWL = ctypes.windll.user32.GetWindowLongW
+        _SetWL = ctypes.windll.user32.SetWindowLongW
+
     def _set_exstyle(w_, add=0, remove=0):
         try:
             w_.update_idletasks()
-            hwnd = w_.winfo_id()
             u = ctypes.windll.user32
-            GWL_EXSTYLE = -20
-            cur = u.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            u.SetWindowLongW(hwnd, GWL_EXSTYLE, (cur | add) & ~remove)
+            hwnd = u.GetAncestor(w_.winfo_id(), _GA_ROOT)  # 진짜 top-level
+            cur = _GetWL(hwnd, _GWL_EXSTYLE)
+            _SetWL(hwnd, _GWL_EXSTYLE, (cur | add) & ~remove)
+            u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, _SWP_APPLY)  # 변경 강제 반영
         except Exception:
             pass
 
     _WS_EX_NOACTIVATE = 0x08000000
     _WS_EX_TOPMOST = 0x00000008
     _WS_EX_TOOLWINDOW = 0x00000080
-    _WS_EX_TRANSPARENT = 0x00000020  # 마우스 클릭 통과(밑의 이지폼으로 전달) — LAYERED 와 함께.
+    _WS_EX_TRANSPARENT = 0x00000020  # 마우스 클릭 통과(밑의 이지폼으로 전달)
+    _WS_EX_LAYERED = 0x00080000      # 클릭통과 전제(명시) — 알파와 별개로 확실히 켠다.
     busy = {"v": False}
 
     def show_overlay():
@@ -584,8 +597,8 @@ def install(root) -> None:
         done_frame.pack_forget()
         dim.deiconify()
         panel.deiconify()
-        # NOACTIVATE(포커스 안 뺏음) + TRANSPARENT(클릭 통과 → 매크로 클릭이 이지폼 셀에 떨어지게).
-        over = _WS_EX_NOACTIVATE | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW | _WS_EX_TRANSPARENT
+        # LAYERED+TRANSPARENT(클릭 통과 → 매크로 클릭이 이지폼 셀에) + NOACTIVATE(포커스 안 뺏음).
+        over = _WS_EX_LAYERED | _WS_EX_TRANSPARENT | _WS_EX_NOACTIVATE | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW
         _set_exstyle(dim, add=over)
         _set_exstyle(panel, add=over)
         dim.lift()
