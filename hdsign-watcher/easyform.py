@@ -70,6 +70,7 @@ try:
         _MOUSEEVENTF_LEFTUP = 0x0004
         _MOUSEEVENTF_MOVE = 0x0001
         _MOUSEEVENTF_ABSOLUTE = 0x8000
+        _MOUSEEVENTF_WHEEL = 0x0800
 
         _user32.GetSystemMetrics.argtypes = [ctypes.c_int]
         _user32.GetSystemMetrics.restype = ctypes.c_int
@@ -135,6 +136,19 @@ try:
             ef_click(x, y)
             time.sleep(0.05)
             ef_click(x, y)
+
+        def ef_wheel_down(x: int, y: int, notches: int = 1) -> None:
+            # (x,y) 위로 커서 이동(주입) 후 휠 down — 그리드 한 행씩 스크롤. batch.py 검증: 1노치≈1행.
+            px = int(x * EF_DPI_SCALE)
+            py = int(y * EF_DPI_SCALE)
+            nx = int(px * 65535 / max(1, EF_SCREEN_W - 1))
+            ny = int(py * 65535 / max(1, EF_SCREEN_H - 1))
+            mv = _EF_MI(nx, ny, 0, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, 0, None)
+            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=mv))])
+            time.sleep(0.03)
+            delta = (-120 * notches) & 0xFFFFFFFF  # 음수=아래로(WHEEL_DELTA=120)
+            wh = _EF_MI(0, 0, delta, _MOUSEEVENTF_WHEEL, 0, None)
+            _ef_send([_EF_IN(_INPUT_MOUSE, _EF_U(mi=wh))])
 
         def ef_key(vk: int, mods=None) -> None:
             mods = mods or []
@@ -348,10 +362,7 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
     n = len(rows)
     if n == 0:
         return False, "기입할 행이 없습니다."
-    cap = len(EF_CELLS)  # 10
-    if n > cap:
-        return False, (f"행이 {n}개로 자동기입 한도({cap}행)를 넘습니다. "
-                       f"먼저 {cap}행 이하로 나눠 작성해 주세요. (현재 버전 미지원)")
+    cap = len(EF_CELLS)  # 보이는 행 수(좌표 매핑 10행). 넘으면 한 행씩 스크롤하며 채운다.
 
     abort_msg = "ESC 로 중단했습니다. (일부만 입력됐을 수 있어요 — 이지폼에서 확인 후 저장 마세요)"
     # 입력 가드 ON — 사용자 물리 마우스/키보드 차단, ESC 누르면 ef_aborted()=True. 끝나면 항상 해제.
@@ -380,8 +391,20 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
 
         time.sleep(0.2)
 
-        # 3) 행마다 7칸 클릭+붙여넣기 (월일은 행 진입 시 자동, 비고는 건드리지 않음)
+        # 3) 행마다 7칸 클릭+붙여넣기 (월일은 행 진입 시 자동, 비고는 건드리지 않음).
+        #    보이는 cap 행은 그 좌표에, cap 을 넘는 행은 한 행씩 휠 스크롤하며 '마지막 보이는 행'
+        #    위치(EF_CELLS[cap-1])에 채운다(batch.py 읽기 Phase2 의 쓰기판).
+        remark_xy = EF_CELLS[cap - 1][EF_COLS.index("remark")]
+        last_row_cells = EF_CELLS[cap - 1]
         for r in range(n):
+            if ef_aborted():
+                return False, abort_msg
+            if r < cap:
+                cells = EF_CELLS[r]
+            else:
+                ef_wheel_down(*remark_xy, 1)  # 한 행 스크롤 → 다음 행이 마지막 위치에 나타남
+                time.sleep(0.3)
+                cells = last_row_cells
             for key_name, col_idx, is_num in EF_FILL_SEQ:
                 if ef_aborted():
                     return False, abort_msg
@@ -390,7 +413,7 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
                     val = _ef_num(val)
                 if val == "":
                     continue  # 빈 값은 칸을 건드리지 않음
-                x, y = EF_CELLS[r][col_idx]
+                x, y = cells[col_idx]
                 ef_click(x, y)
                 time.sleep(0.08)            # 셀 활성화 대기(batch.py 검증 타이밍)
                 ef_set_clipboard(val)
@@ -398,9 +421,9 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
                 ef_paste()
                 time.sleep(0.05)
 
-        # 4) 마지막 셀 확정 — 여유분(다음) 행 품목칸 클릭(저장/Enter 안 함). 한도면 마지막 행 재클릭.
-        commit_r = min(n, cap - 1)
-        ef_click(*EF_CELLS[commit_r][EF_COLS.index("item")])
+        # 4) 마지막 셀 확정 — 저장/Enter 안 함. cap 이하면 여유분(다음) 행, 넘으면 마지막 보이는 행 재클릭.
+        commit_cells = EF_CELLS[min(n, cap - 1)] if n <= cap else last_row_cells
+        ef_click(*commit_cells[EF_COLS.index("item")])
     finally:
         ef_guard_stop()  # 입력 가드 OFF — 사용자 입력 복구(항상 실행)
     return True, f"{n}개 행을 기입했습니다. 내용 확인 후 직접 저장(F5)하세요."
@@ -479,9 +502,6 @@ def handle_fill(body: dict) -> "tuple[int, dict]":
             rows.append({k: ("" if r.get(k) is None else str(r.get(k))) for k in _EF_ROW_KEYS})
     if not rows:
         return 400, {"staged": False, "message": "유효한 행이 없습니다."}
-    cap = len(EF_CELLS)
-    if len(rows) > cap:
-        return 200, {"staged": False, "message": f"행이 {len(rows)}개로 한도({cap}행)를 넘어 보낼 수 없습니다."}
     ef_stage_job(rows)
     try:
         _EF_UI_QUEUE.put(("show", len(rows)))

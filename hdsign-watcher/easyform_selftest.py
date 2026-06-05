@@ -21,12 +21,16 @@ import time
 sys.path.insert(0, r"C:\Users\USER\Desktop\hdsign\hdsign-watcher")
 import easyform as e  # noqa: E402
 
-ROWS = [
-    {"item_code": "AQ-1", "item": "테스트간판", "spec": "1000x500",
-     "qty": "2", "unit_price": "15000", "supply": "30000", "tax": "3000"},
-    {"item_code": "AQ-2", "item": "아크릴", "spec": "600x300",
-     "qty": "1", "unit_price": "8000", "supply": "8000", "tax": "800"},
-]
+# 행 수 = 첫 인자(기본 20). 20 으로 10행 초과 스크롤 채우기를 검증한다.
+N = int(sys.argv[1]) if len(sys.argv) > 1 else 20
+ROWS = []
+for i in range(1, N + 1):
+    up = 1000 * i
+    ROWS.append({
+        "item_code": f"AQ-{i}", "item": f"테스트{i}", "spec": f"{100 * i}x{50 * i}",
+        "qty": str(i), "unit_price": str(up), "supply": str(up * i),
+        "tax": str(round(up * i * 0.1)),
+    })
 
 
 def main() -> int:
@@ -34,7 +38,7 @@ def main() -> int:
         print("EASYFORM_AVAILABLE=False")
         return 1
     print("=" * 60)
-    print(f"매크로 단독 진단(오버레이 없음) — DPI {e.EF_DPI_SCALE:.2f}x, 화면 {e.EF_SCREEN_W}x{e.EF_SCREEN_H}")
+    print(f"매크로 단독 진단(오버레이 없음) — {N}행, DPI {e.EF_DPI_SCALE:.2f}x, 화면 {e.EF_SCREEN_W}x{e.EF_SCREEN_H}")
     print("이지폼 [새로작성→거래처선택] 창을 맨 앞에 두세요. 5초 후 시작, 마우스 만지지 마세요.")
     for i in range(5, 0, -1):
         print(f"  {i}...", end="\r", flush=True)
