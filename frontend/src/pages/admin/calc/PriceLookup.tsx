@@ -30,6 +30,7 @@ export default function PriceLookup() {
   const [client, setClient] = useState('');
   const [busy, setBusy] = useState(false);
   const [acOpen, setAcOpen] = useState(false);
+  const [acIdx, setAcIdx] = useState(-1); // 품목코드 드롭다운 하이라이트(-1=없음)
   const [lk, setLk] = useState<LkState | null>(null);
   const [msg, setMsg] = useState('');
 
@@ -72,6 +73,45 @@ export default function PriceLookup() {
   const ms = acOpen && code.trim() ? matchCodes(code) : [];
   const dym = ms.length ? didYouMean(code, ms) : null;
 
+  // 품목코드 칸 키 — 드롭다운 탐색(↓↑)/선택(Enter)/닫기(Esc). 선택 없으면 Enter=검색 실행.
+  const onCodeKey = (e: React.KeyboardEvent) => {
+    const m = matchCodes(code);
+    if (acOpen && m.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setAcIdx((i) => Math.min(i + 1, m.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setAcIdx((i) => Math.max(i - 1, -1));
+        return;
+      }
+      if (e.key === 'Escape') {
+        setAcOpen(false);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const d = didYouMean(code, m);
+        if (acIdx >= 0 && m[acIdx]) {
+          setCode(m[acIdx]);
+          setAcOpen(false);
+          return;
+        }
+        if (d) {
+          setCode(d);
+          setAcOpen(false);
+          return;
+        }
+        run();
+        return;
+      }
+    } else if (e.key === 'Enter') {
+      run();
+    }
+  };
+
   return (
     <div className="pl-card">
       <div className="pl-head">
@@ -84,26 +124,30 @@ export default function PriceLookup() {
           <input
             value={code}
             onChange={(e) => {
-              setCode(e.target.value);
+              const v = e.target.value;
+              setCode(v);
               setAcOpen(true);
+              const m = matchCodes(v);
+              const d = didYouMean(v, m);
+              setAcIdx(d ? m.indexOf(d) : -1);
             }}
             onFocus={() => setAcOpen(true)}
             onBlur={() => setTimeout(() => setAcOpen(false), 150)}
-            onKeyDown={(e) => e.key === 'Enter' && run()}
+            onKeyDown={onCodeKey}
             placeholder="예: 갈바레이저타공"
           />
           {ms.length > 0 && (
             <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, width: '100%', zIndex: 50 }}>
-              {dym && (
+              {dym && acIdx === ms.indexOf(dym) && (
                 <div className="aq-achint">
-                  혹시 <b>{dym}</b> 인가요?
+                  혹시 <b>{dym}</b> 인가요? · Enter 적용
                 </div>
               )}
               <div className="aq-aclist">
-                {ms.map((c) => (
+                {ms.map((c, k) => (
                   <div
                     key={c}
-                    className="aq-acitem"
+                    className={'aq-acitem' + (k === acIdx ? ' on' : '')}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setCode(c);
