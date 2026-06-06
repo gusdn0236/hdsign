@@ -116,6 +116,7 @@ const ClientAdmin      = lazyWithRetry(() => import('./pages/admin/ClientAdmin.j
 const RatesAdmin       = lazyWithRetry(() => import('./pages/admin/RatesAdmin.jsx'))
 const CasesAdmin       = lazyWithRetry(() => import('./pages/admin/CasesAdmin.jsx'))
 const CalcLayout       = lazyWithRetry(() => import('./pages/admin/calc/CalcLayout.jsx'))
+const SalesAnalytics   = lazyWithRetry(() => import('./pages/admin/analytics/SalesAnalytics.tsx'))
 const ClientLogin      = lazyWithRetry(() => import('./pages/client/ClientLogin.jsx'))
 const ClientSignup     = lazyWithRetry(() => import('./pages/client/ClientSignup.jsx'))
 const ClientLayout     = lazyWithRetry(() => import('./pages/client/ClientLayout.jsx'))
@@ -195,6 +196,7 @@ function App() {
                             <Route path="calc/*" element={<Navigate to="/admin/prices" replace />} />
                             <Route path="notices" element={<NoticeAdmin />} />
                             <Route path="evidence" element={<EvidenceAdmin />} />
+                            <Route path="analytics" element={<SalesAnalytics />} />
                         </Route>
 
                         <Route path="/p/:orderNumber" element={<EvidenceQuickCapture />} />

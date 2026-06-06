@@ -26,6 +26,7 @@ const AdminLayout = () => {
         { name: '이미지 관리', path: '/admin/gallery-upload' },
         { name: '공지사항 관리', path: '/admin/notices' },
         { name: '현장작업완료사진', path: '/admin/evidence' },
+        { name: '매출분석', path: '/admin/analytics' },
     ];
 
     return (

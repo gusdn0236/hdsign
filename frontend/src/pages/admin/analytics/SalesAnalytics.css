@@ -1,0 +1,335 @@
+/* 매출분석 대시보드 — 토스/뱅크샐러드 감성(깔끔 카드·큰 숫자·부드러운 색) */
+.sa-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 22px 18px 60px;
+  color: #1f2733;
+}
+.sa-load {
+  text-align: center;
+  color: #6b7785;
+  font-size: 15px;
+  padding: 80px 0;
+}
+.sa-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.sa-title h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  color: #0a9396;
+}
+.sa-title span {
+  font-size: 13px;
+  color: #9aa5b1;
+}
+
+/* 히어로 */
+.sa-hero {
+  background: linear-gradient(135deg, #0a9396 0%, #0a7a7d 100%);
+  color: #fff;
+  border-radius: 18px;
+  padding: 24px 26px;
+  margin-bottom: 14px;
+  box-shadow: 0 6px 22px rgba(10, 147, 150, 0.28);
+}
+.sa-hero-label {
+  font-size: 14px;
+  opacity: 0.9;
+  font-weight: 600;
+}
+.sa-hero-num {
+  font-size: 38px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  margin: 4px 0 8px;
+}
+.sa-hero-mom {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* 요약 카드 */
+.sa-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.sa-card {
+  background: #fff;
+  border: 1px solid #eef2f5;
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: 0 2px 10px rgba(31, 39, 51, 0.04);
+}
+.sa-card-label {
+  font-size: 12.5px;
+  color: #6b7785;
+  font-weight: 600;
+}
+.sa-card-val {
+  font-size: 24px;
+  font-weight: 800;
+  color: #1f2733;
+  margin-top: 4px;
+  letter-spacing: -0.3px;
+}
+.sa-card-sub {
+  font-size: 11.5px;
+  color: #9aa5b1;
+  margin-top: 2px;
+}
+
+/* 섹션 */
+.sa-section {
+  background: #fff;
+  border: 1px solid #eef2f5;
+  border-radius: 16px;
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: 0 2px 10px rgba(31, 39, 51, 0.04);
+}
+.sa-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.sa-section-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: #1f2733;
+}
+.sa-section-head span {
+  font-size: 12px;
+  color: #9aa5b1;
+}
+.sa-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.sa-grid .sa-section {
+  margin-bottom: 0;
+}
+
+/* 막대 차트(월별·계절성) */
+.sa-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 180px;
+  padding-top: 6px;
+}
+.sa-bars.season {
+  gap: 8px;
+}
+.sa-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 0;
+}
+.sa-bar {
+  width: 100%;
+  max-width: 26px;
+  background: linear-gradient(180deg, #0a9396, #56c3c5);
+  border-radius: 5px 5px 0 0;
+  transition: opacity 0.12s;
+}
+.sa-bar.alt {
+  background: linear-gradient(180deg, #5a73a8, #8aa0d4);
+}
+.sa-bar-col:hover .sa-bar {
+  opacity: 0.78;
+}
+.sa-bar-x {
+  font-size: 10.5px;
+  color: #9aa5b1;
+  margin-top: 5px;
+  white-space: nowrap;
+}
+
+/* 연도별 막대 */
+.sa-ybars {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  height: 190px;
+  padding: 0 6px;
+}
+.sa-ybar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+.sa-ybar-val {
+  font-size: 13px;
+  font-weight: 800;
+  color: #0a7a7d;
+  margin-bottom: 6px;
+}
+.sa-ybar {
+  width: 100%;
+  max-width: 64px;
+  background: linear-gradient(180deg, #0a9396, #56c3c5);
+  border-radius: 8px 8px 0 0;
+}
+.sa-ybar-x {
+  font-size: 12.5px;
+  color: #6b7785;
+  font-weight: 700;
+  margin-top: 7px;
+}
+
+/* 도넛 */
+.sa-donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.sa-donut {
+  width: 150px;
+  height: 150px;
+  flex-shrink: 0;
+}
+.sa-donut-c1 {
+  font-size: 15px;
+  font-weight: 800;
+  fill: #1f2733;
+}
+.sa-donut-c2 {
+  font-size: 10.5px;
+  fill: #9aa5b1;
+}
+.sa-legend {
+  flex: 1;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sa-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.sa-legend-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.sa-legend-name {
+  flex: 1;
+  color: #4b5563;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-legend-pct {
+  font-weight: 800;
+  color: #1f2733;
+}
+
+/* 랭킹 리스트 */
+.sa-rank {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.sa-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+.sa-rank-i {
+  width: 20px;
+  text-align: center;
+  font-weight: 800;
+  color: #9aa5b1;
+  flex-shrink: 0;
+}
+.sa-rank-i.top {
+  color: #0a9396;
+}
+.sa-rank-name {
+  width: 130px;
+  flex-shrink: 0;
+  color: #1f2733;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-rank-bar-wrap {
+  flex: 1;
+  height: 9px;
+  background: #f1f4f6;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.sa-rank-bar {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #0a9396, #56c3c5);
+  border-radius: 5px;
+}
+.sa-rank-val {
+  width: 110px;
+  text-align: right;
+  flex-shrink: 0;
+  font-weight: 800;
+  color: #1f2733;
+}
+.sa-rank-val em {
+  font-style: normal;
+  font-weight: 500;
+  font-size: 11px;
+  color: #9aa5b1;
+}
+
+.sa-foot {
+  font-size: 11.5px;
+  color: #b3bcc6;
+  text-align: center;
+  margin-top: 18px;
+}
+
+@media (max-width: 820px) {
+  .sa-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sa-grid {
+    grid-template-columns: 1fr;
+  }
+  .sa-rank-name {
+    width: 92px;
+  }
+  .sa-rank-val {
+    width: 84px;
+  }
+  .sa-hero-num {
+    font-size: 30px;
+  }
+}

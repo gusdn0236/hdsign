@@ -312,3 +312,61 @@ export async function markEasyformUploaded(
   if (!res.ok) throw new Error(`이지폼 표시 실패 (${res.status})`);
   return res.json();
 }
+
+// ---- 매출분석 대시보드 (GET /api/admin/analytics/sales) -------------------
+export interface SalesSummary {
+  totalRevenue: number;
+  totalInvoices: number;
+  avgInvoice: number;
+  firstYm: string;
+  lastYm: string;
+  latestYm: string;
+  latestRevenue: number;
+  momPct: number | null;
+  latestYear: number;
+  latestYearRevenue: number;
+  yoyPct: number | null;
+  clientCount: number;
+}
+export interface MonthPoint {
+  ym: string;
+  revenue: number;
+  invoices: number;
+}
+export interface YearPoint {
+  year: number;
+  revenue: number;
+  invoices: number;
+}
+export interface NameRevenue {
+  name: string;
+  revenue: number;
+  count: number;
+}
+export interface ItemStat {
+  name: string;
+  revenue: number;
+  qty: number;
+  count: number;
+}
+export interface MonthAvg {
+  month: number;
+  revenue: number;
+}
+export interface SalesAnalytics {
+  summary: SalesSummary;
+  monthly: MonthPoint[];
+  yearly: YearPoint[];
+  topClients: NameRevenue[];
+  topItems: ItemStat[];
+  materials: NameRevenue[];
+  seasonality: MonthAvg[];
+}
+
+/** 매출분석 집계 — 상세 명세서 기반. 미프로비저닝(503)이면 null. */
+export async function salesAnalytics(token: string | null | undefined): Promise<SalesAnalytics | null> {
+  const res = await fetch(`${BASE_URL}/api/admin/analytics/sales`, { headers: authHeaders(token) });
+  if (res.status === 503) return null;
+  if (!res.ok) throw new Error(`매출분석 실패 (${res.status})`);
+  return res.json();
+}
