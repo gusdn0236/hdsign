@@ -95,6 +95,21 @@ public class AdminAutoQuotePredictController {
         return ResponseEntity.ok(out);
     }
 
+    /**
+     * 유사 품목코드 추천 — 입력 코드와 비슷한 코퍼스 코드들(같은 자재 다른 표기·오타)을 건수순으로.
+     * 단가찾아보기에서 '비슷한 코드' 칩으로 띄워, 흩어진 표기를 함께 검색하도록 돕는다.
+     */
+    @GetMapping("/predict/similar-codes")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> similarCodes(@RequestParam(required = false) String code,
+                                          @RequestParam(required = false) Integer limit) {
+        if (code == null || code.isBlank()) {
+            return ResponseEntity.ok(List.of());
+        }
+        int n = limit != null ? limit : 8;
+        return ResponseEntity.ok(predictor.similarCodes(code, n));
+    }
+
     @GetMapping("/evidence/{invoiceIdx}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> evidence(@PathVariable("invoiceIdx") String invoiceIdx,

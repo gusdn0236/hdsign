@@ -70,6 +70,12 @@ public class PricePredictor {
             @JsonProperty("reason") String reason) {
     }
 
+    /** 유사 품목코드 추천 1건 — 표기(code) + 코퍼스 내 건수(count). */
+    public record CodeSuggestion(
+            @JsonProperty("code") String code,
+            @JsonProperty("count") int count) {
+    }
+
     // ---- 공개 API -----------------------------------------------------------
 
     /** priced_index 를 읽어 인덱스를 만들 수 있으면 true(=예측 가능). 미프로비저닝이면 false. */
@@ -133,6 +139,97 @@ public class PricePredictor {
         for (Scored s : rel) {
             out.add(toLookupPrediction(s.line, qd, "관련", it));
             if (out.size() >= cap) break;
+        }
+        return out;
+    }
+
+    /**
+     * 입력 품목코드와 '비슷한' 코드들을 코퍼스에서 찾아 건수 많은 순으로 추천(같은 자재가 여러 표기·오타로
+     * 흩어진 경우 함께 검색하라고). 유사도 = ① 정규화코드 부분포함(짧은 쪽 길이≥3) 0.95,
+     * ② 아니면 글자 bigram Sørensen–Dice(≥0.4). 정확히 같은 코드는 제외. 미프로비저닝이면 빈 리스트.
+     */
+    public List<CodeSuggestion> similarCodes(String queryCode, int limit) {
+        Index idx = index();
+        if (idx == null) {
+            return List.of();
+        }
+        String q = ccode(queryCode);
+        if (q.isBlank()) {
+            return List.of();
+        }
+        Set<String> qb = bigrams(q);
+        int cap = Math.max(1, Math.min(limit, 20));
+        record Cand(String code, int count, double sim) {
+        }
+        List<Cand> cands = new ArrayList<>();
+        for (Map.Entry<String, List<Line>> e : idx.byCode.entrySet()) {
+            String c = e.getKey();
+            if (c.equals(q)) {
+                continue; // 정확히 같은 코드는 이미 검색됨
+            }
+            double sim;
+            int minLen = Math.min(q.length(), c.length());
+            if (minLen >= 3 && (c.contains(q) || q.contains(c))) {
+                sim = 0.95; // 부분포함(예: 갈바레이저타공 ⊂ 1.2T갈바레이저타공·갈바레이저타공후렘)
+            } else {
+                Set<String> cb = bigrams(c);
+                int inter = 0;
+                for (String b : qb) {
+                    if (cb.contains(b)) {
+                        inter++;
+                    }
+                }
+                int denom = qb.size() + cb.size();
+                sim = denom == 0 ? 0 : (2.0 * inter) / denom; // Sørensen–Dice
+            }
+            if (sim < 0.4) {
+                continue;
+            }
+            cands.add(new Cand(displayCode(e.getValue()), e.getValue().size(), sim));
+        }
+        cands.sort((a, b) -> a.sim != b.sim ? Double.compare(b.sim, a.sim) : Integer.compare(b.count, a.count));
+        List<CodeSuggestion> out = new ArrayList<>();
+        for (Cand c : cands) {
+            out.add(new CodeSuggestion(c.code, c.count));
+            if (out.size() >= cap) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    /** byCode 한 버킷의 대표 표기 — 가장 흔한 원본 code(정규화 전 철자). */
+    private static String displayCode(List<Line> lines) {
+        Map<String, Integer> freq = new LinkedHashMap<>();
+        for (Line l : lines) {
+            String c = l.code == null ? "" : l.code.trim();
+            if (!c.isBlank()) {
+                freq.merge(c, 1, Integer::sum);
+            }
+        }
+        String best = null;
+        int bn = -1;
+        for (Map.Entry<String, Integer> e : freq.entrySet()) {
+            if (e.getValue() > bn) {
+                bn = e.getValue();
+                best = e.getKey();
+            }
+        }
+        return best != null ? best : "";
+    }
+
+    /** 글자 bigram 집합(유사도용). 길이 1이면 그 글자 자체를 단일 토큰으로. */
+    private static Set<String> bigrams(String s) {
+        Set<String> out = new HashSet<>();
+        if (s == null || s.isEmpty()) {
+            return out;
+        }
+        if (s.length() == 1) {
+            out.add(s);
+            return out;
+        }
+        for (int i = 0; i + 1 < s.length(); i++) {
+            out.add(s.substring(i, i + 2));
         }
         return out;
     }

@@ -72,6 +72,66 @@ export async function lookupPrices(
   return res.json();
 }
 
+/**
+ * 다중 품목코드 단가 찾아보기 — codes 각각을 lookupPrices 로 조회해 합치고,
+ * ① 사이즈 근접도(score, 정확일치=1.0) ② 같은 거래처(이력>타거래처>관련) 순으로 정렬.
+ * 같은 물건이 여러 코드 표기로 흩어진 경우(예: 갈바레이저타공 + 갈바레이저전후광) 함께 검색.
+ * codes 가 비면 fallbackText(품목명 등)로 1회 조회. 전부 미프로비저닝(503)이면 null.
+ */
+export async function lookupPricesMerged(
+  token: string | null | undefined,
+  client: string,
+  codes: string[],
+  spec: string,
+  qty: string,
+  opts?: { fallbackText?: string; limit?: number },
+): Promise<Prediction[] | null> {
+  const limit = opts?.limit ?? 50;
+  const targets = codes.length
+    ? codes.map((c) => ({ text: c, material: c }))
+    : [{ text: opts?.fallbackText ?? '', material: '' }];
+  const lists = await Promise.all(
+    targets.map((t) => lookupPrices(token, client, { text: t.text, material: t.material, size: spec, qty }, limit)),
+  );
+  if (lists.every((l) => l == null)) return null; // 코퍼스 미프로비저닝
+  const sp = (s: string) => (s === '이력' ? 0 : s === '타거래처' ? 1 : 2);
+  const seen = new Set<string>();
+  return lists
+    .filter((l): l is Prediction[] => l != null)
+    .flat()
+    .filter((p) => {
+      const k = `${p.ref_file}|${p.ref_invoice_idx}|${p.price}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => b.score - a.score || sp(a.src) - sp(b.src))
+    .slice(0, limit);
+}
+
+export interface CodeSuggestion {
+  code: string;
+  count: number;
+}
+
+/**
+ * 유사 품목코드 추천 — 입력 코드와 비슷한 코퍼스 코드들(같은 자재 다른 표기·오타)을 건수순으로.
+ * 단가찾아보기 '비슷한 코드' 칩에 사용. 실패/없음이면 빈 배열.
+ */
+export async function similarCodes(
+  token: string | null | undefined,
+  code: string,
+  limit = 8,
+): Promise<CodeSuggestion[]> {
+  if (!code.trim()) return [];
+  const res = await fetch(
+    `${BASE_URL}/api/admin/autoquote/predict/similar-codes?code=${encodeURIComponent(code)}&limit=${limit}`,
+    { headers: authHeaders(token) },
+  );
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export interface EvidenceGridRow {
   item_code?: string;
   item?: string;

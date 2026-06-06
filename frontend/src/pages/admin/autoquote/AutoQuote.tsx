@@ -17,7 +17,8 @@ import {
   charCount,
 } from './annot/calc';
 import {
-  lookupPrices,
+  lookupPricesMerged,
+  similarCodes,
   evidence as fetchEvidence,
   getOrder,
   getEstimate,
@@ -29,6 +30,7 @@ import {
   type Evidence,
   type OrderContext,
   type VisionQuota,
+  type CodeSuggestion,
 } from './annot/api';
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean } from './itemCodes';
@@ -330,6 +332,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string } | null>(null);
   const [lpi, setLpi] = useState(0); // 단가찾아보기 모달 — 현재 후보의 사진 인덱스(다장 갤러리)
+  // 단가찾아보기 다중 코드 태그(같은 물건 다른 코드 함께 검색) — 행 코드로 시드, 추가 시 재검색.
+  const [lkCodes, setLkCodes] = useState<string[]>([]);
+  const [lkSugg, setLkSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩
+  const [lkInput, setLkInput] = useState('');
+  const [lkAcOpen, setLkAcOpen] = useState(false);
+  const [lkAcIdx, setLkAcIdx] = useState(-1);
+  const lkCtxRef = useRef<{ spec: string; qty: string; client: string; item: string }>({
+    spec: '',
+    qty: '',
+    client: '',
+    item: '',
+  });
 
   const stageRef = useRef<HTMLDivElement>(null);
   const stagewrapRef = useRef<HTMLDivElement>(null);
@@ -1367,24 +1381,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   };
 
   // ---- 단가 찾아보기 (slice-11 predict + evidence) ----------------------
-  const openLookup = async (row?: number) => {
-    const tgt = row != null ? row : active;
-    if (tgt == null) return;
-    priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행 단가에 적용
-    const p = pins[tgt];
-    const code = p.vals['품목코드'] || '';
-    const item = p.vals['품목'] || '';
-    const spec = p.vals['규격'] || '';
-    const qty = p.vals['수량'] || '';
-    const client = order?.clientCompanyName || '';
+  // 태그된 코드들로 병합 검색(공용 헬퍼) → 후보별 근거(사진+명세서 grid) 로드 → 모달 갱신.
+  const runLookup = async (codes: string[]) => {
+    const { spec, qty, client, item } = lkCtxRef.current;
     setStatus('과거 단가 조회 중…');
     try {
-      // 품목코드 기준 후보 리스트(①같은거래처 ②타거래처 ③관련). 한 품목→여러 후보.
-      const preds = await lookupPrices(token, client, {
-        text: `${code} ${item}`.trim(),
-        material: code,
-        size: spec,
-        qty,
+      const preds = await lookupPricesMerged(token, client, codes, spec, qty, {
+        fallbackText: `${codes[0] || ''} ${item}`.trim(),
+        limit: 50,
       });
       if (preds == null) {
         cdlg('학습 데이터(코퍼스)가 서버에 아직 없습니다. 관리자에게 R2 업로드를 요청하세요.', [{ label: '확인', sec: true }]);
@@ -1403,14 +1407,100 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           return { reason: pr.reason, src: pr.src, price: pr.price, evidence: ev, hitPrice: pr.price };
         }),
       );
-      const q = `"${(code + ' ' + item).trim() || '품목'}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
+      const codeLabel = codes.length ? codes.join(' + ') : item || '품목';
+      const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
       setLpi(0);
       setLookup({ refs, ri: 0, q });
       setStatus('');
+      // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
+      const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
+      const activeN = new Set(codes.map(nrm));
+      const lists = await Promise.all(codes.filter(Boolean).map((c) => similarCodes(token, c, 8)));
+      const seen = new Set<string>();
+      setLkSugg(
+        lists
+          .flat()
+          .filter((x) => {
+            const k = nrm(x.code);
+            if (activeN.has(k) || seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          })
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10),
+      );
     } catch (e) {
       console.error(e);
       cdlg('단가 조회에 실패했습니다.', [{ label: '확인', sec: true }]);
       setStatus('');
+    }
+  };
+
+  const openLookup = async (row?: number) => {
+    const tgt = row != null ? row : active;
+    if (tgt == null) return;
+    priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행 단가에 적용
+    const p = pins[tgt];
+    const code = p.vals['품목코드'] || '';
+    const item = p.vals['품목'] || '';
+    const spec = p.vals['규격'] || '';
+    const qty = p.vals['수량'] || '';
+    const client = order?.clientCompanyName || '';
+    lkCtxRef.current = { spec, qty, client, item };
+    const seed = code ? [code] : [];
+    setLkCodes(seed);
+    setLkInput('');
+    setLkAcOpen(false);
+    setLkAcIdx(-1);
+    await runLookup(seed);
+  };
+
+  // 태그 추가/삭제 시 즉시 재검색(현재 행 규격·거래처 컨텍스트 유지).
+  const addLkTag = (c: string) => {
+    const t = c.trim();
+    setLkInput('');
+    setLkAcOpen(false);
+    setLkAcIdx(-1);
+    if (!t || lkCodes.includes(t)) return;
+    const next = [...lkCodes, t];
+    setLkCodes(next);
+    runLookup(next);
+  };
+  const removeLkTag = (t: string) => {
+    const next = lkCodes.filter((x) => x !== t);
+    setLkCodes(next);
+    runLookup(next);
+  };
+  const onLkKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !lkInput && lkCodes.length) {
+      removeLkTag(lkCodes[lkCodes.length - 1]);
+      return;
+    }
+    const m = matchCodes(lkInput).filter((c) => !lkCodes.includes(c));
+    if (lkAcOpen && m.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setLkAcIdx((i) => Math.min(i + 1, m.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setLkAcIdx((i) => Math.max(i - 1, -1));
+        return;
+      }
+      if (e.key === 'Escape') {
+        setLkAcOpen(false);
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const d = didYouMean(lkInput, m);
+        addLkTag(lkAcIdx >= 0 && m[lkAcIdx] ? m[lkAcIdx] : d || lkInput);
+        return;
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (lkInput.trim()) addLkTag(lkInput);
     }
   };
 
@@ -2875,6 +2965,80 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 </button>
               </span>
             </div>
+            <div className="aq-lkbar">
+              <span className="aq-lkbar-label">품목코드</span>
+              {lkCodes.map((c) => (
+                <span key={c} className="aq-lktag">
+                  {c}
+                  <button type="button" onClick={() => removeLkTag(c)} aria-label={`${c} 삭제`}>
+                    ×
+                  </button>
+                </span>
+              ))}
+              {lkCodes.length > 0 && (
+                <button
+                  type="button"
+                  className="aq-lkclear"
+                  onClick={() => {
+                    setLkCodes([]);
+                    runLookup([]);
+                  }}
+                >
+                  초기화
+                </button>
+              )}
+              <div className="aq-lkinput">
+                <input
+                  value={lkInput}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setLkInput(v);
+                    setLkAcOpen(true);
+                    const m = matchCodes(v).filter((c) => !lkCodes.includes(c));
+                    const d = didYouMean(v, m);
+                    setLkAcIdx(d ? m.indexOf(d) : -1);
+                  }}
+                  onFocus={() => setLkAcOpen(true)}
+                  onBlur={() => setTimeout(() => setLkAcOpen(false), 150)}
+                  onKeyDown={onLkKey}
+                  placeholder="+ 코드 추가 (Enter) — 같은 물건 다른 코드 함께"
+                />
+                {lkAcOpen &&
+                  lkInput.trim() &&
+                  (() => {
+                    const m = matchCodes(lkInput).filter((c) => !lkCodes.includes(c));
+                    if (!m.length) return null;
+                    return (
+                      <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60 }}>
+                        <div className="aq-aclist">
+                          {m.map((c, k) => (
+                            <div
+                              key={c}
+                              className={'aq-acitem' + (k === lkAcIdx ? ' on' : '')}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                addLkTag(c);
+                              }}
+                            >
+                              {c}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+              </div>
+            </div>
+            {lkSugg.length > 0 && (
+              <div className="aq-lksugg">
+                <span className="aq-lksugg-label">비슷한 코드</span>
+                {lkSugg.map((s) => (
+                  <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => addLkTag(s.code)}>
+                    {s.code} <em>{s.count}</em>
+                  </button>
+                ))}
+              </div>
+            )}
             {!lookup.refs.length ? (
               <div className="aq-mbody">
                 <div className="aq-mleft">

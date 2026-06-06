@@ -831,6 +831,115 @@
   align-items: center;
   gap: 12px;
 }
+/* 단가찾아보기 모달 — 다중 품목코드 태그 바 */
+.aq-lkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #f7fafb;
+}
+.aq-lkbar-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mut);
+  margin-right: 2px;
+}
+.aq-lktag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #0a9396;
+  color: #fff;
+  border-radius: 13px;
+  padding: 3px 5px 3px 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.aq-lktag button {
+  background: rgba(255, 255, 255, 0.25);
+  border: none;
+  color: #fff;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.aq-lktag button:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+.aq-lkclear {
+  background: #eef2f5;
+  border: 1px solid var(--line);
+  color: var(--mut);
+  border-radius: 13px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.aq-lkclear:hover {
+  background: #e3e8ec;
+  color: #c0392b;
+}
+/* 단가찾아보기 모달 — 비슷한 코드 추천 칩 */
+.aq-lksugg {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfdfd;
+}
+.aq-lksugg-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mut);
+}
+.aq-lksugg-chip {
+  background: #eef7f7;
+  border: 1px solid #9fd3d4;
+  color: #0a7a7d;
+  border-radius: 13px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.aq-lksugg-chip:hover {
+  background: #0a9396;
+  color: #fff;
+  border-color: #0a7a7d;
+}
+.aq-lksugg-chip em {
+  font-style: normal;
+  opacity: 0.7;
+  font-size: 11px;
+}
+.aq-lkinput {
+  position: relative;
+  flex: 1;
+  min-width: 180px;
+}
+.aq-lkinput input {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1.5px solid var(--line);
+  border-radius: 7px;
+  font-size: 13px;
+}
+.aq-lkinput input:focus {
+  outline: none;
+  border-color: #0a9396;
+}
 .aq-mhead b {
   font-size: 15px;
   color: var(--navy);

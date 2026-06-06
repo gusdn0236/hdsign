@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../../context/AuthContext.jsx';
-import { lookupPrices, evidence as fetchEvidence } from '../autoquote/annot/api';
-import type { Evidence, Prediction } from '../autoquote/annot/api';
+import { lookupPricesMerged, similarCodes, evidence as fetchEvidence } from '../autoquote/annot/api';
+import type { Evidence, CodeSuggestion } from '../autoquote/annot/api';
 import { matchCodes, didYouMean } from '../autoquote/itemCodes';
 import '../autoquote/AutoQuote.css'; // 모달(.aq-modal)·드롭다운(.aq-acdrop) 스타일 재사용
 import './PriceLookup.css';
@@ -34,6 +34,7 @@ export default function PriceLookup() {
   const [acIdx, setAcIdx] = useState(-1); // 품목코드 드롭다운 하이라이트(-1=없음)
   const [lk, setLk] = useState<LkState | null>(null);
   const [msg, setMsg] = useState('');
+  const [sugg, setSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩(같은 물건 다른 표기/오타)
 
   // 품목코드 태그 추가/삭제. 같은 코드 중복은 무시.
   const addTag = (c: string) => {
@@ -45,10 +46,18 @@ export default function PriceLookup() {
     setAcIdx(-1);
   };
   const removeTag = (t: string) => setCodes((cs) => cs.filter((x) => x !== t));
+  // 추천 칩 클릭 = 태그 추가 후 즉시 재검색.
+  const onSugg = (c: string) => {
+    if (codes.includes(c)) return;
+    const next = [...codes, c];
+    setCodes(next);
+    run(next);
+  };
 
-  const run = async () => {
+  const run = async (codesOverride?: string[]) => {
     // 확정 태그가 있으면 그 코드들로, 없으면 입력칸 텍스트를 단일 코드로(하위호환).
-    const active = codes.length ? codes : code.trim() ? [code.trim()] : [];
+    const tags = codesOverride ?? codes;
+    const active = tags.length ? tags : code.trim() ? [code.trim()] : [];
     if (!active.length && !spec.trim()) {
       setMsg('품목코드 또는 규격을 입력하세요.');
       return;
@@ -57,30 +66,13 @@ export default function PriceLookup() {
     setAcOpen(false);
     setMsg('');
     try {
-      const targets = active.length ? active : [''];
-      const lists = await Promise.all(
-        targets.map((c) => lookupPrices(token, client, { text: c, material: c, size: spec, qty: '' }, 50)),
-      );
-      if (lists.every((l) => l == null)) {
+      // 여러 코드 후보를 합쳐 ① 사이즈 근접도(정확일치=1.0) ② 같은 거래처 우선으로 정렬(공용 헬퍼).
+      const merged = await lookupPricesMerged(token, client, active, spec, '', { limit: 50 });
+      if (merged == null) {
         setMsg('학습 데이터(코퍼스)가 서버에 아직 없습니다.');
         setBusy(false);
         return;
       }
-      // 여러 코드 후보를 합쳐 ① 사이즈 근접도(score, 정확일치=1.0) 1순위 ② 같은 거래처 우선.
-      const sp = (s: string) => (s === '이력' ? 0 : s === '타거래처' ? 1 : 2);
-      const seen = new Set<string>();
-      const merged = lists
-        .filter((l): l is Prediction[] => l != null)
-        .flat()
-        .filter((p) => {
-          const k = `${p.ref_file}|${p.ref_invoice_idx}|${p.price}`;
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        })
-        .sort((a, b) => b.score - a.score || sp(a.src) - sp(b.src))
-        .slice(0, 50);
-
       const refs: Ref[] = await Promise.all(
         merged.map(async (pr) => {
           let ev: Evidence | null = null;
@@ -96,6 +88,23 @@ export default function PriceLookup() {
       const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
       setLk({ refs, ri: 0, lpi: 0, q });
       if (!refs.length) setMsg('관련 과거 단가를 찾지 못했습니다.');
+      // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
+      const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
+      const activeN = new Set(active.map(nrm));
+      const lists = await Promise.all(active.filter(Boolean).map((c) => similarCodes(token, c, 8)));
+      const seen = new Set<string>();
+      setSugg(
+        lists
+          .flat()
+          .filter((x) => {
+            const k = nrm(x.code);
+            if (activeN.has(k) || seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          })
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10),
+      );
     } catch (e) {
       console.error(e);
       setMsg('단가 조회에 실패했습니다.');
@@ -170,6 +179,9 @@ export default function PriceLookup() {
                   </button>
                 </span>
               ))}
+              <button type="button" className="pl-tags-clear" onClick={() => setCodes([])}>
+                초기화
+              </button>
             </div>
           )}
           <input
@@ -229,10 +241,20 @@ export default function PriceLookup() {
             placeholder="거래처명"
           />
         </div>
-        <button className="pl-btn" onClick={run} disabled={busy}>
+        <button className="pl-btn" onClick={() => run()} disabled={busy}>
           {busy ? '조회 중…' : '검색'}
         </button>
       </div>
+      {sugg.length > 0 && (
+        <div className="pl-sugg">
+          <span className="pl-sugg-label">비슷한 코드</span>
+          {sugg.map((s) => (
+            <button key={s.code} type="button" className="pl-sugg-chip" onClick={() => onSugg(s.code)}>
+              {s.code} <em>{s.count}</em>
+            </button>
+          ))}
+        </div>
+      )}
       {msg && <div className="pl-msg">{msg}</div>}
 
       {lk && (
