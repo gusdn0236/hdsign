@@ -60,6 +60,7 @@ public class SalesAnalyticsService {
         Map<String, long[]> monthly = new TreeMap<>();   // ym -> [revenue, invoices]
         Map<Integer, long[]> yearly = new TreeMap<>();    // year -> [revenue, invoices]
         Map<String, long[]> clients = new LinkedHashMap<>(); // client -> [revenue, count]
+        Map<String, String[]> clientYm = new LinkedHashMap<>(); // client -> [firstYm, lastYm]
         Map<String, long[]> items = new LinkedHashMap<>();   // itemCode -> [revenue, qty, count]
         Map<String, Long> materials = new LinkedHashMap<>(); // category -> revenue
         long[] seasonByMonth = new long[13];              // 1..12 합계(계절성)
@@ -112,6 +113,13 @@ public class SalesAnalyticsService {
                         clients.computeIfAbsent(client, k -> new long[2]);
                         clients.get(client)[0] += revenue;
                         clients.get(client)[1] += 1;
+                        String[] span = clientYm.computeIfAbsent(client, k -> new String[] {ym, ym});
+                        if (ym.compareTo(span[0]) < 0) {
+                            span[0] = ym;
+                        }
+                        if (ym.compareTo(span[1]) > 0) {
+                            span[1] = ym;
+                        }
                     }
                     // 라인(품목/자재) 집계 — 라인 매출 = 수량 × 단가.
                     JsonNode grid = inv.get("grid");
@@ -167,8 +175,107 @@ public class SalesAnalyticsService {
             seasonality.add(new MonthAvg(m, seasonByMonth[m]));
         }
 
+        // ---- 리서치 반영: 거래처 집중도 / 이탈위험(silent churn) / 신규 / RFM 세그먼트 ----
+        String refYm = monthlyList.isEmpty() ? null : monthlyList.get(monthlyList.size() - 1).ym();
+        List<long[]> revSorted = clients.values().stream()
+                .sorted((a, b) -> Long.compare(b[0], a[0])).toList();
+        Concentration concentration = concentration(revSorted, totalRevenue, clients.size());
+
+        long[] revAll = clients.values().stream().mapToLong(a -> a[0]).sorted().toArray();
+        long p75 = revAll.length == 0 ? 0 : revAll[Math.min(revAll.length - 1, (int) (revAll.length * 0.75))];
+        List<ChurnClient> churn = new ArrayList<>();
+        Map<Integer, Integer> newByYearMap = new TreeMap<>();
+        Map<String, long[]> segAgg = new LinkedHashMap<>(); // seg -> [clients, revenue]
+        if (refYm != null) {
+            for (Map.Entry<String, long[]> e : clients.entrySet()) {
+                String name = e.getKey();
+                long rev = e.getValue()[0];
+                int cnt = (int) e.getValue()[1];
+                String[] span = clientYm.get(name);
+                if (span == null) {
+                    continue;
+                }
+                int recency = monthsBetween(refYm, span[1]); // 마지막 거래 후 경과 개월
+                int sinceFirst = monthsBetween(refYm, span[0]);
+                newByYearMap.merge(Integer.parseInt(span[0].substring(0, 4)), 1, Integer::sum);
+                String seg;
+                if (recency >= 6) {
+                    seg = "이탈위험·휴면";
+                } else if (sinceFirst <= 6 && cnt <= 2) {
+                    seg = "신규";
+                } else if (rev >= p75) {
+                    seg = "우수(VIP)";
+                } else {
+                    seg = "일반(활성)";
+                }
+                segAgg.computeIfAbsent(seg, k -> new long[2]);
+                segAgg.get(seg)[0] += 1;
+                segAgg.get(seg)[1] += rev;
+                if (cnt >= 3) {
+                    int avgGap = Math.max(1, monthsBetween(span[1], span[0]) / (cnt - 1));
+                    if (recency >= Math.max(4, avgGap * 2)) {
+                        churn.add(new ChurnClient(name, rev, span[1], recency, cnt));
+                    }
+                }
+            }
+        }
+        churn.sort((a, b) -> Long.compare(b.revenue(), a.revenue()));
+        List<ChurnClient> churnTop = new ArrayList<>(churn.subList(0, Math.min(12, churn.size())));
+        List<NewYear> newByYear = newByYearMap.entrySet().stream()
+                .map(e -> new NewYear(e.getKey(), e.getValue())).toList();
+        List<Segment> segments = segAgg.entrySet().stream()
+                .map(e -> new Segment(e.getKey(), (int) e.getValue()[0], e.getValue()[1]))
+                .sorted((a, b) -> Long.compare(b.revenue(), a.revenue())).toList();
+
         Summary summary = summary(monthlyList, yearlyList, totalRevenue, totalInvoices, clients.size());
-        return new SalesAnalytics(summary, monthlyList, yearlyList, topClients, topItems, materialList, seasonality);
+        return new SalesAnalytics(summary, monthlyList, yearlyList, topClients, topItems, materialList,
+                seasonality, concentration, churnTop, newByYear, segments);
+    }
+
+    private static Concentration concentration(List<long[]> revSorted, long total, int n) {
+        if (revSorted.isEmpty() || total <= 0) {
+            return new Concentration(0, 0, 0, 0, 0, 0);
+        }
+        long t1 = 0;
+        long t5 = 0;
+        long t10 = 0;
+        double hhi = 0;
+        long cum = 0;
+        int pareto = 0;
+        boolean done = false;
+        for (int i = 0; i < revSorted.size(); i++) {
+            long rev = revSorted.get(i)[0];
+            if (i < 1) {
+                t1 += rev;
+            }
+            if (i < 5) {
+                t5 += rev;
+            }
+            if (i < 10) {
+                t10 += rev;
+            }
+            double share = (double) rev / total * 100.0;
+            hhi += share * share;
+            if (!done) {
+                cum += rev;
+                pareto++;
+                if (cum >= total * 0.8) {
+                    done = true;
+                }
+            }
+        }
+        return new Concentration(round1((double) t1 / total * 100), round1((double) t5 / total * 100),
+                round1((double) t10 / total * 100), (int) Math.round(hhi),
+                pareto, round1((double) pareto / n * 100));
+    }
+
+    /** 'YYYY.MM' 두 시점의 개월 차(later - earlier), 음수면 0. */
+    private static int monthsBetween(String laterYm, String earlierYm) {
+        return Math.max(0, ymOrd(laterYm) - ymOrd(earlierYm));
+    }
+
+    private static int ymOrd(String ym) {
+        return Integer.parseInt(ym.substring(0, 4)) * 12 + Integer.parseInt(ym.substring(5, 7));
     }
 
     private Summary summary(List<MonthPoint> monthly, List<YearPoint> yearly,
@@ -270,7 +377,26 @@ public class SalesAnalyticsService {
     // ---- 응답 DTO (전역 네이밍 설정 없음 → 기본 camelCase 직렬화: totalRevenue, topClients …) ----
     public record SalesAnalytics(Summary summary, List<MonthPoint> monthly, List<YearPoint> yearly,
                                  List<NameRevenue> topClients, List<ItemStat> topItems,
-                                 List<NameRevenue> materials, List<MonthAvg> seasonality) {
+                                 List<NameRevenue> materials, List<MonthAvg> seasonality,
+                                 Concentration concentration, List<ChurnClient> churnRisk,
+                                 List<NewYear> newClientsByYear, List<Segment> segments) {
+    }
+
+    /** 거래처 집중도 — 상위 N개 매출 점유율 + HHI + 파레토(매출 80% 차지 거래처 수/비율). */
+    public record Concentration(double top1Pct, double top5Pct, double top10Pct, int hhi,
+                                int pareto80Count, double pareto80Pct) {
+    }
+
+    /** 이탈 위험 거래처 — 마지막 거래월/경과 개월/거래 횟수. */
+    public record ChurnClient(String name, long revenue, String lastYm, int inactiveMonths, int orders) {
+    }
+
+    /** 연도별 신규 거래처 수(그 해 첫 거래). */
+    public record NewYear(int year, int newClients) {
+    }
+
+    /** RFM 세그먼트 — 거래처 수 + 매출. */
+    public record Segment(String name, int clients, long revenue) {
     }
 
     public record Summary(long totalRevenue, int totalInvoices, long avgInvoice, String firstYm, String lastYm,

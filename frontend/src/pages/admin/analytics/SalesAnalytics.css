@@ -475,6 +475,160 @@
   color: #9aa5b1;
 }
 
+/* 구분선 */
+.sa-divider {
+  margin: 22px 2px 12px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #1f2733;
+  padding-left: 10px;
+  border-left: 4px solid #0a9396;
+}
+
+/* 집중도 리스크 */
+.sa-risk {
+  font-size: 12.5px;
+  font-weight: 800;
+  padding: 4px 11px;
+  border-radius: 13px;
+}
+.sa-risk.hi {
+  background: #fdecea;
+  color: #c0392b;
+}
+.sa-risk.mid {
+  background: #fff5e6;
+  color: #b45309;
+}
+.sa-risk.lo {
+  background: #e8f6ee;
+  color: #1f8a4c;
+}
+.sa-conc-bar {
+  display: flex;
+  height: 16px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f1f4f6;
+}
+.sa-conc-bar span {
+  height: 100%;
+}
+.sa-conc-bar .s1 {
+  background: #0a9396;
+}
+.sa-conc-bar .s2 {
+  background: #56c3c5;
+}
+.sa-conc-bar .s3 {
+  background: #a7dedf;
+}
+.sa-conc-bar .s4 {
+  background: #e2e8ec;
+}
+.sa-conc-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 16px 0 4px;
+}
+.sa-conc-stats div {
+  text-align: center;
+}
+.sa-conc-stats b {
+  display: block;
+  font-size: 20px;
+  font-weight: 800;
+  color: #1f2733;
+}
+.sa-conc-stats span {
+  font-size: 11.5px;
+  color: #9aa5b1;
+}
+.sa-conc-say {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #6b7785;
+  background: #f7fafb;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.sa-conc-say b {
+  color: #0a9396;
+}
+
+/* 세그먼트 */
+.sa-segs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.sa-seg-card {
+  border: 1.5px solid #d7dde3;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.sa-seg-name {
+  font-size: 13px;
+  font-weight: 800;
+}
+.sa-seg-n {
+  font-size: 20px;
+  font-weight: 800;
+  color: #1f2733;
+  margin-top: 4px;
+}
+.sa-seg-rev {
+  font-size: 12px;
+  color: #9aa5b1;
+}
+
+/* 이탈 위험 거래처 */
+.sa-churn {
+  display: flex;
+  flex-direction: column;
+}
+.sa-churn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 2px;
+  border-bottom: 1px solid #f1f4f6;
+  font-size: 13px;
+}
+.sa-churn-row:last-child {
+  border-bottom: none;
+}
+.sa-churn-name {
+  width: 150px;
+  flex-shrink: 0;
+  font-weight: 700;
+  color: #1f2733;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-churn-meta {
+  flex: 1;
+  color: #6b7785;
+  font-size: 12.5px;
+}
+.sa-churn-meta b {
+  color: #c0392b;
+}
+.sa-churn-rev {
+  font-weight: 800;
+  color: #1f2733;
+  flex-shrink: 0;
+}
+.sa-churn-none {
+  text-align: center;
+  color: #1f8a4c;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 24px 0;
+}
+
 .sa-foot {
   font-size: 11.5px;
   color: #b3bcc6;
@@ -497,6 +651,15 @@
   }
   .sa-rank-val {
     width: 84px;
+  }
+  .sa-conc-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sa-churn-name {
+    width: 100px;
+  }
+  .sa-churn-meta {
+    font-size: 11.5px;
   }
   .sa-hero-num {
     font-size: 30px;

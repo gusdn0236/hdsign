@@ -101,6 +101,17 @@ export default function SalesAnalytics() {
   }
 
   const { summary, monthly, yearly, topClients, topItems, materials, seasonality } = data;
+  const { concentration, churnRisk, newClientsByYear, segments } = data;
+  const maxNew = Math.max(...newClientsByYear.map((n) => n.newClients), 1);
+  // 집중도 위험도 — HHI 표준(>2500 높음, 1500~2500 보통, <1500 낮음)
+  const riskLevel = concentration.hhi >= 2500 ? '높음' : concentration.hhi >= 1500 ? '보통' : '낮음';
+  const riskClass = concentration.hhi >= 2500 ? 'hi' : concentration.hhi >= 1500 ? 'mid' : 'lo';
+  const SEG_COLOR: Record<string, string> = {
+    '우수(VIP)': '#0a9396',
+    '일반(활성)': '#5a73a8',
+    신규: '#4f8a5b',
+    '이탈위험·휴면': '#c06a52',
+  };
   const months = range === 0 ? monthly : monthly.slice(-range);
   const maxMonth = Math.max(...months.map((m) => m.revenue), 1);
   const maxYear = Math.max(...yearly.map((y) => y.revenue), 1);
@@ -278,6 +289,102 @@ export default function SalesAnalytics() {
       {/* 품목 TOP */}
       <Section title="품목코드 매출 TOP 15" sub="라인(수량×단가) 기준">
         <RankList rows={topItems.map((t) => ({ name: t.name, revenue: t.revenue, sub: `${t.count}건` }))} />
+      </Section>
+
+      <div className="sa-divider">거래처 인사이트</div>
+
+      {/* 거래처 집중도 리스크 (파레토/HHI) */}
+      <Section
+        title="거래처 집중도 리스크"
+        sub="특정 거래처 의존도 — 높을수록 위험"
+        right={<span className={'sa-risk ' + riskClass}>위험도 {riskLevel}</span>}
+      >
+        <div className="sa-conc-bar">
+          <span className="s1" style={{ width: `${concentration.top1Pct}%` }} title={`1위 ${concentration.top1Pct}%`} />
+          <span
+            className="s2"
+            style={{ width: `${Math.max(0, concentration.top5Pct - concentration.top1Pct)}%` }}
+            title={`2~5위`}
+          />
+          <span
+            className="s3"
+            style={{ width: `${Math.max(0, concentration.top10Pct - concentration.top5Pct)}%` }}
+            title={`6~10위`}
+          />
+          <span className="s4" style={{ width: `${Math.max(0, 100 - concentration.top10Pct)}%` }} title="나머지" />
+        </div>
+        <div className="sa-conc-stats">
+          <div>
+            <b>{concentration.top1Pct}%</b>
+            <span>1위 거래처</span>
+          </div>
+          <div>
+            <b>{concentration.top5Pct}%</b>
+            <span>상위 5개</span>
+          </div>
+          <div>
+            <b>{concentration.top10Pct}%</b>
+            <span>상위 10개</span>
+          </div>
+          <div>
+            <b>{concentration.hhi.toLocaleString()}</b>
+            <span>HHI 지수</span>
+          </div>
+        </div>
+        <div className="sa-conc-say">
+          상위 <b>{concentration.pareto80Count}개</b>({concentration.pareto80Pct}%) 거래처가 전체 매출의 80%를 차지해요.
+        </div>
+      </Section>
+
+      <div className="sa-grid">
+        {/* 거래처 세그먼트 (RFM) */}
+        <Section title="거래처 세그먼트" sub="최근성·거래량·매출 기준">
+          <div className="sa-segs">
+            {segments.map((s) => (
+              <div className="sa-seg-card" key={s.name} style={{ borderColor: SEG_COLOR[s.name] || '#d7dde3' }}>
+                <div className="sa-seg-name" style={{ color: SEG_COLOR[s.name] || '#1f2733' }}>
+                  {s.name}
+                </div>
+                <div className="sa-seg-n">{s.clients.toLocaleString()}곳</div>
+                <div className="sa-seg-rev">{won(s.revenue)}원</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        {/* 신규 거래처 */}
+        <Section title="신규 거래처" sub="연도별 첫 거래">
+          <div className="sa-ybars">
+            {newClientsByYear.map((n) => (
+              <div className="sa-ybar-col" key={n.year} title={`${n.year} · 신규 ${n.newClients}곳`}>
+                <div className="sa-ybar-val">{n.newClients}</div>
+                <div className="sa-ybar" style={{ height: `${Math.max(6, (n.newClients / maxNew) * 100)}%` }} />
+                <div className="sa-ybar-x">{n.year}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      </div>
+
+      {/* 이탈 위험 거래처 (silent churn) */}
+      <Section title="이탈 위험 거래처" sub="한동안 거래가 없는 단골 — 연락해보세요">
+        {churnRisk.length === 0 ? (
+          <div className="sa-churn-none">이탈 위험 거래처가 없어요 👍</div>
+        ) : (
+          <div className="sa-churn">
+            {churnRisk.map((c) => (
+              <div className="sa-churn-row" key={c.name}>
+                <span className="sa-churn-name" title={c.name}>
+                  {c.name}
+                </span>
+                <span className="sa-churn-meta">
+                  마지막 {c.lastYm} · <b>{c.inactiveMonths}개월째</b> 거래 없음 · 누적 {c.orders}회
+                </span>
+                <span className="sa-churn-rev">{won(c.revenue)}원</span>
+              </div>
+            ))}
+          </div>
+        )}
       </Section>
 
       <div className="sa-foot">매출 = 명세서 공급가액(VAT 제외) · 상세 명세서 데이터 기반</div>

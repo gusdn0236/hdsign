@@ -353,6 +353,30 @@ export interface MonthAvg {
   month: number;
   revenue: number;
 }
+export interface Concentration {
+  top1Pct: number;
+  top5Pct: number;
+  top10Pct: number;
+  hhi: number;
+  pareto80Count: number;
+  pareto80Pct: number;
+}
+export interface ChurnClient {
+  name: string;
+  revenue: number;
+  lastYm: string;
+  inactiveMonths: number;
+  orders: number;
+}
+export interface NewYear {
+  year: number;
+  newClients: number;
+}
+export interface Segment {
+  name: string;
+  clients: number;
+  revenue: number;
+}
 export interface SalesAnalytics {
   summary: SalesSummary;
   monthly: MonthPoint[];
@@ -361,6 +385,10 @@ export interface SalesAnalytics {
   topItems: ItemStat[];
   materials: NameRevenue[];
   seasonality: MonthAvg[];
+  concentration: Concentration;
+  churnRisk: ChurnClient[];
+  newClientsByYear: NewYear[];
+  segments: Segment[];
 }
 
 /** 매출분석 집계 — 상세 명세서 기반. 미프로비저닝(503)이면 null. */
