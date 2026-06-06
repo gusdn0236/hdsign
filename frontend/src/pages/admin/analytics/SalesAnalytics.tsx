@@ -15,12 +15,19 @@ const ymShort = (ym: string): string => `${ym.slice(2, 4)}.${ym.slice(5)}`; // 2
 
 const COLORS = ['#0a9396', '#4f8a5b', '#b07d3a', '#8a5a7d', '#c06a52', '#5a73a8', '#6b8e4e', '#d39a4e', '#9aa5b1', '#5fb0b2'];
 
+const SA_PASSCODE = '9512'; // 매출분석 2차 비밀번호(가림막 — 실제 보호는 admin 로그인/JWT)
+
 export default function SalesAnalytics() {
   const { token } = useAuth();
   const [data, setData] = useState<SA | null>(null);
   const [state, setState] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading');
+  // 2차 비밀번호 잠금 — 세션 동안 1회만(세션스토리지). 실매출이라 옆사람 가림막.
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem('sa-unlocked') === '1');
+  const [pw, setPw] = useState('');
+  const [pwErr, setPwErr] = useState(false);
 
   useEffect(() => {
+    if (!unlocked) return;
     let alive = true;
     salesAnalytics(token)
       .then((d) => {
@@ -36,7 +43,47 @@ export default function SalesAnalytics() {
     return () => {
       alive = false;
     };
-  }, [token]);
+  }, [token, unlocked]);
+
+  if (!unlocked) {
+    const submit = () => {
+      if (pw === SA_PASSCODE) {
+        sessionStorage.setItem('sa-unlocked', '1');
+        setUnlocked(true);
+        setPwErr(false);
+      } else {
+        setPwErr(true);
+      }
+    };
+    return (
+      <div className="sa-shell">
+        <div className="sa-gate">
+          <div className="sa-gate-box">
+            <div className="sa-gate-ico">🔒</div>
+            <h2>매출분석 잠금</h2>
+            <p>실제 매출 데이터입니다. 2차 비밀번호를 입력하세요.</p>
+            <input
+              type="password"
+              inputMode="numeric"
+              autoFocus
+              value={pw}
+              onChange={(e) => {
+                setPw(e.target.value);
+                setPwErr(false);
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
+              placeholder="비밀번호"
+              className={pwErr ? 'err' : ''}
+            />
+            {pwErr && <div className="sa-gate-err">비밀번호가 올바르지 않습니다.</div>}
+            <button type="button" onClick={submit}>
+              확인
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (state !== 'ok' || !data) {
     const msg =

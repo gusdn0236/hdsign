@@ -11,6 +11,75 @@
   font-size: 15px;
   padding: 80px 0;
 }
+
+/* 2차 비밀번호 잠금 화면 */
+.sa-gate {
+  display: flex;
+  justify-content: center;
+  padding: 60px 0;
+}
+.sa-gate-box {
+  background: #fff;
+  border: 1px solid #eef2f5;
+  border-radius: 18px;
+  box-shadow: 0 6px 24px rgba(31, 39, 51, 0.08);
+  padding: 34px 30px;
+  width: 320px;
+  max-width: 90vw;
+  text-align: center;
+}
+.sa-gate-ico {
+  font-size: 38px;
+}
+.sa-gate-box h2 {
+  margin: 10px 0 4px;
+  font-size: 19px;
+  font-weight: 800;
+  color: #1f2733;
+}
+.sa-gate-box p {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: #6b7785;
+  line-height: 1.5;
+}
+.sa-gate-box input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1.5px solid #d7dde3;
+  border-radius: 10px;
+  font-size: 18px;
+  text-align: center;
+  letter-spacing: 6px;
+}
+.sa-gate-box input:focus {
+  outline: none;
+  border-color: #0a9396;
+}
+.sa-gate-box input.err {
+  border-color: #c0392b;
+}
+.sa-gate-err {
+  color: #c0392b;
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+.sa-gate-box button {
+  width: 100%;
+  margin-top: 16px;
+  padding: 12px;
+  background: #0a9396;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.sa-gate-box button:hover {
+  background: #097a7d;
+}
 .sa-title {
   display: flex;
   align-items: baseline;
