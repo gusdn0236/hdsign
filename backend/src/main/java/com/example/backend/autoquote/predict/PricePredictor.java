@@ -67,7 +67,8 @@ public class PricePredictor {
             @JsonProperty("ref_file") String refFile,
             @JsonProperty("src") String src,        // "이력" | "전체"
             @JsonProperty("score") Double score,
-            @JsonProperty("reason") String reason) {
+            @JsonProperty("reason") String reason,
+            @JsonProperty("date") String date) {
     }
 
     /** 유사 품목코드 추천 1건 — 표기(code) + 코퍼스 내 건수(count). */
@@ -238,7 +239,7 @@ public class PricePredictor {
         double prox = dimProximity(qd, r.dims);
         String reason = buildLookupReason(r, src, prox);
         // 과거 실거래 단가(r.up)를 그대로 — 사용자가 사이즈별 실값을 비교해 고른다(스케일 안 함).
-        return new Prediction(safe(r.item), n(r.spec), it.qty(), r.up, r.idx, r.file, src, round3(prox), reason);
+        return new Prediction(safe(r.item), n(r.spec), it.qty(), r.up, r.idx, r.file, src, round3(prox), reason, r.date());
     }
 
     private String buildLookupReason(Line r, String src, double prox) {
@@ -371,7 +372,7 @@ public class PricePredictor {
         }
         if (best == null) {
             return new Prediction(text, it.size(), it.qty(), null, null, null, null, null,
-                    "매칭되는 과거 단가를 찾지 못했습니다(동일품목 자카드 0.34 미만).");
+                    "매칭되는 과거 단가를 찾지 못했습니다(동일품목 자카드 0.34 미만).", null);
         }
 
         Line r = best.line;
@@ -393,7 +394,7 @@ public class PricePredictor {
 
         String reason = buildReason(src, r, basePrice, factor, price, scaled, best.score, qsz);
         return new Prediction(text, it.size(), it.qty(), price, r.idx, r.file, src,
-                round3(best.score), reason);
+                round3(best.score), reason, r.date());
     }
 
     private String buildReason(String src, Line r, int basePrice, double factor, int price,
@@ -515,7 +516,8 @@ public class PricePredictor {
                 ? (ln.get("idx").isNumber() ? (Object) ln.get("idx").asInt() : ln.get("idx").asText())
                 : null;
         String file = text(ln, "file");
-        return new Line(idx, file, item, spec, up, sz, itoks(item, spec), code, clientNorm, sizeDims(item, spec));
+        String date = text(ln, "date");
+        return new Line(idx, file, item, spec, up, sz, itoks(item, spec), code, clientNorm, sizeDims(item, spec), date);
     }
 
     // ---- 포팅된 정규화/토큰/사이즈 함수 (build_learn_corpus.py) -------------
@@ -621,7 +623,7 @@ public class PricePredictor {
     // ---- 내부 자료구조 ------------------------------------------------------
 
     private record Line(Object idx, String file, String item, String spec, int up, Long sz,
-                        Set<String> itok, String code, String cl, int[] dims) {
+                        Set<String> itok, String code, String cl, int[] dims, String date) {
     }
 
     private record Scored(Line line, double score) {

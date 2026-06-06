@@ -106,6 +106,25 @@ interface LookupRef {
   price: number;
   evidence: Evidence | null;
   hitPrice: number;
+  date?: string; // 후보 명세서 날짜
+  cspec?: string; // 후보 규격
+  est?: number | null; // 입력 사이즈 기준 예상 단가
+}
+
+/** 날짜 'YYYY.MM.DD' → '2022년 2월'. */
+function ymLabel(d?: string): string {
+  if (!d) return '';
+  const m = String(d).match(/(\d{4})\D+(\d{1,2})/);
+  return m ? `${m[1]}년 ${parseInt(m[2], 10)}월` : String(d);
+}
+
+/** 후보 단가(price, 후보규격 refSpec)를 입력규격(userSpec)으로 면적비 보정(√, 0.5~2.0 clamp). */
+function estForSize(price: number, refSpec?: string, userSpec?: string): number | null {
+  const rs = sizev(refSpec || '');
+  const qs = sizev(userSpec || '');
+  if (!rs || !qs || rs <= 0) return null;
+  const f = Math.max(0.5, Math.min(2.0, Math.sqrt(qs / rs)));
+  return Math.round(price * f);
 }
 
 const ROWS = 10;
@@ -1404,7 +1423,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           } catch {
             ev = null;
           }
-          return { reason: pr.reason, src: pr.src, price: pr.price, evidence: ev, hitPrice: pr.price };
+          return {
+            reason: pr.reason,
+            src: pr.src,
+            price: pr.price,
+            evidence: ev,
+            hitPrice: pr.price,
+            date: pr.date,
+            cspec: pr.size,
+            est: estForSize(pr.price, pr.size, spec),
+          };
         }),
       );
       const codeLabel = codes.length ? codes.join(' + ') : item || '품목';
@@ -3031,10 +3059,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
             </div>
             {lkSugg.length > 0 && (
               <div className="aq-lksugg">
-                <span className="aq-lksugg-label">비슷한 코드</span>
+                <span className="aq-lksugg-label">혹시 이걸 찾으시나요?</span>
                 {lkSugg.map((s) => (
                   <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => addLkTag(s.code)}>
-                    {s.code} <em>{s.count}</em>
+                    {s.code} <em>{s.count}건</em>
                   </button>
                 ))}
               </div>
@@ -3100,9 +3128,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                     </div>
                     <div className="aq-mright">
                       <div className="aq-rinfo">
-                        예측 단가 <b>{Number(R.price).toLocaleString()}원</b>
+                        과거 단가 <b>{Number(R.price).toLocaleString()}원</b>
                         <span className="samebadge">{R.src}</span>
+                        {R.date && <span className="aq-date">{ymLabel(R.date)}</span>}
                       </div>
+                      {R.est != null && (
+                        <div className="aq-est">
+                          입력 사이즈{lkCtxRef.current.spec ? ` (${lkCtxRef.current.spec})` : ''} 예상{' '}
+                          <b>~{R.est.toLocaleString()}원</b>
+                          {R.cspec ? <span className="aq-est-base"> · 근거 규격 {R.cspec}</span> : null}
+                        </div>
+                      )}
                       <div style={{ fontSize: 12, color: '#6b7785', margin: '6px 0' }}>{R.reason}</div>
                       <button className="aq-btn sh" style={{ marginBottom: 10 }} onClick={() => applyPrice(R.price)}>
                         이 단가 적용 →

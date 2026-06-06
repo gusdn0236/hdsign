@@ -3,6 +3,7 @@ import { useAuth } from '../../../context/AuthContext.jsx';
 import { lookupPricesMerged, similarCodes, evidence as fetchEvidence } from '../autoquote/annot/api';
 import type { Evidence, CodeSuggestion } from '../autoquote/annot/api';
 import { matchCodes, didYouMean } from '../autoquote/itemCodes';
+import { sizev } from '../autoquote/annot/calc';
 import '../autoquote/AutoQuote.css'; // 모달(.aq-modal)·드롭다운(.aq-acdrop) 스타일 재사용
 import './PriceLookup.css';
 
@@ -11,6 +12,25 @@ interface Ref {
   src: string;
   price: number;
   evidence: Evidence | null;
+  date?: string; // 후보 명세서 날짜
+  cspec?: string; // 후보 규격
+  est?: number | null; // 입력 사이즈 기준 예상 단가
+}
+
+/** 날짜 'YYYY.MM.DD' → '2022년 2월'. */
+function ymLabel(d?: string): string {
+  if (!d) return '';
+  const m = String(d).match(/(\d{4})\D+(\d{1,2})/);
+  return m ? `${m[1]}년 ${parseInt(m[2], 10)}월` : String(d);
+}
+
+/** 후보 단가(price, 후보규격 refSpec)를 입력규격(userSpec)으로 면적비 보정(√, 0.5~2.0 clamp). */
+function estForSize(price: number, refSpec?: string, userSpec?: string): number | null {
+  const rs = sizev(refSpec || '');
+  const qs = sizev(userSpec || '');
+  if (!rs || !qs || rs <= 0) return null;
+  const f = Math.max(0.5, Math.min(2.0, Math.sqrt(qs / rs)));
+  return Math.round(price * f);
 }
 interface LkState {
   refs: Ref[];
@@ -81,7 +101,15 @@ export default function PriceLookup() {
           } catch {
             ev = null;
           }
-          return { reason: pr.reason, src: pr.src, price: pr.price, evidence: ev };
+          return {
+            reason: pr.reason,
+            src: pr.src,
+            price: pr.price,
+            evidence: ev,
+            date: pr.date,
+            cspec: pr.size,
+            est: estForSize(pr.price, pr.size, spec),
+          };
         }),
       );
       const codeLabel = active.length ? active.join(' + ') : '품목';
@@ -162,7 +190,7 @@ export default function PriceLookup() {
     <div className="pl-card">
       <div className="pl-head">
         <span className="pl-title">🔎 단가 찾아보기</span>
-        <span className="pl-sub">과거 명세서·작업지시서에서 품목코드 + 사이즈로 실제 단가를 찾아봅니다</span>
+        <span className="pl-sub">이지폼에 있는 예전 단가를 찾아드립니다</span>
       </div>
       <div className="pl-form">
         <div className="pl-field pl-code">
@@ -247,10 +275,10 @@ export default function PriceLookup() {
       </div>
       {sugg.length > 0 && (
         <div className="pl-sugg">
-          <span className="pl-sugg-label">비슷한 코드</span>
+          <span className="pl-sugg-label">혹시 이걸 찾으시나요?</span>
           {sugg.map((s) => (
             <button key={s.code} type="button" className="pl-sugg-chip" onClick={() => onSugg(s.code)}>
-              {s.code} <em>{s.count}</em>
+              {s.code} <em>{s.count}건</em>
             </button>
           ))}
         </div>
@@ -262,6 +290,7 @@ export default function PriceLookup() {
           lk={lk}
           setLk={setLk}
           searchCodes={codes.length ? codes : code.trim() ? [code.trim()] : []}
+          userSpec={spec}
         />
       )}
     </div>
@@ -272,10 +301,12 @@ function LookupResult({
   lk,
   setLk,
   searchCodes,
+  userSpec,
 }: {
   lk: LkState;
   setLk: (f: (l: LkState | null) => LkState | null) => void;
   searchCodes: string[];
+  userSpec: string;
 }) {
   const close = () => setLk(() => null);
   const num = (v: unknown) => {
@@ -361,9 +392,16 @@ function LookupResult({
             </div>
             <div className="aq-mright">
               <div className="aq-rinfo">
-                예측 단가 <b>{Number(R.price).toLocaleString()}원</b>
+                과거 단가 <b>{Number(R.price).toLocaleString()}원</b>
                 <span className="samebadge">{R.src}</span>
+                {R.date && <span className="pl-date">{ymLabel(R.date)}</span>}
               </div>
+              {R.est != null && (
+                <div className="pl-est">
+                  입력 사이즈{userSpec ? ` (${userSpec})` : ''} 예상 <b>~{R.est.toLocaleString()}원</b>
+                  {R.cspec ? <span className="pl-est-base"> · 근거 규격 {R.cspec}</span> : null}
+                </div>
+              )}
               <div style={{ fontSize: 12, color: '#6b7785', margin: '6px 0' }}>{R.reason}</div>
               <button className="aq-btn sh" style={{ marginBottom: 10 }} onClick={() => copyPrice(R.price)}>
                 이 단가 복사 📋

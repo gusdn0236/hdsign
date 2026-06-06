@@ -34,6 +34,7 @@ export interface Prediction {
   src: string; // '이력' | '전체'
   score: number;
   reason: string;
+  date?: string; // 후보(과거 명세서)의 날짜 'YYYY.MM.DD'
 }
 
 /** 가격 예측 — 단일/다중 품목. 미프로비저닝(503)이면 null. */
