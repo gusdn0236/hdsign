@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../../context/AuthContext.jsx';
 import { lookupPrices, evidence as fetchEvidence } from '../autoquote/annot/api';
-import type { Evidence } from '../autoquote/annot/api';
+import type { Evidence, Prediction } from '../autoquote/annot/api';
 import { matchCodes, didYouMean } from '../autoquote/itemCodes';
 import '../autoquote/AutoQuote.css'; // 모달(.aq-modal)·드롭다운(.aq-acdrop) 스타일 재사용
 import './PriceLookup.css';
@@ -25,7 +25,8 @@ interface LkState {
  */
 export default function PriceLookup() {
   const { token } = useAuth();
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(''); // 품목코드 입력칸 텍스트(아직 태그 안 됨)
+  const [codes, setCodes] = useState<string[]>([]); // 확정된 품목코드 필터 태그들
   const [spec, setSpec] = useState('');
   const [client, setClient] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,8 +35,21 @@ export default function PriceLookup() {
   const [lk, setLk] = useState<LkState | null>(null);
   const [msg, setMsg] = useState('');
 
+  // 품목코드 태그 추가/삭제. 같은 코드 중복은 무시.
+  const addTag = (c: string) => {
+    const t = c.trim();
+    if (!t) return;
+    setCodes((cs) => (cs.includes(t) ? cs : [...cs, t]));
+    setCode('');
+    setAcOpen(false);
+    setAcIdx(-1);
+  };
+  const removeTag = (t: string) => setCodes((cs) => cs.filter((x) => x !== t));
+
   const run = async () => {
-    if (!code.trim() && !spec.trim()) {
+    // 확정 태그가 있으면 그 코드들로, 없으면 입력칸 텍스트를 단일 코드로(하위호환).
+    const active = codes.length ? codes : code.trim() ? [code.trim()] : [];
+    if (!active.length && !spec.trim()) {
       setMsg('품목코드 또는 규격을 입력하세요.');
       return;
     }
@@ -43,14 +57,32 @@ export default function PriceLookup() {
     setAcOpen(false);
     setMsg('');
     try {
-      const preds = await lookupPrices(token, client, { text: code, material: code, size: spec, qty: '' }, 12);
-      if (preds == null) {
+      const targets = active.length ? active : [''];
+      const lists = await Promise.all(
+        targets.map((c) => lookupPrices(token, client, { text: c, material: c, size: spec, qty: '' }, 12)),
+      );
+      if (lists.every((l) => l == null)) {
         setMsg('학습 데이터(코퍼스)가 서버에 아직 없습니다.');
         setBusy(false);
         return;
       }
+      // 여러 코드 후보를 합쳐 ① 사이즈 근접도(score, 정확일치=1.0) 1순위 ② 같은 거래처 우선.
+      const sp = (s: string) => (s === '이력' ? 0 : s === '타거래처' ? 1 : 2);
+      const seen = new Set<string>();
+      const merged = lists
+        .filter((l): l is Prediction[] => l != null)
+        .flat()
+        .filter((p) => {
+          const k = `${p.ref_file}|${p.ref_invoice_idx}|${p.price}`;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        })
+        .sort((a, b) => b.score - a.score || sp(a.src) - sp(b.src))
+        .slice(0, 12);
+
       const refs: Ref[] = await Promise.all(
-        preds.map(async (pr) => {
+        merged.map(async (pr) => {
           let ev: Evidence | null = null;
           try {
             ev = await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
@@ -60,7 +92,8 @@ export default function PriceLookup() {
           return { reason: pr.reason, src: pr.src, price: pr.price, evidence: ev };
         }),
       );
-      const q = `"${code.trim() || '품목'}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
+      const codeLabel = active.length ? active.join(' + ') : '품목';
+      const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
       setLk({ refs, ri: 0, lpi: 0, q });
       if (!refs.length) setMsg('관련 과거 단가를 찾지 못했습니다.');
     } catch (e) {
@@ -70,12 +103,16 @@ export default function PriceLookup() {
     setBusy(false);
   };
 
-  const ms = acOpen && code.trim() ? matchCodes(code) : [];
+  const ms = acOpen && code.trim() ? matchCodes(code).filter((c) => !codes.includes(c)) : [];
   const dym = ms.length ? didYouMean(code, ms) : null;
 
-  // 품목코드 칸 키 — 드롭다운 탐색(↓↑)/선택(Enter)/닫기(Esc). 선택 없으면 Enter=검색 실행.
+  // 품목코드 칸 키 — 드롭다운 탐색(↓↑)/Esc. Enter=태그 추가(있으면). 빈칸 Enter=검색. 빈칸 Backspace=마지막 태그 삭제.
   const onCodeKey = (e: React.KeyboardEvent) => {
-    const m = matchCodes(code);
+    if (e.key === 'Backspace' && !code && codes.length) {
+      removeTag(codes[codes.length - 1]);
+      return;
+    }
+    const m = matchCodes(code).filter((c) => !codes.includes(c));
     if (acOpen && m.length) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -95,20 +132,20 @@ export default function PriceLookup() {
         e.preventDefault();
         const d = didYouMean(code, m);
         if (acIdx >= 0 && m[acIdx]) {
-          setCode(m[acIdx]);
-          setAcOpen(false);
+          addTag(m[acIdx]);
           return;
         }
         if (d) {
-          setCode(d);
-          setAcOpen(false);
+          addTag(d);
           return;
         }
-        run();
+        addTag(code);
         return;
       }
     } else if (e.key === 'Enter') {
-      run();
+      e.preventDefault();
+      if (code.trim()) addTag(code);
+      else run();
     }
   };
 
@@ -120,21 +157,35 @@ export default function PriceLookup() {
       </div>
       <div className="pl-form">
         <div className="pl-field pl-code">
-          <label>품목코드</label>
+          <label>
+            품목코드 <span className="pl-hint">Enter로 여러 개 추가 — 같은 물건 다른 코드도 함께 검색</span>
+          </label>
+          {codes.length > 0 && (
+            <div className="pl-tags">
+              {codes.map((c) => (
+                <span key={c} className="pl-tag">
+                  {c}
+                  <button type="button" onClick={() => removeTag(c)} aria-label={`${c} 삭제`}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <input
             value={code}
             onChange={(e) => {
               const v = e.target.value;
               setCode(v);
               setAcOpen(true);
-              const m = matchCodes(v);
+              const m = matchCodes(v).filter((c) => !codes.includes(c));
               const d = didYouMean(v, m);
               setAcIdx(d ? m.indexOf(d) : -1);
             }}
             onFocus={() => setAcOpen(true)}
             onBlur={() => setTimeout(() => setAcOpen(false), 150)}
             onKeyDown={onCodeKey}
-            placeholder="예: 갈바레이저타공"
+            placeholder={codes.length ? '코드 더 추가… (Enter)' : '예: 갈바레이저타공 (Enter로 추가)'}
           />
           {ms.length > 0 && (
             <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, width: '100%', zIndex: 50 }}>
@@ -150,8 +201,7 @@ export default function PriceLookup() {
                     className={'aq-acitem' + (k === acIdx ? ' on' : '')}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setCode(c);
-                      setAcOpen(false);
+                      addTag(c);
                     }}
                   >
                     {c}
@@ -185,7 +235,13 @@ export default function PriceLookup() {
       </div>
       {msg && <div className="pl-msg">{msg}</div>}
 
-      {lk && <LookupResult lk={lk} setLk={setLk} searchCode={code} />}
+      {lk && (
+        <LookupResult
+          lk={lk}
+          setLk={setLk}
+          searchCodes={codes.length ? codes : code.trim() ? [code.trim()] : []}
+        />
+      )}
     </div>
   );
 }
@@ -193,11 +249,11 @@ export default function PriceLookup() {
 function LookupResult({
   lk,
   setLk,
-  searchCode,
+  searchCodes,
 }: {
   lk: LkState;
   setLk: (f: (l: LkState | null) => LkState | null) => void;
-  searchCode: string;
+  searchCodes: string[];
 }) {
   const close = () => setLk(() => null);
   const num = (v: unknown) => {
@@ -303,9 +359,9 @@ function LookupResult({
                 </thead>
                 <tbody>
                   {(ev?.grid || []).map((g, j) => {
-                    // 검색한 품목코드와 같은 행, 또는 예측단가와 일치하는 행을 한눈에 하이라이트.
+                    // 검색한 품목코드(여럿) 중 하나와 같은 행, 또는 예측단가와 일치하는 행을 한눈에 하이라이트.
                     const hit =
-                      (!!searchCode && ncode(g.item_code as string) === ncode(searchCode)) ||
+                      searchCodes.some((sc) => sc && ncode(g.item_code as string) === ncode(sc)) ||
                       num(g.unit_price) === Math.round(Number(R.price));
                     return (
                       <tr key={j} className={hit ? 'pl-hit' : ''}>

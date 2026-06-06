@@ -45,6 +45,46 @@
   font-weight: 700;
   color: #4b5563;
 }
+.pl-hint {
+  font-weight: 400;
+  color: #9aa5b1;
+  font-size: 11px;
+}
+/* 품목코드 필터 태그(칩) */
+.pl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.pl-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #0a9396;
+  color: #fff;
+  border-radius: 14px;
+  padding: 4px 6px 4px 11px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.pl-tag button {
+  background: rgba(255, 255, 255, 0.25);
+  border: none;
+  color: #fff;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pl-tag button:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
 .pl-field input {
   padding: 11px 12px;
   border: 1.5px solid #d7dde3;
