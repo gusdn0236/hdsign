@@ -89,7 +89,7 @@ public class PricePredictor {
         if (idx == null) {
             return null;
         }
-        int cap = Math.max(1, Math.min(limit, 30));
+        int cap = Math.max(1, Math.min(limit, 50));
         String specBlob = specBlob(it);
         int[] qd = sizeDims(it.text(), specBlob); // 쿼리 가로·세로(높이형은 (h,h)). null=규격 없음
         String qtype = sizeType(it.text(), specBlob); // "height"(h:100/100) | "area"(가로*세로) | "none"

@@ -59,7 +59,7 @@ export default function PriceLookup() {
     try {
       const targets = active.length ? active : [''];
       const lists = await Promise.all(
-        targets.map((c) => lookupPrices(token, client, { text: c, material: c, size: spec, qty: '' }, 12)),
+        targets.map((c) => lookupPrices(token, client, { text: c, material: c, size: spec, qty: '' }, 50)),
       );
       if (lists.every((l) => l == null)) {
         setMsg('학습 데이터(코퍼스)가 서버에 아직 없습니다.');
@@ -79,7 +79,7 @@ export default function PriceLookup() {
           return true;
         })
         .sort((a, b) => b.score - a.score || sp(a.src) - sp(b.src))
-        .slice(0, 12);
+        .slice(0, 50);
 
       const refs: Ref[] = await Promise.all(
         merged.map(async (pr) => {
