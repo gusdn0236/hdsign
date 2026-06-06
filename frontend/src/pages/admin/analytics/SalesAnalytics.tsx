@@ -21,6 +21,7 @@ export default function SalesAnalytics() {
   const { token } = useAuth();
   const [data, setData] = useState<SA | null>(null);
   const [state, setState] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading');
+  const [range, setRange] = useState(24); // 월별 차트 기간(개월), 0 = 전체
   // 2차 비밀번호 잠금 — 세션 동안 1회만(세션스토리지). 실매출이라 옆사람 가림막.
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem('sa-unlocked') === '1');
   const [pw, setPw] = useState('');
@@ -100,29 +101,53 @@ export default function SalesAnalytics() {
   }
 
   const { summary, monthly, yearly, topClients, topItems, materials, seasonality } = data;
-  const months = monthly.slice(-24);
+  const months = range === 0 ? monthly : monthly.slice(-range);
   const maxMonth = Math.max(...months.map((m) => m.revenue), 1);
   const maxYear = Math.max(...yearly.map((y) => y.revenue), 1);
   const maxSeason = Math.max(...seasonality.map((s) => s.revenue), 1);
+  const seasonMaxMonth = seasonality.reduce((a, b) => (b.revenue > a.revenue ? b : a), seasonality[0]);
+
+  // 자연어 인사이트 (뱅크샐러드 감성)
+  const prevMonth = monthly.length >= 2 ? monthly[monthly.length - 2] : null;
+  const momDiff = prevMonth ? summary.latestRevenue - prevMonth.revenue : 0;
+  const momSay =
+    summary.momPct == null
+      ? '이번 달 첫 매출이에요.'
+      : momDiff >= 0
+        ? `지난달보다 ${won(Math.abs(momDiff))}원 더 벌었어요`
+        : `지난달보다 ${won(Math.abs(momDiff))}원 줄었어요`;
+  const matTotal = materials.reduce((s, m) => s + m.revenue, 0) || 1;
+  const topMat = materials[0];
+  const bestMonth = monthly.reduce((a, b) => (b.revenue > a.revenue ? b : a), monthly[0]);
+  const topClient = topClients[0];
+
+  const seg = [
+    { k: 12, l: '12개월' },
+    { k: 24, l: '24개월' },
+    { k: 0, l: '전체' },
+  ];
 
   return (
     <div className="sa-shell">
       <div className="sa-title">
-        <h1>📊 매출분석</h1>
+        <h1>매출분석</h1>
         <span>
           상세 명세서 {summary.totalInvoices.toLocaleString()}건 · {summary.firstYm}~{summary.lastYm}
         </span>
       </div>
 
-      {/* 히어로 — 최근 달 매출 */}
+      {/* 히어로 — 최근 달 매출 + 자연어 인사이트 */}
       <div className="sa-hero">
-        <div className="sa-hero-label">{summary.latestYm} 매출</div>
+        <div className="sa-hero-top">
+          <span className="sa-hero-label">{summary.latestYm} 매출</span>
+          {summary.momPct != null && (
+            <span className={'sa-hero-pill ' + (summary.momPct >= 0 ? 'up' : 'down')}>
+              {summary.momPct >= 0 ? '▲' : '▼'} {Math.abs(summary.momPct)}%
+            </span>
+          )}
+        </div>
         <div className="sa-hero-num">{wonFull(summary.latestRevenue)}</div>
-        {summary.momPct != null && (
-          <div className={'sa-hero-mom ' + (summary.momPct >= 0 ? 'up' : 'down')}>
-            전월대비 {summary.momPct >= 0 ? '▲' : '▼'} {Math.abs(summary.momPct)}%
-          </div>
-        )}
+        <div className="sa-hero-say">{momSay}</div>
       </div>
 
       {/* 요약 카드 */}
@@ -133,15 +158,68 @@ export default function SalesAnalytics() {
         <Card label="거래처 수" value={`${summary.clientCount.toLocaleString()}곳`} />
       </div>
 
-      {/* 월별 매출 추이 */}
-      <Section title="월별 매출 추이" sub="최근 24개월 · 공급가액">
+      {/* 인사이트 칩 */}
+      <div className="sa-insights">
+        {topClient && (
+          <div className="sa-ins">
+            <span className="sa-ins-ico">🏆</span>
+            <div>
+              <div className="sa-ins-k">최다 매출 거래처</div>
+              <div className="sa-ins-v">
+                {topClient.name} <em>{won(topClient.revenue)}원</em>
+              </div>
+            </div>
+          </div>
+        )}
+        {topMat && (
+          <div className="sa-ins">
+            <span className="sa-ins-ico">🧱</span>
+            <div>
+              <div className="sa-ins-k">주력 자재</div>
+              <div className="sa-ins-v">
+                {topMat.name} <em>{Math.round((topMat.revenue / matTotal) * 100)}%</em>
+              </div>
+            </div>
+          </div>
+        )}
+        {bestMonth && (
+          <div className="sa-ins">
+            <span className="sa-ins-ico">📅</span>
+            <div>
+              <div className="sa-ins-k">최고 매출의 달</div>
+              <div className="sa-ins-v">
+                {bestMonth.ym} <em>{won(bestMonth.revenue)}원</em>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 월별 매출 추이 + 기간 토글 */}
+      <Section
+        title="월별 매출 추이"
+        right={
+          <div className="sa-seg">
+            {seg.map((o) => (
+              <button key={o.k} className={range === o.k ? 'on' : ''} onClick={() => setRange(o.k)}>
+                {o.l}
+              </button>
+            ))}
+          </div>
+        }
+      >
         <div className="sa-bars">
-          {months.map((m) => {
+          {months.map((m, i) => {
             const mo = m.ym.slice(5);
-            const showX = ['01', '04', '07', '10'].includes(mo);
+            const sparse = months.length > 18;
+            const showX = sparse ? ['01', '04', '07', '10'].includes(mo) : true;
+            const latest = i === months.length - 1;
             return (
               <div className="sa-bar-col" key={m.ym} title={`${m.ym} · ${wonFull(m.revenue)} · ${m.invoices}건`}>
-                <div className="sa-bar" style={{ height: `${Math.max(3, (m.revenue / maxMonth) * 100)}%` }} />
+                <div
+                  className={'sa-bar' + (latest ? ' on' : '')}
+                  style={{ height: `${Math.max(3, (m.revenue / maxMonth) * 100)}%` }}
+                />
                 <div className="sa-bar-x">{showX ? ymShort(m.ym) : ''}</div>
               </div>
             );
@@ -156,10 +234,13 @@ export default function SalesAnalytics() {
           sub={summary.yoyPct != null ? `전년대비 ${summary.yoyPct >= 0 ? '▲' : '▼'} ${Math.abs(summary.yoyPct)}%` : ''}
         >
           <div className="sa-ybars">
-            {yearly.map((y) => (
+            {yearly.map((y, i) => (
               <div className="sa-ybar-col" key={y.year} title={`${y.year} · ${wonFull(y.revenue)} · ${y.invoices}건`}>
                 <div className="sa-ybar-val">{won(y.revenue)}</div>
-                <div className="sa-ybar" style={{ height: `${Math.max(6, (y.revenue / maxYear) * 100)}%` }} />
+                <div
+                  className={'sa-ybar' + (i === yearly.length - 1 ? ' on' : '')}
+                  style={{ height: `${Math.max(6, (y.revenue / maxYear) * 100)}%` }}
+                />
                 <div className="sa-ybar-x">{y.year}</div>
               </div>
             ))}
@@ -171,7 +252,10 @@ export default function SalesAnalytics() {
           <div className="sa-bars season">
             {seasonality.map((s) => (
               <div className="sa-bar-col" key={s.month} title={`${s.month}월 · ${wonFull(s.revenue)}`}>
-                <div className="sa-bar alt" style={{ height: `${Math.max(3, (s.revenue / maxSeason) * 100)}%` }} />
+                <div
+                  className={'sa-bar' + (s.month === seasonMaxMonth.month ? ' on' : ' mute')}
+                  style={{ height: `${Math.max(3, (s.revenue / maxSeason) * 100)}%` }}
+                />
                 <div className="sa-bar-x">{s.month}</div>
               </div>
             ))}
@@ -196,7 +280,7 @@ export default function SalesAnalytics() {
         <RankList rows={topItems.map((t) => ({ name: t.name, revenue: t.revenue, sub: `${t.count}건` }))} />
       </Section>
 
-      <div className="sa-foot">매출 = 명세서 공급가액(VAT 제외). 상세 명세서 데이터 기반 집계.</div>
+      <div className="sa-foot">매출 = 명세서 공급가액(VAT 제외) · 상세 명세서 데이터 기반</div>
     </div>
   );
 }
@@ -204,10 +288,12 @@ export default function SalesAnalytics() {
 function Section({
   title,
   sub,
+  right,
   children,
 }: {
   title: string;
   sub?: string;
+  right?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -215,6 +301,7 @@ function Section({
       <div className="sa-section-head">
         <h3>{title}</h3>
         {sub && <span>{sub}</span>}
+        {right && <div className="sa-section-right">{right}</div>}
       </div>
       {children}
     </div>
