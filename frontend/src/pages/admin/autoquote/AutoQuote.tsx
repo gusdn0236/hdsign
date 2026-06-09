@@ -2701,10 +2701,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                         </div>
                         {FIELDS[p.fi] === '단가' && (
                           <div className="aq-lkrow">
-                            <button className="aq-lookup" onMouseDown={(e) => e.stopPropagation()} onClick={openLookup}>
+                            <button className="aq-lookup" onMouseDown={(e) => e.stopPropagation()} onClick={() => openLookup()}>
                               🔎 단가 찾아보기
                             </button>
-                            <button className="aq-lookup calc" onMouseDown={(e) => e.stopPropagation()} onClick={runCalc}>
+                            <button className="aq-lookup calc" onMouseDown={(e) => e.stopPropagation()} onClick={() => runCalc()}>
                               🧮 계산기
                             </button>
                           </div>
