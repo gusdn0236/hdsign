@@ -28,8 +28,8 @@ MAP = os.path.join(DATA, "learning", "rematch_map.json")
 PHOTOS = os.path.join(DATA, "work-order-photos-sorted")
 
 
-def build():
-    mp = json.load(open(MAP, encoding="utf-8"))
+def build(map_path):
+    mp = json.load(open(map_path, encoding="utf-8"))
     prefix = os.environ.get("R2_PREFIX", "autoquote/")
     if not prefix.endswith("/"):
         prefix += "/"
@@ -57,8 +57,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--map", default=MAP, help="매핑 JSON({file:{idx:[photos]}}). 기본 rematch_map.json, "
+                                               "신규 증분은 photo_merge_new.json")
     args = ap.parse_args()
-    uploads, prefix = build()
+    uploads, prefix = build(args.map)
 
     if args.dry_run:
         for lp, k, _ in uploads[:20]:
