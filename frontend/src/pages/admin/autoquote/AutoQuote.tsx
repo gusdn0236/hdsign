@@ -33,7 +33,8 @@ import {
   type CodeSuggestion,
 } from './annot/api';
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
-import { matchCodes, didYouMean } from './itemCodes';
+import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
+import LookupResultModal from './LookupResultModal';
 import './AutoQuote.css';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -109,13 +110,6 @@ interface LookupRef {
   date?: string; // 후보 명세서 날짜
   cspec?: string; // 후보 규격
   est?: number | null; // 입력 사이즈 기준 예상 단가
-}
-
-/** 날짜 'YYYY.MM.DD' → '2022년 2월'. */
-function ymLabel(d?: string): string {
-  if (!d) return '';
-  const m = String(d).match(/(\d{4})\D+(\d{1,2})/);
-  return m ? `${m[1]}년 ${parseInt(m[2], 10)}월` : String(d);
 }
 
 /** 후보 단가(price, 후보규격 refSpec)를 입력규격(userSpec)으로 면적비 보정(√, 0.5~2.0 clamp). */
@@ -324,6 +318,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [acIdx, setAcIdx] = useState(-1); // 품목코드 자동완성 드롭다운 하이라이트(-1=없음)
   const [acAbove, setAcAbove] = useState(false); // 드롭다운을 입력칸 위로 열지(아래 공간 부족 시)
   const acDropRef = useRef<HTMLDivElement>(null);
+  const gridAcRef = useRef<HTMLDivElement>(null); // 우측 표 품목코드 드롭다운(포털) — 키보드 탐색 스크롤용
   const [imgSrc, setImgSrc] = useState<string | null>(null); // 작업지시서 — 말풍선(핀)을 얹는 캔버스.
   const [refSrc, setRefSrc] = useState<string | null>(null); // 참고사진 — 보기 전용(붙여넣기). 지시서와 별개.
   const [showRef, setShowRef] = useState(false); // 스테이지에 참고사진 표시(true) / 지시서 표시(false).
@@ -357,6 +352,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [lkInput, setLkInput] = useState('');
   const [lkAcOpen, setLkAcOpen] = useState(false);
   const [lkAcIdx, setLkAcIdx] = useState(-1);
+  const [lkView, setLkView] = useState<'search' | 'working'>('search'); // 단가찾아보기 모달: 검색결과↔작성중 토글
+
+
   const lkCtxRef = useRef<{ spec: string; qty: string; client: string; item: string }>({
     spec: '',
     qty: '',
@@ -756,6 +754,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     if (acIdx < 0) return;
     acDropRef.current?.querySelector('.aq-acitem.on')?.scrollIntoView({ block: 'nearest' });
   }, [acIdx]);
+
+  // 우측 표 품목코드 드롭다운도 동일 — 키보드 ↓↑ 로 하이라이트가 5개 너머로 가면 따라 스크롤.
+  useEffect(() => {
+    if (!gridAc || gridAc.idx < 0) return;
+    gridAcRef.current?.querySelector('.aq-acitem.on')?.scrollIntoView({ block: 'nearest' });
+  }, [gridAc?.idx]);
 
   // 드롭다운은 입력칸을 밀지 않고 아래로 연다(절대배치). 단, 사진 영역 아래 공간이 부족하면 위로.
   // 입력칸/스테이지의 화면 좌표를 재 비교 — 말풍선 scale(1/zoom) 까지 반영된 실측값을 쓴다.
@@ -1225,7 +1229,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 품목코드 칸 키 — 드롭다운 탐색(↓↑)/적용(Enter)/닫기(Esc). 선택 없으면 Enter=오른쪽 이동.
   const onGridCodeKey = (e: React.KeyboardEvent, row: number) => {
     const cur = pinsRef.current[row]?.vals['품목코드'] || '';
-    const ms = matchCodes(cur);
+    const ms = cur.trim() ? matchCodes(cur) : ITEM_CODES; // 빈 칸이면 전체 코드 목록을 ↓↑로 탐색
     if (e.key === 'ArrowDown' && ms.length) {
       e.preventDefault();
       setGridAc((g) => (g ? { ...g, idx: Math.min(g.idx + 1, ms.length - 1) } : g));
@@ -1346,18 +1350,24 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     if (tgt == null) return;
     priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행에, 아니면 말풍선 흐름
     const p = pins[tgt];
-    const code = p.vals['품목코드'] || '';
-    const item = p.vals['품목'] || '';
-    const spec = p.vals['규격'] || '';
+    const code = p?.vals['품목코드'] || '';
+    const item = p?.vals['품목'] || '';
+    const spec = p?.vals['규격'] || '';
+    if (!code) {
+      cdlg('먼저 품목코드를 입력해주세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
     const pc = parseCode(code);
-    if (!pc) {
-      cdlg('품목코드에서 계산기 종류를 못 읽었어요.<br>예: <b>아크릴3T</b> · <b>포맥스5T</b> · <b>고무스카시10T</b>', [
+    // 아크릴/포맥스·고무스카시 외 모든 품목(파싱 실패 포함)은 계산기 미지원 — 통일 안내. HTML 이스케이프.
+    if (!pc || (pc.calc !== 'acryl' && pc.calc !== 'gomu')) {
+      const codeLabel = code.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
+      cdlg(`<b>${codeLabel}</b>는 계산기로 계산할수 없습니다.<br>아크릴,포맥스,고무스카시만 계산가능합니다.`, [
         { label: '확인', sec: true },
       ]);
       return;
     }
     if (!item) {
-      cdlg('품목(글자)을 먼저 입력하세요', [{ label: '확인', sec: true }]);
+      cdlg('먼저 품목(글자)을 입력해주세요.', [{ label: '확인', sec: true }]);
       return;
     }
     if (pc.calc === 'acryl') {
@@ -1385,17 +1395,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         return;
       }
       doApply(hasKo ? '한글' : '영문', hasKo ? 'ko' : 'en');
-    } else if (pc.calc === 'gomu') {
+    } else {
+      // gomu — acryl/gomu 외는 위에서 모두 걸러졌으므로 여기는 고무스카시.
       const r = computeGomu(CALC, pc.tk, item, spec);
       if (r.ok) applyResult(r.unit, r.qty, r.desc);
       else cdlg(r.message, [{ label: '확인', sec: true }]);
-    } else {
-      // 내부 계산기 키(epoxy 등) 대신 사용자가 적은 품목코드를 보여준다. HTML 이스케이프.
-      const codeLabel = (code || pc.calc).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
-      cdlg(
-        `이 품목(<b>${codeLabel}</b>)은 즉시계산 미지원 — admin/prices 계산기 페이지에서 확인하세요.<br>(현재 아크릴/포맥스·고무스카시만 지원)`,
-        [{ label: '확인', sec: true }],
-      );
     }
   };
 
@@ -1438,6 +1442,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       const codeLabel = codes.length ? codes.join(' + ') : item || '품목';
       const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
       setLpi(0);
+      setLkView('search'); // 새 검색 → 검색결과 보기로 복귀(토글은 이 시점부터 다시 시작)
       setLookup({ refs, ri: 0, q });
       setStatus('');
       // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
@@ -1469,10 +1474,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     if (tgt == null) return;
     priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행 단가에 적용
     const p = pins[tgt];
-    const code = p.vals['품목코드'] || '';
-    const item = p.vals['품목'] || '';
-    const spec = p.vals['규격'] || '';
-    const qty = p.vals['수량'] || '';
+    const code = p?.vals['품목코드'] || '';
+    const item = p?.vals['품목'] || '';
+    if (!code && !item) {
+      cdlg('먼저 품목코드를 입력해주세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const spec = p?.vals['규격'] || '';
+    const qty = p?.vals['수량'] || '';
     const client = order?.clientCompanyName || '';
     lkCtxRef.current = { spec, qty, client, item };
     const seed = code ? [code] : [];
@@ -1661,30 +1670,29 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   };
 
   // ---- 공유 (Canvas 합성 → 클립보드) ------------------------------------
-  // 참고사진이 있으면 포함 여부를 먼저 묻는다. 포함 시 2장(① 지시서+말풍선+명세서, ② 참고사진)으로 저장.
+  // 무엇을 공유할지 셋 중 고른다: 지시서만 / 명세서만 / 전부(지시서+명세서).
   const captureShare = () => {
-    if (refSrc) {
-      cdlg('참고사진도 함께 공유할까요?', [
-        { label: '참고사진 포함', fn: () => doShare(true) },
-        { label: '지시서+명세서만', fn: () => doShare(false), sec: true },
-      ]);
-    } else {
-      doShare(false);
-    }
+    cdlg('무엇을 공유할까요?', [
+      { label: '📷 지시서만', fn: () => doShare('worksheet') },
+      { label: '📄 명세서만', fn: () => doShare('statement') },
+      { label: '📷📄 전부 공유', fn: () => doShare('both') },
+    ]);
   };
 
-  const doShare = (includeRef: boolean) => {
+  // mode: 'worksheet'=지시서(사진+말풍선)만 · 'statement'=명세서(표)만 · 'both'=둘 다.
+  // 참고사진은 지시서가 포함될 때만 곁들인다(클립보드 1장 제한 → 파일로 함께 저장).
+  const doShare = (mode: 'worksheet' | 'statement' | 'both') => {
+    const wantPhoto = mode !== 'statement';
+    const wantTable = mode !== 'worksheet';
     const img = imgRef.current;
-    if (!img || !imgSrc) {
+    if (wantPhoto && (!img || !imgSrc)) {
       cdlg('사진을 먼저 붙여넣으세요.', [{ label: '확인', sec: true }]);
       return;
     }
-    const nw = img.naturalWidth,
-      nh = img.naturalHeight,
-      dw = img.clientWidth,
-      dh = img.clientHeight;
-    const sx = nw / dw,
-      sy = nh / dh;
+    const nw = wantPhoto && img ? img.naturalWidth : 0;
+    const nh = wantPhoto && img ? img.naturalHeight : 0;
+    const sx = wantPhoto && img ? nw / (img.clientWidth || 1) : 1;
+    const sy = wantPhoto && img ? nh / (img.clientHeight || 1) : 1;
 
     // ── 오른쪽 명세서(표) 메트릭 — 표 너비가 사진 너비의 약 2/3 가 되도록 글자 크기를 정한다.
     //    (사진:표 ≈ 3:2 — 작성 화면 비율. 예전엔 nh/42·상한40 이라 고해상 사진에서 표가 너무 작았음.) ──
@@ -1698,7 +1706,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       { key: '공급가액', label: '공급가액', m: 6.4, align: 'right' },
     ];
     const mSum = colSpec.reduce((s, c) => s + c.m, 0) + 1.2; // 열 가중치 합 + 좌우 패딩(tfs*0.6*2)
-    const tfs = Math.max(22, Math.round((nw * (2 / 3)) / mSum)); // 표폭 ≈ 사진폭 × 2/3
+    // 표폭 ≈ 사진폭 × 2/3. 명세서만 공유(사진 없음)면 고정 기준폭으로 또렷하게.
+    const tableBaseW = wantPhoto ? nw * (2 / 3) : 1300;
+    const tfs = Math.max(22, Math.round(tableBaseW / mSum));
     const cols = colSpec.map((c) => ({ key: c.key, label: c.label, w: tfs * c.m, align: c.align }));
     const tpad = tfs * 0.6;
     const tw = cols.reduce((s, c) => s + c.w, 0) + tpad * 2;
@@ -1709,16 +1719,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     const nRows = Math.max(pins.length, 1);
     const th = titleH + headH + rh * nRows + footH;
 
-    const GAP = Math.round(tfs * 0.8);
+    const GAP = wantPhoto && wantTable ? Math.round(tfs * 0.8) : 0;
     const cv = document.createElement('canvas');
-    cv.width = nw + GAP + tw;
-    cv.height = Math.max(nh, th);
+    cv.width = (wantPhoto ? nw : 0) + GAP + (wantTable ? tw : 0);
+    cv.height = Math.max(wantPhoto ? nh : 0, wantTable ? th : 0);
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, cv.width, cv.height);
 
-    // ── 왼쪽: 사진 + 말풍선 (기존 합성) ──────────────────────────────
+    // ── 왼쪽: 사진 + 말풍선 — 지시서/전부 모드에서만 ──────────────────
+    if (wantPhoto && img) {
     try {
       ctx.drawImage(img, 0, 0, nw, nh);
     } catch {
@@ -1776,9 +1787,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       ctx.strokeStyle = '#fff';
       ctx.stroke();
     });
+    }
 
-    // ── 오른쪽: 명세서 표 (화면의 grid 를 캔버스로 재현) ──────────────
-    const ox = nw + GAP;
+    // ── 오른쪽: 명세서 표 (화면의 grid 를 캔버스로 재현) — 명세서/전부 모드에서만 ──
+    if (wantTable) {
+    const ox = wantPhoto ? nw + GAP : 0;
     const cellText = (p: Pin, key: string): string => {
       const v = p.vals;
       if (key === '공급가액') {
@@ -1882,6 +1895,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     ctx.lineWidth = 1.5;
     ctx.strokeRect(ox + 0.5, 0.5, tw - 1, th - 1);
     ctx.textAlign = 'left';
+    }
 
     const dlBlob = (b: Blob, name: string) => {
       const a = document.createElement('a');
@@ -1895,23 +1909,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         cdlg('캡쳐 실패(샘플 이미지는 보안제한 — 붙여넣은 사진으로 시도하세요).', [{ label: '확인', sec: true }]);
         return;
       }
-      // 참고사진 포함 — 클립보드는 1장만 가능하므로 두 장 모두 파일로 저장(① 합성, ② 참고사진).
-      if (includeRef && refSrc) {
-        dlBlob(blob, '지시서_명세서.png');
+      const what = mode === 'worksheet' ? '작업지시서' : mode === 'statement' ? '명세서' : '작업지시서+명세서';
+      const fname = mode === 'worksheet' ? '지시서.png' : mode === 'statement' ? '명세서.png' : '지시서_명세서.png';
+      // 참고사진은 지시서가 포함될 때만 — 클립보드는 1장뿐이라 합성·참고사진 2장 모두 파일로 저장.
+      if (wantPhoto && refSrc) {
+        dlBlob(blob, fname);
         try {
           const rb = await (await fetch(refSrc)).blob();
           dlBlob(rb, '참고사진.png');
         } catch {
           /* 참고사진 저장 실패는 합성 저장엔 영향 없음 */
         }
-        cdlg('2장(지시서+명세서 · 참고사진)을 저장했어요. 카톡에 두 장 모두 첨부하세요.', [{ label: '확인' }]);
+        cdlg(`2장(${what} · 참고사진)을 저장했어요. 카톡에 두 장 모두 첨부하세요.`, [{ label: '확인' }]);
         return;
       }
       try {
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        cdlg('✅ 작업지시서+명세서가 복사됐어요! 📋 카톡에서 Ctrl+V 로 붙여넣어주세요.', [{ label: '확인' }]);
+        cdlg(`✅ ${what}가 복사됐어요! 📋 카톡에서 Ctrl+V 로 붙여넣어주세요.`, [{ label: '확인' }]);
       } catch {
-        dlBlob(blob, '견적.png');
+        dlBlob(blob, fname);
         cdlg('클립보드 복사가 막혀 이미지로 저장했어요.', [{ label: '확인' }]);
       }
     }, 'image/png');
@@ -2882,16 +2898,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         </div>
       </div>
 
-      {/* 우측 표 품목코드 자동완성 드롭다운 — 표 overflow 클리핑 회피로 포털+fixed. 말풍선과 동일 UI. */}
+      {/* 우측 표 품목코드 자동완성 드롭다운 — 표 overflow 클리핑 회피로 포털+fixed. 말풍선과 동일 UI.
+          빈 칸을 클릭만 해도 전체 코드(빈도순)가 떠 바로 고를 수 있고, 입력 중이면 매칭만 보인다. */}
       {gridAc &&
-        pins[gridAc.row] &&
         (() => {
-          const cur = pins[gridAc.row].vals['품목코드'] || '';
-          const ms = matchCodes(cur);
+          const cur = pins[gridAc.row]?.vals['품목코드'] || '';
+          const ms = cur.trim() ? matchCodes(cur) : ITEM_CODES;
           if (!ms.length) return null;
-          const dym = didYouMean(cur, ms);
+          const dym = cur.trim() ? didYouMean(cur, ms) : null;
           return createPortal(
             <div
+              ref={gridAcRef}
               className="aq-acdrop"
               style={{
                 position: 'fixed',
@@ -2927,9 +2944,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           );
         })()}
 
-      {/* 우측 표 단가칸 툴바 — 계산기 / 단가 찾아보기 (말풍선과 동일). 표 overflow 회피로 포털+fixed. */}
+      {/* 우측 표 단가칸 툴바 — 계산기 / 단가 찾아보기 (말풍선과 동일). 표 overflow 회피로 포털+fixed.
+          핀 없는 빈 행에서도 클릭만 하면 떠야 하므로 pins 가드 없음(버튼은 runCalc/openLookup 에서 빈 칸 안내). */}
       {gridTool &&
-        pins[gridTool.row] &&
         createPortal(
           <div
             style={{ position: 'fixed', left: gridTool.left, top: gridTool.top + 3, zIndex: 3000, display: 'flex', gap: 6 }}
@@ -2961,231 +2978,150 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           document.body,
         )}
 
-      {/* 단가 찾아보기 모달 */}
+      {/* 단가 찾아보기 모달 — 결과 UI는 LookupResultModal(단가계산기 탭과 공유). 헤더 아래 품목코드 태그 바는 명세서작성 전용 extras. */}
       {lookup && (
-        <div className="aq-modal on" onClick={(e) => e.target === e.currentTarget && setLookup(null)}>
-          <div className="aq-mbox">
-            <div className="aq-mhead">
-              <b>단가 찾아보기</b>
-              <span className="aq-q">{lookup.q} · 예측 단가·근거</span>
-              <span className="aq-nav">
-                <button
-                  onClick={() => {
-                    setLpi(0);
-                    setLookup((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1 } : l));
-                  }}
-                >
-                  ‹
-                </button>
-                <span style={{ fontSize: 12.5, color: '#6b7785' }}>
-                  {lookup.refs.length ? `${lookup.ri + 1} / ${lookup.refs.length}` : '0'}
-                </span>
-                <button
-                  onClick={() => {
-                    setLpi(0);
-                    setLookup((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1 } : l));
-                  }}
-                >
-                  ›
-                </button>
-                <button className="aq-x" onClick={() => setLookup(null)}>
-                  ×
-                </button>
-              </span>
-            </div>
-            <div className="aq-lkbar">
-              <span className="aq-lkbar-label">품목코드</span>
-              {lkCodes.map((c) => (
-                <span key={c} className="aq-lktag">
-                  {c}
-                  <button type="button" onClick={() => removeLkTag(c)} aria-label={`${c} 삭제`}>
-                    ×
-                  </button>
-                </span>
-              ))}
-              {lkCodes.length > 0 && (
-                <button
-                  type="button"
-                  className="aq-lkclear"
-                  onClick={() => {
-                    setLkCodes([]);
-                    runLookup([]);
-                  }}
-                >
-                  초기화
-                </button>
-              )}
-              <div className="aq-lkinput">
-                <input
-                  value={lkInput}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setLkInput(v);
-                    setLkAcOpen(true);
-                    const m = matchCodes(v).filter((c) => !lkCodes.includes(c));
-                    const d = didYouMean(v, m);
-                    setLkAcIdx(d ? m.indexOf(d) : -1);
-                  }}
-                  onFocus={() => setLkAcOpen(true)}
-                  onBlur={() => setTimeout(() => setLkAcOpen(false), 150)}
-                  onKeyDown={onLkKey}
-                  placeholder="+ 코드 추가 (Enter) — 같은 물건 다른 코드 함께"
-                />
-                {lkAcOpen &&
-                  lkInput.trim() &&
-                  (() => {
-                    const m = matchCodes(lkInput).filter((c) => !lkCodes.includes(c));
-                    if (!m.length) return null;
-                    return (
-                      <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60 }}>
-                        <div className="aq-aclist">
-                          {m.map((c, k) => (
-                            <div
-                              key={c}
-                              className={'aq-acitem' + (k === lkAcIdx ? ' on' : '')}
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                addLkTag(c);
-                              }}
-                            >
-                              {c}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-              </div>
-            </div>
-            {lkSugg.length > 0 && (
-              <div className="aq-lksugg">
-                <span className="aq-lksugg-label">혹시 이걸 찾으시나요?</span>
-                {lkSugg.map((s) => (
-                  <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => addLkTag(s.code)}>
-                    {s.code} <em>{s.count}건</em>
-                  </button>
-                ))}
-              </div>
-            )}
-            {!lookup.refs.length ? (
-              <div className="aq-mbody">
-                <div className="aq-mleft">
-                  <div className="none">관련 과거 단가가 없습니다. 품목코드/품목을 확인해 보세요.</div>
-                </div>
-                <div className="aq-mright" />
-              </div>
+        <LookupResultModal
+          refs={lookup.refs}
+          ri={lookup.ri}
+          lpi={lpi}
+          userSpec={lkCtxRef.current.spec}
+          actionLabel="이 단가 적용 →"
+          onAction={applyPrice}
+          onPrev={() => {
+            setLpi(0);
+            setLookup((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1 } : l));
+          }}
+          onNext={() => {
+            setLpi(0);
+            setLookup((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1 } : l));
+          }}
+          onClose={() => setLookup(null)}
+          setLpi={setLpi}
+          view={lkView}
+          onToggleView={() => setLkView((v) => (v === 'search' ? 'working' : 'search'))}
+          workingTitle={`${order?.clientCompanyName || order?.orderNumber || ''} 작성중인 명세서`.trim()}
+          workingLeft={
+            imgSrc ? (
+              <img src={imgSrc} alt="작성중인 작업지시서" />
             ) : (
-              (() => {
-                const R = lookup.refs[lookup.ri];
-                const ev = R.evidence;
-                // 다장(many-to-many) 지원: ev.photos 있으면 그걸, 없으면 단일 photo_base64 폴백.
-                const phs =
-                  ev?.photos && ev.photos.length
-                    ? ev.photos
-                    : ev?.photo_base64
-                      ? [{ content_type: ev.photo_content_type || 'image/jpeg', base64: ev.photo_base64 }]
-                      : [];
-                const cur = phs.length ? phs[Math.min(lpi, phs.length - 1)] : null;
-                const photo = cur ? `data:${cur.content_type || 'image/jpeg'};base64,${cur.base64}` : null;
-                return (
-                  <div className="aq-mbody">
-                    <div className="aq-mleft" style={{ position: 'relative' }}>
-                      {photo ? <img src={photo} alt="과거 작업지시서" /> : <div className="none">사진 없음</div>}
-                      {phs.length > 1 && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            bottom: 8,
-                            left: '50%',
-                            transform: 'translateX(-50%)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            background: 'rgba(0,0,0,0.6)',
-                            color: '#fff',
-                            borderRadius: 16,
-                            padding: '4px 10px',
-                            fontSize: 13,
-                          }}
-                        >
-                          <button
-                            style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16 }}
-                            onClick={() => setLpi((i) => (i > 0 ? i - 1 : phs.length - 1))}
-                          >
-                            ‹
-                          </button>
-                          <span>
-                            지시서 {Math.min(lpi, phs.length - 1) + 1} / {phs.length}
-                          </span>
-                          <button
-                            style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16 }}
-                            onClick={() => setLpi((i) => (i < phs.length - 1 ? i + 1 : 0))}
-                          >
-                            ›
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="aq-mright">
-                      <div className="aq-rinfo">
-                        과거 단가 <b>{Number(R.price).toLocaleString()}원</b>
-                        <span className="samebadge">{R.src}</span>
-                        {R.date && <span className="aq-date">{ymLabel(R.date)}</span>}
-                      </div>
-                      {R.est != null && (
-                        <div className="aq-est">
-                          입력 사이즈{lkCtxRef.current.spec ? ` (${lkCtxRef.current.spec})` : ''} 예상{' '}
-                          <b>~{R.est.toLocaleString()}원</b>
-                          {R.cspec ? <span className="aq-est-base"> · 근거 규격 {R.cspec}</span> : null}
-                        </div>
-                      )}
-                      <div style={{ fontSize: 12, color: '#6b7785', margin: '6px 0' }}>{R.reason}</div>
-                      <button className="aq-btn sh" style={{ marginBottom: 10 }} onClick={() => applyPrice(R.price)}>
-                        이 단가 적용 →
-                      </button>
-                      <div style={{ fontSize: 12, color: '#6b7785', marginBottom: 6 }}>
-                        과거 명세서 — 행을 클릭하면 그 단가가 입력됩니다.
-                      </div>
-                      <table className="aq-rtbl">
-                        <thead>
-                          <tr>
-                            <th>품목코드</th>
-                            <th>품목</th>
-                            <th>규격</th>
-                            <th>수량</th>
-                            <th className="p">단가</th>
-                            <th></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(ev?.grid || []).map((g, j) => {
-                            const price = num(g.unit_price);
-                            const hit = price != null && price === Math.round(Number(R.hitPrice));
-                            const clk = price != null && price > 0;
-                            return (
-                              <tr
-                                key={j}
-                                className={(hit ? 'hit ' : '') + (clk ? 'click' : '')}
-                                onClick={clk ? () => applyPrice(price as number) : undefined}
+              <div className="none">작성 중인 지시서가 없습니다.</div>
+            )
+          }
+          workingRight={
+            pins.length ? (
+              <table className="aq-rtbl">
+                <thead>
+                  <tr>
+                    <th>품목코드</th>
+                    <th>품목</th>
+                    <th>규격</th>
+                    <th>수량</th>
+                    <th className="p">단가</th>
+                    <th className="p">공급가액</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pins.map((p, i) => {
+                    const v = p.vals;
+                    const u = num(v['단가']);
+                    return (
+                      <tr key={i}>
+                        <td>{v['품목코드'] || ''}</td>
+                        <td>{v['품목'] || ''}</td>
+                        <td>{v['규격'] || ''}</td>
+                        <td>{v['수량'] || ''}</td>
+                        <td className="p">{u != null ? u.toLocaleString() : v['단가'] || ''}</td>
+                        <td className="p">{u != null ? (u * (num(v['수량']) || 1)).toLocaleString() : ''}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <div className="none" style={{ padding: 16, color: '#6b7785' }}>
+                작성 중인 명세서가 비어 있습니다.
+              </div>
+            )
+          }
+          extras={
+            <>
+              <div className="aq-lkbar">
+                <span className="aq-lkbar-label">품목코드</span>
+                {lkCodes.map((c) => (
+                  <span key={c} className="aq-lktag">
+                    {c}
+                    <button type="button" onClick={() => removeLkTag(c)} aria-label={`${c} 삭제`}>
+                      ×
+                    </button>
+                  </span>
+                ))}
+                {lkCodes.length > 0 && (
+                  <button
+                    type="button"
+                    className="aq-lkclear"
+                    onClick={() => {
+                      setLkCodes([]);
+                      runLookup([]);
+                    }}
+                  >
+                    초기화
+                  </button>
+                )}
+                <div className="aq-lkinput">
+                  <input
+                    value={lkInput}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setLkInput(v);
+                      setLkAcOpen(true);
+                      const m = matchCodes(v).filter((c) => !lkCodes.includes(c));
+                      const d = didYouMean(v, m);
+                      setLkAcIdx(d ? m.indexOf(d) : -1);
+                    }}
+                    onFocus={() => setLkAcOpen(true)}
+                    onBlur={() => setTimeout(() => setLkAcOpen(false), 150)}
+                    onKeyDown={onLkKey}
+                    placeholder="+ 코드 추가 (Enter) — 같은 물건 다른 코드 함께"
+                  />
+                  {lkAcOpen &&
+                    lkInput.trim() &&
+                    (() => {
+                      const m = matchCodes(lkInput).filter((c) => !lkCodes.includes(c));
+                      if (!m.length) return null;
+                      return (
+                        <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60 }}>
+                          <div className="aq-aclist">
+                            {m.map((c, k) => (
+                              <div
+                                key={c}
+                                className={'aq-acitem' + (k === lkAcIdx ? ' on' : '')}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  addLkTag(c);
+                                }}
                               >
-                                <td>{g.item_code || ''}</td>
-                                <td>{g.item || ''}</td>
-                                <td>{g.spec || ''}</td>
-                                <td>{g.qty ?? ''}</td>
-                                <td className="p">{g.unit_price ?? ''}</td>
-                                <td>{clk ? <span className="pick">선택 →</span> : ''}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })()
-            )}
-          </div>
-        </div>
+                                {c}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                </div>
+              </div>
+              {lkSugg.length > 0 && (
+                <div className="aq-lksugg">
+                  <span className="aq-lksugg-label">혹시 이걸 찾으시나요?</span>
+                  {lkSugg.map((s) => (
+                    <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => addLkTag(s.code)}>
+                      {s.code} <em>{s.count}건</em>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          }
+        />
       )}
 
       {/* 작은 다이얼로그 */}

@@ -143,6 +143,10 @@ export interface EvidenceGridRow {
 }
 export interface Evidence {
   invoice_idx: number | string;
+  /** 근거 명세서의 거래처명·발행일·합계(백엔드가 함께 내려줌). 단가찾아보기 제목에 사용. */
+  client?: string;
+  date?: string;
+  total?: string;
   photo_available: boolean;
   photo_content_type?: string;
   photo_base64?: string;

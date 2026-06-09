@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from '../../../context/AuthContext.jsx';
 import { lookupPricesMerged, similarCodes, evidence as fetchEvidence } from '../autoquote/annot/api';
 import type { Evidence, CodeSuggestion } from '../autoquote/annot/api';
 import { matchCodes, didYouMean } from '../autoquote/itemCodes';
 import { sizev } from '../autoquote/annot/calc';
+import LookupResultModal from '../autoquote/LookupResultModal';
 import '../autoquote/AutoQuote.css'; // 모달(.aq-modal)·드롭다운(.aq-acdrop) 스타일 재사용
 import './PriceLookup.css';
 
@@ -15,13 +16,6 @@ interface Ref {
   date?: string; // 후보 명세서 날짜
   cspec?: string; // 후보 규격
   est?: number | null; // 입력 사이즈 기준 예상 단가
-}
-
-/** 날짜 'YYYY.MM.DD' → '2022년 2월'. */
-function ymLabel(d?: string): string {
-  if (!d) return '';
-  const m = String(d).match(/(\d{4})\D+(\d{1,2})/);
-  return m ? `${m[1]}년 ${parseInt(m[2], 10)}월` : String(d);
 }
 
 /** 후보 단가(price, 후보규격 refSpec)를 입력규격(userSpec)으로 면적비 보정(√, 0.5~2.0 clamp). */
@@ -286,159 +280,19 @@ export default function PriceLookup() {
       {msg && <div className="pl-msg">{msg}</div>}
 
       {lk && (
-        <LookupResult
-          lk={lk}
-          setLk={setLk}
-          searchCodes={codes.length ? codes : code.trim() ? [code.trim()] : []}
+        <LookupResultModal
+          refs={lk.refs}
+          ri={lk.ri}
+          lpi={lk.lpi}
           userSpec={spec}
+          actionLabel="이 단가 복사 📋"
+          onAction={(p) => navigator.clipboard?.writeText(String(p))}
+          onPrev={() => setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0 } : l))}
+          onNext={() => setLk((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1, lpi: 0 } : l))}
+          onClose={() => setLk(null)}
+          setLpi={(f) => setLk((l) => (l ? { ...l, lpi: f(l.lpi) } : l))}
         />
       )}
-    </div>
-  );
-}
-
-function LookupResult({
-  lk,
-  setLk,
-  searchCodes,
-  userSpec,
-}: {
-  lk: LkState;
-  setLk: (f: (l: LkState | null) => LkState | null) => void;
-  searchCodes: string[];
-  userSpec: string;
-}) {
-  const close = () => setLk(() => null);
-  const num = (v: unknown) => {
-    const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
-    return Number.isFinite(n) ? n : null;
-  };
-  // 키보드 ← → 로 후보 넘기기, Esc 닫기 (입력칸 포커스 중이면 무시).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0 } : l));
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        setLk((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1, lpi: 0 } : l));
-      } else if (e.key === 'Escape') {
-        setLk(() => null);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [setLk]);
-  const ncode = (s: string) => (s || '').trim().replace(/[\s/]/g, '').toUpperCase();
-  const R = lk.refs[lk.ri];
-  const ev = R?.evidence;
-  const phs =
-    ev?.photos && ev.photos.length
-      ? ev.photos
-      : ev?.photo_base64
-        ? [{ content_type: ev.photo_content_type || 'image/jpeg', base64: ev.photo_base64 }]
-        : [];
-  const cur = phs.length ? phs[Math.min(lk.lpi, phs.length - 1)] : null;
-  const photo = cur ? `data:${cur.content_type || 'image/jpeg'};base64,${cur.base64}` : null;
-  const copyPrice = (p: number) => {
-    navigator.clipboard?.writeText(String(p));
-  };
-
-  return (
-    <div className="aq-modal on pl-modal" onClick={(e) => e.target === e.currentTarget && close()}>
-      <div className="aq-mbox">
-        <div className="aq-mhead">
-          <b>단가 찾아보기</b>
-          <span className="aq-q">{lk.q} · 예측 단가·근거</span>
-          <span className="aq-nav">
-            <button onClick={() => setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0 } : l))}>‹</button>
-            <span style={{ fontSize: 12.5, color: '#6b7785' }}>
-              {lk.refs.length ? `${lk.ri + 1} / ${lk.refs.length}` : '0'}
-            </span>
-            <button onClick={() => setLk((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1, lpi: 0 } : l))}>
-              ›
-            </button>
-            <button className="aq-x" onClick={close}>
-              ×
-            </button>
-          </span>
-        </div>
-        {!lk.refs.length ? (
-          <div className="aq-mbody">
-            <div className="aq-mleft">
-              <div className="none">관련 과거 단가가 없습니다. 품목코드/규격을 확인해 보세요.</div>
-            </div>
-            <div className="aq-mright" />
-          </div>
-        ) : (
-          <div className="aq-mbody">
-            <div className="aq-mleft" style={{ position: 'relative' }}>
-              {photo ? <img src={photo} alt="과거 작업지시서" /> : <div className="none">사진 없음</div>}
-              {phs.length > 1 && (
-                <div className="pl-gal">
-                  <button onClick={() => setLk((l) => (l ? { ...l, lpi: l.lpi > 0 ? l.lpi - 1 : phs.length - 1 } : l))}>
-                    ‹
-                  </button>
-                  <span>
-                    지시서 {Math.min(lk.lpi, phs.length - 1) + 1} / {phs.length}
-                  </span>
-                  <button onClick={() => setLk((l) => (l ? { ...l, lpi: l.lpi < phs.length - 1 ? l.lpi + 1 : 0 } : l))}>
-                    ›
-                  </button>
-                </div>
-              )}
-            </div>
-            <div className="aq-mright">
-              <div className="aq-rinfo">
-                과거 단가 <b>{Number(R.price).toLocaleString()}원</b>
-                <span className="samebadge">{R.src}</span>
-                {R.date && <span className="pl-date">{ymLabel(R.date)}</span>}
-              </div>
-              {R.est != null && (
-                <div className="pl-est">
-                  입력 사이즈{userSpec ? ` (${userSpec})` : ''} 예상 <b>~{R.est.toLocaleString()}원</b>
-                  {R.cspec ? <span className="pl-est-base"> · 근거 규격 {R.cspec}</span> : null}
-                </div>
-              )}
-              <div style={{ fontSize: 12, color: '#6b7785', margin: '6px 0' }}>{R.reason}</div>
-              <button className="aq-btn sh" style={{ marginBottom: 10 }} onClick={() => copyPrice(R.price)}>
-                이 단가 복사 📋
-              </button>
-              <div style={{ fontSize: 12, color: '#6b7785', marginBottom: 6 }}>과거 명세서 — 단가 참고용</div>
-              <table className="aq-rtbl">
-                <thead>
-                  <tr>
-                    <th>품목코드</th>
-                    <th>품목</th>
-                    <th>규격</th>
-                    <th>수량</th>
-                    <th className="p">단가</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(ev?.grid || []).map((g, j) => {
-                    // 검색한 품목코드(여럿) 중 하나와 같은 행, 또는 예측단가와 일치하는 행을 한눈에 하이라이트.
-                    const hit =
-                      searchCodes.some((sc) => sc && ncode(g.item_code as string) === ncode(sc)) ||
-                      num(g.unit_price) === Math.round(Number(R.price));
-                    return (
-                      <tr key={j} className={hit ? 'pl-hit' : ''}>
-                        <td>{g.item_code}</td>
-                        <td>{g.item}</td>
-                        <td>{g.spec}</td>
-                        <td>{g.qty}</td>
-                        <td className="p">{num(g.unit_price)?.toLocaleString() ?? g.unit_price}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }

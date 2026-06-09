@@ -1163,3 +1163,139 @@
 .aq-close:hover {
   background: #e63946 !important;
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   단가찾아보기 결과 모달(LookupResultModal) — 단가계산기 탭·명세서작성 공유.
+   제목 = 근거 명세서 거래처+발행일, 본문 = 규격·단가·예상가격만(미니멀).
+   ─────────────────────────────────────────────────────────────────────── */
+.lk-modal .aq-mhead .lk-title {
+  flex: 1; /* 남는 폭을 제목이 흡수 → 토글·네비는 항상 같은 자리(제목 길이와 무관) */
+  min-width: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--navy);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lk-modal .aq-nav button:not(.aq-x) {
+  font-size: 26px;
+  width: 42px;
+  height: 36px;
+  line-height: 1;
+  border-radius: 8px;
+}
+.lk-modal .aq-nav button:not(.aq-x):disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.lk-modal .aq-nav .aq-x {
+  margin-left: 20px;
+}
+.lk-right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 22px;
+  overflow: auto;
+}
+/* 과거 명세서 발행일 — 규격·단가(표) 위에 표시 */
+.lk-right .lk-date {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--navy);
+}
+.lk-right .lk-tbl {
+  margin-top: 2px;
+}
+.lk-right .lk-tbl tr.click {
+  cursor: pointer;
+}
+.lk-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+.lk-row .lk-k {
+  flex: 0 0 52px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--mut);
+}
+.lk-row .lk-v {
+  font-size: 23px;
+  font-weight: 800;
+  color: var(--navy);
+}
+.lk-row .lk-v.lk-price {
+  color: #0a7a7d;
+}
+.lk-est {
+  margin-top: 6px;
+  padding: 15px 17px;
+  background: #eef7f7;
+  border: 1px solid #bfe3e4;
+  border-radius: 10px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #25313c;
+}
+.lk-est b {
+  color: #0a7a7d;
+  font-weight: 800;
+}
+.lk-action {
+  margin-top: 8px;
+  align-self: flex-start;
+  padding: 11px 24px;
+  font-size: 15px;
+}
+/* 다장 지시서 사진 갤러리 — 사진 위 떠있는 페이저 */
+.lk-gal {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border-radius: 16px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.lk-gal button {
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+/* 검색결과↔작성중 토글 버튼(명세서작성 전용) — 고정폭·가운데 정렬로 두 문구 모두 같은 자리. */
+.lk-modal .lk-toggle {
+  margin-left: 14px;
+  min-width: 188px;
+  text-align: center;
+  padding: 7px 14px;
+  background: #eef7f7;
+  border: 1.5px solid #0a9396;
+  color: #0a7a7d;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lk-modal .lk-toggle:hover {
+  background: #0a9396;
+  color: #fff;
+}
+/* 작성중 보기 — 우측 명세서 표 */
+.lk-modal .lk-working {
+  padding: 16px;
+}
+.lk-modal .lk-working .aq-rtbl {
+  margin-top: 0;
+}
