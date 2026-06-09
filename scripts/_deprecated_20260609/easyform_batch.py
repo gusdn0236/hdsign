@@ -347,6 +347,25 @@ def extract_grid(layout: dict) -> tuple[list[dict], str]:
     return out, "OK"
 
 
+def focus_easyform() -> bool:
+    """이지폼 명세서 상세 창을 포그라운드로 — 터미널에서 실행돼도 기준 창이 이지폼이 되게.
+    (직접 PowerShell 실행 땐 불필요하지만, 헤드리스/터미널 실행 호환용. 매크로 로직 영향 없음.)"""
+    try:
+        from pywinauto import Desktop
+        desk = Desktop(backend="win32")
+        # 이지폼은 Delphi MDI 앱 — 명세서 상세는 메인창(TfrmBookMain) 안의 자식. 메인창을 포커스.
+        cands = [w for w in desk.windows()
+                 if w.class_name() == "TfrmBookMain" or "이지폼" in (w.window_text() or "")]
+        if not cands:
+            return False
+        cands[0].set_focus()
+        time.sleep(0.4)
+        return True
+    except Exception as e:
+        print(f"  포커스 시도 실패: {e}")
+        return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max", type=int, default=2200)
@@ -371,6 +390,11 @@ def main() -> int:
     for i in range(5, 0, -1):
         print(f"  {i}...", end="\r", flush=True); time.sleep(1)
     print()
+
+    if focus_easyform():
+        print("이지폼 상세 창 포커스 OK")
+    else:
+        print("⚠ 이지폼 상세 창을 못 찾음 — 상세화면이 열려 있는지 확인하세요")
 
     out_path = Path(args.out)
     # 기존 결과 (재시작 시)
