@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -104,8 +105,26 @@ public class PricePredictor {
         String codeNorm = ccode(it.material());
 
         List<Prediction> out = new ArrayList<>();
-        List<Line> coded = codeNorm.isBlank() ? null : idx.byCode.get(codeNorm);
-        if (coded != null && !coded.isEmpty()) {
+        // 품목코드와 품목을 함께 본다: 코드 버킷 ∪ 품목(item)에 검색 코드가 든 라인.
+        // 숫자코드(200 등)는 자재가 품목에 적히므로, '갈바레이저타공' 검색 시 품목이 '갈바레이저타공'인
+        // 200-코드 라인도 함께 잡힌다. (코드 단일귀속이 놓치는 부분일치를 품목 스캔이 보완)
+        LinkedHashSet<Line> coded = new LinkedHashSet<>();
+        if (!codeNorm.isBlank()) {
+            List<Line> bucket = idx.byCode.get(codeNorm);
+            if (bucket != null) {
+                coded.addAll(bucket);
+            }
+            if (codeNorm.length() >= 2) {
+                for (List<Line> lines : idx.byClient.values()) {
+                    for (Line r : lines) {
+                        if (itemHasCode(r.item, codeNorm)) {
+                            coded.add(r);
+                        }
+                    }
+                }
+            }
+        }
+        if (!coded.isEmpty()) {
             List<Line> same = new ArrayList<>();
             List<Line> other = new ArrayList<>();
             for (Line r : coded) {
@@ -343,6 +362,14 @@ public class PricePredictor {
         return s.trim().replaceAll("[\\s/]", "").toUpperCase();
     }
 
+    /** 품목(item)에 검색 코드가 포함되는지 — 코드와 동일 정규화(공백/슬래시 제거+대문자)로 부분일치. */
+    private static boolean itemHasCode(String item, String codeNorm) {
+        if (item == null || item.isBlank()) {
+            return false;
+        }
+        return item.replaceAll("[\\s/]", "").toUpperCase().contains(codeNorm);
+    }
+
     /** 여러 견적 라인을 예측. 코퍼스 미프로비저닝이면 {@code null}(호출부가 503 처리). */
     public List<Prediction> predict(String client, List<Item> items) {
         Index idx = index();
@@ -478,6 +505,7 @@ public class PricePredictor {
         if (bc == null || !bc.isObject()) {
             return new Index(byClient, byItem, byCode);
         }
+        List<Line> all = new ArrayList<>();
         var fields = bc.fields();
         while (fields.hasNext()) {
             var e = fields.next();
@@ -489,15 +517,78 @@ public class PricePredictor {
                     continue;
                 }
                 lines.add(line);
-                byItem.computeIfAbsent(inorm(line.item), k -> new ArrayList<>()).add(line);
-                String cc = ccode(line.code);
-                if (!cc.isBlank()) {
-                    byCode.computeIfAbsent(cc, k -> new ArrayList<>()).add(line);
-                }
+                all.add(line);
             }
             byClient.put(clientNorm, lines);
         }
+        // 자재코드 어휘 빌드 후, byCode 를 resolveCode(코드+품목)로 키잉. 숫자/빈칸 코드(전체 39%)는
+        // 품목에 적힌 실제 자재타입으로 귀속 → "200/갈바레이저타공" 도 갈바레이저타공으로 검색됨.
+        List<String> vocab = buildVocab(all);
+        for (Line line : all) {
+            byItem.computeIfAbsent(inorm(line.item), k -> new ArrayList<>()).add(line);
+            String rc = resolveCode(line.code, line.item, vocab);
+            if (!rc.isBlank()) {
+                byCode.computeIfAbsent(rc, k -> new ArrayList<>()).add(line);
+            }
+        }
         return new Index(byClient, byItem, byCode);
+    }
+
+    private static final java.util.regex.Pattern P_NUMCODE = java.util.regex.Pattern.compile("[0-9][0-9\\-]*");
+    private static final String[] MAT_KW = {
+        "갈바", "아크릴", "스텐", "포맥스", "스카시", "잔넬", "골드스텐", "고무", "투명", "에폭시",
+        "일체형", "채널", "후광", "측광", "전광", "전후광", "비조명", "도시락", "오사이", "절곡",
+        "헤어라인", "타공", "레이저", "레이져", "에칭", "먹통", "후렘", "포리싱", "조각", "금경",
+        "은경", "무광", "백색", "검정", "적색", "알마이트", "철판", "시트", "네온", "캡",
+        "행잉", "용접", "돌출", "부식", "현판", "파이프",
+    };
+
+    private static boolean isNumericCode(String c) {
+        return c != null && P_NUMCODE.matcher(c).matches();
+    }
+
+    private static boolean hasMaterialKw(String s) {
+        if (s == null) {
+            return false;
+        }
+        for (String k : MAT_KW) {
+            if (s.contains(k)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 자재코드 어휘 — 숫자아님 + 자재키워드 포함 코드. 긴 것 우선(부분일치 정확도). */
+    private static List<String> buildVocab(List<Line> all) {
+        Set<String> set = new HashSet<>();
+        for (Line l : all) {
+            String c = l.code == null ? "" : l.code.trim();
+            if (!c.isBlank() && !isNumericCode(c) && hasMaterialKw(c)) {
+                set.add(c);
+            }
+        }
+        List<String> v = new ArrayList<>(set);
+        v.sort((a, b) -> b.length() - a.length());
+        return v;
+    }
+
+    /**
+     * 효과적 코드(검색·그룹 키): 코드가 의미있는 자재코드면 그대로(정규화), 숫자/빈칸/비자재 코드면
+     * 품목(괄호=현장명 제거)에서 알려진 자재코드를 부분일치로 찾아 귀속. 못 찾으면 원 코드.
+     */
+    private static String resolveCode(String code, String item, List<String> vocab) {
+        String c = code == null ? "" : code.trim();
+        if (!c.isBlank() && !isNumericCode(c) && hasMaterialKw(c)) {
+            return ccode(c);
+        }
+        String it = item == null ? "" : item.replaceAll("\\([^)]*\\)", " ");
+        for (String v : vocab) {
+            if (it.contains(v)) {
+                return ccode(v);
+            }
+        }
+        return ccode(c);
     }
 
     private Line toLine(JsonNode ln, String clientNorm) {

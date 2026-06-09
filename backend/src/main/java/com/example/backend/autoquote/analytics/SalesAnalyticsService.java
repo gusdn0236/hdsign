@@ -26,13 +26,25 @@ import java.util.regex.Pattern;
 public class SalesAnalyticsService {
 
     private static final Pattern NUM = Pattern.compile("-?\\d[\\d,]*");
-    /** 자재 카테고리 — 키워드 우선순위 순(구체적인 것 먼저). 품목코드/품목명에 포함되면 그 카테고리. */
-    private static final String[][] MATERIALS = {
+    /**
+     * 본체 자재(금속/판) — 키워드 우선순위 순(구체적인 것 먼저). <b>품목코드 + 품목명을 함께</b> 본다.
+     * 숫자코드(200=본체제작/100-x=전원/0000x=LED모듈/500-2=도장/700=시트 …)는 자재코드가 아니라
+     * 회계 분류코드라, 실제 자재는 품목란에 있다. 코드+품목을 합쳐 분류하면 '기타'가 17.9%→9.0%로 반감.
+     * 본체 자재가 LED/전원보다 우선(예: '스텐후렘+LED'는 스텐 본체). 전기·시공·운임은 뒤에서 흡수.
+     */
+    private static final String[][] METALS = {
         {"골드스텐", "골드스텐"}, {"스텐", "스텐"}, {"갈바", "갈바"},
         {"투명아크릴", "아크릴"}, {"아크릴", "아크릴"}, {"포맥스", "포맥스"},
         {"고무스카시", "스카시"}, {"스카시", "스카시"},
-        {"잔넬", "잔넬"}, {"네온", "네온"}, {"철판", "철판"},
-        {"에칭", "시트·에칭"}, {"시트", "시트·에칭"}, {"일체형", "일체형"},
+        {"타카잔넬", "잔넬"}, {"잔넬", "잔넬"}, {"철판", "철판"},
+    };
+    /** 전원장치(SMPS) — HM-300W-12V / 유니온방수형 300W-12V / SMPS 등. */
+    private static final Pattern POWER =
+        Pattern.compile("(\\d+\\s*w[\\-\\s]*12v|hm[\\-\\s]*\\d+w|smps)", Pattern.CASE_INSENSITIVE);
+    /** LED 광원/모듈 — KPL/KDL/APL(LED모듈 제품), 넘버원/로웬, 구백색/웜화이트 등. */
+    private static final String[] LED_KW = {
+        "kpl", "kdl", "apl", "넘버원", "로웬", "it-3s", "ss-w", "구백색", "구광각",
+        "웜화이트", "미들라이트", "엘광등", "모듈", "형광",
     };
 
     private final AutoQuoteDataSource dataSource;
@@ -132,14 +144,16 @@ public class SalesAnalyticsService {
                             }
                             long lineRev = (qty == 0 ? 1 : qty) * up;
                             String code = norm(text(g, "item_code"));
-                            String label = code.isBlank() ? norm(text(g, "item")) : code;
+                            String item = norm(text(g, "item"));
+                            // 품목 TOP — 숫자/빈칸 코드(200 등)는 무의미하므로 품목내용(괄호=현장명 제거)으로 표시·그룹.
+                            String label = (!code.isBlank() && !isNumericCode(code)) ? code : stripParens(item);
                             if (!label.isBlank()) {
                                 items.computeIfAbsent(label, k -> new long[3]);
                                 items.get(label)[0] += lineRev;
                                 items.get(label)[1] += (qty == 0 ? 1 : qty);
                                 items.get(label)[2] += 1;
                             }
-                            String mat = material(code.isBlank() ? text(g, "item") : code);
+                            String mat = material(code, item); // 코드+품목 함께
                             materials.merge(mat, lineRev, Long::sum);
                         }
                     }
@@ -327,14 +341,74 @@ public class SalesAnalyticsService {
         return sum;
     }
 
-    private static String material(String s) {
-        String x = s == null ? "" : s;
-        for (String[] m : MATERIALS) {
-            if (x.contains(m[0])) {
+    /**
+     * 코드+품목을 합쳐 자재/유형 카테고리 판정. 숫자코드는 자재코드가 아니라 회계 분류코드라
+     * 실제 자재는 품목에 있음 → 코드+품목을 함께 본다. 본체 자재 우선, 전기·시공·운임·인쇄 흡수.
+     */
+    private static String material(String code, String item) {
+        String xl = ((code == null ? "" : code) + " " + (item == null ? "" : item)).toLowerCase();
+        for (String[] m : METALS) {
+            if (xl.contains(m[0])) {
                 return m[1];
             }
         }
+        if (xl.contains("에칭") || xl.contains("시트")) {
+            return "시트·에칭";
+        }
+        if (xl.contains("부식") || xl.contains("현판")) {
+            return "부식·현판";
+        }
+        if (xl.contains("일체형")) {
+            return "일체형";
+        }
+        if (xl.contains("네온")) {
+            return "네온";
+        }
+        if (POWER.matcher(xl).find() || containsAny(xl, "안정기", "파워", "타이머", "조광기", "dimmer",
+                "컨버터", "트랜스", "아답터", "방수형", "방수용")) {
+            return "전원·제어";
+        }
+        if (containsAny(xl, LED_KW) || xl.contains("led") || xl.contains("엘이디") || xl.contains("광등")) {
+            return "LED·광원";
+        }
+        if (xl.contains("후렘") || xl.contains("행잉")) {
+            return "후렘·행잉";
+        }
+        if (xl.contains("도장") || xl.contains("파이프")) {
+            return "도장·부자재";
+        }
+        if (containsAny(xl, "완조립", "조립비", "시공", "부착")) {
+            return "조립·시공";
+        }
+        if (containsAny(xl, "운임", "퀵", "택배", "톤차", "화물", "다마스", "용달", "라보", "1톤", "5톤")) {
+            return "운임·퀵";
+        }
+        if (xl.contains("할인")) {
+            return "할인·조정";
+        }
+        if (containsAny(xl, "도안", "실사", "현도", "현수막", "배너", "마크", "인쇄")) {
+            return "인쇄·도안";
+        }
         return "기타";
+    }
+
+    private static boolean containsAny(String s, String... keys) {
+        for (String k : keys) {
+            if (s.contains(k)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 숫자(+하이픈)만으로 된 코드 = 무의미(200, 200-1, 100-0005 …). */
+    private static boolean isNumericCode(String c) {
+        return c != null && c.matches("[0-9][0-9\\-]*");
+    }
+
+    /** 품목에서 괄호(현장명/설명) 제거 — 200 같은 숫자코드의 표시 라벨용. */
+    private static String stripParens(String s) {
+        return s == null ? "" : s.replaceAll("\\([^)]*\\)", " ").replaceAll("\\s+", " ").trim();
     }
 
     /** 'YYYY.MM.DD' / 'YYYY-MM-..' → 'YYYY.MM'. 파싱 실패면 null. */
