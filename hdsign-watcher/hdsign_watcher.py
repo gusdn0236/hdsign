@@ -6799,68 +6799,92 @@ def _find_ghostscript() -> str | None:
     return None
 
 
+# 이미지 다운샘플 기준 — 가장 긴 변이 이 px 를 넘는 래스터 이미지만 줄인다.
+# A4 폭(8.27in) 기준 ~195dpi 라 참고사진엔 충분하고, 텍스트는 벡터라 영향 없음.
+_UPLOAD_IMG_MAX_DIM = 1600
+_UPLOAD_IMG_JPEG_QUALITY = 72
+
+
 def compress_pdf_for_upload(src: Path) -> Path:
-    """업로드 직전 PDF 다운샘플링. 벡터 텍스트는 유지한 채 이미지/스트림 압축.
-    Ghostscript 가 없거나 압축 실패 시 원본 경로를 그대로 반환 (폴백)."""
-    enable_upload_pdf_compression = False
-    if not enable_upload_pdf_compression:
-        # 작업지시서는 현장 모바일에서 작은 글씨를 읽는 용도가 더 중요하다.
-        # FlexSign/PDF24 출력물이 이미지화된 PDF일 때는 업로드 압축만으로도 글씨가
-        # 뭉개질 수 있으므로 원본 PDF를 그대로 올린다.
-        ui_log("PDF 압축 건너뜀 — 원본 화질로 업로드")
-        return src
+    """업로드 직전, PDF 안의 '큰 래스터 이미지(참고사진)'만 다운샘플한다. 벡터 텍스트/도형은
+    전혀 건드리지 않으므로 글씨는 원본 그대로 선명하다.
 
-    gs_exe = _find_ghostscript()
-    if not gs_exe:
-        ui_log("Ghostscript 미설치 — 원본 PDF 그대로 업로드 (압축 건너뜀)")
-        return src
+    왜: FlexSign 참고사진이 초고해상 원본으로 박히면 PDF 가 수십~수백 MB 가 되고(관측: 200MB),
+    그대로 올리면 ~384MB 힙의 백엔드가 디코드하다 OOM → 컨테이너 즉사(연결 강제 끊김). 메모리가
+    넉넉한 사무실 PC 가 여기서 이미지만 줄여 올리면 백엔드는 작은 PDF 만 보게 되어 OOM 이 사라지고
+    업로드·평탄화·썸네일·모바일 렌더까지 전부 빨라진다.
 
-    # 압축본은 PRINTED_PDF_DIR 가 아닌 시스템 temp 에 쓴다.
-    # 같은 폴더에 쓰면 watchdog 의 on_created 가 다시 발사돼 매칭 다이얼로그가 두 번 뜸.
+    PyMuPDF(fitz)+PIL 로 이미지 xref 스트림만 교체. 마스크/투명·1비트 이미지는 재인코딩 시 깨질 수
+    있어 건너뛴다(안전 우선). 줄일 큰 이미지가 없거나(=일반 지시서) 어떤 실패든 발생하면 원본 반환."""
+    if fitz is None:
+        return src
+    import io
     out = Path(tempfile.gettempdir()) / f"hdsign_{src.stem}.min.pdf"
-    cmd = [
-        gs_exe,
-        "-sDEVICE=pdfwrite",
-        "-dCompatibilityLevel=1.5",
-        # Keep worksheet text readable on phones. /ebook downsamples rasterized
-        # PDF24/FlexSign output to about 150dpi, which makes small labels blur.
-        "-dPDFSETTINGS=/printer",
-        "-dColorImageResolution=300",
-        "-dGrayImageResolution=300",
-        "-dMonoImageResolution=300",
-        "-dJPEGQ=92",
-        "-dDetectDuplicateImages=true",
-        "-dCompressFonts=true",
-        "-dSubsetFonts=true",
-        "-dNOPAUSE", "-dQUIET", "-dBATCH",
-        f"-sOutputFile={out}",
-        str(src),
-    ]
     try:
-        r = subprocess.run(
-            cmd, capture_output=True, timeout=120,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if r.returncode != 0 or not out.exists():
-            ui_log(f"PDF 압축 실패(rc={r.returncode}) — 원본으로 업로드")
-            return src
-        # 압축이 오히려 커진 경우(이미 잘 압축된 PDF) 원본 사용
-        if out.stat().st_size >= src.stat().st_size:
-            try:
-                out.unlink()
-            except Exception:
-                pass
-            return src
-        before_kb = src.stat().st_size // 1024
-        after_kb = out.stat().st_size // 1024
-        ui_log(f"PDF 압축: {before_kb}KB → {after_kb}KB ({100 - after_kb * 100 // max(before_kb, 1)}% 절감)")
-        return out
-    except subprocess.TimeoutExpired:
-        ui_log("PDF 압축 타임아웃(120s) — 원본으로 업로드")
-        return src
+        doc = fitz.open(str(src))
     except Exception as e:
-        ui_log(f"PDF 압축 예외: {e} — 원본으로 업로드")
+        ui_log(f"이미지 압축 — PDF 열기 실패: {e} (원본 그대로 업로드)")
         return src
+    changed = 0
+    done: set[int] = set()
+    try:
+        for page in doc:
+            for img in page.get_images(full=True):
+                # img = (xref, smask, width, height, bpc, colorspace, alt_cs, name, filter, ...)
+                xref = img[0]
+                if xref in done:
+                    continue
+                done.add(xref)
+                smask, w, h, bpc = img[1], img[2], img[3], img[4]
+                if smask:                       # 투명(소프트마스크) — JPEG 가 알파를 날림
+                    continue
+                if bpc == 1:                    # 1비트 라인아트/스텐실 — 작고, 흐려지면 안 됨
+                    continue
+                if max(w, h) <= _UPLOAD_IMG_MAX_DIM:
+                    continue
+                try:
+                    base = doc.extract_image(xref)
+                    raw = base.get("image") if base else None
+                    if not raw:
+                        continue
+                    im = Image.open(io.BytesIO(raw))
+                    if im.mode not in ("RGB", "L"):
+                        im = im.convert("RGB")
+                    scale = _UPLOAD_IMG_MAX_DIM / float(max(w, h))
+                    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+                    im = im.resize((nw, nh), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    im.save(buf, format="JPEG", quality=_UPLOAD_IMG_JPEG_QUALITY)
+                    page.replace_image(xref, stream=buf.getvalue())
+                    changed += 1
+                except Exception as e:
+                    ui_log(f"이미지 압축 건너뜀(xref {xref}): {e}")
+                    continue
+        if changed == 0:
+            doc.close()
+            ui_log("이미지 압축 — 줄일 큰 사진 없음 (원본 그대로 업로드)")
+            return src
+        doc.save(str(out), garbage=4, deflate=True)
+        doc.close()
+    except Exception as e:
+        try:
+            doc.close()
+        except Exception:
+            pass
+        ui_log(f"이미지 압축 실패: {e} — 원본으로 업로드")
+        return src
+    try:
+        if out.exists() and out.stat().st_size < src.stat().st_size:
+            before_kb = src.stat().st_size // 1024
+            after_kb = out.stat().st_size // 1024
+            ui_log(f"이미지 압축: {before_kb}KB → {after_kb}KB "
+                   f"({100 - after_kb * 100 // max(before_kb, 1)}% 절감, 사진 {changed}장 축소)")
+            return out
+        if out.exists():
+            out.unlink()
+    except Exception:
+        pass
+    return src
 
 
 def upload_worksheet_pdf(order_number: str, pdf_path: Path,
