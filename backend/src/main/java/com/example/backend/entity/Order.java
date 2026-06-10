@@ -89,6 +89,10 @@ public class Order {
     @Column(length = 500)
     private String worksheetPdfUrl;
 
+    // worksheetPdfUrl 이 가리키는 PDF 의 바이트 크기. 발주관리/카드에 작게 표시해 비정상 대용량
+    // (예: 압축 안 된 사진으로 수십~수백 MB) 업로드를 한눈에 식별 — 업로드 실패 원인 추적용.
+    private Long worksheetPdfSize;
+
     // iOS/Safari 계열 모바일 뷰어용 원본 PDF. Android 에는 worksheetPdfUrl(평탄화본)을 우선 제공.
     @Column(length = 500)
     private String worksheetOriginalPdfUrl;

@@ -1237,11 +1237,35 @@
   font-feature-settings: "tnum" 1;
 }
 
+.order-card-foot-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .order-card-num {
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 지시서 PDF 용량 — 작게, 평소엔 옅게. 비정상 대용량(WARN 이상)이면 빨갛게 강조해 즉시 식별. */
+.order-card-size {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  color: #a1a1aa;
+  background: #f4f4f5;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  font-feature-settings: "tnum" 1;
+}
+.order-card-size.is-large {
+  color: #b91c1c;
+  background: #fee2e2;
 }
 
 /* 카드 액션 — 두 줄: (위) 도구 FS·폴더·공유·명세서, (아래) 상태 버튼(복원/영구삭제 등). */

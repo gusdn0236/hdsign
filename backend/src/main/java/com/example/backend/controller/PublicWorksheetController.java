@@ -329,6 +329,7 @@ public class PublicWorksheetController {
         item.put("dueTime", o.getDueTime());
         item.put("deliveryMethod", o.getDeliveryMethod() != null ? o.getDeliveryMethod().name() : null);
         item.put("worksheetPdfUrl", o.getWorksheetPdfUrl());
+        item.put("worksheetPdfSize", o.getWorksheetPdfSize());
         // 모바일 카드 빠른 로딩용 — 백엔드가 PDF 업로드 시 PDFBox 로 미리 만든 작은 JPEG.
         // null 이면 프론트가 기존 PDF 직접 렌더로 폴백.
         item.put("worksheetThumbnailUrl", o.getWorksheetThumbnailUrl());

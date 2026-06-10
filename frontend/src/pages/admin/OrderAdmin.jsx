@@ -122,6 +122,19 @@ function formatDueDate(dueDate, deliveryMethod) {
   return delivery ? `${base} ${delivery}` : base;
 }
 
+// 바이트 → 사람이 읽는 용량. 발주관리/카드에 작게 표시해 비정상 대용량 업로드(예: 압축 안 된
+// 사진으로 수백 MB → 백엔드 OOM)를 한눈에 식별하고 업로드 실패 원인을 빨리 찾기 위함.
+function formatFileSize(bytes) {
+  if (bytes == null || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes}B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${Math.round(kb)}KB`;
+  const mb = kb / 1024;
+  return mb < 10 ? `${mb.toFixed(1)}MB` : `${Math.round(mb)}MB`;
+}
+// 이 크기 이상이면 '비정상 대용량'으로 경고색 표시 — 보통 지시서는 수 MB 이하다.
+const WORKSHEET_SIZE_WARN_BYTES = 20 * 1024 * 1024;
+
 // 카드 그리드의 납기 그룹 헤더용 — '5월 6일 (수)' 만. 오늘/내일/지남 같은 상태는
 // getDueBadge 가 별도 컬러 배지로 반환해 헤더에서 함께 렌더한다(모바일 /m/worksheets 동일).
 function formatGroupDateLabel(dateStr) {
@@ -1473,7 +1486,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             {order.title || requestLabel(order.requestType)}
           </h3>
           <div className="order-card-foot">
-            <span className="order-card-num">{order.orderNumber}</span>
+            <span className="order-card-foot-left">
+              <span className="order-card-num">{order.orderNumber}</span>
+              {order.worksheetPdfSize ? (
+                <span
+                  className={`order-card-size${order.worksheetPdfSize >= WORKSHEET_SIZE_WARN_BYTES ? " is-large" : ""}`}
+                  title={`지시서 PDF 용량: ${formatFileSize(order.worksheetPdfSize)}${order.worksheetPdfSize >= WORKSHEET_SIZE_WARN_BYTES ? " — 비정상적으로 큽니다(사진 압축 확인)" : ""}`}
+                >
+                  {formatFileSize(order.worksheetPdfSize)}
+                </span>
+              ) : null}
+            </span>
             <span className="order-card-date">
               {formatDateWithDay(isTrash ? order.deletedAt : order.createdAt)}
             </span>

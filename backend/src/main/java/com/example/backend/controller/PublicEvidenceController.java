@@ -624,6 +624,8 @@ public class PublicEvidenceController {
         boolean userMarkedChanged = Boolean.TRUE.equals(contentChanged);
         boolean preserveNote = Boolean.TRUE.equals(preserveChangeNote);
         order.setWorksheetPdfUrl(androidUrl);
+        // worksheetPdfUrl 이 실제로 서빙하는 바이트 크기 — 발주관리/카드에 표시해 대용량 식별.
+        order.setWorksheetPdfSize((long) androidPdfBytes.length);
         order.setWorksheetOriginalPdfUrl(originalUrl);
         // 썸네일 렌더 실패 시(thumbnailUrl == null) 기존 값을 덮어써 stale 썸네일이 남지 않도록 함.
         // 다음 업로드 때 다시 시도되며, 그 사이엔 프론트가 PDF 폴백으로 그린다.

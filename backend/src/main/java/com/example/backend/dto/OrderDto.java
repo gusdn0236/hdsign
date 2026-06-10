@@ -34,6 +34,7 @@ public class OrderDto {
         private String worksheetPdfUrl;
         private String worksheetOriginalPdfUrl;
         private String worksheetThumbnailUrl;
+        private Long worksheetPdfSize;
         private LocalDateTime evidenceLastUploadedAt;
         private LocalDateTime worksheetUpdatedAt;
         private LocalDateTime worksheetRevisedAt;
@@ -126,6 +127,7 @@ public class OrderDto {
                 .worksheetPdfUrl(order.getWorksheetPdfUrl())
                 .worksheetOriginalPdfUrl(order.getWorksheetOriginalPdfUrl())
                 .worksheetThumbnailUrl(order.getWorksheetThumbnailUrl())
+                .worksheetPdfSize(order.getWorksheetPdfSize())
                 .evidenceLastUploadedAt(order.getEvidenceLastUploadedAt())
                 .worksheetUpdatedAt(order.getWorksheetUpdatedAt())
                 .worksheetRevisedAt(order.getWorksheetRevisedAt())
