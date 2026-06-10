@@ -2,10 +2,14 @@ package com.example.backend.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
+import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
 import org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.rendering.ImageType;
@@ -28,6 +32,13 @@ import java.io.ByteArrayOutputStream;
  * <p>페이지당 단일 이미지 구조로 평탄화하면 안드로이드에서도 즉시 렌더되고, 모바일 뷰어는
  * 이미 textLayer/annotationLayer 를 끈 상태라 텍스트 선택/검색 같은 사용성 손실은 없다.
  *
+ * <p><b>언제 평탄화하나 — 타일이 많을 때만.</b> 워처가 지시서 텍스트를 윤곽선(벡터 커브)으로
+ * 저장하므로 보통 지시서는 이미지 0~1개의 사실상 벡터 PDF 다(참고사진 1장 정도만 래스터).
+ * 이런 PDF 를 평탄화하면 선명한 벡터 텍스트를 저해상 JPEG 으로 뭉개고(화질↓), 용량이 수 배로
+ * 불고, 고DPI 렌더로 OOM 위험까지 생긴다 — 정작 막으려던 "수백 타일 안드로이드 멈춤"은 없는데도.
+ * 그래서 이미지 XObject 수가 {@link #TILE_FLATTEN_THRESHOLD} 이하면 {@code null} 을 돌려
+ * 호출부가 원본(벡터)을 그대로 쓰게 한다. 진짜 타일 폭탄(>임계값)일 때만 평탄화한다.
+ *
  * <p>DPI 400 + JPEG 품질 0.95: A4 → 3307x4677px, 화면/핀치 ~350% 까지 또렷.
  * (한때 600 으로 올렸으나 A4 한 페이지 INT_RGB 래스터가 ~139MB 라 Railway 힙(MaxRAMPercentage=75,
  *  512MB 컨테이너 → ~384MB)에서 OOM → -XX:+ExitOnOutOfMemoryError 로 컨테이너가 즉사하며
@@ -43,6 +54,10 @@ public class WorksheetFlattenService {
 
     private static final float FLATTEN_DPI = 400f;
     private static final float FLATTEN_JPEG_QUALITY = 0.95f;
+    // 이미지 XObject 수가 이 값 이하면 평탄화하지 않고 원본을 쓴다(null 반환). 일반 지시서는 0~1개,
+    // 안드로이드를 멈추게 했던 병리적 케이스는 한 페이지에 /Image 212개였다. 12 는 손으로 붙인
+    // 참고사진 몇 장은 원본 그대로 두면서(선명·경량), 수십~수백 타일 폭탄만 평탄화로 잡는 경계.
+    private static final int TILE_FLATTEN_THRESHOLD = 12;
     // 페이지 하나를 렌더한 BufferedImage(INT_RGB, 4 byte/px)의 픽셀 수 상한.
     // A4 @400DPI ≈ 15.5M px(~62MB). 16M 을 넘는 큰 페이지는 이 픽셀 예산에 맞춰 DPI 를 낮춰
     // 단일 페이지 래스터가 힙을 넘기지 않게 한다. (대형 사인 도안 등 A4 초과 페이지 방어.)
@@ -57,6 +72,15 @@ public class WorksheetFlattenService {
         try (PDDocument src = Loader.loadPDF(pdfBytes); PDDocument dst = new PDDocument()) {
             int pageCount = src.getNumberOfPages();
             if (pageCount == 0) return null;
+            // 타일이 적으면(보통 0~1개) 평탄화가 득보다 실 — 원본(벡터) 그대로 쓰게 null 반환.
+            int imageCount = countImageXObjects(src);
+            if (imageCount <= TILE_FLATTEN_THRESHOLD) {
+                log.info("지시서 평탄화 건너뜀 — 이미지 {}개 ≤ {} (원본/벡터 그대로 사용)",
+                        imageCount, TILE_FLATTEN_THRESHOLD);
+                return null;
+            }
+            log.info("지시서 평탄화 진행 — 이미지 타일 {}개 > {} (안드로이드 멈춤 방어)",
+                    imageCount, TILE_FLATTEN_THRESHOLD);
             PDFRenderer renderer = new PDFRenderer(src);
             for (int i = 0; i < pageCount; i++) {
                 // PDFRenderer 는 /Rotate 를 자동 적용한 표시 방향 픽셀맵을 만든다 — 새 PDF 는
@@ -97,5 +121,33 @@ public class WorksheetFlattenService {
         if (areaIn2 <= 0) return FLATTEN_DPI;
         double maxDpi = Math.sqrt(MAX_RENDER_PIXELS / areaIn2);
         return (float) Math.min(FLATTEN_DPI, maxDpi);
+    }
+
+    /** 모든 페이지의 이미지 XObject 총수(폼 XObject 안에 중첩된 것도 포함). 픽셀 디코드는 안 함 — 싸다. */
+    private static int countImageXObjects(PDDocument doc) {
+        int count = 0;
+        for (PDPage page : doc.getPages()) {
+            count += countImagesInResources(page.getResources(), 0);
+        }
+        return count;
+    }
+
+    private static int countImagesInResources(PDResources res, int depth) {
+        // 깊이 제한 — 비정상적으로 깊거나 순환 참조하는 폼 중첩에서 무한 재귀 방지.
+        if (res == null || depth > 6) return 0;
+        int count = 0;
+        for (COSName name : res.getXObjectNames()) {
+            try {
+                PDXObject xo = res.getXObject(name);
+                if (xo instanceof PDImageXObject) {
+                    count += 1;
+                } else if (xo instanceof PDFormXObject form) {
+                    count += countImagesInResources(form.getResources(), depth + 1);
+                }
+            } catch (Exception e) {
+                // 한 객체 해석 실패는 무시하고 계속 — 카운트는 임계값 판정용 근사치면 충분.
+            }
+        }
+        return count;
     }
 }

@@ -463,30 +463,45 @@ public class AdminOrderController {
         String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
                 ? "" : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
 
-        int processed = 0, succeeded = 0, failed = 0;
+        int processed = 0, reverted = 0, reflattened = 0, skipped = 0, failed = 0;
         for (Order order : batch) {
             processed += 1;
-            String oldUrl = order.getWorksheetPdfUrl();
-            String oldKey = thumbnailService.extractKey(oldUrl);
-            if (oldKey == null) {
-                log.warn("평탄화 백필 — R2 key 추출 실패 [{}], url={}", order.getOrderNumber(), oldUrl);
+            String currentUrl = order.getWorksheetPdfUrl();
+            // 평가는 항상 '진짜 원본'으로. 이미 평탄화된 주문은 originalPdfUrl 에 원본이 보존돼
+            // 있고, 아직 평탄화 안 된(구) 주문은 worksheetPdfUrl 자체가 원본이다.
+            String preservedOriginalUrl = order.getWorksheetOriginalPdfUrl();
+            boolean hasPreservedOriginal = preservedOriginalUrl != null && !preservedOriginalUrl.isBlank();
+            String originalUrl = hasPreservedOriginal ? preservedOriginalUrl : currentUrl;
+            String originalKey = thumbnailService.extractKey(originalUrl);
+            if (originalKey == null) {
+                log.warn("평탄화 백필 — R2 key 추출 실패 [{}], url={}", order.getOrderNumber(), originalUrl);
                 failed += 1;
                 continue;
             }
-            byte[] pdfBytes = thumbnailService.downloadObject(oldKey);
-            if (pdfBytes == null) {
+            byte[] originalBytes = thumbnailService.downloadObject(originalKey);
+            if (originalBytes == null) {
                 failed += 1;
                 continue;
             }
-            byte[] flattened = flattenService.flatten(pdfBytes);
+            byte[] flattened = flattenService.flatten(originalBytes);
+
             if (flattened == null) {
-                failed += 1;
+                // 타일이 적은 일반 지시서 — 원본(벡터)이 더 선명·경량. 흐린 평탄화본이 노출 중이면
+                // worksheetPdfUrl 을 보존된 원본으로 되돌린다(= 기존 흐린 지시서 선명화).
+                if (hasPreservedOriginal && !originalUrl.equals(currentUrl)) {
+                    order.setWorksheetPdfUrl(originalUrl);
+                    orderRepository.save(order);
+                    deleteStaleFlattened(currentUrl, originalKey, order.getOrderNumber());
+                    log.info("평탄화 해제 [{}] — 원본(벡터)로 복귀", order.getOrderNumber());
+                    reverted += 1;
+                } else {
+                    // 이미 원본을 그대로 노출 중(구 주문) — 변경 불필요.
+                    skipped += 1;
+                }
                 continue;
             }
 
-            // 새 키로 업로드 → DB url 교체 → 옛 키 best-effort 삭제. worksheetUpdatedAt 은 손대지 않음.
-            boolean preserveOldAsOriginal = order.getWorksheetOriginalPdfUrl() == null
-                    || order.getWorksheetOriginalPdfUrl().isBlank();
+            // 진짜 타일 폭탄(>임계값) — 안전 DPI 로 (재)평탄화해 교체. worksheetUpdatedAt 은 손대지 않음.
             String newKey = "orders/" + order.getOrderNumber() + "/worksheet/flattened-" + UUID.randomUUID() + ".pdf";
             try {
                 s3Client.putObject(
@@ -502,35 +517,46 @@ public class AdminOrderController {
                 failed += 1;
                 continue;
             }
-            if (preserveOldAsOriginal) {
-                order.setWorksheetOriginalPdfUrl(oldUrl);
+            if (!hasPreservedOriginal) {
+                // 이번이 첫 평탄화 — 현재(=원본) URL 을 원본 슬롯에 보존.
+                order.setWorksheetOriginalPdfUrl(originalUrl);
             }
             order.setWorksheetPdfUrl(normalizedPublicUrl + newKey);
             orderRepository.save(order);
-            if (!preserveOldAsOriginal) {
-            try {
-                s3Client.deleteObject(DeleteObjectRequest.builder()
-                        .bucket(bucket).key(oldKey).build());
-            } catch (Exception e) {
-                log.warn("이전 지시서 PDF 삭제 실패 [{}/{}]: {}",
-                        order.getOrderNumber(), oldKey, e.getMessage());
-            }
+            // 직전 평탄화본만 정리 — 원본(originalKey)은 절대 삭제하지 않는다.
+            if (hasPreservedOriginal) {
+                deleteStaleFlattened(currentUrl, originalKey, order.getOrderNumber());
             }
             log.info("지시서 PDF 평탄화 [{}]: {} → {} bytes",
-                    order.getOrderNumber(), pdfBytes.length, flattened.length);
-            succeeded += 1;
+                    order.getOrderNumber(), originalBytes.length, flattened.length);
+            reflattened += 1;
         }
 
+        int succeeded = reverted + reflattened;
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("total", total);
         body.put("page", page);
         body.put("processed", processed);
         body.put("succeeded", succeeded);
+        body.put("reverted", reverted);     // 평탄화 해제(원본 복귀)
+        body.put("reflattened", reflattened); // 타일 폭탄 재평탄화
+        body.put("skipped", skipped);       // 이미 원본 노출 중 — 변경 없음
         body.put("failed", failed);
         body.put("limit", limit);
-        log.info("지시서 PDF 평탄화 백필 — page={} 처리 {}, 성공 {}, 실패 {}",
-                page, processed, succeeded, failed);
+        log.info("지시서 PDF 평탄화 백필 — page={} 처리 {}, 원본복귀 {}, 재평탄화 {}, 스킵 {}, 실패 {}",
+                page, processed, reverted, reflattened, skipped, failed);
         return ResponseEntity.ok(body);
+    }
+
+    /** 더 이상 안 쓰는 평탄화본을 best-effort 로 R2 에서 지운다. 원본(keepKey)과 같으면 건드리지 않는다. */
+    private void deleteStaleFlattened(String staleUrl, String keepKey, String orderNumber) {
+        String staleKey = thumbnailService.extractKey(staleUrl);
+        if (staleKey == null || staleKey.equals(keepKey)) return;
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(staleKey).build());
+        } catch (Exception e) {
+            log.warn("옛 평탄화본 삭제 실패 [{}/{}]: {}", orderNumber, staleKey, e.getMessage());
+        }
     }
 
     private void purgeR2Files(Order order) {
