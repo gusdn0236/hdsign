@@ -2206,34 +2206,31 @@ def start_order_alert_loop():
 
 
 def resolve_new_due_date_md(current_iso: str, month_input: int, day_input: int) -> date:
-    """월+일을 명시적으로 입력받는 새 폼용 — 년은 기준일(current_iso 또는 오늘)에서 가져오되,
-    입력 날짜가 기준일보다 과거면 다음 해로 롤오버. 잘못된 조합(2/30 등)은 그 달 말일로 클램프."""
-    base = date.today()
-    if current_iso:
+    """월+일을 명시적으로 입력받는 폼용 — 연도는 '오늘' 기준으로 정하고, 입력한 월/일이 올해
+    기준으로 이미 지났으면(=오늘보다 과거) 다음 해로 롤오버. 잘못된 조합(2/30 등)은 그 달 말일로 클램프.
+
+    current_iso(현재 납기)는 연도 기준으로 쓰지 않는다(인자는 호출부 호환을 위해 유지). 예전엔
+    current_iso 를 기준으로 '입력<현재납기면 내년'으로 굴려서, 납기를 *현재보다 이른 날*로 당기면
+    멀쩡한 가까운 미래인데도 내년으로 넘어갔다(실측 버그: 06-14→06-11 입력이 2027-06-11 로 저장,
+    05-22→05-20 이 2027-05-20 으로 저장). 기준을 오늘로 바꿔 '이미 지난 날짜만' 내년으로 민다."""
+    today = date.today()
+    year = today.year
+
+    def _clamped(y: int, m: int, d: int) -> date:
         try:
-            base = date.fromisoformat(current_iso)
+            return date(y, m, d)
         except ValueError:
-            pass
-    year = base.year
-    try:
-        candidate = date(year, month_input, day_input)
-    except ValueError:
-        # 잘못된 월/일 조합 — 해당 월 말일로 클램프
-        if month_input == 12:
-            next_first = date(year + 1, 1, 1)
-        else:
-            next_first = date(year, month_input + 1, 1)
-        candidate = next_first - timedelta(days=1)
-    if candidate < base:
-        # 과거 → 다음 해 같은 월/일.
-        try:
-            candidate = date(year + 1, month_input, day_input)
-        except ValueError:
-            if month_input == 12:
-                next_first = date(year + 2, 1, 1)
+            # 잘못된 월/일 조합 — 해당 월 말일로 클램프
+            if m == 12:
+                next_first = date(y + 1, 1, 1)
             else:
-                next_first = date(year + 1, month_input + 1, 1)
-            candidate = next_first - timedelta(days=1)
+                next_first = date(y, m + 1, 1)
+            return next_first - timedelta(days=1)
+
+    candidate = _clamped(year, month_input, day_input)
+    if candidate < today:
+        # 입력 월/일이 올해 기준 이미 지났음 → 같은 월/일의 내년.
+        candidate = _clamped(year + 1, month_input, day_input)
     return candidate
 
 
