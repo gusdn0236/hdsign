@@ -153,6 +153,9 @@ export default function WorksheetViewer() {
     // 화면을 portrait 으로 채워 글자를 크게 보여준다. 사용자는 폰을 좌측으로
     // 돌려서 읽으면 자연스럽게 landscape 로 보임. 0 = 회전 없음(=PDF 자체 /Rotate 사용).
     const [pageRotation, setPageRotation] = useState(0);
+    // 썸네일 플레이스홀더가 PDF 와 같은 방향으로 보이도록, 뷰어가 가로 페이지에 추가로 주는
+    // +90° 만 따로 보관(0 또는 90). 썸네일은 서버에서 /Rotate 적용해 렌더되므로 이 추가분만 필요.
+    const [extraRotation, setExtraRotation] = useState(0);
 
     // 시트 (사진 큐가 있을 때 자동으로 열림 — 사용자가 직접 토글하진 않음)
     const [sheetOpen, setSheetOpen] = useState(false);
@@ -605,6 +608,7 @@ export default function WorksheetViewer() {
         setPdfViewKey((key) => key + 1);
         setRenderAttempt(0);
         setPageRotation(0);
+        setExtraRotation(0);
     }, [detail?.worksheetPdfUrl]);
 
     // 빠른 캐시 히트 전환에선 로딩 텍스트를 표시하지 않음(깜빡임 제거). 300ms 넘게 걸리면 그제야 노출.
@@ -696,6 +700,8 @@ export default function WorksheetViewer() {
 
         finalRotationRef.current = finalRotation;
         setPageRotation((prev) => (prev === finalRotation ? prev : finalRotation));
+        // 썸네일 플레이스홀더에 줄 추가 회전 — 가로 페이지만 +90°.
+        setExtraRotation(isLandscape ? 90 : 0);
 
         // 비율은 우리가 실제 그릴 회전 기준으로 — landscape 를 추가 회전해
         // portrait 가 됐으면 그 portrait 의 width/height 로 계산해야 stage fit 이 맞다.
@@ -1018,6 +1024,33 @@ export default function WorksheetViewer() {
                 )}
                 {pdfFile && pageWidth > 0 && !pdfError && !pdfReady && showSlowLoading && (
                     <div className="wsv-msg wsv-pdf-loading">PDF 불러오는 중…</div>
+                )}
+                {/* 즉시 표시 — 목록에서 이미 받아둔 720px 썸네일을 PDF 가 그려질 때까지 깔아둔다.
+                    벡터 원본은 폰에서 렌더에 잠깐 걸리므로, 빈 화면 대신 흐릿한 지시서를 먼저 보여주고
+                    선명한 벡터가 준비되면(pdfReady) 페이드아웃. PDF 와 같은 박스·방향으로 정렬. */}
+                {pdfFile && pageWidth > 0 && !pdfError && detail?.worksheetThumbnailUrl && (
+                    <div
+                        className={`wsv-thumb-ph${pdfReady ? ' is-ready' : ''}`}
+                        style={{ width: pageWidth, height: pageRatio > 0 ? pageWidth / pageRatio : pageWidth }}
+                        aria-hidden="true"
+                    >
+                        <img
+                            src={detail.worksheetThumbnailUrl}
+                            alt=""
+                            className="wsv-thumb-ph-img"
+                            style={extraRotation
+                                ? {
+                                    width: pageRatio > 0 ? pageWidth / pageRatio : pageWidth,
+                                    height: pageWidth,
+                                    transform: 'translate(-50%, -50%) rotate(90deg)',
+                                }
+                                : {
+                                    width: pageWidth,
+                                    height: pageRatio > 0 ? pageWidth / pageRatio : pageWidth,
+                                    transform: 'translate(-50%, -50%)',
+                                }}
+                        />
+                    </div>
                 )}
                 {pdfFile && pageWidth > 0 && (
                   <>

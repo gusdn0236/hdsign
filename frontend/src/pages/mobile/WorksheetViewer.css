@@ -193,6 +193,31 @@ body:has(.wsv-page) {
 .wsv-msg.error {
     color: #fca5a5;
 }
+
+/* 즉시 표시 썸네일 플레이스홀더 — 벡터 PDF 가 그려질 때까지 목록에서 받아둔 흐릿한 지시서를
+   깔아 빈 화면/대기를 없앤다. width/height 는 PDF 페이지 박스에 맞춰 인라인으로 지정, 화면 중앙 정렬.
+   pdfReady 가 되면 .is-ready 로 페이드아웃하며 선명한 벡터로 자연스럽게 교체. */
+.wsv-thumb-ph {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    overflow: hidden;
+    background: #fff;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+.wsv-thumb-ph.is-ready {
+    opacity: 0;
+}
+.wsv-thumb-ph-img {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    object-fit: contain;
+}
 .wsv-pdf-loading {
     position: absolute;
     inset: 0;
