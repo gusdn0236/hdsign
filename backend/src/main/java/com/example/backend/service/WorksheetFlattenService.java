@@ -28,8 +28,11 @@ import java.io.ByteArrayOutputStream;
  * <p>페이지당 단일 이미지 구조로 평탄화하면 안드로이드에서도 즉시 렌더되고, 모바일 뷰어는
  * 이미 textLayer/annotationLayer 를 끈 상태라 텍스트 선택/검색 같은 사용성 손실은 없다.
  *
- * <p>DPI 600 + JPEG 품질 0.95: A4 → 4960x7016px, 화면/핀치 ~500% 까지 또렷.
-     * (PDF24 가 600/1200 어느 쪽이든 여기서 단일 JPEG 으로 재렌더되므로 이 DPI 가 실질 화질 천장.)
+ * <p>DPI 400 + JPEG 품질 0.95: A4 → 3307x4677px, 화면/핀치 ~350% 까지 또렷.
+ * (한때 600 으로 올렸으나 A4 한 페이지 INT_RGB 래스터가 ~139MB 라 Railway 힙(MaxRAMPercentage=75,
+ *  512MB 컨테이너 → ~384MB)에서 OOM → -XX:+ExitOnOutOfMemoryError 로 컨테이너가 즉사하며
+ *  worksheet-pdf 업로드가 전부 실패했다. 400 은 ~62MB 라 안전. 더 올리려면 힙부터 키워야 함.)
+ * 추가로 MAX_RENDER_PIXELS 로 페이지별 DPI 를 적응 하향해 A4 보다 큰 대형 지시서도 OOM 안 나게 한다.
  * 신규 PDF 업로드 ({@link com.example.backend.controller.PublicEvidenceController}) 와
  * 기존 PDF 백필 ({@link com.example.backend.controller.AdminOrderController#backfillWorksheetFlatten})
  * 양쪽에서 사용.
@@ -38,8 +41,12 @@ import java.io.ByteArrayOutputStream;
 @Service
 public class WorksheetFlattenService {
 
-    private static final float FLATTEN_DPI = 600f;
+    private static final float FLATTEN_DPI = 400f;
     private static final float FLATTEN_JPEG_QUALITY = 0.95f;
+    // 페이지 하나를 렌더한 BufferedImage(INT_RGB, 4 byte/px)의 픽셀 수 상한.
+    // A4 @400DPI ≈ 15.5M px(~62MB). 16M 을 넘는 큰 페이지는 이 픽셀 예산에 맞춰 DPI 를 낮춰
+    // 단일 페이지 래스터가 힙을 넘기지 않게 한다. (대형 사인 도안 등 A4 초과 페이지 방어.)
+    private static final double MAX_RENDER_PIXELS = 16_000_000d;
 
     /**
      * 입력 PDF 바이트를 평탄화한 새 PDF 바이트로 반환. 실패 시 null —
@@ -54,9 +61,10 @@ public class WorksheetFlattenService {
             for (int i = 0; i < pageCount; i++) {
                 // PDFRenderer 는 /Rotate 를 자동 적용한 표시 방향 픽셀맵을 만든다 — 새 PDF 는
                 // 회전 0 으로 두고, 픽셀 차원을 그대로 PDF 포인트로 환산해 페이지 크기 산정.
-                BufferedImage rendered = renderer.renderImageWithDPI(i, FLATTEN_DPI, ImageType.RGB);
-                float pageW = rendered.getWidth() * 72f / FLATTEN_DPI;
-                float pageH = rendered.getHeight() * 72f / FLATTEN_DPI;
+                float dpi = effectiveDpi(src.getPage(i).getCropBox());
+                BufferedImage rendered = renderer.renderImageWithDPI(i, dpi, ImageType.RGB);
+                float pageW = rendered.getWidth() * 72f / dpi;
+                float pageH = rendered.getHeight() * 72f / dpi;
                 PDPage newPage = new PDPage(new PDRectangle(pageW, pageH));
                 dst.addPage(newPage);
                 PDImageXObject jpeg = JPEGFactory.createFromImage(dst, rendered, FLATTEN_JPEG_QUALITY);
@@ -68,9 +76,26 @@ public class WorksheetFlattenService {
                 dst.save(out);
                 return out.toByteArray();
             }
-        } catch (Exception e) {
-            log.warn("PDF 평탄화 실패: {}", e.getMessage());
+        } catch (Throwable e) {
+            // Exception 뿐 아니라 Error(StackOverflowError 등)도 잡아 원본 폴백 — 평탄화는
+            // 어떤 경우에도 업로드를 막지 않는다는 계약을 지킨다. (단, 진짜 OOM 은 Dockerfile 의
+            // -XX:+ExitOnOutOfMemoryError 가 catch 보다 먼저 JVM 을 종료시키므로 여기 도달 못 한다 —
+            // 그래서 DPI/픽셀 상한으로 OOM 자체를 안 나게 막는 게 1차 방어선이다.)
+            log.warn("PDF 평탄화 실패: {}", e.toString());
             return null;
         }
+    }
+
+    /**
+     * 페이지 크기(points)를 받아, 렌더 픽셀 수가 {@link #MAX_RENDER_PIXELS} 를 넘지 않는
+     * 안전 DPI 를 반환. 보통은 {@link #FLATTEN_DPI} 그대로지만 A4 보다 큰 페이지는 하향한다.
+     */
+    private static float effectiveDpi(PDRectangle cropBox) {
+        float wIn = cropBox.getWidth() / 72f;
+        float hIn = cropBox.getHeight() / 72f;
+        double areaIn2 = (double) wIn * hIn;
+        if (areaIn2 <= 0) return FLATTEN_DPI;
+        double maxDpi = Math.sqrt(MAX_RENDER_PIXELS / areaIn2);
+        return (float) Math.min(FLATTEN_DPI, maxDpi);
     }
 }
