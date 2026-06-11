@@ -56,15 +56,22 @@ export default function PriceLookup() {
   const [sugg, setSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩(같은 물건 다른 표기/오타)
 
   // 품목코드 태그 추가/삭제. 같은 코드 중복은 무시.
+  // 모달이 열린 상태(결과 표시 중)면 발주관리처럼 즉시 재검색 — 모달 안 태그바에서 바로 다듬게.
   const addTag = (c: string) => {
     const t = c.trim();
-    if (!t) return;
-    setCodes((cs) => (cs.includes(t) ? cs : [...cs, t]));
     setCode('');
     setAcOpen(false);
     setAcIdx(-1);
+    if (!t || codes.includes(t)) return;
+    const next = [...codes, t];
+    setCodes(next);
+    if (lk) run(next);
   };
-  const removeTag = (t: string) => setCodes((cs) => cs.filter((x) => x !== t));
+  const removeTag = (t: string) => {
+    const next = codes.filter((x) => x !== t);
+    setCodes(next);
+    if (lk) run(next);
+  };
   // 추천 칩 클릭 = 태그 추가 후 즉시 재검색.
   const onSugg = (c: string) => {
     if (codes.includes(c)) return;
@@ -327,6 +334,84 @@ export default function PriceLookup() {
               }
               onClose={() => setLk(null)}
               setLpi={(f) => setLk((l) => (l ? { ...l, lpi: f(l.lpi) } : l))}
+              extras={
+                <>
+                  <div className="aq-lkbar">
+                    <span className="aq-lkbar-label">품목코드</span>
+                    {codes.map((c) => (
+                      <span key={c} className="aq-lktag">
+                        {c}
+                        <button type="button" onClick={() => removeTag(c)} aria-label={`${c} 삭제`}>
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    {codes.length > 0 && (
+                      <button
+                        type="button"
+                        className="aq-lkclear"
+                        onClick={() => {
+                          setCodes([]);
+                          run([]);
+                        }}
+                      >
+                        초기화
+                      </button>
+                    )}
+                    <div className="aq-lkinput">
+                      <input
+                        value={code}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setCode(v);
+                          setAcOpen(true);
+                          const m = matchCodes(v).filter((c) => !codes.includes(c));
+                          const d = didYouMean(v, m);
+                          setAcIdx(d ? m.indexOf(d) : -1);
+                        }}
+                        onFocus={() => setAcOpen(true)}
+                        onBlur={() => setTimeout(() => setAcOpen(false), 150)}
+                        onKeyDown={onCodeKey}
+                        placeholder="+ 코드 추가 (Enter) — 같은 물건 다른 코드 함께"
+                      />
+                      {acOpen &&
+                        code.trim() &&
+                        (() => {
+                          const m = matchCodes(code).filter((c) => !codes.includes(c));
+                          if (!m.length) return null;
+                          return (
+                            <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60 }}>
+                              <div className="aq-aclist">
+                                {m.map((c, k) => (
+                                  <div
+                                    key={c}
+                                    className={'aq-acitem' + (k === acIdx ? ' on' : '')}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      addTag(c);
+                                    }}
+                                  >
+                                    {c}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                    </div>
+                  </div>
+                  {sugg.length > 0 && (
+                    <div className="aq-lksugg">
+                      <span className="aq-lksugg-label">혹시 이걸 찾으시나요?</span>
+                      {sugg.map((s) => (
+                        <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => onSugg(s.code)}>
+                          {s.code} <em>{s.count}건</em>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              }
               bundleCount={bundleCount}
               bi={bi}
               setBi={(i) => setLk((l) => (l ? { ...l, bi: i, lpi: 0 } : l))}
