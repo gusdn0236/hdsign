@@ -70,9 +70,13 @@ function DriveUsageBar({ usage, onRefresh }) {
     if (usage.error) {
         return (
             <div className="drive-usage drive-usage--off">
-                <span className="drive-usage-title">구글 드라이브 백업 <span className="drive-usage-server">(Google Drive)</span></span>
-                <span className="drive-usage-msg">사용량 조회 실패</span>
-                <button type="button" className="drive-usage-refresh" onClick={onRefresh}>↻</button>
+                <div className="drive-usage-head">
+                    <span className="drive-usage-title">구글 드라이브 백업 <span className="drive-usage-server">(Google Drive)</span></span>
+                    <span className="drive-usage-msg">사용량 조회 실패</span>
+                    <button type="button" className="drive-usage-refresh" onClick={onRefresh} title="다시 시도">↻</button>
+                </div>
+                {/* 실제 원인(invalid_grant 등)을 관리자에게 노출 — "조회 실패"만 보면 진단 불가. */}
+                <div className="drive-usage-hint" title={String(usage.error)}>{String(usage.error)}</div>
             </div>
         );
     }
