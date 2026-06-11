@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../../../context/AuthContext.jsx';
-import { lookupPricesMerged, similarCodes, evidence as fetchEvidence } from '../autoquote/annot/api';
-import type { Evidence, CodeSuggestion } from '../autoquote/annot/api';
+import { lookupPricesMerged, similarCodes, evidence as fetchEvidence, bundle as fetchBundle } from '../autoquote/annot/api';
+import type { Evidence, CodeSuggestion, Bundle } from '../autoquote/annot/api';
+import { ymdLabel } from '../autoquote/LookupResultModal';
 import { matchCodes, didYouMean } from '../autoquote/itemCodes';
 import { sizev } from '../autoquote/annot/calc';
 import LookupResultModal from '../autoquote/LookupResultModal';
@@ -16,6 +17,8 @@ interface Ref {
   date?: string; // 후보 명세서 날짜
   cspec?: string; // 후보 규격
   est?: number | null; // 입력 사이즈 기준 예상 단가
+  file: string; // 근거 명세서 파일(묶음 조회용)
+  invoiceIdx: string | number; // 근거 명세서 idx(묶음 조회용)
 }
 
 /** 후보 단가(price, 후보규격 refSpec)를 입력규격(userSpec)으로 면적비 보정(√, 0.5~2.0 clamp). */
@@ -30,7 +33,9 @@ interface LkState {
   refs: Ref[];
   ri: number;
   lpi: number;
+  bi: number; // 묶음뷰: 0=후보 본인, 1..n=형제 명세서
   q: string;
+  bundles: Record<number, Bundle | null>; // ri별 묶음(미조회=undefined, 없음=null)
 }
 
 /**
@@ -103,12 +108,14 @@ export default function PriceLookup() {
             date: pr.date,
             cspec: pr.size,
             est: estForSize(pr.price, pr.size, spec),
+            file: pr.ref_file,
+            invoiceIdx: pr.ref_invoice_idx,
           };
         }),
       );
       const codeLabel = active.length ? active.join(' + ') : '품목';
       const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
-      setLk({ refs, ri: 0, lpi: 0, q });
+      setLk({ refs, ri: 0, lpi: 0, bi: 0, q, bundles: {} });
       if (!refs.length) setMsg('관련 과거 단가를 찾지 못했습니다.');
       // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
       const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
@@ -133,6 +140,24 @@ export default function PriceLookup() {
     }
     setBusy(false);
   };
+
+  // 현재 후보의 묶음(형제 명세서)을 lazy 로드·캐시. 후보를 넘길 때마다 안 받은 것만 1회 조회.
+  useEffect(() => {
+    if (!lk) return;
+    const i = lk.ri;
+    if (lk.bundles[i] !== undefined) return; // 이미 조회(값 또는 null)
+    const ref = lk.refs[i];
+    if (!ref) return;
+    let cancelled = false;
+    fetchBundle(token, ref.invoiceIdx, ref.file)
+      .then((b) => !cancelled && setLk((l) => (l ? { ...l, bundles: { ...l.bundles, [i]: b } } : l)))
+      .catch(() => !cancelled && setLk((l) => (l ? { ...l, bundles: { ...l.bundles, [i]: null } } : l)));
+    return () => {
+      cancelled = true;
+    };
+    // lk.ri/lk.refs 변화에만 반응(bundles 갱신으로는 재실행 안 됨).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lk?.ri, lk?.refs, token]);
 
   const ms = acOpen && code.trim() ? matchCodes(code).filter((c) => !codes.includes(c)) : [];
   const dym = ms.length ? didYouMean(code, ms) : null;
@@ -279,20 +304,37 @@ export default function PriceLookup() {
       )}
       {msg && <div className="pl-msg">{msg}</div>}
 
-      {lk && (
-        <LookupResultModal
-          refs={lk.refs}
-          ri={lk.ri}
-          lpi={lk.lpi}
-          userSpec={spec}
-          actionLabel="이 단가 복사 📋"
-          onAction={(p) => navigator.clipboard?.writeText(String(p))}
-          onPrev={() => setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0 } : l))}
-          onNext={() => setLk((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1, lpi: 0 } : l))}
-          onClose={() => setLk(null)}
-          setLpi={(f) => setLk((l) => (l ? { ...l, lpi: f(l.lpi) } : l))}
-        />
-      )}
+      {lk &&
+        (() => {
+          const sibs = lk.bundles[lk.ri]?.siblings ?? [];
+          const bundleCount = 1 + sibs.length;
+          const bi = Math.min(lk.bi, bundleCount - 1);
+          const bundleEvidence = bi === 0 ? lk.refs[lk.ri]?.evidence ?? null : sibs[bi - 1]?.evidence ?? null;
+          const sibEv = bi > 0 ? sibs[bi - 1]?.evidence : null;
+          const bundleLabel =
+            bi > 0 ? `형제 · ${ymdLabel(sibEv?.date)} ${sibEv?.client ?? ''}`.trim() : undefined;
+          return (
+            <LookupResultModal
+              refs={lk.refs}
+              ri={lk.ri}
+              lpi={lk.lpi}
+              userSpec={spec}
+              actionLabel="이 단가 복사 📋"
+              onAction={(p) => navigator.clipboard?.writeText(String(p))}
+              onPrev={() => setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0, bi: 0 } : l))}
+              onNext={() =>
+                setLk((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1, lpi: 0, bi: 0 } : l))
+              }
+              onClose={() => setLk(null)}
+              setLpi={(f) => setLk((l) => (l ? { ...l, lpi: f(l.lpi) } : l))}
+              bundleCount={bundleCount}
+              bi={bi}
+              setBi={(i) => setLk((l) => (l ? { ...l, bi: i, lpi: 0 } : l))}
+              bundleEvidence={bundleEvidence}
+              bundleLabel={bundleLabel}
+            />
+          );
+        })()}
     </div>
   );
 }

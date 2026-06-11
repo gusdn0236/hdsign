@@ -60,6 +60,16 @@ interface Props {
   workingTitle?: string; // 작성중 보기 제목
   workingLeft?: ReactNode; // 작성중 보기 — 좌측(지시서 이미지)
   workingRight?: ReactNode; // 작성중 보기 — 우측(작성 중 명세서 표)
+  /**
+   * 묶음(bundle) 넘기기 — 현재 후보와 같은 지시서를 공유하는 형제 명세서들. 셋째 네비 축.
+   * bundleCount>1 일 때만 '묶음 k/n' 페이저가 뜬다. props 생략 시(명세서작성 재사용) 안 뜸.
+   * bi=0 = 후보 본인, 1..n = 형제. bundleEvidence 가 현재 표시할 명세서(사진열·grid 둘 다 스왑).
+   */
+  bundleCount?: number;
+  bi?: number;
+  setBi?: (i: number) => void;
+  bundleEvidence?: Evidence | null; // bi 에 해당하는 명세서(0이면 후보 evidence 와 동일)
+  bundleLabel?: string; // 형제일 때 '형제 · 날짜 거래처' (후보면 undefined)
 }
 
 /**
@@ -88,8 +98,14 @@ export default function LookupResultModal({
   workingTitle = '작성중인 명세서',
   workingLeft,
   workingRight,
+  bundleCount,
+  bi = 0,
+  setBi,
+  bundleEvidence,
+  bundleLabel,
 }: Props) {
   const working = view === 'working';
+  const hasBundle = !!setBi && (bundleCount ?? 0) > 1; // 형제 1+ 있을 때만 묶음 페이저
 
   // 키보드 ← → 후보 넘기기, Esc 닫기 (입력칸 포커스 중이면 무시). 작성중 보기에선 후보 넘기기 끔.
   useEffect(() => {
@@ -114,7 +130,9 @@ export default function LookupResultModal({
   }, [onPrev, onNext, onClose, working]);
 
   const R = refs[ri];
-  const ev = R?.evidence;
+  // 묶음 형제를 보는 중이면 그 명세서로 스왑(사진열·grid 둘 다). 후보(bi=0)면 R.evidence 와 동일.
+  const ev = bundleEvidence !== undefined ? bundleEvidence : R?.evidence;
+  const onSibling = !!bundleLabel; // 형제 표시 중(예상가·복사 버튼은 후보에서만)
   // 다장(many-to-many) 지원: ev.photos 있으면 그걸, 없으면 단일 photo_base64 폴백.
   const phs =
     ev?.photos && ev.photos.length
@@ -127,9 +145,9 @@ export default function LookupResultModal({
 
   // 제목 = 근거 명세서의 거래처명만(예: '나라광고(안양)'). 발행일은 본문 규격·단가 위에 따로 표시.
   const corp = ev?.client || R?.src || '거래처';
-  const dateStr = ymdLabel(R?.date || ev?.date);
+  const dateStr = ymdLabel(ev?.date || R?.date);
   const title = R ? corp : '단가 찾아보기';
-  const est = R?.est != null ? round500(R.est) : null;
+  const est = !onSibling && R?.est != null ? round500(R.est) : null;
   const grid = ev?.grid || [];
 
   return (
@@ -170,6 +188,7 @@ export default function LookupResultModal({
             <div className="aq-mright" />
           </div>
         ) : (
+          <>
           <div className="aq-mbody">
             <div className="aq-mleft" style={{ position: 'relative' }}>
               {photo ? <img src={photo} alt="과거 작업지시서" /> : <div className="none">사진 없음</div>}
@@ -190,9 +209,11 @@ export default function LookupResultModal({
                   현재 입력하신 <b>{userSpec}</b> 사이즈의 예상 가격은 <b>{est.toLocaleString()}원</b> 입니다.
                 </div>
               ) : null}
-              <button className="aq-btn sh lk-action" onClick={() => onAction(R.price)}>
-                {actionLabel}
-              </button>
+              {!onSibling && (
+                <button className="aq-btn sh lk-action" onClick={() => onAction(R.price)}>
+                  {actionLabel}
+                </button>
+              )}
               {grid.length ? (
                 <table className="aq-rtbl lk-tbl">
                   <thead>
@@ -228,6 +249,21 @@ export default function LookupResultModal({
               ) : null}
             </div>
           </div>
+          {hasBundle && (
+            <div className="lk-bundle">
+              <button onClick={() => setBi!(bi > 0 ? bi - 1 : bundleCount! - 1)} aria-label="이전 묶음">
+                ‹
+              </button>
+              <span className="lk-bundle-cnt">
+                묶음 {bi + 1} / {bundleCount}
+              </span>
+              <button onClick={() => setBi!(bi < bundleCount! - 1 ? bi + 1 : 0)} aria-label="다음 묶음">
+                ›
+              </button>
+              <span className="lk-bundle-lbl">{bundleLabel || '이 후보(기준 명세서)'}</span>
+            </div>
+          )}
+          </>
         )}
       </div>
     </div>

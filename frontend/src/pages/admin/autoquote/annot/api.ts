@@ -170,6 +170,39 @@ export async function evidence(
   return res.json();
 }
 
+/** 묶음 형제 한 건 — 같은 지시서를 공유하는 다른 명세서. evidence 에 grid·사진이 채워져 온다. */
+export interface BundleSibling {
+  file: string;
+  idx: string;
+  shared_photos: string[];
+  agreement: number;
+  evidence: Evidence | null;
+}
+/** 묶음 응답 — 기준 명세서 키 + 그 명세서의 지시서 사진 + 형제들. */
+export interface Bundle {
+  bundle_id: string;
+  photos: string[];
+  siblings: BundleSibling[];
+}
+
+/**
+ * 묶음 조회 — 이 명세서와 같은 작업지시서를 공유하는 형제 명세서들(grid·사진 포함).
+ * 묶음이 없거나(404) 데이터 미프로비저닝(503)이면 null — 호출부는 묶음 페이저를 숨긴다.
+ */
+export async function bundle(
+  token: string | null | undefined,
+  invoiceIdx: number | string,
+  file: string,
+): Promise<Bundle | null> {
+  const res = await fetch(
+    `${BASE_URL}/api/admin/autoquote/bundle/${encodeURIComponent(String(invoiceIdx))}?file=${encodeURIComponent(file)}`,
+    { headers: authHeaders(token) },
+  );
+  if (res.status === 404 || res.status === 503) return null;
+  if (!res.ok) throw new Error(`묶음 조회 실패 (${res.status})`);
+  return res.json();
+}
+
 /** 글자읽기 일일 한도 현황. */
 export interface VisionQuota {
   used: number;

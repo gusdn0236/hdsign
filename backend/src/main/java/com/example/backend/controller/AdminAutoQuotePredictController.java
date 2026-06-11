@@ -1,5 +1,6 @@
 package com.example.backend.controller;
 
+import com.example.backend.autoquote.predict.InvoiceBundleService;
 import com.example.backend.autoquote.predict.InvoiceEvidenceService;
 import com.example.backend.autoquote.predict.PricePredictor;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,7 @@ public class AdminAutoQuotePredictController {
 
     private final PricePredictor predictor;
     private final InvoiceEvidenceService evidenceService;
+    private final InvoiceBundleService bundleService;
 
     /** 예측 요청 본문. items 각 줄은 {text, material, size, qty}. */
     public record PredictRequest(String client, List<ItemRequest> items) {
@@ -126,5 +128,32 @@ public class AdminAutoQuotePredictController {
                             "message", "해당 명세서를 찾지 못했습니다."));
         }
         return ResponseEntity.ok(ev);
+    }
+
+    /**
+     * 묶음(bundle) — 이 명세서와 같은 작업지시서를 공유하는 형제 명세서들(grid·사진 포함).
+     * 단가찾아보기에서 '묶음 넘기기'에 쓴다. bundles.json 미프로비저닝이면 503,
+     * 해당 명세서가 어떤 묶음에도 없으면 404.
+     */
+    @GetMapping("/bundle/{invoiceIdx}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> bundle(@PathVariable("invoiceIdx") String invoiceIdx,
+                                    @RequestParam("file") String file) {
+        if (!evidenceService.isValidFile(file)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", "invalid_file",
+                            "message", "file 은 easyform_*_*.json 형식이어야 합니다."));
+        }
+        if (!bundleService.available()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("error", "autoquote_data_unavailable"));
+        }
+        InvoiceBundleService.Bundle b = bundleService.find(file, invoiceIdx);
+        if (b == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "bundle_not_found",
+                            "message", "해당 명세서가 묶음에 없습니다."));
+        }
+        return ResponseEntity.ok(b);
     }
 }

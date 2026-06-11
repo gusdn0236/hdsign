@@ -1,0 +1,28 @@
+{
+ "generated": "2099-01-01",
+ "agree_coverage": 0.5,
+ "sibling_cap": 20,
+ "by_invoice": {
+  "easyform_2099_test.json#10": {
+   "photos": ["easyform_2099_test_10.png"],
+   "siblings": [
+    {
+     "file": "easyform_2099_test.json",
+     "idx": "11",
+     "date": "2099.02.01",
+     "client": "한국사인",
+     "shared_photos": ["easyform_2099_test_10.png"],
+     "agreement": 0.6
+    },
+    {
+     "file": "easyform_2099_test.json",
+     "idx": "9999",
+     "date": "2099.03.01",
+     "client": "한국사인",
+     "shared_photos": ["easyform_2099_test_10.png"],
+     "agreement": 0.4
+    }
+   ]
+  }
+ }
+}

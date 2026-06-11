@@ -292,4 +292,59 @@ class AdminAutoQuotePredictControllerTest {
                 HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
+
+    // ---- /bundle ------------------------------------------------------------
+
+    @Test
+    void bundle_withoutJwt_returns401() {
+        ResponseEntity<String> res = rest.getForEntity(
+                "/api/admin/autoquote/bundle/10?file=easyform_2099_test.json", String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void bundle_withNonAdminJwt_returns403() {
+        ResponseEntity<String> res = rest.exchange(
+                "/api/admin/autoquote/bundle/10?file=easyform_2099_test.json",
+                HttpMethod.GET, new HttpEntity<>(clientHeaders()), String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @Test
+    void bundle_returns200_withSiblingEvidence() throws Exception {
+        // bundles.json: #10 의 형제 = #11(존재) + #9999(데이터 drift → 스킵).
+        ResponseEntity<String> res = rest.exchange(
+                "/api/admin/autoquote/bundle/10?file=easyform_2099_test.json",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode body = json.readTree(res.getBody());
+        assertThat(body.get("bundle_id").asText()).isEqualTo("easyform_2099_test.json#10");
+        assertThat(body.get("siblings").isArray()).isTrue();
+        // #9999 는 명세서가 없어 하이드레이션 실패 → 드롭. 남는 형제는 #11 하나.
+        assertThat(body.get("siblings")).hasSize(1);
+        JsonNode sib = body.get("siblings").get(0);
+        assertThat(sib.get("idx").asText()).isEqualTo("11");
+        assertThat(sib.get("agreement").asDouble()).isEqualTo(0.6);
+        // 형제는 grid 까지 채워져 프론트가 추가 왕복 없이 명세서를 스왑한다.
+        assertThat(sib.get("evidence").get("grid")).isNotEmpty();
+        assertThat(sib.get("evidence").get("grid").get(0).get("item").asText()).isEqualTo("후렉스배너");
+    }
+
+    @Test
+    void bundle_invalidFile_returns400() {
+        ResponseEntity<String> res = rest.exchange(
+                "/api/admin/autoquote/bundle/10?file=corpus.json",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void bundle_notFound_returns404() {
+        // #11 은 bundles.json by_invoice 에 키가 없다 → 묶음 없음.
+        ResponseEntity<String> res = rest.exchange(
+                "/api/admin/autoquote/bundle/11?file=easyform_2099_test.json",
+                HttpMethod.GET, new HttpEntity<>(adminHeaders()), String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
 }
