@@ -59,7 +59,7 @@ export default function AcrylCalc({ prices }) {
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null
-                        ? `아크릴 ${tt} ${tk} ${heightMm}mm 밴드(${band}) — ${formatPrice(unitPrice)} × ${qtyN}개`
+                        ? `아크릴 ${tt} ${tk} ${heightMm}mm — ${formatPrice(unitPrice)} × ${qtyN}개`
                         : (heightMm > 900
                             ? '900mm 까지만 등록되어 있습니다'
                             : (Number.isFinite(heightMm) && heightMm > 0

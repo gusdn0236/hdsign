@@ -102,7 +102,7 @@ export default function GoldSilverCalc({ prices }) {
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null
-                        ? `${matLabel} ${tk} ${tt} ${heightMm}mm 밴드(${band}) — ${formatPrice(unitPrice)} × ${qtyN}개`
+                        ? `${matLabel} ${tk} ${tt} ${heightMm}mm — ${formatPrice(unitPrice)} × ${qtyN}개`
                         : (Number.isFinite(heightMm) && heightMm > 0
                             ? '해당 조합에 등록된 단가가 없습니다'
                             : '높이/수량을 입력하세요')}

@@ -51,7 +51,7 @@ export default function GomuCalc({ prices }) {
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null
-                        ? `고무 ${tk} ${heightMm}mm 밴드(${band}) — ${formatPrice(unitPrice)} × ${qtyN}개`
+                        ? `고무 ${tk} ${heightMm}mm — ${formatPrice(unitPrice)} × ${qtyN}개`
                         : (heightMm > 2000
                             ? '2000mm 까지만 등록되어 있습니다'
                             : (Number.isFinite(heightMm) && heightMm > 0
