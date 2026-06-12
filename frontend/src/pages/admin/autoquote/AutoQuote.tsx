@@ -2961,9 +2961,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         )}
 
       {/* 미니 단가계산기 창 — 드래그 이동·✕ 닫기. 결과는 [N번에 채우기]로 빈 행에 채움. */}
-      {calcOpen && (
-        <MiniCalc onClose={() => setCalcOpen(false)} onFill={onCalcFill} fillRow={firstEmptyGridRow(pins)} />
-      )}
+      {calcOpen && (() => {
+        const fr = firstEmptyGridRow(pins);
+        return (
+          <MiniCalc
+            onClose={() => setCalcOpen(false)}
+            onFill={onCalcFill}
+            fillRow={fr}
+            fillColor={pinColor(fr)} /* 그리드 동그라미와 같은 색으로 N 배지 표시 */
+          />
+        );
+      })()}
 
       {/* 단가 찾아보기 모달 — 결과 UI는 LookupResultModal(단가계산기 탭과 공유). 헤더 아래 품목코드 태그 바는 명세서작성 전용 extras. */}
       {lookup && (

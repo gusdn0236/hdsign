@@ -39,18 +39,22 @@ export default function MiniCalc({
   onClose,
   onFill,
   fillRow,
+  fillColor,
 }: {
   onClose: () => void;
   onFill?: (p: FillPayload) => void; // 계산 결과를 명세서 빈 행에 채우기(없으면 카드는 [복사] 버튼).
-  fillRow?: number; // 채울 빈 행 인덱스(0-based, 없으면 -1). 버튼 라벨 'N번에 채우기'.
+  fillRow?: number; // 채울 빈 행 인덱스(0-based). 버튼에 그리드와 같은 동그라미 N 으로 표시.
+  fillColor?: string; // 그 행 동그라미 색(그리드와 일치).
 }) {
   const { prices } = usePrices();
-  // 채우기 모드면 카드의 [복사] 버튼이 [N번에 채우기] 로 바뀐다(FillContext). 일반(홈페이지)은 null.
+  // 채우기 모드면 카드의 [복사] 버튼이 [(N) 번에 채우기] 로 바뀐다(FillContext). 일반(홈페이지)은 null.
+  const canFill = typeof fillRow === 'number' && fillRow >= 0;
   const fillValue = onFill
     ? {
         onFill,
-        label: typeof fillRow === 'number' && fillRow >= 0 ? `${fillRow + 1}번에 채우기` : '빈 행 없음',
-        canFill: typeof fillRow === 'number' && fillRow >= 0,
+        canFill,
+        num: canFill ? (fillRow as number) + 1 : null, // 동그라미에 표시할 1-based 행 번호
+        color: fillColor || '#0a7d8c',
       }
     : null;
   const [tab, setTab] = useState('acryl');

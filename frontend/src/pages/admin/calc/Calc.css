@@ -216,29 +216,48 @@
     border-color: #86efac;
     color: #166534;
 }
-/* 명세서작성 미니 계산기 — [복사] 대신 [N번에 채우기] 버튼(같은 위치, 청록 강조). */
+/* 명세서작성 미니 계산기 — [복사] 대신 [(N)번에 채우기] 버튼. N 은 그리드와 같은 동그라미 숫자. */
 .calc-fillbtn {
     position: absolute;
     top: 10px;
     right: 10px;
-    background: #0a7d8c;
-    border: 1px solid #0a7d8c;
-    border-radius: 6px;
-    padding: 4px 11px;
-    font-size: 11.5px;
-    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #fff;
+    border: 1.5px solid #0a7d8c;
+    border-radius: 7px;
+    padding: 4px 11px 4px 5px;
+    font-size: 12px;
+    color: #0a7d8c;
     cursor: pointer;
-    font-weight: 700;
+    font-weight: 800;
     font-family: inherit;
     transition: all 0.12s;
 }
 .calc-fillbtn:hover:not(:disabled) {
-    background: #0d8f9e;
+    background: #ecf8f9;
 }
 .calc-fillbtn:disabled {
-    background: #cbd5e1;
     border-color: #cbd5e1;
+    color: #94a3b8;
     cursor: not-allowed;
+}
+/* 버튼 안 동그라미 N — 우측 명세서 표의 .rnum 과 동일한 모양(색은 그 행 색). */
+.calc-fillbtn-num {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+.calc-fillbtn:disabled .calc-fillbtn-num {
+    background: #cbd5e1 !important;
 }
 .calc-result-num {
     font-size: 28px;

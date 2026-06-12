@@ -18,9 +18,12 @@ export default function CalcAction({ copyText, payload }) {
         className="calc-fillbtn"
         disabled={!fill.canFill}
         onClick={() => fill.onFill(payload)}
-        title={fill.canFill ? '계산된 값을 명세서 빈 행에 채웁니다 (품목은 직접 입력)' : '채울 빈 행이 없습니다'}
+        title="계산된 값을 명세서의 이 행에 채웁니다 (품목은 직접 입력)"
       >
-        {fill.label}
+        {fill.num != null && (
+          <span className="calc-fillbtn-num" style={{ background: fill.color }}>{fill.num}</span>
+        )}
+        번에 채우기
       </button>
     )
   }
