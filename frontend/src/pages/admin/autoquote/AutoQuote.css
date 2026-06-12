@@ -672,6 +672,27 @@
   padding: 3px 9px;
   border-radius: 20px;
 }
+/* 견적 헤더 맨 오른쪽 — 미니 단가계산기 토글(공급가액 열 위). 켜지면 진한 청록. */
+.aq-calcbtn {
+  margin-left: auto;
+  border: 1px solid var(--teal, #0a7d8c);
+  background: #fff;
+  color: var(--teal, #0a7d8c);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aq-calcbtn:hover {
+  background: #ecf8f9;
+}
+.aq-calcbtn.on {
+  background: #0a7d8c;
+  color: #fff;
+}
 .aq-gridwrap {
   flex: 1;
   overflow: auto;

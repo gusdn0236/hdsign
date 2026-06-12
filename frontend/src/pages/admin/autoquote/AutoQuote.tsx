@@ -35,6 +35,7 @@ import {
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal from './LookupResultModal';
+import MiniCalc from './MiniCalc';
 import './AutoQuote.css';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -355,6 +356,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [lkAcOpen, setLkAcOpen] = useState(false);
   const [lkAcIdx, setLkAcIdx] = useState(-1);
   const [lkView, setLkView] = useState<'search' | 'working'>('search'); // 단가찾아보기 모달: 검색결과↔작성중 토글
+  const [calcOpen, setCalcOpen] = useState(false); // 미니 단가계산기 창 토글(드래그 이동 가능, 헤더 🧮 버튼).
 
 
   const lkCtxRef = useRef<{ spec: string; qty: string; client: string; item: string }>({
@@ -2646,6 +2648,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           <div className="aq-h">
             <b>견적 (이지폼)</b>
             {order && <span className="aq-tag">{order.clientCompanyName || order.orderNumber}</span>}
+            {/* 미니 단가계산기 토글 — 헤더 맨 오른쪽(공급가액 열 위). 누르면 드래그 가능한 계산기 창이 켜졌다 꺼졌다. */}
+            <button
+              type="button"
+              className={'aq-calcbtn' + (calcOpen ? ' on' : '')}
+              onClick={() => setCalcOpen((v) => !v)}
+              title="단가계산기 창 열기/닫기"
+            >
+              🧮 계산기
+            </button>
           </div>
           <div className="aq-gridwrap">
             <table
@@ -2826,25 +2837,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           );
         })()}
 
-      {/* 우측 표 단가칸 툴바 — 계산기 / 단가 찾아보기 (말풍선과 동일). 표 overflow 회피로 포털+fixed.
-          핀 없는 빈 행에서도 클릭만 하면 떠야 하므로 pins 가드 없음(버튼은 runCalc/openLookup 에서 빈 칸 안내). */}
+      {/* 우측 표 단가칸 툴바 — 단가 찾아보기. (계산기 버튼은 제거 — 견적 헤더의 🧮 미니 계산기 창으로 분리.)
+          핀 없는 빈 행에서도 클릭만 하면 떠야 하므로 pins 가드 없음(버튼은 openLookup 에서 빈 칸 안내). */}
       {gridTool &&
         createPortal(
           <div
             style={{ position: 'fixed', left: gridTool.left, top: gridTool.top + 3, zIndex: 3000, display: 'flex', gap: 6 }}
             onMouseDown={(e) => e.preventDefault()}
           >
-            <button
-              className="aq-lookup calc"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                const row = gridTool.row;
-                setGridTool(null);
-                runCalc(row);
-              }}
-            >
-              🧮 계산기
-            </button>
             <button
               className="aq-lookup"
               onMouseDown={(e) => {
@@ -2859,6 +2859,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           </div>,
           document.body,
         )}
+
+      {/* 미니 단가계산기 창 — 드래그 이동·✕ 닫기. position:fixed 라 트리 위치 무관. */}
+      {calcOpen && <MiniCalc onClose={() => setCalcOpen(false)} />}
 
       {/* 단가 찾아보기 모달 — 결과 UI는 LookupResultModal(단가계산기 탭과 공유). 헤더 아래 품목코드 태그 바는 명세서작성 전용 extras. */}
       {lookup && (
