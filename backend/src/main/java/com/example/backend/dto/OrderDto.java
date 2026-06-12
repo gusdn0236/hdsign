@@ -53,6 +53,11 @@ public class OrderDto {
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
+        // 명세서 작성 잠금(소프트 락) — 누가 지금 이 작업의 명세서를 작성 중인지. 프론트가
+        // statementEditingAt 이 최근(TTL 이내)인지로 "작성중" 여부를 판단해 카드에 배지를 띄운다.
+        private String statementEditingBy;
+        private String statementEditingName;
+        private LocalDateTime statementEditingAt;
     }
 
     @Getter
@@ -145,6 +150,9 @@ public class OrderDto {
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .deletedAt(order.getDeletedAt())
+                .statementEditingBy(order.getStatementEditingBy())
+                .statementEditingName(order.getStatementEditingName())
+                .statementEditingAt(order.getStatementEditingAt())
                 .build();
     }
 

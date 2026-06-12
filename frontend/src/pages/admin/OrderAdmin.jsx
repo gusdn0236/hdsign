@@ -212,6 +212,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   // 자동견적 명세서작성 모달 — 열린 주문 id(없으면 닫힘). 별도 탭이 아니라 OrderAdmin 안 모달로 띄운다.
   const [estimateOrderId, setEstimateOrderId] = useState(null);
+  // 로그인한 관리자 본인 — { username, name }. 명세서 잠금이 "내 잠금" 판별 + 표시이름에 쓴다.
+  const [me, setMe] = useState(null);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
   // 저장 성공 시 해당 주문의 "명세서" 배지를 즉시 점등(재요청 없이 목록/모달 동기).
   const markEstimateSaved = useCallback((id) => {
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
@@ -233,6 +237,112 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       document.body.style.overflow = prev;
     };
   }, [estimateOrderId]);
+
+  // 로그인한 관리자 본인 정보 — 표시이름(작성중 배지)과 "내 잠금" 판별에 쓴다. 토큰 잡히면 한 번 조회.
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${BASE_URL}/api/admin/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) {
+          setMe(data);
+          setNameDraft(data.name || "");
+        }
+      })
+      .catch(() => {});
+  }, [token]);
+
+  // 내 표시이름 저장 — 각자 본인이 자기 이름을 입력. 저장하면 이후 "ㅇㅇㅇ님이 작성중" 에 이 이름이 뜬다.
+  const saveDisplayName = useCallback(async () => {
+    const name = nameDraft.trim();
+    if (!name) {
+      setFeedback({ type: "error", msg: "이름을 입력해 주세요." });
+      return;
+    }
+    setSavingName(true);
+    try {
+      const res = await fetch(`${BASE_URL}/api/admin/me/display-name`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error("이름 저장에 실패했습니다.");
+      const data = await res.json();
+      setMe(data);
+      setNameDraft(data.name || "");
+      setFeedback({ type: "success", msg: `표시 이름을 '${data.name}' 으로 설정했습니다.` });
+    } catch (err) {
+      setFeedback({ type: "error", msg: err.message || "이름 저장 중 오류가 발생했습니다." });
+    } finally {
+      setSavingName(false);
+    }
+  }, [nameDraft, token]);
+
+  // 명세서 모달이 열려 있는 동안 작성 잠금을 획득·갱신(하트비트)하고, 닫히면 해제한다.
+  // 25초마다 하트비트 → 서버 TTL(90초) 안에서 잠금 유지. 탭을 그냥 닫아도 TTL 지나면 자동 만료.
+  useEffect(() => {
+    if (estimateOrderId == null || !token) return undefined;
+    const id = estimateOrderId;
+    let cancelled = false;
+
+    const beat = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}/api/admin/orders/${id}/statement-lock`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        // 잠금 상태를 카드 배지에 즉시 반영(재조회 없이).
+        const patch = (o) =>
+          o.id === id
+            ? { ...o, statementEditingBy: data.editingBy, statementEditingName: data.editingName, statementEditingAt: data.editingAt }
+            : o;
+        setOrders((prev) => prev.map(patch));
+        setTrashOrders((prev) => prev.map(patch));
+      } catch {
+        // 네트워크 일시 오류는 무시 — 다음 하트비트에서 복구.
+      }
+    };
+
+    beat();
+    const timer = setInterval(beat, 25000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      // 모달 닫힘 → 잠금 해제(best-effort). keepalive 로 페이지 이탈 중에도 전송 시도.
+      fetch(`${BASE_URL}/api/admin/orders/${id}/statement-lock`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {});
+      const clear = (o) =>
+        o.id === id ? { ...o, statementEditingBy: null, statementEditingName: null, statementEditingAt: null } : o;
+      setOrders((prev) => prev.map(clear));
+      setTrashOrders((prev) => prev.map(clear));
+    };
+  }, [estimateOrderId, token]);
+
+  // 이 주문을 '다른 사람'이 지금 작성 중이면 그 표시이름을, 아니면 null. 신선도(TTL 90초) 판정 포함.
+  // 내가 작성 중인 잠금은 배지로 안 띄운다(내가 아는 사실이라). 서버 시각은 KST LocalDateTime(존 없음)
+  // 으로 직렬화되고 클라이언트도 KST 라 new Date() 로컬 해석이 일치한다(앱 전역 createdAt 처리와 동일).
+  const STATEMENT_LOCK_TTL_MS = 90 * 1000;
+  const statementLockHolder = useCallback((order) => {
+    if (!order || !order.statementEditingAt || !order.statementEditingBy) return null;
+    if (me && order.statementEditingBy === me.username) return null; // 내 잠금 → 배지 없음
+    const t = new Date(order.statementEditingAt).getTime();
+    if (!Number.isFinite(t) || Date.now() - t > STATEMENT_LOCK_TTL_MS) return null; // stale
+    return order.statementEditingName || order.statementEditingBy;
+  }, [me]);
+
+  // 명세서 모달 열기 — 다른 사람이 작성 중이면 한 번 확인받고 연다(소프트 락: 강제로 열 수 있음).
+  const openEstimate = useCallback((order) => {
+    const holder = statementLockHolder(order);
+    if (holder && !window.confirm(`${holder}님이 이 작업의 명세서를 작성 중입니다.\n중복 작성될 수 있어요. 그래도 여시겠어요?`)) {
+      return;
+    }
+    setEstimateOrderId(order.id);
+  }, [statementLockHolder]);
   // 작업현황 등 다른 화면에서 `?order=<id>` 로 넘어오면 그 주문 상세 모달을 바로 연다.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -341,8 +451,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     cycleStateRef.current = { query: clientSearch.trim().toLowerCase(), index: -1 };
   }, [clientSearch]);
 
-  const loadOrders = async () => {
-    setLoading(true);
+  const loadOrders = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const [activeRes, trashRes] = await Promise.all([
         fetch(`${BASE_URL}/api/admin/orders`, {
@@ -361,9 +471,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setOrders(filterByType(activeData));
       setTrashOrders(filterByType(trashData));
     } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "주문 목록 조회 중 오류가 발생했습니다." });
+      if (!silent) setFeedback({ type: "error", msg: err.message || "주문 목록 조회 중 오류가 발생했습니다." });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -751,6 +861,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       return tb - ta;
     });
   }, [isStatementView, calendarOrdersBase]);
+
+  // 명세서 탭에서만 20초마다 조용히 목록 갱신 → 다른 사람의 "작성중" 배지를 거의 실시간으로 반영.
+  // 폴링 방식이라 WebSocket 같은 추가 인프라 불필요. 다른 탭에선 폴링하지 않아 부담 없음.
+  useEffect(() => {
+    if (!isStatementView || !token) return undefined;
+    const timer = setInterval(() => loadOrders({ silent: true }), 20000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStatementView, token]);
 
   // 모달 prev/next 의 "현재 화면" 대상 — 명세서 탭은 최신순 평면 목록, 달력 전체보기면 필터된 모든 주문,
   // 그 외엔 선택 일자 카드. 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과.
@@ -1406,6 +1525,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     // 자동견적 — 명세서 작성됨 / 이지폼 업로드됨 배지. 데이터 존재하면 항상 표시(열람과 무관).
     const hasEstimate = !!order.hasEstimate;
     const easyformUploaded = !!order.easyformUploadedAt;
+    // 명세서 작성 잠금 — 다른 사람이 지금 이 작업의 명세서를 작성 중이면 표시이름, 아니면 null.
+    const editingHolder = statementLockHolder(order);
     const worksheetChangeNote = (order.worksheetChangeNote || "").trim();
     // 변경 태그 — 지시서가 웹에 두 번째 이상 재반영된 적 있으면(worksheetRevisedAt) 표시.
     // 한 번 찍히면 재인쇄·열람으로도 안 사라지는 영구 신호. 옛 주문(타임스탬프 없이
@@ -1482,6 +1603,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               ) : hasEstimate ? (
                 <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">명세서 임시저장</span>
               ) : null}
+            </div>
+          )}
+          {editingHolder && (
+            <div className="order-card-editing-overlay" title={`${editingHolder}님이 명세서를 작성 중입니다`}>
+              <span className="editing-dot" />
+              {editingHolder}님 작성중
             </div>
           )}
         </div>
@@ -1561,7 +1688,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             <button
               type="button"
               className={`order-card-tool action-estimate${order.hasEstimate ? " has" : ""}`}
-              onClick={() => setEstimateOrderId(order.id)}
+              onClick={() => openEstimate(order)}
               title={order.hasEstimate ? "명세서 수정 (작성됨)" : "명세서작성"}
             >
               <span aria-hidden="true">📝</span>
@@ -1784,6 +1911,32 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             <h3 className="calendar-selected-head">
               <span className="order-card-group-date">명세서 — 최신 업로드순</span>
               <span className="order-card-group-count">{statementOrders.length}건</span>
+              {/* 내 표시이름 — 명세서를 작성하면 다른 사람 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이 뜬다.
+                  각자 본인이 한 번 설정. 비어있으면 입력을 유도. */}
+              <span className="statement-myname">
+                <span className="statement-myname-label">내 이름</span>
+                <input
+                  type="text"
+                  className="statement-myname-input"
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveDisplayName(); }}
+                  placeholder="작성중 표시용 이름"
+                  maxLength={30}
+                />
+                <button
+                  type="button"
+                  className="statement-myname-save"
+                  onClick={saveDisplayName}
+                  disabled={savingName || nameDraft.trim() === (me?.name || "")}
+                  title="명세서 작성중 표시에 쓸 내 이름 저장"
+                >
+                  {savingName ? "저장중..." : "저장"}
+                </button>
+                {(!me?.name) && (
+                  <span className="statement-myname-hint">← 이름을 설정해 주세요</span>
+                )}
+              </span>
             </h3>
             {loading ? (
               <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
@@ -2264,7 +2417,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   <button
                     type="button"
                     className="next-status-btn action-estimate"
-                    onClick={() => setEstimateOrderId(selectedOrder.id)}
+                    onClick={() => openEstimate(selectedOrder)}
                     title="이 지시서로 자동견적 명세서를 작성/수정합니다"
                   >
                     {selectedOrder.hasEstimate ? "명세서 수정" : "명세서작성"}

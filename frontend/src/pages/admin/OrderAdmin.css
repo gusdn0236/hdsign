@@ -1182,6 +1182,83 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
+/* 명세서 작성중 오버레이 — 다른 사람이 이 작업의 명세서를 작성 중일 때 썸네일 상단을 가로지르는
+   눈에 띄는 띠. 중복작성을 막기 위한 경고라 보라색 강조 + 점멸 점으로 시선을 끈다. */
+.order-card-editing-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(124, 58, 237, 0.92);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.order-card-editing-overlay .editing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fde047;
+  box-shadow: 0 0 0 0 rgba(253, 224, 71, 0.7);
+  animation: editing-pulse 1.4s ease-out infinite;
+}
+@keyframes editing-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(253, 224, 71, 0.7); }
+  70%  { box-shadow: 0 0 0 7px rgba(253, 224, 71, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(253, 224, 71, 0); }
+}
+
+/* 명세서 탭 — 내 표시이름 설정 줄(작성중 배지에 뜰 이름). */
+.statement-myname {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+}
+.statement-myname-label {
+  color: #71717a;
+  font-weight: 600;
+}
+.statement-myname-input {
+  width: 130px;
+  padding: 5px 8px;
+  border: 1px solid #d4d4d8;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.statement-myname-input:focus {
+  outline: none;
+  border-color: #7c3aed;
+}
+.statement-myname-save {
+  padding: 5px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.statement-myname-save:disabled {
+  background: #c4b5fd;
+  cursor: default;
+}
+.statement-myname-hint {
+  color: #dc2626;
+  font-weight: 700;
+}
+
 .order-card-body {
   padding: 12px 14px 14px;
   display: flex;

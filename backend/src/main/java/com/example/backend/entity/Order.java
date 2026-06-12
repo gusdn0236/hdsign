@@ -189,6 +189,17 @@ public class Order {
     @Column
     private LocalDateTime purgedAt;
 
+    // ===== 명세서 작성 잠금(소프트 락) — 동시 중복작성 방지 =====
+    // 명세서 모달을 연 관리자의 username(소유권 식별). 모달 닫으면 비운다.
+    @Column(length = 100)
+    private String statementEditingBy;
+    // 화면에 띄울 표시 이름 스냅샷("ㅇㅇㅇ님이 작성중"). 잠금 획득 시점의 admin.name.
+    @Column(length = 100)
+    private String statementEditingName;
+    // 마지막 하트비트 시각. 일정 시간(TTL) 지나면 stale 로 보고 무시 — 탭을 그냥 닫아도 자동 만료.
+    @Column
+    private LocalDateTime statementEditingAt;
+
     public enum RequestType {
         ORDER,
         QUOTE
