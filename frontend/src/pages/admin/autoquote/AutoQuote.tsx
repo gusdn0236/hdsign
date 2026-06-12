@@ -316,6 +316,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [selPin, setSelPin] = useState<number | null>(null);
   // 우측 명세서 표의 동그라미 숫자를 클릭하면 그 행에 삭제 버튼을 띄운다(행 단위 삭제).
   const [gridSelRow, setGridSelRow] = useState<number | null>(null);
+  // 행 재정렬 드래그 중 시각 피드백 — 출발 행(흐리게)·놓을 대상 행(강조).
+  const [dragRow, setDragRow] = useState<number | null>(null);
+  const [dragOverRow, setDragOverRow] = useState<number | null>(null);
   const [selectedPin, setSelectedPin] = useState<number | null>(null); // 복사용으로 클릭 선택된 말풍선.
   const [draft, setDraft] = useState('');
   const [acIdx, setAcIdx] = useState(-1); // 품목코드 자동완성 드롭다운 하이라이트(-1=없음)
@@ -2745,14 +2748,27 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                   return (
                     <tr
                       key={i}
-                      className={`${i === active ? 'cur' : ''}${isOcrTgt ? ' ocrtgt' : ''}`.trim() || undefined}
+                      className={
+                        [
+                          i === active ? 'cur' : '',
+                          isOcrTgt ? 'ocrtgt' : '',
+                          dragRow === i ? 'rowdragging' : '',
+                          dragOverRow === i ? 'rowswapover' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ') || undefined
+                      }
                       style={isOcrTgt ? { background: hexToRgba(pinColor(i), 0.28) } : undefined}
                     >
                       <td
                         className="rn"
                         // 다른 행의 동그라미를 이 칸 동그라미로 끌어다 놓으면 두 행을 맞바꾼다(행 재정렬).
                         onDragOver={(e) => {
-                          if (p && e.dataTransfer.types.includes('application/x-aq-pin')) e.preventDefault();
+                          if (p && e.dataTransfer.types.includes('application/x-aq-pin') && dragRow !== i) {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            if (dragOverRow !== i) setDragOverRow(i);
+                          }
                         }}
                         onDrop={(e) => {
                           if (!p) return;
@@ -2761,6 +2777,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                           e.preventDefault();
                           e.stopPropagation();
                           const from = parseInt(raw, 10);
+                          setDragOverRow(null);
                           if (!Number.isNaN(from) && from !== i) swapRows(from, i);
                         }}
                       >
@@ -2772,6 +2789,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                             onDragStart={(e) => {
                               e.dataTransfer.setData('application/x-aq-pin', String(i));
                               e.dataTransfer.effectAllowed = 'move';
+                              setDragRow(i);
+                            }}
+                            onDragEnd={() => {
+                              setDragRow(null);
+                              setDragOverRow(null);
                             }}
                             // 클릭(드래그 아님)하면 그 행 삭제 버튼 토글. 드래그는 말풍선 생성/행 재정렬.
                             onClick={() => p && setGridSelRow((s) => (s === i ? null : i))}
