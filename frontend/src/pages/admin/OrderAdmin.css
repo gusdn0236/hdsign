@@ -42,9 +42,9 @@
   margin-bottom: 20px;
 }
 
-/* /admin/orders — 지연 카드 추가로 4컬럼. /admin/quotes 는 dueDate 가 없어 3컬럼 유지. */
+/* /admin/orders — 지연·명세서 카드 추가로 5컬럼. /admin/quotes 는 dueDate 가 없어 3컬럼 유지. */
 .order-summary--with-overdue {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .summary-card {
@@ -134,7 +134,16 @@
   border-color: #dc2626;
 }
 
-/* 좁은 화면 — 4컬럼이 너무 빡빡하면 2x2 로 떨어뜨려 가독성 확보. */
+/* 명세서 필터 카드 — 보라 강조. 작업중+작업완료 전체를 최신 업로드순으로 모아 보는 진입점. */
+.summary-statement .summary-count {
+  color: #7c3aed;
+}
+.summary-statement.is-selected {
+  background: #f5f3ff;
+  border-color: #7c3aed;
+}
+
+/* 좁은 화면 — 5컬럼이 너무 빡빡하면 2열로 떨어뜨려 가독성 확보. */
 @media (max-width: 600px) {
   .order-summary--with-overdue {
     grid-template-columns: repeat(2, minmax(0, 1fr));

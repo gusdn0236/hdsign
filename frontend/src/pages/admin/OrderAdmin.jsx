@@ -578,6 +578,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     if (activeFilter === "IN_PROGRESS") {
       return filteredOrders.filter((o) => o.status === "IN_PROGRESS" || o.status === "COMPLETED");
     }
+    // 명세서 탭 — 작업중(IN_PROGRESS·COMPLETED) + 작업완료(휴지통) 전체. 날짜 무관, 최신 업로드순으로
+    // 본문에서 다시 정렬한다. 명세서 작성을 단순화하려는 용도라 "올린 순서"로 한 화면에 모아 보여줌.
+    if (activeFilter === "STATEMENT") {
+      return [
+        ...filteredOrders.filter((o) => o.status === "IN_PROGRESS" || o.status === "COMPLETED"),
+        ...trashOrders,
+      ];
+    }
     return filteredOrders.filter((order) => order.status === activeFilter);
   }, [activeFilter, filteredOrders, trashOrders]);
 
@@ -732,12 +740,25 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setBulkSelectedIds(new Set());
   };
 
-  // 모달 prev/next 의 "현재 화면" 대상 — 달력 전체보기면 필터된 모든 주문, 그 외엔 선택 일자 카드.
-  // 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과를 들고 있다.
+  // 명세서 탭 — 달력/날짜그룹 없이 작업중+작업완료 전체를 최신 업로드순(createdAt 내림차순)으로 펼친다.
+  // 가장 마지막에 올린 지시서 카드가 맨 위. 명세서 작성을 단순화하려는 용도.
+  const isStatementView = activeFilter === "STATEMENT";
+  const statementOrders = useMemo(() => {
+    if (!isStatementView) return [];
+    return [...calendarOrdersBase].sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+  }, [isStatementView, calendarOrdersBase]);
+
+  // 모달 prev/next 의 "현재 화면" 대상 — 명세서 탭은 최신순 평면 목록, 달력 전체보기면 필터된 모든 주문,
+  // 그 외엔 선택 일자 카드. 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과.
   const visibleOrders = useMemo(() => {
+    if (isStatementView) return statementOrders;
     if (isAllView) return calendarOrdersBase;
     return calendarSelectedOrders;
-  }, [isAllView, calendarOrdersBase, calendarSelectedOrders]);
+  }, [isStatementView, statementOrders, isAllView, calendarOrdersBase, calendarSelectedOrders]);
 
   const currentOrderIndex = useMemo(() => {
     if (!selectedOrderId) return -1;
@@ -1647,6 +1668,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             <span className="summary-label">지연</span>
           </button>
         )}
+        {isOrderPage && (
+          <button
+            type="button"
+            className={`summary-card summary-statement ${activeFilter === "STATEMENT" ? "is-selected" : ""}`}
+            onClick={() => setActiveFilter("STATEMENT")}
+            disabled={!!reviewSession}
+            aria-pressed={activeFilter === "STATEMENT"}
+            title="작업중·작업완료 전체를 최신 업로드순으로 모아 보기"
+          >
+            <span className="summary-count">{statusCounts.IN_PROGRESS + statusCounts.COMPLETED + trashOrders.length}</span>
+            <span className="summary-label">명세서</span>
+          </button>
+        )}
       </div>
 
       <div className="order-sort-row">
@@ -1745,6 +1779,28 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       )}
 
       <div className="order-calendar-view">
+        {isStatementView ? (
+          <section className="calendar-selected-section">
+            <h3 className="calendar-selected-head">
+              <span className="order-card-group-date">명세서 — 최신 업로드순</span>
+              <span className="order-card-group-count">{statementOrders.length}건</span>
+            </h3>
+            {loading ? (
+              <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
+            ) : statementOrders.length === 0 ? (
+              <div className="order-empty">
+                {calendarClientChips.length > 0 || clientSearch.trim()
+                  ? "필터에 맞는 작업중·작업완료 카드가 없습니다."
+                  : "작업중·작업완료 카드가 없습니다."}
+              </div>
+            ) : (
+              <div className="order-card-grid">
+                {statementOrders.map(renderOrderCard)}
+              </div>
+            )}
+          </section>
+        ) : (
+          <>
           <div className="calendar-toolbar">
             <button
               type="button"
@@ -1998,6 +2054,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </>
             )}
           </section>
+          </>
+        )}
         </div>
 
       <PhotoLightbox
