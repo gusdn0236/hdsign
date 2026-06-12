@@ -327,7 +327,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [stageH, setStageH] = useState(0);
   const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~10). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
-  const [mode, setMode] = useState<'cursor' | 'hand' | 'ocr'>('hand'); // 진입 기본=이동(1). 커서=핀 작성(2) / 손바닥=화면 이동 / 글자=영역 OCR(3)
+  const [mode, setMode] = useState<'hand' | 'ocr'>('hand'); // 진입 기본=이동(1). 글자AI=영역 OCR(2). 지시서 위 말풍선 작성(옛 cursor)은 비활성화 — 우측 명세서로만 작성.
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
   const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
@@ -944,23 +944,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     return () => window.removeEventListener('keydown', onEnter);
   }, [mode]);
 
-  // 단축키 1/2/3 = 커서/지시서이동/글자수 모드. 입력칸에 타이핑 중이면 무시(숫자 입력 보존).
+  // 단축키 1/2 = 지시서이동 / 글자AI 모드. 입력칸에 타이핑 중이면 무시(숫자 입력 보존).
+  // (옛 2=말풍선 작성은 비활성화 — 말풍선은 우측 명세서의 번호를 끌어다 놓을 때만 생긴다.)
   useEffect(() => {
     const onNum = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key !== '1' && e.key !== '2' && e.key !== '3') return;
+      if (e.key !== '1' && e.key !== '2') return;
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
       e.preventDefault();
       if (e.key === '1') {
         setMode('hand'); // 1 = 지시서 이동
-      } else if (e.key === '2') {
-        setMode('cursor'); // 2 = 말풍선
       } else if (modeRef.current === 'ocr') {
-        // 3 = 글자수. 이미 글자수 모드면 재입력 = 박스→연필→지우개 순환.
+        // 2 = 글자AI. 이미 글자AI 모드면 재입력 = 박스→연필→지우개 순환.
         setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'));
       } else {
-        setMode('ocr');
+        setMode('ocr'); // 2 = 글자AI
       }
     };
     window.addEventListener('keydown', onNum);
@@ -1036,16 +1035,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       return;
     }
     if (e.button !== 0) return;
-    // 삭제버튼(selPin)이 열려 있으면 사진 클릭은 "삭제버튼 닫기"로만 — 새 핀은 안 만든다.
+    // 삭제버튼(selPin)이 열려 있으면 사진 클릭은 "삭제버튼 닫기"로만.
     if (selPinRef.current != null) {
       setSelPin(null);
       return;
     }
-    // 입력 중인 핀이 있어도 사진의 다른 곳을 클릭/드래그하면 새 핀을 만든다(기존 핀은 입력한 만큼 유지).
-    e.preventDefault();
-    const st = stageRef.current?.getBoundingClientRect();
-    const z = zoomRef.current || 1;
-    drag.current = { ax: (e.clientX - (st?.left ?? 0)) / z, ay: (e.clientY - (st?.top ?? 0)) / z, moved: false };
+    // 지시서 위 좌클릭/드래그로 새 핀·말풍선을 만드는 기능은 비활성화 — 작성은 우측 명세서로만 하고,
+    // 그 행의 번호 동그라미를 끌어다 지시서에 놓을 때만(onBadgeDrop) 핀+말풍선이 생긴다.
   };
 
   const startPinDrag = (e: React.MouseEvent, i: number) => {
@@ -2226,7 +2222,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const ocrTarget = pins.length; // 읽으면/그리면 새로 만들어질 말풍선·행 번호(0-based).
   // 다음 항목 행 하이라이트(글자수=3 · 말풍선=2 공통). 핀 편집 중(active)이나 우측 표를 수기
   // 편집 중(gridEditing)이면 끈다 — 표에서 n번 행 작성 중에 n+1 행이 미리 칠해지던 문제 방지.
-  const showTgtRow = (mode === 'ocr' || mode === 'cursor') && active === null && !gridEditing;
+  const showTgtRow = mode === 'ocr' && active === null && !gridEditing;
   const rows = Math.max(ROWS, pins.length + (showTgtRow ? 1 : 0));
   // 박스·연필·커서·grid 행 하이라이트 색 = 다음 말풍선 색. "지금 칠하는 게 N번으로 들어가겠구나".
   const ocrColor = pinColor(ocrTarget);
@@ -2323,19 +2319,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               </button>
               <button
                 type="button"
-                className={'aq-toolbtn' + (mode === 'cursor' ? ' on' : '')}
-                title="말풍선 — 드래그로 말풍선 작성 (단축키 2)"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setMode('cursor')}
-              >
-                <svg viewBox="0 0 512 512" width="15" height="15" fill="currentColor" aria-hidden="true">
-                  <path d="M256 32C114.6 32 0 125.1 0 240c0 49.6 21.4 95 57 130.7C44.5 421.1 2.7 466 2.2 466.5c-2.2 2.3-2.8 5.7-1.5 8.7 1.3 3 4.3 4.9 7.5 4.8 66.3 0 116-31.8 140.6-51.4 32.7 12.3 69 19.4 106.4 19.4 141.4 0 256-93.1 256-208S397.4 32 256 32z" />
-                </svg>
-              </button>
-              <button
-                type="button"
                 className={'aq-toolbtn aq-ocrbtn' + (mode === 'ocr' ? ' on' : '')}
-                title="글자AI — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 3). 글자수 모드에서 또 누르면 박스→연필→지우개 순환"
+                title="글자AI — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 2). 글자AI 모드에서 또 누르면 박스→연필→지우개 순환"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() =>
                   // 키 3 과 동일: 글자수 모드가 아니면 진입, 이미면 박스→연필→지우개 순환.
@@ -2524,24 +2509,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 )}
               </svg>
 
-              {/* 핀 점 */}
-              {pins.map((p, i) => (
-                <div
-                  key={'dot' + i}
-                  className="aq-dot"
-                  style={{
-                    left: p.ax - 10.5 / zoom,
-                    top: p.ay - 10.5 / zoom,
-                    background: pinColor(i),
-                    transform: `scale(${1 / zoom})`,
-                    transformOrigin: '0 0',
-                  }}
-                  title={`드래그=이동 · 클릭=삭제 (${i + 1}번 행)`}
-                  onMouseDown={(e) => startPinDrag(e, i)}
-                >
-                  {i + 1}
-                </div>
-              ))}
+              {/* 핀 점 — 지시서에 배치된(dragged) 핀만. 아직 안 옮긴 명세서 행은 점도 말풍선도 안 보인다. */}
+              {pins.map((p, i) =>
+                p.dragged ? (
+                  <div
+                    key={'dot' + i}
+                    className="aq-dot"
+                    style={{
+                      left: p.ax - 10.5 / zoom,
+                      top: p.ay - 10.5 / zoom,
+                      background: pinColor(i),
+                      transform: `scale(${1 / zoom})`,
+                      transformOrigin: '0 0',
+                    }}
+                    title={`드래그=이동 · 클릭=삭제 (${i + 1}번 행)`}
+                    onMouseDown={(e) => startPinDrag(e, i)}
+                  >
+                    {i + 1}
+                  </div>
+                ) : null,
+              )}
 
               {/* 삭제 버튼 */}
               {selPin != null && selPin !== active && pins[selPin] && (
@@ -2565,9 +2552,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
 
               {/* 말풍선 + 입력 */}
               {pins.map((p, i) => {
-                const isActive = i === active;
-                // 수기(표) 핀은 처음엔 점만 — 말풍선 숨김. 점을 드래그해 놓으면 dragged=true 가 되며 펼쳐진다.
-                if (!p.dragged && !isActive) return null;
+                // 지시서에 배치된(dragged) 핀만 말풍선 표시. 명세서 번호를 끌어다 놓으면 dragged=true 가 된다.
+                if (!p.dragged) return null;
                 // 입력 중에는 현재 필드명만 안내. 끝나면 2줄: (위) 품목 규격, (아래) 단가원 ×수량개 = 합계원.
                 const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
                 const dp = num(p.vals['단가']);
@@ -2588,145 +2574,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 return (
                   <div
                     key={'lbl' + i}
-                    className={'aq-lbl' + (i === selectedPin ? ' sel' : '') + (isActive ? ' active' : '')}
+                    className={'aq-lbl' + (i === selectedPin ? ' sel' : '')}
                     style={lblStyle}
                   >
-                    {/* 말풍선 — 입력 중=현재 필드 안내 / 완료=2줄(품목·규격 / 단가·수량·합계). 드래그=이동, 더블클릭=재입력. */}
+                    {/* 말풍선 — 읽기 전용. 내용 수정은 오른쪽 명세서 칸에서(입력칸이 두 곳이면 헷갈려서).
+                        2줄: (위) 품목 규격, (아래) 단가원 ×수량개 = 합계원. 드래그=이동. */}
                     <div
-                      className={'aq-pintag' + (isActive || hasContent ? '' : ' empty')}
+                      className={'aq-pintag' + (hasContent ? '' : ' empty')}
                       style={{ background: pinColor(i) }}
-                      title="드래그=이동 · 더블클릭=처음부터 입력/수정"
+                      title="드래그=이동 · 내용 수정은 오른쪽 명세서 칸에서"
                       onMouseDown={(e) => startBubbleDrag(e, i)}
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        startEdit(i);
-                      }}
                     >
-                      {isActive ? (
-                        <span className="aq-pin-guide">
-                          {FIELDS[p.fi] ?? ''}
-                          {FIELDS[p.fi] === '수량' && (p.vals['품목'] || '').trim() !== '' && (
-                            <button
-                              type="button"
-                              title="품목에 입력한 글자 수만큼 수량에 넣기"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                commitDraft(String(charCount(p.vals['품목'] || '', 'all')));
-                              }}
-                              style={{
-                                marginLeft: 7,
-                                fontSize: '0.82em',
-                                fontWeight: 700,
-                                background: '#0a9396',
-                                color: '#fff',
-                                border: 'none',
-                                borderRadius: 5,
-                                padding: '1px 7px',
-                                cursor: 'pointer',
-                                verticalAlign: 'middle',
-                                whiteSpace: 'nowrap',
-                              }}
-                            >
-                              글씨갯수만큼 적용
-                            </button>
-                          )}
-                        </span>
-                      ) : hasContent ? (
+                      {hasContent ? (
                         <>
                           {top && <div className="aq-pin-l1">{top}</div>}
                           {priceLine && <div className="aq-pin-l2">{priceLine}</div>}
                         </>
                       ) : (
-                        '✎ 더블클릭하여 입력'
+                        '명세서 칸에 입력'
                       )}
                     </div>
-                    {isActive && (
-                      <>
-                        <div className="aq-inwrap">
-                          <div className="aq-pinrow">
-                            <input
-                              ref={inputRef}
-                              value={draft}
-                              placeholder={`${FIELDS[p.fi] ?? ''} 입력 후 Enter`}
-                              autoComplete="off"
-                              inputMode={FIELDS[p.fi] === '단가' || FIELDS[p.fi] === '수량' ? 'numeric' : undefined}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (FIELDS[p.fi] === '단가') {
-                                  setDraft(formatWon(v));
-                                  return;
-                                }
-                                setDraft(v);
-                                if (FIELDS[p.fi] === '품목코드') {
-                                  const ms = matchCodes(v);
-                                  const dym = didYouMean(v, ms);
-                                  setAcIdx(dym ? ms.indexOf(dym) : -1); // 표준형 변형이면 미리 하이라이트
-                                }
-                              }}
-                              onKeyDown={onInputKey}
-                              onMouseDown={(e) => e.stopPropagation()}
-                            />
-                            <button
-                              className="aq-pinx"
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={closeActive}
-                              title="닫기"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          {/* 품목코드 자동완성 드롭다운 — 입력칸은 고정, 드롭다운만 절대배치로 아래(또는 위)로. */}
-                          {FIELDS[p.fi] === '품목코드' &&
-                            draft.trim() &&
-                            (() => {
-                              const ms = matchCodes(draft);
-                              if (ms.length === 0) return null;
-                              const dym = didYouMean(draft, ms);
-                              return (
-                                <div
-                                  className={'aq-acdrop' + (acAbove ? ' above' : '')}
-                                  ref={acDropRef}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                >
-                                  {dym && acIdx === ms.indexOf(dym) && (
-                                    <div className="aq-achint">
-                                      혹시 <b>{dym}</b>? · Enter 적용 · → 그대로
-                                    </div>
-                                  )}
-                                  <div className="aq-aclist">
-                                    {ms.map((c, j) => (
-                                      <div
-                                        key={c}
-                                        className={'aq-acitem' + (j === acIdx ? ' on' : '')}
-                                        onMouseDown={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          commitDraft(c);
-                                          setAcIdx(-1);
-                                        }}
-                                      >
-                                        {c}
-                                      </div>
-                                    ))}
-                                  </div>
-                                  {ms.length > 5 && <div className="aq-acmore">+{ms.length - 5}개 더 · ↓로 탐색</div>}
-                                </div>
-                              );
-                            })()}
-                        </div>
-                        {FIELDS[p.fi] === '단가' && (
-                          <div className="aq-lkrow">
-                            <button className="aq-lookup" onMouseDown={(e) => e.stopPropagation()} onClick={() => openLookup()}>
-                              🔎 단가 찾아보기
-                            </button>
-                            <button className="aq-lookup calc" onMouseDown={(e) => e.stopPropagation()} onClick={() => runCalc()}>
-                              🧮 계산기
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
                   </div>
                 );
               })}
