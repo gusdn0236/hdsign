@@ -2,9 +2,13 @@ import { useState } from 'react'
 import { formatPrice, acrylBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 
+// 아크릴/포맥스는 가격표는 같지만 품목코드는 구분(아크릴5T / 포맥스5T). 재질 선택으로 코드만 달라진다.
+const ACRYL_MATERIALS = ['아크릴', '포맥스']
+
 export default function AcrylCalc({ prices }) {
     const calc = prices.calculators.acryl
     const { thickness, textType } = calc.axes
+    const [mat, setMat] = useState(ACRYL_MATERIALS[0])
     const [tk, setTk] = useState(thickness[0])
     const [tt, setTt] = useState(textType[0])
     const [height, setHeight] = useState('100')
@@ -21,6 +25,13 @@ export default function AcrylCalc({ prices }) {
             <h2 className="calc-title">{calc.label}</h2>
 
             <div className="calc-form">
+                <label className="calc-field">
+                    <span>재질</span>
+                    <select value={mat} onChange={e => setMat(e.target.value)}>
+                        {ACRYL_MATERIALS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                </label>
+
                 <label className="calc-field">
                     <span>두께</span>
                     <select value={tk} onChange={e => setTk(e.target.value)}>
@@ -57,12 +68,12 @@ export default function AcrylCalc({ prices }) {
             <div className="calc-result">
                 <CalcAction
                     copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                    payload={{ code: `아크릴${tk}`, spec: heightMm ? String(heightMm) : '', qty: qtyN, unit: unitPrice }}
+                    payload={{ code: `${mat}${tk}`, spec: heightMm ? String(heightMm) : '', qty: qtyN, unit: unitPrice }}
                 />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null
-                        ? `아크릴 ${tt} ${tk} ${heightMm}mm — ${formatPrice(unitPrice)} × ${qtyN}개`
+                        ? `${mat} ${tt} ${tk} ${heightMm}mm — ${formatPrice(unitPrice)} × ${qtyN}개`
                         : (heightMm > 900
                             ? '900mm 까지만 등록되어 있습니다'
                             : (Number.isFinite(heightMm) && heightMm > 0

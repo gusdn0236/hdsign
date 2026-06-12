@@ -2,6 +2,9 @@ import { useState, useMemo } from 'react'
 import { formatPrice, channelSizes, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 
+// 품목코드 — 대부분 종류 라벨 그대로. 단 후광 영문/한글은 이지폼에서 '갈바후광' 한 코드로 많이 쓰임.
+const CH_CODE_OVERRIDE = { galvaBackEng: '갈바후광', galvaBackKor: '갈바후광' }
+
 export default function ChannelCalc({ prices }) {
     const calc = prices.calculators.channel
     const sizes = useMemo(() => channelSizes(calc.sizeAxis), [calc.sizeAxis])
@@ -12,6 +15,7 @@ export default function ChannelCalc({ prices }) {
 
     const qtyN = parseInt(qty, 10)
     const type = calc.types.find(t => t.key === typeKey)
+    const code = CH_CODE_OVERRIDE[typeKey] || type?.label || '잔넬'
     const unitPrice = type?.needsLang
         ? type?.pricesByLang?.[lang]?.[String(size)] ?? null
         : type?.prices?.[String(size)] ?? null
@@ -69,7 +73,7 @@ export default function ChannelCalc({ prices }) {
             <ResultBox
                 primary={total}
                 copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                payload={{ code: '잔넬', spec: size ? String(size) : '', qty: qtyN, unit: unitPrice }}
+                payload={{ code, spec: size ? String(size) : '', qty: qtyN, unit: unitPrice }}
                 breakdown={
                     unitPrice !== null && total !== null
                         ? `${type.label} ${size}mm (${formatPrice(unitPrice)}) × ${qtyN}개`

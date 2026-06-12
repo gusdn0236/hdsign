@@ -100,7 +100,7 @@ export default function GoldSilverCalc({ prices }) {
             <div className="calc-result">
                 <CalcAction
                     copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                    payload={{ code: `${matLabel || '금은경'}${tk}`, spec: heightMm ? String(heightMm) : '', qty: qtyN, unit: unitPrice }}
+                    payload={{ code: `${matLabel || '금경'}아크릴${tk}`, spec: heightMm ? String(heightMm) : '', qty: qtyN, unit: unitPrice }}
                 />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
