@@ -8,11 +8,13 @@ import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 자동견적 가격예측/근거 서빙이 회사 기밀 학습자산({@code priced_index.json}, 과거 명세서
@@ -45,9 +47,52 @@ public class AutoQuoteDataSource {
 
     private final S3Client s3Client;
 
+    /** 존재여부 캐시 — 사진 유무를 다건 확인할 때(단가찾아보기 사진필터) 반복 헤드요청을 피한다.
+     *  자산은 인덱스 수명 동안 거의 안 바뀌므로 캐시가 안전(새 자산은 앱 재기동 시 반영). */
+    private final ConcurrentHashMap<String, Boolean> existsCache = new ConcurrentHashMap<>();
+
     @Autowired
     public AutoQuoteDataSource(@Autowired(required = false) S3Client s3Client) {
         this.s3Client = s3Client;
+    }
+
+    /**
+     * 자산 존재 여부만 싸게 확인(바이트 다운로드/인코딩 없이). 파일시스템은 {@code isReadable},
+     * R2 는 {@code headObject}. 결과는 캐시한다 — 사진 유무 필터처럼 수십~수백 건을 빠르게 거를 때 사용.
+     */
+    public boolean exists(String name) {
+        if (name == null || name.isBlank() || name.contains("/") || name.contains("\\")
+                || name.contains("..")) {
+            return false;
+        }
+        Boolean cached = existsCache.get(name);
+        if (cached != null) {
+            return cached;
+        }
+        boolean ok = existsFilesystem(name) || existsR2(name);
+        existsCache.put(name, ok);
+        return ok;
+    }
+
+    private boolean existsFilesystem(String name) {
+        if (dataDir == null || dataDir.isBlank()) {
+            return false;
+        }
+        Path p = Paths.get(dataDir, name).toAbsolutePath().normalize();
+        return Files.isReadable(p) && !Files.isDirectory(p);
+    }
+
+    private boolean existsR2(String name) {
+        if (s3Client == null || bucket == null || bucket.isBlank()) {
+            return false;
+        }
+        String prefix = (r2Prefix == null) ? "" : r2Prefix;
+        try {
+            s3Client.headObject(HeadObjectRequest.builder().bucket(bucket).key(prefix + name).build());
+            return true;
+        } catch (SdkException e) {
+            return false; // NoSuchKey·자격증명 누락 등 — 존재 안 함으로 처리(비밀 미노출).
+        }
     }
 
     /**

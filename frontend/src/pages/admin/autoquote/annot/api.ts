@@ -35,6 +35,7 @@ export interface Prediction {
   score: number;
   reason: string;
   date?: string; // 후보(과거 명세서)의 날짜 'YYYY.MM.DD'
+  photo_available?: boolean; // 이 후보에 매칭된 작업지시서 사진이 있는지(백엔드 싼 존재확인). 사진필터용.
 }
 
 /** 가격 예측 — 단일/다중 품목. 미프로비저닝(503)이면 null. */

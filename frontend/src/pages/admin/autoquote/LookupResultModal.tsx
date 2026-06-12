@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Evidence } from './annot/api';
 
 /**
@@ -44,6 +44,8 @@ interface Props {
   userSpec: string; // 사용자가 입력한 규격(예상 가격 안내문에 표시)
   actionLabel: string; // 기본 버튼 라벨(복사/적용)
   onAction: (price: number) => void;
+  totalFound?: number; // 사진 있는 비슷한 명세서 총 건수("총 N건 찾았습니다"). 표시는 30건만.
+  confirmBeforeAction?: boolean; // true면 행/버튼 클릭 시 "이 가격으로 결정할까요?" 한번 확인 후 적용.
   onPrev: () => void;
   onNext: () => void;
   onClose: () => void;
@@ -86,6 +88,8 @@ export default function LookupResultModal({
   userSpec,
   actionLabel,
   onAction,
+  totalFound,
+  confirmBeforeAction,
   onPrev,
   onNext,
   onClose,
@@ -107,11 +111,35 @@ export default function LookupResultModal({
   const working = view === 'working';
   const hasBundle = !!setBi && (bundleCount ?? 0) > 1; // 형제 1+ 있을 때만 묶음 페이저
 
+  // 가격 적용 확인 — confirmBeforeAction 일 때 행/버튼 클릭이 바로 적용되지 않고 여기에 담긴다.
+  // "이 가격으로 결정할까요?" 확인 바가 뜨고, Enter 또는 [적용] 클릭으로 onAction 호출.
+  const [pending, setPending] = useState<number | null>(null);
+  const ask = (price: number) => {
+    if (confirmBeforeAction) setPending(price);
+    else onAction(price);
+  };
+  // 후보를 넘기거나 보기를 토글하면 확인 대기를 취소(엉뚱한 행에 적용 방지).
+  useEffect(() => {
+    setPending(null);
+  }, [ri, view]);
+
   // 키보드 ← → 후보 넘기기, Esc 닫기 (입력칸 포커스 중이면 무시). 작성중 보기에선 후보 넘기기 끔.
+  // 확인 대기 중이면: Enter=적용, Esc=취소(모달은 안 닫음), ←→는 무시.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      if (pending != null) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onAction(pending);
+          setPending(null);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          setPending(null);
+        }
+        return;
+      }
       if (e.key === 'Escape') {
         onClose();
         return;
@@ -127,7 +155,7 @@ export default function LookupResultModal({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onPrev, onNext, onClose, working]);
+  }, [onPrev, onNext, onClose, working, pending, onAction]);
 
   const R = refs[ri];
   // 묶음 형제를 보는 중이면 그 명세서로 스왑(사진열·grid 둘 다). 후보(bi=0)면 R.evidence 와 동일.
@@ -174,6 +202,12 @@ export default function LookupResultModal({
             </button>
           </span>
         </div>
+        {!working && typeof totalFound === 'number' && (
+          <div className="lk-foundcnt">
+            비슷한 명세서를 총 <b>{totalFound}</b>건 찾았습니다.
+            {totalFound > refs.length ? ` (최신 ${refs.length}건 표시)` : ''}
+          </div>
+        )}
         {!working && extras}
         {working ? (
           <div className="aq-mbody">
@@ -210,7 +244,7 @@ export default function LookupResultModal({
                 </div>
               ) : null}
               {!onSibling && (
-                <button className="aq-btn sh lk-action" onClick={() => onAction(R.price)}>
+                <button className="aq-btn sh lk-action" onClick={() => ask(R.price)}>
                   {actionLabel}
                 </button>
               )}
@@ -223,24 +257,28 @@ export default function LookupResultModal({
                       <th>규격</th>
                       <th>수량</th>
                       <th className="p">단가</th>
+                      <th className="p">공급가액</th>
                     </tr>
                   </thead>
                   <tbody>
                     {grid.map((g, j) => {
                       const price = num(g.unit_price);
+                      const q = num(g.qty) ?? 1;
+                      const supply = price != null ? price * q : null; // 공급가액 = 단가 × 수량
                       const hit = price != null && price === Math.round(Number(R.price));
                       const clk = price != null && price > 0;
                       return (
                         <tr
                           key={j}
                           className={(hit ? 'hit ' : '') + (clk ? 'click' : '')}
-                          onClick={clk ? () => onAction(price as number) : undefined}
+                          onClick={clk ? () => ask(price as number) : undefined}
                         >
                           <td>{g.item_code || ''}</td>
                           <td>{g.item || ''}</td>
                           <td>{g.spec || ''}</td>
                           <td>{g.qty ?? ''}</td>
                           <td className="p">{price != null ? price.toLocaleString() : (g.unit_price ?? '')}</td>
+                          <td className="p">{supply != null ? supply.toLocaleString() : ''}</td>
                         </tr>
                       );
                     })}
@@ -264,6 +302,29 @@ export default function LookupResultModal({
             </div>
           )}
           </>
+        )}
+        {pending != null && (
+          <div className="lk-confirm" onClick={(e) => e.target === e.currentTarget && setPending(null)}>
+            <div className="lk-confirm-box">
+              <div className="lk-confirm-q">
+                이 가격 <b>{pending.toLocaleString()}원</b> 으로 결정할까요?
+              </div>
+              <div className="lk-confirm-btns">
+                <button
+                  className="lk-confirm-ok"
+                  onClick={() => {
+                    onAction(pending);
+                    setPending(null);
+                  }}
+                >
+                  적용 (Enter)
+                </button>
+                <button className="lk-confirm-cancel" onClick={() => setPending(null)}>
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

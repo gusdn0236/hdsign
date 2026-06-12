@@ -140,6 +140,24 @@ public class InvoiceEvidenceService {
     }
 
     /**
+     * 메인 작업지시서 사진({@code <stem>_<idx>.{jpg|jpeg|png}}) 존재 여부만 싸게 확인 —
+     * base64 인코딩/다운로드 없이 {@link AutoQuoteDataSource#exists} 로. 단가찾아보기 사진필터용.
+     */
+    public boolean hasPhoto(String file, Object invoiceIdx) {
+        if (file == null || invoiceIdx == null) {
+            return false;
+        }
+        String stem = file.endsWith(".json") ? file.substring(0, file.length() - ".json".length()) : file;
+        String base = stem + "_" + invoiceIdx;
+        for (String ext : PHOTO_EXTS) {
+            if (dataSource.exists(base + "." + ext)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 작업지시서 사진들 조회: 메인 {@code <stem>_<idx>.{ext}} + 보조 {@code <stem>_<idx>_2.{ext}}, _3..
      * (many-to-many — 한 명세서에 여러 지시서). 메인이 없으면 빈 리스트(사진 없음).
      */

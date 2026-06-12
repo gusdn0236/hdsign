@@ -36,13 +36,15 @@ public class PricePredictor {
     private static final double JACCARD_MIN = 0.34;
 
     private final AutoQuoteDataSource dataSource;
+    private final InvoiceEvidenceService evidenceService;
     private final ObjectMapper json = new ObjectMapper();
 
     /** 한 번 성공적으로 로드된 인덱스를 캐시(코퍼스 캐시와 동일 정책 — 실패는 캐시하지 않음). */
     private final AtomicReference<Index> indexRef = new AtomicReference<>();
 
-    public PricePredictor(AutoQuoteDataSource dataSource) {
+    public PricePredictor(AutoQuoteDataSource dataSource, InvoiceEvidenceService evidenceService) {
         this.dataSource = dataSource;
+        this.evidenceService = evidenceService;
     }
 
     // ---- 입력/출력 계약 -----------------------------------------------------
@@ -69,7 +71,10 @@ public class PricePredictor {
             @JsonProperty("src") String src,        // "이력" | "전체"
             @JsonProperty("score") Double score,
             @JsonProperty("reason") String reason,
-            @JsonProperty("date") String date) {
+            @JsonProperty("date") String date,
+            // 이 후보(과거 명세서)에 매칭된 작업지시서 사진이 있는지. 단가찾아보기에서 사진 있는 것만
+            // 보여주고 최신순 정렬하는 데 쓴다. lookup 경로에서만 채우며 predict 경로는 false.
+            @JsonProperty("photo_available") boolean photoAvailable) {
     }
 
     /** 유사 품목코드 추천 1건 — 표기(code) + 코퍼스 내 건수(count). */
@@ -97,7 +102,9 @@ public class PricePredictor {
         if (idx == null) {
             return null;
         }
-        int cap = Math.max(1, Math.min(limit, 50));
+        // 단가찾아보기는 사진 있는 것만 추려 최신순으로 보여주므로, 사진 없는 후보까지 감안해 넉넉히
+        // 모은다(프론트가 사진필터 후 30건만 표시). 사진 유무는 캐시된 싼 존재확인이라 부담 적다.
+        int cap = Math.max(1, Math.min(limit, 100));
         String specBlob = specBlob(it);
         int[] qd = sizeDims(it.text(), specBlob); // 쿼리 가로·세로(높이형은 (h,h)). null=규격 없음
         String qtype = sizeType(it.text(), specBlob); // "height"(h:100/100) | "area"(가로*세로) | "none"
@@ -258,7 +265,8 @@ public class PricePredictor {
         double prox = dimProximity(qd, r.dims);
         String reason = buildLookupReason(r, src, prox);
         // 과거 실거래 단가(r.up)를 그대로 — 사용자가 사이즈별 실값을 비교해 고른다(스케일 안 함).
-        return new Prediction(safe(r.item), n(r.spec), it.qty(), r.up, r.idx, r.file, src, round3(prox), reason, r.date());
+        boolean hasPhoto = evidenceService.hasPhoto(r.file, r.idx); // 싼 존재확인(캐시) — 사진필터/정렬용.
+        return new Prediction(safe(r.item), n(r.spec), it.qty(), r.up, r.idx, r.file, src, round3(prox), reason, r.date(), hasPhoto);
     }
 
     private String buildLookupReason(Line r, String src, double prox) {
@@ -399,7 +407,7 @@ public class PricePredictor {
         }
         if (best == null) {
             return new Prediction(text, it.size(), it.qty(), null, null, null, null, null,
-                    "매칭되는 과거 단가를 찾지 못했습니다(동일품목 자카드 0.34 미만).", null);
+                    "매칭되는 과거 단가를 찾지 못했습니다(동일품목 자카드 0.34 미만).", null, false);
         }
 
         Line r = best.line;
@@ -421,7 +429,7 @@ public class PricePredictor {
 
         String reason = buildReason(src, r, basePrice, factor, price, scaled, best.score, qsz);
         return new Prediction(text, it.size(), it.qty(), price, r.idx, r.file, src,
-                round3(best.score), reason, r.date());
+                round3(best.score), reason, r.date(), false);
     }
 
     private String buildReason(String src, Line r, int basePrice, double factor, int price,

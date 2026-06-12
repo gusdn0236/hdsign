@@ -344,7 +344,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [saving, setSaving] = useState(false);
 
   const [dialog, setDialog] = useState<DialogState | null>(null);
-  const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string } | null>(null);
+  const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string; total: number } | null>(null);
+  // 단가찾아보기를 연 '작성 중이던 행'(우측 명세서 인덱스). 작성중보기에서 그 행을 노란색으로 표시.
+  const [lkTargetRow, setLkTargetRow] = useState<number | null>(null);
   const [lpi, setLpi] = useState(0); // 단가찾아보기 모달 — 현재 후보의 사진 인덱스(다장 갤러리)
   // 단가찾아보기 다중 코드 태그(같은 물건 다른 코드 함께 검색) — 행 코드로 시드, 추가 시 재검색.
   const [lkCodes, setLkCodes] = useState<string[]>([]);
@@ -1407,16 +1409,28 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     try {
       const preds = await lookupPricesMerged(token, client, codes, spec, qty, {
         fallbackText: `${codes[0] || ''} ${item}`.trim(),
-        limit: 50,
+        limit: 100,
       });
       if (preds == null) {
         cdlg('학습 데이터(코퍼스)가 서버에 아직 없습니다. 관리자에게 R2 업로드를 요청하세요.', [{ label: '확인', sec: true }]);
         setStatus('');
         return;
       }
-      // 후보별 근거(과거 지시서 사진 + 명세서 grid)를 병렬로 로드(순차면 N배 느림). 실패는 null.
+      // 1차: 품목코드·품목·사이즈로 분류된 후보 중 '매칭된 사진이 있는' 것만 남긴다.
+      // (백엔드가 싼 존재확인으로 photo_available 을 채워줌. 구버전 백엔드라 전부 undefined 면 필터 생략.)
+      const hasFlag = preds.some((p) => p.photo_available !== undefined);
+      const photoed = hasFlag ? preds.filter((p) => p.photo_available) : preds;
+      // 2차: 사진 있는 명세서들을 '최신순(날짜 내림차순)'으로 정렬.
+      const dnum = (d?: string) => {
+        const m = String(d || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+        return m ? +m[1] * 10000 + +m[2] * 100 + +m[3] : 0;
+      };
+      const sorted = [...photoed].sort((a, b) => dnum(b.date) - dnum(a.date));
+      const total = sorted.length;
+      const top = sorted.slice(0, 30); // 총 N건 중 최신 30건만 표시.
+      // 표시할 30건의 근거(과거 지시서 사진 + 명세서 grid)를 병렬로 로드(순차면 N배 느림). 실패는 null.
       const refs: LookupRef[] = await Promise.all(
-        preds.map(async (pr) => {
+        top.map(async (pr) => {
           let ev: Evidence | null = null;
           try {
             ev = await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
@@ -1439,7 +1453,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
       setLpi(0);
       setLkView('search'); // 새 검색 → 검색결과 보기로 복귀(토글은 이 시점부터 다시 시작)
-      setLookup({ refs, ri: 0, q });
+      setLookup({ refs, ri: 0, q, total });
       setStatus('');
       // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
       const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
@@ -1469,6 +1483,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     const tgt = row != null ? row : active;
     if (tgt == null) return;
     priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행 단가에 적용
+    setLkTargetRow(tgt); // 작성중보기에서 노란색으로 강조할 '작성 중이던 행'
     const p = pins[tgt];
     const code = p?.vals['품목코드'] || '';
     const item = p?.vals['품목'] || '';
@@ -2854,6 +2869,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           userSpec={lkCtxRef.current.spec}
           actionLabel="이 단가 적용 →"
           onAction={applyPrice}
+          totalFound={lookup.total}
+          confirmBeforeAction
+
           onPrev={() => {
             setLpi(0);
             setLookup((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1 } : l));
@@ -2892,7 +2910,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                     const v = p.vals;
                     const u = num(v['단가']);
                     return (
-                      <tr key={i}>
+                      <tr key={i} className={i === lkTargetRow ? 'lk-edit-row' : undefined}>
                         <td>{v['품목코드'] || ''}</td>
                         <td>{v['품목'] || ''}</td>
                         <td>{v['규격'] || ''}</td>
