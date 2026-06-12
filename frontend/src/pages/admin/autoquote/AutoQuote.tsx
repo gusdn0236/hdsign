@@ -314,8 +314,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [pins, setPins] = useState<Pin[]>([]);
   const [active, setActive] = useState<number | null>(null);
   const [selPin, setSelPin] = useState<number | null>(null);
-  // 우측 명세서 표의 동그라미 숫자를 클릭하면 그 행에 삭제 버튼을 띄운다(행 단위 삭제).
-  const [gridSelRow, setGridSelRow] = useState<number | null>(null);
+  // 우측 명세서 표의 동그라미 숫자를 클릭하면 삭제 버튼을 띄운다(행 단위 삭제). 표가 좁아 잘리지 않도록
+  // 화면 좌표(fixed) 포털로 동그라미 옆에 띄운다.
+  const [gridDel, setGridDel] = useState<{ row: number; left: number; top: number } | null>(null);
   // 행 재정렬 드래그 중 시각 피드백 — 출발 행(흐리게)·놓을 대상 행(강조).
   const [dragRow, setDragRow] = useState<number | null>(null);
   const [dragOverRow, setDragOverRow] = useState<number | null>(null);
@@ -990,15 +991,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
 
   // 표 동그라미 삭제버튼이 열린 상태에서 그 숫자/삭제버튼 외 다른 곳을 누르면 닫는다.
   useEffect(() => {
-    if (gridSelRow == null) return undefined;
+    if (gridDel == null) return undefined;
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && t.closest && t.closest('.rnum, .rnum-del')) return;
-      setGridSelRow(null);
+      setGridDel(null);
     };
     window.addEventListener('mousedown', onDown);
     return () => window.removeEventListener('mousedown', onDown);
-  }, [gridSelRow]);
+  }, [gridDel]);
 
   const startStageDrag = (e: React.MouseEvent) => {
     if (!imgSrc) return;
@@ -1176,7 +1177,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     setPins((prev) => prev.filter((_, j) => j !== i)); // 행 제거 + 아래 행이 위로 한 칸씩(빈 행 없이 압축).
     setActive((a) => (a != null && a > i ? a - 1 : a === i ? null : a));
     setSelPin(null);
-    setGridSelRow(null);
+    setGridDel(null);
   };
 
   // 표의 동그라미 숫자를 다른 숫자 칸으로 끌어다 놓으면 두 행을 맞바꾼다(예: 1번을 3번 칸에 → 3,2,1).
@@ -1189,7 +1190,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       next[b] = t;
       return next;
     });
-    setGridSelRow(null);
+    setGridDel(null);
   };
 
   // 말풍선 더블클릭 → 품목코드(fi=0)부터 입력/수정. Enter 로 다음 필드 진행.
@@ -2291,7 +2292,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 다음 항목 행 하이라이트(글자수=3 · 말풍선=2 공통). 핀 편집 중(active)이나 우측 표를 수기
   // 편집 중(gridEditing)이면 끈다 — 표에서 n번 행 작성 중에 n+1 행이 미리 칠해지던 문제 방지.
   const showTgtRow = mode === 'ocr' && active === null && !gridEditing;
-  const rows = Math.max(ROWS, pins.length + (showTgtRow ? 1 : 0));
+  // 기본 10줄. 마지막 줄에 입력을 시작하면(=pins.length 가 늘면) 항상 한 줄 더 보여줘 계속 이어 쓰게 한다.
+  const rows = Math.max(ROWS, pins.length + 1);
   // 박스·연필·커서·grid 행 하이라이트 색 = 다음 말풍선 색. "지금 칠하는 게 N번으로 들어가겠구나".
   const ocrColor = pinColor(ocrTarget);
   ocrColorRef.current = ocrColor;
@@ -2790,30 +2792,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                               e.dataTransfer.setData('application/x-aq-pin', String(i));
                               e.dataTransfer.effectAllowed = 'move';
                               setDragRow(i);
+                              setGridDel(null);
                             }}
                             onDragEnd={() => {
                               setDragRow(null);
                               setDragOverRow(null);
                             }}
-                            // 클릭(드래그 아님)하면 그 행 삭제 버튼 토글. 드래그는 말풍선 생성/행 재정렬.
-                            onClick={() => p && setGridSelRow((s) => (s === i ? null : i))}
+                            // 클릭(드래그 아님)하면 그 행 삭제 버튼 토글(동그라미 화면좌표 기준 포털로 띄움).
+                            onClick={(e) => {
+                              if (!p) return;
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setGridDel((g) => (g && g.row === i ? null : { row: i, left: r.right + 6, top: r.top + r.height / 2 }));
+                            }}
                             title={p ? '클릭=삭제 · 드래그→지시서=말풍선 · 드래그→다른 번호=행 바꾸기' : undefined}
                           >
                             {i + 1}
                           </span>
-                        )}
-                        {gridSelRow === i && p && (
-                          <button
-                            type="button"
-                            className="rnum-del"
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deletePin(i);
-                            }}
-                          >
-                            🗑 삭제
-                          </button>
                         )}
                       </td>
                       <td>
@@ -2957,6 +2951,24 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               🔎 단가 찾아보기
             </button>
           </div>,
+          document.body,
+        )}
+
+      {/* 표 동그라미 행 삭제 버튼 — 좁은 칸에 잘리지 않도록 화면좌표(fixed) 포털로 동그라미 옆에. */}
+      {gridDel &&
+        createPortal(
+          <button
+            type="button"
+            className="rnum-del"
+            style={{ position: 'fixed', left: gridDel.left, top: gridDel.top, transform: 'translateY(-50%)', zIndex: 3200 }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              deletePin(gridDel.row);
+            }}
+          >
+            🗑 삭제
+          </button>,
           document.body,
         )}
 

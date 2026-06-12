@@ -781,26 +781,21 @@
   vertical-align: middle;
   cursor: pointer;
 }
-/* 동그라미 클릭 시 뜨는 행 삭제 버튼 — 번호 칸 오른쪽에 떠서 다음 칸 위로 살짝 겹친다. */
-.aq-tbl .rnum-del {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 5;
+/* 동그라미 클릭 시 뜨는 행 삭제 버튼 — 화면좌표(fixed) 포털로 동그라미 옆에 띄운다(칸 잘림 방지). */
+.rnum-del {
   white-space: nowrap;
   border: none;
   border-radius: 6px;
   background: #dc2626;
   color: #fff;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 3px 9px;
+  padding: 5px 11px;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
 }
-.aq-tbl .rnum-del:hover {
+.rnum-del:hover {
   background: #b91c1c;
 }
 .aq-tbl tr.cur td.rn .rnum {
