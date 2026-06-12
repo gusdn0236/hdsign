@@ -263,8 +263,13 @@ public class AdminOrderController {
     // 작업중/작업완료 공용. 명세서 본문(grid 등)은 JSON 그대로 보관한다.
 
     // 명세서 저장(upsert) — 주문당 1건. body = 명세서 JSON(grid + 메타) 전체.
+    // editorName(쿼리) = 이 PC 작성자 이름. 매 저장마다 덮어써, 마지막 작성자가 배지에 뜬다.
     @PutMapping("/{id}/estimate")
-    public ResponseEntity<?> putEstimate(@PathVariable Long id, @RequestBody(required = false) JsonNode body) {
+    public ResponseEntity<?> putEstimate(
+            @PathVariable Long id,
+            @RequestParam(required = false) String editorName,
+            @RequestBody(required = false) JsonNode body
+    ) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
         if (body == null || body.isNull()) {
@@ -274,7 +279,16 @@ public class AdminOrderController {
                 .orElseGet(() -> AutoQuoteEstimate.builder().orderId(order.getId()).build());
         est.setGridJson(body.toString());
         est.setSavedAt(LocalDateTime.now());
+        est.setEditorName(normalizeEditorName(editorName));
         return ResponseEntity.ok(estimateResponse(estimateRepository.save(est)));
+    }
+
+    /** 작성자 표시이름 정리 — 공백 trim, 비면 null, 최대 30자. */
+    private static String normalizeEditorName(String raw) {
+        if (raw == null) return null;
+        String t = raw.trim();
+        if (t.isEmpty()) return null;
+        return t.length() > 30 ? t.substring(0, 30) : t;
     }
 
     // 명세서 조회 — 없으면 404(프론트는 "신규 작성"으로 처리).
@@ -289,8 +303,12 @@ public class AdminOrderController {
     }
 
     // 이지폼 업로드 완료 표시(slice-14 매크로가 호출) → "이지폼" 배지. 명세서 선행 필수.
+    // editorName(쿼리) = 이지폼으로 옮겨적은 사람. 최종 배지에 이 이름이 뜬다(임시저장자와 달라도 됨).
     @PostMapping("/{id}/estimate/easyform-uploaded")
-    public ResponseEntity<?> markEasyformUploaded(@PathVariable Long id) {
+    public ResponseEntity<?> markEasyformUploaded(
+            @PathVariable Long id,
+            @RequestParam(required = false) String editorName
+    ) {
         AutoQuoteEstimate est = estimateRepository.findByOrderId(id).orElse(null);
         if (est == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -298,6 +316,8 @@ public class AdminOrderController {
                             "message", "먼저 명세서를 저장해야 합니다."));
         }
         est.setEasyformUploadedAt(LocalDateTime.now());
+        String normalized = normalizeEditorName(editorName);
+        if (normalized != null) est.setEditorName(normalized); // 비어오면 직전(임시저장자) 유지
         return ResponseEntity.ok(estimateResponse(estimateRepository.save(est)));
     }
 
@@ -309,6 +329,7 @@ public class AdminOrderController {
         body.put("savedAt", est.getSavedAt() != null ? est.getSavedAt().toString() : null);
         body.put("easyformUploadedAt",
                 est.getEasyformUploadedAt() != null ? est.getEasyformUploadedAt().toString() : null);
+        body.put("editorName", est.getEditorName());
         try {
             body.put("estimate", new ObjectMapper().readTree(est.getGridJson()));
         } catch (Exception e) {

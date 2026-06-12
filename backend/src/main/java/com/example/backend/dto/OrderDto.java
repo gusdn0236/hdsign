@@ -50,6 +50,8 @@ public class OrderDto {
         private Boolean hasEstimate;
         // 자동견적 — 명세서가 이지폼에 업로드된 시각(배지 "이지폼"). 미업로드면 null.
         private LocalDateTime easyformUploadedAt;
+        // 자동견적 — 마지막으로 명세서를 처리(임시저장/이지폼)한 작성자 표시이름. 배지에 "ㅇㅇㅇ님: ..." 로 노출.
+        private String estimateEditorName;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
@@ -147,6 +149,7 @@ public class OrderDto {
                 .departmentSlots(splitCsv(order.getDepartmentSlots()))
                 .hasEstimate(estimate != null)
                 .easyformUploadedAt(estimate != null ? estimate.getEasyformUploadedAt() : null)
+                .estimateEditorName(estimate != null ? estimate.getEditorName() : null)
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .deletedAt(order.getDeletedAt())

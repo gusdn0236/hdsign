@@ -49,6 +49,14 @@ public class AutoQuoteEstimate {
     @Column(name = "easyform_uploaded_at")
     private LocalDateTime easyformUploadedAt;
 
+    /**
+     * 마지막으로 이 명세서를 처리(임시저장 또는 이지폼 입력)한 작성자 표시이름. 명세서 작성 잠금과
+     * 같은 PC별 이름(각 PC localStorage)을 클라이언트가 보낸다. 저장·이지폼 매 단계에서 덮어써,
+     * "마지막에 이지폼으로 옮겨적은 사람" 이름이 최종으로 카드 배지에 뜨게 한다.
+     */
+    @Column(name = "editor_name", length = 100)
+    private String editorName;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

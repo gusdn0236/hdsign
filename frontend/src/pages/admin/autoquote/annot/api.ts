@@ -322,6 +322,17 @@ export async function getEstimate(token: string | null | undefined, orderId: num
   return res.json();
 }
 
+// 명세서 작성자 표시이름 — 명세서 작성 잠금과 같은 PC별 이름(각 PC localStorage). 저장/이지폼
+// 요청에 실어 보내, 카드 배지에 "ㅇㅇㅇ님: 임시저장 / 명세서 완료" 로 마지막 작성자를 노출한다.
+function editorNameQuery(): string {
+  try {
+    const n = (localStorage.getItem('hdsign_statement_editor_name') || '').trim();
+    return n ? `?editorName=${encodeURIComponent(n)}` : '';
+  } catch {
+    return '';
+  }
+}
+
 /** 명세서 저장(upsert). doc = {grid:[...], ...}. */
 export async function putEstimate(
   token: string | null | undefined,
@@ -329,11 +340,14 @@ export async function putEstimate(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   doc: any,
 ): Promise<EstimateDoc> {
-  const res = await fetch(`${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate`, {
-    method: 'PUT',
-    headers: authHeaders(token, true),
-    body: JSON.stringify(doc),
-  });
+  const res = await fetch(
+    `${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate${editorNameQuery()}`,
+    {
+      method: 'PUT',
+      headers: authHeaders(token, true),
+      body: JSON.stringify(doc),
+    },
+  );
   if (!res.ok) throw new Error(`명세서 저장 실패 (${res.status})`);
   return res.json();
 }
@@ -343,7 +357,7 @@ export async function markEasyformUploaded(
   orderId: number | string,
 ): Promise<EstimateDoc> {
   const res = await fetch(
-    `${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate/easyform-uploaded`,
+    `${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate/easyform-uploaded${editorNameQuery()}`,
     { method: 'POST', headers: authHeaders(token) },
   );
   if (!res.ok) throw new Error(`이지폼 표시 실패 (${res.status})`);

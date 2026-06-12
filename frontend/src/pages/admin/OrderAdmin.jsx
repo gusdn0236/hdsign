@@ -240,17 +240,24 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const deviceIdRef = useRef(null);
   if (!deviceIdRef.current) deviceIdRef.current = getOrCreateDeviceId();
   // 저장 성공 시 해당 주문의 "명세서" 배지를 즉시 점등(재요청 없이 목록/모달 동기).
+  // 작성자 = 이 PC 이름 — 배지에 "ㅇㅇㅇ님: 임시저장" 으로 바로 반영(서버 값과 동일).
   const markEstimateSaved = useCallback((id) => {
-    setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
-    setTrashOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
-  }, []);
-  // 이지폼 입력(확정) 시 — '명세서작성완료' 배지를 작업중·작업완료 목록 카드에 즉시 점등(재요청 없이).
-  const markEasyformDone = useCallback((id) => {
-    const now = new Date().toISOString();
-    const patch = (o) => (o.id === id ? { ...o, hasEstimate: true, easyformUploadedAt: now } : o);
+    const patch = (o) =>
+      o.id === id ? { ...o, hasEstimate: true, estimateEditorName: editorName || o.estimateEditorName } : o;
     setOrders((prev) => prev.map(patch));
     setTrashOrders((prev) => prev.map(patch));
-  }, []);
+  }, [editorName]);
+  // 이지폼 입력(확정) 시 — '명세서작성완료' 배지를 작업중·작업완료 목록 카드에 즉시 점등(재요청 없이).
+  // 이지폼으로 옮겨적은 사람(=이 PC) 이름이 최종 작성자로 뜬다.
+  const markEasyformDone = useCallback((id) => {
+    const now = new Date().toISOString();
+    const patch = (o) =>
+      o.id === id
+        ? { ...o, hasEstimate: true, easyformUploadedAt: now, estimateEditorName: editorName || o.estimateEditorName }
+        : o;
+    setOrders((prev) => prev.map(patch));
+    setTrashOrders((prev) => prev.map(patch));
+  }, [editorName]);
   // 명세서작성 모달이 열린 동안 배경(/admin/orders) 스크롤 잠금.
   useEffect(() => {
     if (estimateOrderId == null) return undefined;
@@ -1526,6 +1533,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const easyformUploaded = !!order.easyformUploadedAt;
     // 명세서 작성 잠금 — 다른 사람이 지금 이 작업의 명세서를 작성 중이면 표시이름, 아니면 null.
     const editingHolder = statementLockHolder(order);
+    // 명세서를 마지막으로 처리(임시저장/이지폼)한 작성자 이름 — 배지에 "ㅇㅇㅇ님: ..." 로 노출.
+    const estimateAuthor = (order.estimateEditorName || "").trim();
     const worksheetChangeNote = (order.worksheetChangeNote || "").trim();
     // 변경 태그 — 지시서가 웹에 두 번째 이상 재반영된 적 있으면(worksheetRevisedAt) 표시.
     // 한 번 찍히면 재인쇄·열람으로도 안 사라지는 영구 신호. 옛 주문(타임스탬프 없이
@@ -1596,11 +1605,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               {hasWorksheetChange && (
                 <span className="row-badge badge-worksheet" title={worksheetChangeTitle}>변경</span>
               )}
-              {/* 임시저장(estimate 저장됨) → 이지폼 자동기입 완료(명세서작성완료) 로 진행. 완료면 완료만 표시. */}
+              {/* 임시저장(estimate 저장됨) → 이지폼 자동기입 완료(명세서작성완료) 로 진행. 완료면 완료만 표시.
+                  작성자 이름이 있으면 "ㅇㅇㅇ님: 임시저장 / 명세서 완료" 로 누가 했는지 함께 보여준다. */}
               {easyformUploaded ? (
-                <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">명세서작성완료</span>
+                <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">
+                  {estimateAuthor ? `${estimateAuthor}님: 명세서 완료` : "명세서작성완료"}
+                </span>
               ) : hasEstimate ? (
-                <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">명세서 임시저장</span>
+                <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">
+                  {estimateAuthor ? `${estimateAuthor}님: 임시저장` : "명세서 임시저장"}
+                </span>
               ) : null}
             </div>
           )}
@@ -2350,15 +2364,22 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 {selectedOrder.title || requestLabel(selectedOrder.requestType)}
               </h3>
 
-              {(selectedOrder.hasEstimate || selectedOrder.easyformUploadedAt) && (
-                <div className="modal-badges">
-                  {selectedOrder.easyformUploadedAt ? (
-                    <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">명세서작성완료</span>
-                  ) : selectedOrder.hasEstimate ? (
-                    <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">명세서 임시저장</span>
-                  ) : null}
-                </div>
-              )}
+              {(selectedOrder.hasEstimate || selectedOrder.easyformUploadedAt) && (() => {
+                const author = (selectedOrder.estimateEditorName || "").trim();
+                return (
+                  <div className="modal-badges">
+                    {selectedOrder.easyformUploadedAt ? (
+                      <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">
+                        {author ? `${author}님: 명세서 완료` : "명세서작성완료"}
+                      </span>
+                    ) : selectedOrder.hasEstimate ? (
+                      <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">
+                        {author ? `${author}님: 임시저장` : "명세서 임시저장"}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })()}
 
               {(hasPrevOrder || hasNextOrder) && !reviewSession && (
                 <div className="modal-order-nav-row">
