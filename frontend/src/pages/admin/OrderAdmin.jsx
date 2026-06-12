@@ -1698,15 +1698,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 fileName={() => safeFileName(`${order.title || order.orderNumber || "지시서"}_지시서`, "jpg")}
               />
             )}
-            <button
-              type="button"
-              className={`order-card-tool action-estimate${order.hasEstimate ? " has" : ""}`}
-              onClick={() => openEstimate(order)}
-              title={order.hasEstimate ? "명세서 수정 (작성됨)" : "명세서작성"}
-            >
-              <span aria-hidden="true">📝</span>
-              <span>명세서</span>
-            </button>
+            {/* 명세서작성은 '명세서 탭'에서만 — 작업중·작업완료 탭 카드에는 버튼을 두지 않는다.
+                ("ㅇㅇㅇ님 작성중" 잠금 흐름도 명세서 탭으로 분리하기 위함.) */}
+            {isStatementView && (
+              <button
+                type="button"
+                className={`order-card-tool action-estimate${order.hasEstimate ? " has" : ""}`}
+                onClick={() => openEstimate(order)}
+                title={order.hasEstimate ? "명세서 수정 (작성됨)" : "명세서작성"}
+              >
+                <span aria-hidden="true">📝</span>
+                <span>명세서</span>
+              </button>
+            )}
             </div>
             {/* 작업완료(휴지통) 카드는 복원/영구삭제를 카드에 안 띄운다 — 카드 클릭 시 상세모달에서 처리.
                 카드엔 작업중 탭과 똑같이 도구 4개만 노출. */}
@@ -2429,16 +2433,18 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   </span>
                 )}
                 <div className="modal-status-actions">
-                  {/* 자동견적 명세서작성 — 작업중/작업완료 공용(상태 무관). 별도 탭이 아니라 모달로 띄운다.
-                      이미 명세서가 있으면 "명세서 수정". */}
-                  <button
-                    type="button"
-                    className="next-status-btn action-estimate"
-                    onClick={() => openEstimate(selectedOrder)}
-                    title="이 지시서로 자동견적 명세서를 작성/수정합니다"
-                  >
-                    {selectedOrder.hasEstimate ? "명세서 수정" : "명세서작성"}
-                  </button>
+                  {/* 자동견적 명세서작성 — '명세서 탭'에서 연 상세모달에서만 노출. 작업중·작업완료 탭에서
+                      카드를 열면 이 버튼이 없다(명세서 작성/잠금 흐름을 명세서 탭으로 분리). */}
+                  {isStatementView && (
+                    <button
+                      type="button"
+                      className="next-status-btn action-estimate"
+                      onClick={() => openEstimate(selectedOrder)}
+                      title="이 지시서로 자동견적 명세서를 작성/수정합니다"
+                    >
+                      {selectedOrder.hasEstimate ? "명세서 수정" : "명세서작성"}
+                    </button>
+                  )}
                   {selectedOrder.deletedAt ? (
                     <>
                       <button
