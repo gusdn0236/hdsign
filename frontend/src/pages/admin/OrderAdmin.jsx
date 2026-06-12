@@ -12,6 +12,28 @@ import "./OrderAdmin.css";
 const AutoQuote = lazy(() => import("./autoquote/AutoQuote.tsx"));
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
+
+// 명세서 작성 잠금 — 관리자 계정을 여러 PC 가 공유 로그인하므로, "누가 작성중"을 PC 단위로 구분한다.
+// 표시이름과 소유자식별(기기ID) 모두 이 PC 의 localStorage 에만 둔다(서버 공유 계정을 안 건드림).
+const EDITOR_NAME_KEY = "hdsign_statement_editor_name";
+const DEVICE_ID_KEY = "hdsign_statement_device_id";
+function loadEditorName() {
+  try { return localStorage.getItem(EDITOR_NAME_KEY) || ""; } catch { return ""; }
+}
+function getOrCreateDeviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_KEY);
+    if (!id) {
+      id = (crypto.randomUUID && crypto.randomUUID()) ||
+        `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(DEVICE_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    // localStorage 불가(시크릿 등) — 세션 한정 임시 ID. 같은 탭 동안은 일관됨.
+    return `dev-ephemeral-${Math.random().toString(36).slice(2)}`;
+  }
+}
 // 현장 작업뷰어 에이전트(127.0.0.1) — 트레이에 떠 있을 때만 동작. 폴링 없이 클릭 시 한 번만 호출.
 const AGENT_URL = import.meta.env.VITE_HDSIGN_AGENT_URL || "http://127.0.0.1:17345";
 
@@ -212,10 +234,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   // 자동견적 명세서작성 모달 — 열린 주문 id(없으면 닫힘). 별도 탭이 아니라 OrderAdmin 안 모달로 띄운다.
   const [estimateOrderId, setEstimateOrderId] = useState(null);
-  // 로그인한 관리자 본인 — { username, name }. 명세서 잠금이 "내 잠금" 판별 + 표시이름에 쓴다.
-  const [me, setMe] = useState(null);
-  const [nameDraft, setNameDraft] = useState("");
-  const [savingName, setSavingName] = useState(false);
+  // 명세서 작성중 표시이름 — 이 PC(localStorage)에만 저장. 잠금 소유자 식별용 기기ID 도 이 PC 고유.
+  const [editorName, setEditorName] = useState(loadEditorName);
+  const [nameDraft, setNameDraft] = useState(loadEditorName);
+  const deviceIdRef = useRef(null);
+  if (!deviceIdRef.current) deviceIdRef.current = getOrCreateDeviceId();
   // 저장 성공 시 해당 주문의 "명세서" 배지를 즉시 점등(재요청 없이 목록/모달 동기).
   const markEstimateSaved = useCallback((id) => {
     setOrders((prev) => prev.map((o) => (o.id === id ? { ...o, hasEstimate: true } : o)));
@@ -238,45 +261,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     };
   }, [estimateOrderId]);
 
-  // 로그인한 관리자 본인 정보 — 표시이름(작성중 배지)과 "내 잠금" 판별에 쓴다. 토큰 잡히면 한 번 조회.
-  useEffect(() => {
-    if (!token) return;
-    fetch(`${BASE_URL}/api/admin/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data) {
-          setMe(data);
-          setNameDraft(data.name || "");
-        }
-      })
-      .catch(() => {});
-  }, [token]);
-
-  // 내 표시이름 저장 — 각자 본인이 자기 이름을 입력. 저장하면 이후 "ㅇㅇㅇ님이 작성중" 에 이 이름이 뜬다.
-  const saveDisplayName = useCallback(async () => {
+  // 이 PC 의 표시이름 저장 — localStorage 에만 둔다(공유 계정을 안 건드림). 저장하면 이후 이 PC 가
+  // 명세서를 작성할 때 다른 PC 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이 뜬다.
+  const saveDisplayName = useCallback(() => {
     const name = nameDraft.trim();
     if (!name) {
       setFeedback({ type: "error", msg: "이름을 입력해 주세요." });
       return;
     }
-    setSavingName(true);
-    try {
-      const res = await fetch(`${BASE_URL}/api/admin/me/display-name`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) throw new Error("이름 저장에 실패했습니다.");
-      const data = await res.json();
-      setMe(data);
-      setNameDraft(data.name || "");
-      setFeedback({ type: "success", msg: `표시 이름을 '${data.name}' 으로 설정했습니다.` });
-    } catch (err) {
-      setFeedback({ type: "error", msg: err.message || "이름 저장 중 오류가 발생했습니다." });
-    } finally {
-      setSavingName(false);
-    }
-  }, [nameDraft, token]);
+    try { localStorage.setItem(EDITOR_NAME_KEY, name); } catch {}
+    setEditorName(name);
+    setNameDraft(name);
+    setFeedback({ type: "success", msg: `이 컴퓨터의 표시 이름을 '${name}' 으로 설정했습니다.` });
+  }, [nameDraft]);
 
   // 명세서 모달이 열려 있는 동안 작성 잠금을 획득·갱신(하트비트)하고, 닫히면 해제한다.
   // 25초마다 하트비트 → 서버 TTL(90초) 안에서 잠금 유지. 탭을 그냥 닫아도 TTL 지나면 자동 만료.
@@ -289,7 +286,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       try {
         const res = await fetch(`${BASE_URL}/api/admin/orders/${id}/statement-lock`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ editorId: deviceIdRef.current, editorName }),
         });
         if (!res.ok || cancelled) return;
         const data = await res.json();
@@ -311,7 +309,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       cancelled = true;
       clearInterval(timer);
       // 모달 닫힘 → 잠금 해제(best-effort). keepalive 로 페이지 이탈 중에도 전송 시도.
-      fetch(`${BASE_URL}/api/admin/orders/${id}/statement-lock`, {
+      // 이 PC(editorId)가 잡은 잠금만 풀리도록 editorId 를 쿼리로 보낸다.
+      fetch(`${BASE_URL}/api/admin/orders/${id}/statement-lock?editorId=${encodeURIComponent(deviceIdRef.current)}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
         keepalive: true,
@@ -321,19 +320,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setOrders((prev) => prev.map(clear));
       setTrashOrders((prev) => prev.map(clear));
     };
-  }, [estimateOrderId, token]);
+  }, [estimateOrderId, token, editorName]);
 
-  // 이 주문을 '다른 사람'이 지금 작성 중이면 그 표시이름을, 아니면 null. 신선도(TTL 90초) 판정 포함.
-  // 내가 작성 중인 잠금은 배지로 안 띄운다(내가 아는 사실이라). 서버 시각은 KST LocalDateTime(존 없음)
-  // 으로 직렬화되고 클라이언트도 KST 라 new Date() 로컬 해석이 일치한다(앱 전역 createdAt 처리와 동일).
+  // 이 주문을 '다른 PC'가 지금 작성 중이면 그 표시이름을, 아니면 null. 신선도(TTL 90초) 판정 포함.
+  // 이 PC(deviceId)가 작성 중인 잠금은 배지로 안 띄운다(내가 아는 사실이라). 서버 시각은 KST
+  // LocalDateTime(존 없음)으로 직렬화되고 클라이언트도 KST 라 new Date() 로컬 해석이 일치한다.
   const STATEMENT_LOCK_TTL_MS = 90 * 1000;
   const statementLockHolder = useCallback((order) => {
     if (!order || !order.statementEditingAt || !order.statementEditingBy) return null;
-    if (me && order.statementEditingBy === me.username) return null; // 내 잠금 → 배지 없음
+    if (order.statementEditingBy === deviceIdRef.current) return null; // 이 PC 의 잠금 → 배지 없음
     const t = new Date(order.statementEditingAt).getTime();
     if (!Number.isFinite(t) || Date.now() - t > STATEMENT_LOCK_TTL_MS) return null; // stale
-    return order.statementEditingName || order.statementEditingBy;
-  }, [me]);
+    return order.statementEditingName || "다른 PC";
+  }, []);
 
   // 명세서 모달 열기 — 다른 사람이 작성 중이면 한 번 확인받고 연다(소프트 락: 강제로 열 수 있음).
   const openEstimate = useCallback((order) => {
@@ -1911,10 +1910,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             <h3 className="calendar-selected-head">
               <span className="order-card-group-date">명세서 — 최신 업로드순</span>
               <span className="order-card-group-count">{statementOrders.length}건</span>
-              {/* 내 표시이름 — 명세서를 작성하면 다른 사람 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이 뜬다.
-                  각자 본인이 한 번 설정. 비어있으면 입력을 유도. */}
+              {/* 이 컴퓨터의 표시이름 — 명세서를 작성하면 다른 PC 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이
+                  뜬다. 관리자 계정은 공유라 PC 마다 이 이름을 따로 설정(이 PC localStorage 에만 저장). */}
               <span className="statement-myname">
-                <span className="statement-myname-label">내 이름</span>
+                <span className="statement-myname-label">이 PC 이름</span>
                 <input
                   type="text"
                   className="statement-myname-input"
@@ -1928,13 +1927,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   type="button"
                   className="statement-myname-save"
                   onClick={saveDisplayName}
-                  disabled={savingName || nameDraft.trim() === (me?.name || "")}
-                  title="명세서 작성중 표시에 쓸 내 이름 저장"
+                  disabled={nameDraft.trim() === editorName}
+                  title="명세서 작성중 표시에 쓸 이 컴퓨터의 이름 저장"
                 >
-                  {savingName ? "저장중..." : "저장"}
+                  저장
                 </button>
-                {(!me?.name) && (
-                  <span className="statement-myname-hint">← 이름을 설정해 주세요</span>
+                {!editorName && (
+                  <span className="statement-myname-hint">← 이 컴퓨터 이름을 설정해 주세요</span>
                 )}
               </span>
             </h3>

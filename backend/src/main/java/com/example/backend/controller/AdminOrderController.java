@@ -5,8 +5,6 @@ import com.example.backend.entity.AutoQuoteEstimate;
 import com.example.backend.entity.ClientUser;
 import com.example.backend.entity.Order;
 import com.example.backend.entity.OrderFile;
-import com.example.backend.entity.Admin;
-import com.example.backend.repository.AdminRepository;
 import com.example.backend.repository.AutoQuoteEstimateRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.ClientService;
@@ -63,7 +61,6 @@ public class AdminOrderController {
     private final OrderArchiveService orderArchiveService;
     private final StorageUsageService storageUsageService;
     private final JdbcTemplate jdbcTemplate;
-    private final AdminRepository adminRepository;
 
     // 명세서 작성 잠금 TTL — 마지막 하트비트로부터 이 시간이 지나면 stale(자동 만료)로 본다.
     // 프론트 하트비트 주기(25초)보다 충분히 길게 잡아 비트 한두 번 빠져도 잠금이 안 끊기게.
@@ -198,65 +195,67 @@ public class AdminOrderController {
     }
 
     // ===== 명세서 작성 잠금(소프트 락) — 동시 중복작성 방지 =====
-    // 명세서 모달을 열면 acquire 를 호출해 "내가 작성중" 으로 표시하고, 모달이 열려 있는 동안
-    // 주기적으로(하트비트) 다시 호출해 잠금을 갱신한다. 모달을 닫으면 release 로 잠금을 비운다.
+    // 관리자 계정을 여러 PC 가 '공유' 로그인하므로 username 으로는 PC 를 구분할 수 없다. 그래서
+    // 소유자 식별(editorId)과 표시이름(editorName)을 모두 클라이언트(각 PC 의 localStorage)가 보낸다.
+    // 명세서 모달을 열면 acquire 로 "이 PC 가 작성중" 표시 → 모달 열린 동안 하트비트로 갱신 → 닫으면 release.
     // 소프트 락이라 남이 잡고 있어도 강제로 빼앗아 열 수는 있다(중복작성은 카드 배지로 경고).
 
-    /** 명세서 작성 잠금 획득/갱신(하트비트). 직전에 '다른 사람'이 잡고 있었으면 그 이름을 함께 돌려준다. */
+    /** 명세서 작성 잠금 획득/갱신(하트비트). body = { editorId, editorName }. editorId 는 PC별 고유값. */
     @PostMapping("/{id}/statement-lock")
-    public ResponseEntity<?> acquireStatementLock(@PathVariable Long id) {
+    public ResponseEntity<?> acquireStatementLock(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> reqBody
+    ) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
-        String username = currentUsername();
-        String name = adminRepository.findByUsername(username)
-                .map(Admin::getName)
-                .filter(n -> n != null && !n.isBlank())
-                .orElse(username);
+        String editorId = reqBody != null && reqBody.get("editorId") instanceof String s ? s.trim() : "";
+        String editorName = reqBody != null && reqBody.get("editorName") instanceof String s ? s.trim() : "";
+        if (editorId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "editorId 가 필요합니다."));
+        }
+        if (editorName.isBlank()) editorName = "이름 미설정";
+        if (editorName.length() > 30) editorName = editorName.substring(0, 30);
         LocalDateTime now = LocalDateTime.now();
 
-        // 직전 소유자가 '나 말고 다른 사람' 이고 아직 신선(TTL 이내)하면, 빼앗기 전에 그 이름을 알려준다.
+        // 직전 소유자가 '이 PC 가 아니고' 아직 신선(TTL 이내)하면, 빼앗기 전에 그 이름을 알려준다.
         String previousHolderName = null;
         if (order.getStatementEditingBy() != null
-                && !order.getStatementEditingBy().equals(username)
+                && !order.getStatementEditingBy().equals(editorId)
                 && order.getStatementEditingAt() != null
                 && order.getStatementEditingAt().isAfter(now.minusSeconds(STATEMENT_LOCK_TTL_SECONDS))) {
             previousHolderName = order.getStatementEditingName() != null
-                    ? order.getStatementEditingName() : order.getStatementEditingBy();
+                    ? order.getStatementEditingName() : "다른 PC";
         }
 
-        order.setStatementEditingBy(username);
-        order.setStatementEditingName(name);
+        order.setStatementEditingBy(editorId);
+        order.setStatementEditingName(editorName);
         order.setStatementEditingAt(now);
         orderRepository.save(order);
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("editingBy", username);
-        body.put("editingName", name);
+        body.put("editingBy", editorId);
+        body.put("editingName", editorName);
         body.put("editingAt", now.toString());
-        body.put("previousHolderName", previousHolderName); // null 이면 비어있었거나 내가 갱신
+        body.put("previousHolderName", previousHolderName); // null 이면 비어있었거나 이 PC 가 갱신
         return ResponseEntity.ok(body);
     }
 
-    /** 명세서 작성 잠금 해제 — 내가 잡은 잠금(또는 이미 비어있음)만 해제. 남의 잠금은 건드리지 않는다. */
+    /** 명세서 작성 잠금 해제 — 이 PC(editorId)가 잡은 잠금(또는 이미 비어있음)만 해제. 남의 잠금은 안 건드림. */
     @DeleteMapping("/{id}/statement-lock")
-    public ResponseEntity<?> releaseStatementLock(@PathVariable Long id) {
+    public ResponseEntity<?> releaseStatementLock(
+            @PathVariable Long id,
+            @RequestParam(required = false) String editorId
+    ) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
-        String username = currentUsername();
-        if (order.getStatementEditingBy() == null || order.getStatementEditingBy().equals(username)) {
+        if (order.getStatementEditingBy() == null
+                || (editorId != null && order.getStatementEditingBy().equals(editorId.trim()))) {
             order.setStatementEditingBy(null);
             order.setStatementEditingName(null);
             order.setStatementEditingAt(null);
             orderRepository.save(order);
         }
         return ResponseEntity.noContent().build();
-    }
-
-    /** 인증된 관리자 username(JWT subject). /api/admin/** 라 항상 인증을 통과한 상태. */
-    private static String currentUsername() {
-        org.springframework.security.core.Authentication auth =
-                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        return auth != null ? auth.getName() : "unknown";
     }
 
     // ===== 자동견적 명세서(estimate) — slice-12 (ADDITIVE) =====
