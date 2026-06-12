@@ -1233,7 +1233,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     if (r.spec) setCell(row, '규격', r.spec);
     if (r.qty != null && Number.isFinite(r.qty)) setCell(row, '수량', String(r.qty));
     if (r.unit != null && Number.isFinite(r.unit)) setCell(row, '단가', String(r.unit));
-    cdlg(`${row + 1}번 행에 채웠어요. 품목(글자)만 입력하면 됩니다.`, [{ label: '확인' }]);
+    // 채운 뒤 안내 모달은 띄우지 않는다 — 행에 값이 바로 보이므로 불필요.
   };
 
   // 우측 명세서 표 Enter 이동 — 편집칸 품목코드(0)·품목(1)·규격(2)·수량(3)·단가(4). 공급가액=읽기전용 제외.
