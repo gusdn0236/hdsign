@@ -1913,14 +1913,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               {/* 이 컴퓨터의 표시이름 — 명세서를 작성하면 다른 PC 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이
                   뜬다. 관리자 계정은 공유라 PC 마다 이 이름을 따로 설정(이 PC localStorage 에만 저장). */}
               <span className="statement-myname">
-                <span className="statement-myname-label">이 PC 이름</span>
+                <span className="statement-myname-label">작성자 이름</span>
                 <input
                   type="text"
                   className="statement-myname-input"
                   value={nameDraft}
                   onChange={(e) => setNameDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") saveDisplayName(); }}
-                  placeholder="작성중 표시용 이름"
+                  placeholder="작성자 이름"
                   maxLength={30}
                 />
                 <button
@@ -1928,13 +1928,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   className="statement-myname-save"
                   onClick={saveDisplayName}
                   disabled={nameDraft.trim() === editorName}
-                  title="명세서 작성중 표시에 쓸 이 컴퓨터의 이름 저장"
+                  title="명세서 작성중 표시에 쓸 작성자 이름 저장"
                 >
                   저장
                 </button>
-                {!editorName && (
-                  <span className="statement-myname-hint">← 이 컴퓨터 이름을 설정해 주세요</span>
-                )}
               </span>
             </h3>
             {loading ? (
