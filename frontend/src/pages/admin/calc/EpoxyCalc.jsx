@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { formatPrice, selectAllOnFocus, buildCopyText } from './helpers'
-import CopyButton from './CopyButton'
+import CalcAction from './CalcAction'
 
 export default function EpoxyCalc({ prices }) {
     const calc = prices.calculators.epoxy
@@ -64,7 +64,10 @@ export default function EpoxyCalc({ prices }) {
             </div>
 
             <div className="calc-result">
-                <CopyButton text={buildCopyText(unitPrice, qtyN, '개', total)} />
+                <CalcAction
+                    copyText={buildCopyText(unitPrice, qtyN, '개', total)}
+                    payload={{ code: `${matLabel || ''}에폭시`, spec: size ? String(size) : '', qty: qtyN, unit: unitPrice }}
+                />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null

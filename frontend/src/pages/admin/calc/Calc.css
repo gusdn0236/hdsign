@@ -216,6 +216,30 @@
     border-color: #86efac;
     color: #166534;
 }
+/* 명세서작성 미니 계산기 — [복사] 대신 [N번에 채우기] 버튼(같은 위치, 청록 강조). */
+.calc-fillbtn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: #0a7d8c;
+    border: 1px solid #0a7d8c;
+    border-radius: 6px;
+    padding: 4px 11px;
+    font-size: 11.5px;
+    color: #fff;
+    cursor: pointer;
+    font-weight: 700;
+    font-family: inherit;
+    transition: all 0.12s;
+}
+.calc-fillbtn:hover:not(:disabled) {
+    background: #0d8f9e;
+}
+.calc-fillbtn:disabled {
+    background: #cbd5e1;
+    border-color: #cbd5e1;
+    cursor: not-allowed;
+}
 .calc-result-num {
     font-size: 28px;
     font-weight: 800;

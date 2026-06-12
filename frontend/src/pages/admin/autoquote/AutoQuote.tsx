@@ -314,6 +314,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [pins, setPins] = useState<Pin[]>([]);
   const [active, setActive] = useState<number | null>(null);
   const [selPin, setSelPin] = useState<number | null>(null);
+  // 우측 명세서 표의 동그라미 숫자를 클릭하면 그 행에 삭제 버튼을 띄운다(행 단위 삭제).
+  const [gridSelRow, setGridSelRow] = useState<number | null>(null);
   const [selectedPin, setSelectedPin] = useState<number | null>(null); // 복사용으로 클릭 선택된 말풍선.
   const [draft, setDraft] = useState('');
   const [acIdx, setAcIdx] = useState(-1); // 품목코드 자동완성 드롭다운 하이라이트(-1=없음)
@@ -983,6 +985,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     return () => window.removeEventListener('mousedown', onDocDown);
   }, []);
 
+  // 표 동그라미 삭제버튼이 열린 상태에서 그 숫자/삭제버튼 외 다른 곳을 누르면 닫는다.
+  useEffect(() => {
+    if (gridSelRow == null) return undefined;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest && t.closest('.rnum, .rnum-del')) return;
+      setGridSelRow(null);
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [gridSelRow]);
+
   const startStageDrag = (e: React.MouseEvent) => {
     if (!imgSrc) return;
     // 지시서를 클릭하면 명세서(grid 등) 텍스트박스의 포커스를 푼다. preventDefault 로 기본 blur 가
@@ -1156,9 +1170,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   };
 
   const deletePin = (i: number) => {
-    setPins((prev) => prev.filter((_, j) => j !== i));
+    setPins((prev) => prev.filter((_, j) => j !== i)); // 행 제거 + 아래 행이 위로 한 칸씩(빈 행 없이 압축).
     setActive((a) => (a != null && a > i ? a - 1 : a === i ? null : a));
     setSelPin(null);
+    setGridSelRow(null);
+  };
+
+  // 표의 동그라미 숫자를 다른 숫자 칸으로 끌어다 놓으면 두 행을 맞바꾼다(예: 1번을 3번 칸에 → 3,2,1).
+  const swapRows = (a: number, b: number) => {
+    setPins((prev) => {
+      if (a === b || a < 0 || b < 0 || a >= prev.length || b >= prev.length || !prev[a] || !prev[b]) return prev;
+      const next = [...prev];
+      const t = next[a];
+      next[a] = next[b];
+      next[b] = t;
+      return next;
+    });
+    setGridSelRow(null);
   };
 
   // 말풍선 더블클릭 → 품목코드(fi=0)부터 입력/수정. Enter 로 다음 필드 진행.
@@ -1183,6 +1211,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           : { ...next[i], vals: { ...next[i].vals, [key]: value } };
       return next;
     });
+  };
+
+  // 미니 계산기 '채우기' 대상 = 위에서부터 첫 빈 행(품목코드·품목·단가 모두 비어있는 행). 없으면 맨 끝에 추가.
+  const isEmptyRowVals = (v?: Record<string, string>) =>
+    !v || (!v['품목코드'] && !v['품목'] && !v['단가']);
+  const firstEmptyGridRow = (ps: typeof pins) => {
+    const scan = Math.max(ROWS, ps.length + 1);
+    for (let i = 0; i < scan; i++) {
+      if (isEmptyRowVals(ps[i]?.vals)) return i;
+    }
+    return ps.length;
+  };
+  // 미니 계산기 결과를 빈 행에 채운다 — 품목코드/규격/수량/단가. 품목(글자)은 사용자가 직접 입력.
+  const onCalcFill = (r: { code?: string; spec?: string; qty?: number; unit?: number | null }) => {
+    const row = firstEmptyGridRow(pinsRef.current);
+    if (r.code) setCell(row, '품목코드', r.code);
+    if (r.spec) setCell(row, '규격', r.spec);
+    if (r.qty != null && Number.isFinite(r.qty)) setCell(row, '수량', String(r.qty));
+    if (r.unit != null && Number.isFinite(r.unit)) setCell(row, '단가', String(r.unit));
+    cdlg(`${row + 1}번 행에 채웠어요. 품목(글자)만 입력하면 됩니다.`, [{ label: '확인' }]);
   };
 
   // 우측 명세서 표 Enter 이동 — 편집칸 품목코드(0)·품목(1)·규격(2)·수량(3)·단가(4). 공급가액=읽기전용 제외.
@@ -2700,7 +2748,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                       className={`${i === active ? 'cur' : ''}${isOcrTgt ? ' ocrtgt' : ''}`.trim() || undefined}
                       style={isOcrTgt ? { background: hexToRgba(pinColor(i), 0.28) } : undefined}
                     >
-                      <td className="rn">
+                      <td
+                        className="rn"
+                        // 다른 행의 동그라미를 이 칸 동그라미로 끌어다 놓으면 두 행을 맞바꾼다(행 재정렬).
+                        onDragOver={(e) => {
+                          if (p && e.dataTransfer.types.includes('application/x-aq-pin')) e.preventDefault();
+                        }}
+                        onDrop={(e) => {
+                          if (!p) return;
+                          const raw = e.dataTransfer.getData('application/x-aq-pin');
+                          if (!raw) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const from = parseInt(raw, 10);
+                          if (!Number.isNaN(from) && from !== i) swapRows(from, i);
+                        }}
+                      >
                         {(p || isOcrTgt) && (
                           <span
                             className="rnum"
@@ -2710,10 +2773,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                               e.dataTransfer.setData('application/x-aq-pin', String(i));
                               e.dataTransfer.effectAllowed = 'move';
                             }}
-                            title={p ? '사진(지시서) 위로 드래그하면 이 칸 말풍선이 그 자리에 생겨요' : undefined}
+                            // 클릭(드래그 아님)하면 그 행 삭제 버튼 토글. 드래그는 말풍선 생성/행 재정렬.
+                            onClick={() => p && setGridSelRow((s) => (s === i ? null : i))}
+                            title={p ? '클릭=삭제 · 드래그→지시서=말풍선 · 드래그→다른 번호=행 바꾸기' : undefined}
                           >
                             {i + 1}
                           </span>
+                        )}
+                        {gridSelRow === i && p && (
+                          <button
+                            type="button"
+                            className="rnum-del"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deletePin(i);
+                            }}
+                          >
+                            🗑 삭제
+                          </button>
                         )}
                       </td>
                       <td>
@@ -2860,8 +2938,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           document.body,
         )}
 
-      {/* 미니 단가계산기 창 — 드래그 이동·✕ 닫기. position:fixed 라 트리 위치 무관. */}
-      {calcOpen && <MiniCalc onClose={() => setCalcOpen(false)} />}
+      {/* 미니 단가계산기 창 — 드래그 이동·✕ 닫기. 결과는 [N번에 채우기]로 빈 행에 채움. */}
+      {calcOpen && (
+        <MiniCalc onClose={() => setCalcOpen(false)} onFill={onCalcFill} fillRow={firstEmptyGridRow(pins)} />
+      )}
 
       {/* 단가 찾아보기 모달 — 결과 UI는 LookupResultModal(단가계산기 탭과 공유). 헤더 아래 품목코드 태그 바는 명세서작성 전용 extras. */}
       {lookup && (

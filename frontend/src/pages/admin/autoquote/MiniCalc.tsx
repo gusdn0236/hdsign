@@ -7,8 +7,16 @@ import FrameCalc from '../calc/FrameCalc.jsx';
 import EpoxyCalc from '../calc/EpoxyCalc.jsx';
 import GomuCalc from '../calc/GomuCalc.jsx';
 import GoldSilverCalc from '../calc/GoldSilverCalc.jsx';
+import { FillContext } from '../calc/fillContext';
 import '../calc/Calc.css';
 import './MiniCalc.css';
+
+export interface FillPayload {
+  code?: string;
+  spec?: string;
+  qty?: number;
+  unit?: number | null;
+}
 
 /**
  * 명세서작성 모달 안에 띄우는 미니 단가계산기 — /admin/calc 의 계산기 카드(자급식, prices prop)를
@@ -27,8 +35,24 @@ const TABS: { key: string; label: string; C: ComponentType<{ prices: unknown }> 
   { key: 'gold', label: '금은경', C: GoldSilverCalc as ComponentType<{ prices: unknown }> },
 ];
 
-export default function MiniCalc({ onClose }: { onClose: () => void }) {
+export default function MiniCalc({
+  onClose,
+  onFill,
+  fillRow,
+}: {
+  onClose: () => void;
+  onFill?: (p: FillPayload) => void; // 계산 결과를 명세서 빈 행에 채우기(없으면 카드는 [복사] 버튼).
+  fillRow?: number; // 채울 빈 행 인덱스(0-based, 없으면 -1). 버튼 라벨 'N번에 채우기'.
+}) {
   const { prices } = usePrices();
+  // 채우기 모드면 카드의 [복사] 버튼이 [N번에 채우기] 로 바뀐다(FillContext). 일반(홈페이지)은 null.
+  const fillValue = onFill
+    ? {
+        onFill,
+        label: typeof fillRow === 'number' && fillRow >= 0 ? `${fillRow + 1}번에 채우기` : '빈 행 없음',
+        canFill: typeof fillRow === 'number' && fillRow >= 0,
+      }
+    : null;
   const [tab, setTab] = useState('acryl');
   const [pos, setPos] = useState(() => ({
     x: Math.max(16, Math.round(window.innerWidth * 0.5)),
@@ -87,9 +111,11 @@ export default function MiniCalc({ onClose }: { onClose: () => void }) {
           </button>
         ))}
       </div>
-      <div className="minicalc-body">
-        {prices && Active ? <Active prices={prices} /> : <div className="minicalc-loading">단가표 로드 중…</div>}
-      </div>
+      <FillContext.Provider value={fillValue}>
+        <div className="minicalc-body">
+          {prices && Active ? <Active prices={prices} /> : <div className="minicalc-loading">단가표 로드 중…</div>}
+        </div>
+      </FillContext.Provider>
     </div>
   );
 }
