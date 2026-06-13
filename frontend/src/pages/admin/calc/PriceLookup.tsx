@@ -266,9 +266,7 @@ export default function PriceLookup() {
       </div>
       <div className="pl-form">
         <div className="pl-field pl-code">
-          <label>
-            품목코드 <span className="pl-hint">Enter로 여러 개 추가 — 같은 물건 다른 코드도 함께 검색</span>
-          </label>
+          <label>품목코드</label>
           {codes.length > 0 && (
             <div className="pl-tags">
               {codes.map((c) => (
@@ -333,9 +331,7 @@ export default function PriceLookup() {
           />
         </div>
         <div className="pl-field">
-          <label>
-            거래처 (선택) <span className="pl-hint">입력하면 그 거래처 명세서만 — 비우면 전체</span>
-          </label>
+          <label>거래처 (선택)</label>
           <input
             value={client}
             onChange={(e) => setClient(e.target.value)}
