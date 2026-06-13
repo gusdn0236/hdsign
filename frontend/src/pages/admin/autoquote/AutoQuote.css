@@ -964,6 +964,8 @@
   font-weight: 700;
   color: var(--mut);
   margin-right: 2px;
+  flex-shrink: 0; /* 라벨('규격' 등)은 줄어들어 글씨 짤리지 않게 */
+  white-space: nowrap;
 }
 .aq-lktag {
   display: inline-flex;
@@ -1083,13 +1085,15 @@
 }
 /* 규격(사이즈) 입력 — 코드 입력 옆에 좁게. */
 .aq-lkbar-label2 {
-  margin-left: 6px;
+  margin-left: 10px; /* 품목코드 그룹과 규격 그룹 사이 약간 띄움 */
 }
 .aq-lkspec {
-  flex: 0 0 120px;
+  flex: 0 1 110px;
+  min-width: 84px; /* 박스 넘치지 않게 줄어들 수 있음 */
 }
 .aq-lkspec input {
   width: 100%;
+  box-sizing: border-box;
   padding: 5px 8px;
   border: 1.5px solid var(--line);
   border-radius: 7px;
@@ -1425,6 +1429,17 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   justify-content: flex-end; /* 품목코드·규격 입력칸을 박스 오른쪽으로 정렬 */
+  gap: 8px; /* 요소끼리 약간 띄움 */
+  row-gap: 6px;
+}
+/* 오른쪽 패널은 좁으니 코드 입력칸은 줄어들 수 있게(박스 넘침 방지). */
+.lk-right .aq-lkinput {
+  flex: 0 1 168px;
+  min-width: 108px;
+}
+.lk-right .aq-lkinput input,
+.lk-right .aq-lkspec input {
+  box-sizing: border-box;
 }
 .lk-right .aq-lksugg {
   margin-top: -4px;
