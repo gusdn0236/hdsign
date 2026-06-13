@@ -14,6 +14,9 @@ import {
   parseCode,
   computeAcryl,
   computeGomu,
+  computeChannel,
+  computeEpoxy,
+  epoxyStrokeOptions,
   charCount,
 } from './annot/calc';
 import {
@@ -155,23 +158,62 @@ function formatChip(f: string, v: string): string {
   }
   return v;
 }
+export interface AutoPrice {
+  unit: number;
+  qty: number;
+  /** 한글+영문 혼합 합산('한글+영문 합계') 등 — 있으면 수량까지 확정(수량=1)된 상태. */
+  note?: string;
+  /** 피스 단위(잔넬) — 수량은 사용자 입력(글자수로 덮지 않음). */
+  perPiece?: boolean;
+}
+
+/** 한글만/영문만 추출(공백 정리). 혼합 합산용. */
+const koOnly = (s: string) => s.replace(/[^가-힣\s]/g, '').replace(/\s+/g, ' ').trim();
+const enOnly = (s: string) => s.replace(/[^A-Za-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+
 /**
- * 품목코드가 계산 가능한 자재(아크릴/포맥스→acryl, 고무/스카시→gomu)면 규격(글자높이mm) 기준으로
- * 단가·수량(글자수)을 자동 계산해 돌려준다. 계산 대상이 아니거나 입력 부족/혼합(아크릴 한+영)이면 null.
+ * 품목코드가 계산기 버튼으로 산출 가능한 자재면 규격·품목으로 단가(+수량)를 자동 계산.
+ *  - 아크릴/포맥스: 글자단위. 한글+영문 혼합이면 각 언어로 계산해 '합산 총가격'을 단가에, 수량=1.
+ *  - 고무스카시: 글자단위.
+ *  - 잔넬: 피스단위(종류=코드, 사이즈=규격). 단가만 채우고 수량은 사용자.
+ *  - 에폭시: 획두께가 필요 → 여기서 안 하고 단가칸 드롭다운으로 처리(null).
+ * 계산 대상이 아니거나 입력 부족이면 null.
  */
-function computeAuto(code: string, item: string, spec: string): { unit: number; qty: number } | null {
+function computeAuto(code: string, item: string, spec: string): AutoPrice | null {
   const pc = parseCode(code);
-  if (!pc || (pc.calc !== 'acryl' && pc.calc !== 'gomu')) return null;
-  if (!item || !spec) return null;
+  if (!pc) return null;
   if (pc.calc === 'gomu') {
+    if (!item || !spec) return null;
     const r = computeGomu(CALC, pc.tk, item, spec);
     return r.ok ? { unit: r.unit, qty: r.qty } : null;
   }
-  const hasKo = /[가-힣]/.test(item);
-  const hasEn = /[A-Za-z]/.test(item);
-  if (hasKo && hasEn) return null; // 한글+영문 혼합은 자동 안 함(계산기 버튼에서 분리/선택).
-  const r = computeAcryl(CALC, pc.tk || '', hasKo ? '한글' : '영문', item, spec, hasKo ? 'ko' : 'en');
-  return r.ok ? { unit: r.unit, qty: r.qty } : null;
+  if (pc.calc === 'channel') {
+    if (!spec) return null;
+    const r = computeChannel(CALC, code, item, spec);
+    return r.ok ? { unit: r.unit, qty: r.qty, perPiece: true } : null;
+  }
+  if (pc.calc === 'acryl') {
+    if (!item || !spec) return null;
+    const hasKo = /[가-힣]/.test(item);
+    const hasEn = /[A-Za-z]/.test(item);
+    if (hasKo && hasEn) {
+      // 한글+영문 혼합 → 각 언어로 계산해 합산(총가격), 수량 1.
+      const rKo = computeAcryl(CALC, pc.tk || '', '한글', koOnly(item), spec, 'ko');
+      const rEn = computeAcryl(CALC, pc.tk || '', '영문', enOnly(item), spec, 'en');
+      if (rKo.ok && rEn.ok) {
+        return { unit: rKo.unit * rKo.qty + rEn.unit * rEn.qty, qty: 1, note: '한글+영문 합계' };
+      }
+      return null;
+    }
+    const r = computeAcryl(CALC, pc.tk || '', hasKo ? '한글' : '영문', item, spec, hasKo ? 'ko' : 'en');
+    return r.ok ? { unit: r.unit, qty: r.qty } : null;
+  }
+  return null; // epoxy(드롭다운)/led/frame/goldsilver
+}
+
+/** 품목코드가 에폭시인지(단가칸에 획두께 드롭다운을 띄울지) 판정. */
+function isEpoxyCode(code: string): boolean {
+  return parseCode(code)?.calc === 'epoxy';
 }
 
 /**
@@ -339,6 +381,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
   const [mode, setMode] = useState<'hand' | 'ocr'>('hand'); // 진입 기본=이동(1). 글자AI=영역 OCR(2). 지시서 위 말풍선 작성(옛 cursor)은 비활성화 — 우측 명세서로만 작성.
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
+  const [confirmAt, setConfirmAt] = useState<{ x: number; y: number } | null>(null); // ✓/✕ 위치 — 마지막으로 그린 지점(콘텐츠 좌표). 우측상단에 띄움.
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
   const [ocrTool, setOcrTool] = useState<'box' | 'pencil' | 'eraser'>('box'); // 글자수 모드 하위 도구
   const [gridEditing, setGridEditing] = useState(false); // 우측 명세서 표를 수기 편집(셀 포커스) 중 — 다음행 하이라이트 끔
@@ -656,13 +699,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         paintRef.current = null;
         if (ocrToolRef.current === 'eraser') {
           // 지우개는 칠을 더하지 않는다 → 지운 뒤 남은 칠이 있을 때만 ✓/✕ 활성.
-          setMaskHasInk(maskHasAnyInk(maskRef.current));
+          const ink = maskHasAnyInk(maskRef.current);
+          setMaskHasInk(ink);
+          if (!ink) setConfirmAt(null);
         } else {
           // 연필 = 칠 추가. 이번 세션 첫 영역이면 그 스트로크 bbox 중앙을 앵커로(새 말풍선 위치).
           if (!firstAnchorRef.current) {
             firstAnchorRef.current = { x: (pr.minX + pr.maxX) / 2, y: (pr.minY + pr.maxY) / 2 };
           }
           setMaskHasInk(true);
+          setConfirmAt({ x: pr.lastX, y: pr.lastY }); // 펜 뗀 지점 = 마지막 칠한 점
         }
         return;
       }
@@ -688,6 +734,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               firstAnchorRef.current = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 };
             }
             setMaskHasInk(true);
+            setConfirmAt({ x, y }); // 박스 뗀 지점(끝 모서리) 기준 우측상단
           }
         }
         return;
@@ -1107,13 +1154,24 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     if (cur && FIELDS[cur.fi] === '규격') {
       const auto = computeAuto(cur.vals['품목코드'] || '', cur.vals['품목'] || '', val);
       if (auto) {
+        // 혼합 합산(note)은 수량까지 1로 확정 → 행 완료. 그 외는 단가만 채우고 수량 입력으로.
         setPins((prev) =>
           prev.map((p, i) =>
             i === active
-              ? { ...p, vals: { ...p.vals, 규격: val, 단가: String(auto.unit) }, fi: p.fi + 1 }
+              ? {
+                  ...p,
+                  vals: {
+                    ...p.vals,
+                    규격: val,
+                    단가: String(auto.unit),
+                    ...(auto.note ? { 수량: String(auto.qty) } : {}),
+                  },
+                  fi: auto.note ? FIELDS.length : p.fi + 1,
+                }
               : p,
           ),
         );
+        if (auto.note) setActive(null);
         return;
       }
     }
@@ -1227,6 +1285,59 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     });
   };
 
+  /**
+   * 표 직접입력 자동단가 — 품목코드·규격(·품목)이 채워지면 단가가 비어 있을 때 계산기로 단가를 채운다.
+   * 수기로 넣은 단가는 절대 덮지 않는다(단가 빈 칸일 때만). 한·영 혼합이면 합계 단가+수량 1.
+   * 에폭시는 획두께 선택이 필요해 computeAuto 가 null → 단가칸 드롭다운이 대신 처리.
+   */
+  const autoPriceRow = (row: number) => {
+    const v = pinsRef.current[row]?.vals;
+    if (!v || num(v['단가'])) return; // 단가가 이미 있으면(수기 포함) 건드리지 않음
+    const auto = computeAuto(v['품목코드'] || '', v['품목'] || '', v['규격'] || '');
+    if (!auto) return;
+    setPins((prev) =>
+      prev.map((p, i) =>
+        i === row
+          ? { ...p, vals: { ...p.vals, 단가: String(auto.unit), ...(auto.note ? { 수량: String(auto.qty) } : {}) } }
+          : p,
+      ),
+    );
+  };
+
+  /** 에폭시 단가칸에서 획두께를 고르면 그 행 단가(+수량)를 채운다. 한·영 혼합은 합계·수량 1. */
+  const applyEpoxy = (row: number, stroke: number) => {
+    const v = pinsRef.current[row]?.vals;
+    if (!v) return;
+    const code = v['품목코드'] || '';
+    const item = v['품목'] || '';
+    const spec = v['규격'] || '';
+    const hasKo = /[가-힣]/.test(item);
+    const hasEn = /[A-Za-z]/.test(item);
+    let unit: number | null = null;
+    let qty = 1;
+    if (hasKo && hasEn) {
+      const rKo = computeEpoxy(CALC, code, koOnly(item), spec, stroke, 'ko');
+      const rEn = computeEpoxy(CALC, code, enOnly(item), spec, stroke, 'en');
+      if (rKo.ok && rEn.ok) {
+        unit = rKo.unit * rKo.qty + rEn.unit * rEn.qty;
+        qty = 1;
+      }
+    } else if (item) {
+      const r = computeEpoxy(CALC, code, item, spec, stroke, hasKo ? 'ko' : 'en');
+      if (r.ok) {
+        unit = r.unit;
+        qty = r.qty;
+      }
+    }
+    if (unit == null) {
+      cdlg('이 조합의 에폭시 단가가 표에 없어요. 품목(글자)·규격(높이)을 확인하세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    setCell(row, '단가', String(unit));
+    setCell(row, '수량', String(qty));
+    setGridTool(null);
+  };
+
   // 미니 계산기 '채우기' 대상 = 위에서부터 첫 빈 행(품목코드·품목·단가 모두 비어있는 행). 없으면 맨 끝에 추가.
   const isEmptyRowVals = (v?: Record<string, string>) =>
     !v || (!v['품목코드'] && !v['품목'] && !v['단가']);
@@ -1253,6 +1364,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const onGridKey = (e: React.KeyboardEvent, row: number, col: number) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
+    // 품목(1)·규격(2)·수량(3) 칸을 Enter 로 떠날 때 자동단가 시도(단가 빈 칸일 때만 채움).
+    if (col >= 1 && col <= 3) autoPriceRow(row);
     let nr = row;
     let nc = col + 1;
     if (nc >= GRID_COLS) {
@@ -1351,7 +1464,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 계산기/단가찾아보기 결과를 적용할 대상. null=말풍선 active 핀 흐름, 숫자=우측 표 그 행.
   const priceTargetRef = useRef<number | null>(null);
 
-  const applyResult = (unit: number, qty: number, desc: string) => {
+  const applyResult = (unit: number, qty: number, desc: string, unitWord = '자') => {
     const tgt = priceTargetRef.current != null ? priceTargetRef.current : active;
     if (tgt == null) return;
     setPins((prev) =>
@@ -1365,7 +1478,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     }
     priceTargetRef.current = null;
     cdlg(
-      `${desc}<br><b>${unit.toLocaleString()}원</b> × ${qty}자 = <b>${(unit * qty).toLocaleString()}원</b><br>` +
+      `${desc}<br><b>${unit.toLocaleString()}원</b> × ${qty}${unitWord} = <b>${(unit * qty).toLocaleString()}원</b><br>` +
         `<span style="font-size:12px;color:#6b7785">수량·단가가 채워졌어요</span>`,
       [{ label: '확인' }],
     );
@@ -1420,12 +1533,24 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       return;
     }
     const pc = parseCode(code);
-    // 아크릴/포맥스·고무스카시 외 모든 품목(파싱 실패 포함)은 계산기 미지원 — 통일 안내. HTML 이스케이프.
-    if (!pc || (pc.calc !== 'acryl' && pc.calc !== 'gomu')) {
+    // 지원 자재: 아크릴/포맥스·고무스카시·잔넬·에폭시. 그 외(파싱 실패 포함)는 통일 안내. HTML 이스케이프.
+    if (!pc || !['acryl', 'gomu', 'channel', 'epoxy'].includes(pc.calc)) {
       const codeLabel = code.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
-      cdlg(`<b>${codeLabel}</b>는 계산기로 계산할수 없습니다.<br>아크릴,포맥스,고무스카시만 계산가능합니다.`, [
-        { label: '확인', sec: true },
-      ]);
+      cdlg(
+        `<b>${codeLabel}</b>는 계산기로 계산할수 없습니다.<br>아크릴·포맥스·고무스카시·잔넬·에폭시(갈바/스텐)만 자동 계산됩니다.`,
+        [{ label: '확인', sec: true }],
+      );
+      return;
+    }
+    if (pc.calc === 'epoxy') {
+      cdlg('에폭시는 <b>단가 칸</b>의 “획두께” 드롭다운에서 줄수를 고르면 단가가 채워집니다.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    if (pc.calc === 'channel') {
+      // 잔넬 — 피스 단위. 종류=코드, 사이즈=규격(품목 글자는 한/영 구분에만).
+      const r = computeChannel(CALC, code, item, spec);
+      if (r.ok) applyResult(r.unit, r.qty, r.desc, '개');
+      else cdlg(r.message, [{ label: '확인', sec: true }]);
       return;
     }
     if (!item) {
@@ -1442,23 +1567,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         else cdlg(r.message, [{ label: '확인', sec: true }]);
       };
       if (hasKo && hasEn) {
-        cdlg('품목에 한글과 영문이 함께 있어요.<br><b>한글/영문을 분리</b>하시겠습니까?', [
-          { label: '분리하기', fn: () => splitMixed(p, item, tgt) },
+        // 한글+영문 혼합 — 기본은 합계(한·영 글자수 각 단가 합)로 한 줄. 원하면 두 줄 분리.
+        cdlg('품목에 한글과 영문이 함께 있어요.<br><b>한글+영문 합계</b>로 한 줄에 넣을까요?', [
           {
-            label: '분리 안 함',
-            sec: true,
-            fn: () =>
-              cdlg('어느 단가로 적용할까요?', [
-                { label: '한글 단가', fn: () => doApply('한글', 'all') },
-                { label: '영문 단가', fn: () => doApply('영문', 'all') },
-              ]),
+            label: '합계로 넣기',
+            fn: () => {
+              const a = computeAuto(code, item, spec);
+              if (a) applyResult(a.unit, a.qty, a.note || '한글+영문 합계', '건');
+              else cdlg('합계 계산에 실패했어요. 두께·규격을 확인하세요.', [{ label: '확인', sec: true }]);
+            },
           },
+          { label: '한/영 분리', sec: true, fn: () => splitMixed(p, item, tgt) },
         ]);
         return;
       }
       doApply(hasKo ? '한글' : '영문', hasKo ? 'ko' : 'en');
     } else {
-      // gomu — acryl/gomu 외는 위에서 모두 걸러졌으므로 여기는 고무스카시.
+      // gomu — 위에서 걸러졌으므로 여기는 고무스카시.
       const r = computeGomu(CALC, pc.tk, item, spec);
       if (r.ok) applyResult(r.unit, r.qty, r.desc);
       else cdlg(r.message, [{ label: '확인', sec: true }]);
@@ -2165,6 +2290,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     m.getContext('2d')?.clearRect(0, 0, m.width, m.height);
     firstAnchorRef.current = null;
     setMaskHasInk(false);
+    setConfirmAt(null);
   };
 
   // 읽기 완료 후 — 마스크와 되돌리기 스택을 함께 비운다(읽기 너머로는 undo 안 함).
@@ -2175,6 +2301,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     firstAnchorRef.current = null;
     setCanUndo(false);
     setMaskHasInk(false);
+    setConfirmAt(null);
   };
 
   // 읽은 글자 → 명세서 행만 추가한다(지시서엔 점·말풍선 안 찍음 = dragged:false). 품목=읽은 글자,
@@ -2183,7 +2310,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const createPinFromOcr = (anchor: { x: number; y: number }, text: string) => {
     const ax = anchor.x;
     const ay = anchor.y;
-    const qty = charCount(text, 'all'); // 글자수(공백 제외) = 수량.
+    // 한글+영문 혼합이면 수량=1(단가는 나중에 코드·규격 넣으면 한·영 합계로 계산). 아니면 글자수=수량.
+    const mixed = /[가-힣]/.test(text) && /[A-Za-z]/.test(text);
+    const qty = mixed ? 1 : charCount(text, 'all');
     setPins((prev) => [
       ...prev,
       { ax, ay, lx: ax, ly: ay, dragged: false, vals: { 품목: ocrTruncItem(text), 수량: String(qty) }, fi: FIELDS.length },
@@ -2281,9 +2410,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           `<span style="display:inline-flex;width:22px;height:22px;border-radius:50%;` +
           `background:${pinColor(newIdx)};color:#fff;font-weight:800;font-size:12px;` +
           `align-items:center;justify-content:center;vertical-align:middle;margin-right:5px">${newIdx + 1}</span>`;
+        // 한글+영문 혼합이면 수량 1·한·영 합계 단가로 계산됨을 미리 알린다.
+        const mixed = /[가-힣]/.test(text) && /[A-Za-z]/.test(text);
+        const koN = charCount(text, 'ko');
+        const enN = charCount(text, 'en');
+        const mixedNote = mixed
+          ? `<div style="font-size:12px;color:#0a7d8c;background:#e8f6f7;border-radius:8px;padding:7px 9px;margin-top:8px">` +
+            `한글·영문이 섞여 있어 <b>수량 1 · 한글 ${koN}자+영문 ${enN}자 합계 단가</b>로 계산됩니다.` +
+            `</div>`
+          : '';
         cdlg(
           `<div style="margin-bottom:7px;font-size:14px">${circle}<b>번 품목으로 추가할까요?</b></div>` +
             `<b style="font-size:15px">"${esc}"</b>` +
+            mixedNote +
             `<div style="font-size:11.5px;color:#6b7785;margin-top:6px">추후에 수정 가능합니다.</div>`,
           [
             { label: '확인', fn: () => createPinFromOcr(anchor, text) },
@@ -2582,32 +2721,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               </button>
             </div>
           )}
-          {/* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 화면 이동/확대해도 따라다닌다. */}
-          {imgSrc && !showRef && mode === 'ocr' && (
-            <div className="aq-ocrconfirm" onMouseDown={(e) => e.stopPropagation()}>
-              <button
-                type="button"
-                className="aq-ocrok"
-                disabled={!maskHasInk || ocrBusy}
-                title="칠한 영역의 글자를 한꺼번에 읽기 (Enter)"
-                onClick={() => performOcrRef.current()}
-              >
-                ✓
-              </button>
-              <button
-                type="button"
-                className="aq-ocrclear"
-                disabled={!maskHasInk || ocrBusy}
-                title="칠한 영역 모두 지우기"
-                onClick={clearMask}
-              >
-                ✕
-              </button>
-            </div>
-          )}
           {imgSrc && !showRef && mode === 'ocr' && !ocrBusy && (
             <div className="aq-ocrhint">
-              {`${ocrTarget + 1}번 항목 — 박스/연필로 칠한 뒤 위 ✓ 누르면 그 자리에 말풍선이 생겨요`}
+              {`${ocrTarget + 1}번 항목 — 박스/연필로 칠한 뒤 ✓ 누르면 그 자리에 말풍선이 생겨요`}
             </div>
           )}
           {ocrBusy && !showRef && <div className="aq-ocrbusy">글자 읽는 중…</div>}
@@ -2690,6 +2806,42 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                   />
                 )}
               </svg>
+
+              {/* 읽기(✓)/전체지우기(✕) — 마지막으로 그린(마우스 뗀) 지점 우측상단에 뜬다. 위 공간 없으면 우측하단으로. */}
+              {mode === 'ocr' && maskHasInk && confirmAt && (
+                <div
+                  className="aq-ocrconfirm"
+                  style={{
+                    left: confirmAt.x,
+                    top: confirmAt.y,
+                    transform:
+                      confirmAt.y - 46 / zoom > 0
+                        ? `translate(${8 / zoom}px, calc(-100% - ${6 / zoom}px)) scale(${1 / zoom})`
+                        : `translate(${8 / zoom}px, ${6 / zoom}px) scale(${1 / zoom})`,
+                    transformOrigin: confirmAt.y - 46 / zoom > 0 ? 'left bottom' : 'left top',
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="aq-ocrok"
+                    disabled={!maskHasInk || ocrBusy}
+                    title="칠한 영역의 글자를 한꺼번에 읽기 (Enter)"
+                    onClick={() => performOcrRef.current()}
+                  >
+                    ✓
+                  </button>
+                  <button
+                    type="button"
+                    className="aq-ocrclear"
+                    disabled={!maskHasInk || ocrBusy}
+                    title="칠한 영역 모두 지우기"
+                    onClick={clearMask}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
 
               {/* 핀 점 — 지시서에 배치된(dragged) 핀만. 아직 안 옮긴 명세서 행은 점도 말풍선도 안 보인다. */}
               {pins.map((p, i) =>
@@ -3075,9 +3227,36 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       {gridTool &&
         createPortal(
           <div
-            style={{ position: 'fixed', left: gridTool.left, top: gridTool.top + 3, zIndex: 3000, display: 'flex', gap: 6 }}
+            style={{ position: 'fixed', left: gridTool.left, top: gridTool.top + 3, zIndex: 3000, display: 'flex', gap: 6, alignItems: 'center' }}
             onMouseDown={(e) => e.preventDefault()}
           >
+            {/* 에폭시(갈바/스텐)면 단가칸에 획두께 선택 버튼 — 고르면 그 줄수 단가로 채운다. */}
+            {(() => {
+              const v = pinsRef.current[gridTool.row]?.vals;
+              if (!v || !isEpoxyCode(v['품목코드'] || '')) return null;
+              const opts = epoxyStrokeOptions(CALC, v['품목코드'] || '', v['품목'] || '', v['규격'] || '');
+              if (!opts.length) return null;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const strokeLabels: any[] = CALC.epoxy?.axes?.strokes || [];
+              const labelOf = (val: number) =>
+                strokeLabels.find((s) => s.value === val)?.label || String(val);
+              return (
+                <div className="aq-epoxy-strokes">
+                  <span className="aq-epoxy-label">에폭시 획두께</span>
+                  {opts.map((o) => (
+                    <button
+                      key={o}
+                      type="button"
+                      className="aq-epoxy-btn"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => applyEpoxy(gridTool.row, o)}
+                    >
+                      {labelOf(o)}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
             <button
               className="aq-lookup"
               onMouseDown={(e) => {

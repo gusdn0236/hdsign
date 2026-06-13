@@ -276,17 +276,16 @@
 }
 /* 읽기(✓)/전체지우기(✕) — 지시서 상단 중앙 고정. 스테이지(transform) 밖이라 확대/이동에 안 흔들린다.
    translateZ(0) 로 자체 레이어 승격(스테이지 GPU 레이어 위에 항상 그려지게). */
+/* 위치(left/top/transform)는 그린 지점 기준으로 인라인 style 에서 지정한다. */
 .aq-ocrconfirm {
   position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%) translateZ(0);
   z-index: 22;
   display: flex;
   gap: 0; /* 한 박스로 붙임 */
   border-radius: 10px;
   overflow: hidden;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
 }
 .aq-ocrok,
 .aq-ocrclear {
@@ -643,6 +642,41 @@
 .aq-lookup.calc {
   border-color: var(--teal2);
   color: var(--teal2);
+}
+
+/* 에폭시 단가칸 획두께 선택 — 단가칸 포커스 툴바에 줄수 버튼. */
+.aq-epoxy-strokes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #fff;
+  border: 1.5px solid var(--teal2, #0a7d8c);
+  border-radius: 7px;
+  padding: 4px 7px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+.aq-epoxy-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--teal2, #0a7d8c);
+  margin-right: 2px;
+  white-space: nowrap;
+}
+.aq-epoxy-btn {
+  border: 1px solid #d7dde3;
+  background: #f7fbfb;
+  color: #1f2733;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aq-epoxy-btn:hover {
+  border-color: var(--teal2, #0a7d8c);
+  background: #e8f6f7;
+  color: var(--teal2, #0a7d8c);
 }
 
 .aq-side {

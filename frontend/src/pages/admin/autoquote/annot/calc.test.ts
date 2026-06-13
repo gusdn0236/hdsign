@@ -12,6 +12,11 @@ import {
   szClose,
   computeAcryl,
   computeGomu,
+  computeEpoxy,
+  computeChannel,
+  epoxyStrokeOptions,
+  snapSize,
+  CALC as REAL_CALC,
 } from './calc';
 
 // 테스트용 소형 단가표(실 prices.json 대신 결정적 fixture).
@@ -63,6 +68,18 @@ describe('parseCode', () => {
   });
   it('잔넬/채널 계열 → channel', () => {
     expect(parseCode('잔넬')).toEqual({ calc: 'channel', tk: null });
+    expect(parseCode('타카잔넬')).toEqual({ calc: 'channel', tk: null });
+    expect(parseCode('갈바후광')).toEqual({ calc: 'channel', tk: null }); // 갈바여도 후광=잔넬
+    expect(parseCode('골드스텐오사이')).toEqual({ calc: 'channel', tk: null });
+  });
+  it('에폭시는 "에폭시" 단어가 있을 때만', () => {
+    expect(parseCode('갈바에폭시')).toEqual({ calc: 'epoxy', tk: null });
+    expect(parseCode('스텐에폭시')).toEqual({ calc: 'epoxy', tk: null });
+    expect(parseCode('갈바레이저타공')).toBeNull(); // 맨 갈바는 미판정(오분류 방지)
+  });
+  it('금경/은경 → goldsilver (아크릴보다 우선)', () => {
+    expect(parseCode('금경아크릴3T')).toEqual({ calc: 'goldsilver', tk: '3T' });
+    expect(parseCode('은경아크릴5T')).toEqual({ calc: 'goldsilver', tk: '5T' });
   });
   it('인식 불가 → null', () => {
     expect(parseCode('시트컷팅')).toBeNull(); // 어떤 계산기 패턴에도 안 걸림
@@ -129,6 +146,64 @@ describe('computeGomu', () => {
   });
   it('단가표 없으면 에러', () => {
     const r = computeGomu(CALC, '99T', '가', 'H100');
+    expect(r.ok).toBe(false);
+  });
+});
+
+// 아래는 실제 prices.json(전역 CALC)로 검증 — 단가표 값이 바뀌면 함께 갱신.
+describe('snapSize', () => {
+  it('가장 가까운 등록 사이즈로 스냅', () => {
+    expect(snapSize([200, 250, 300], 230)).toBe(250);
+    expect(snapSize([200, 250, 300], 210)).toBe(200);
+    expect(snapSize([200, 250], null)).toBeNull();
+    expect(snapSize([], 100)).toBeNull();
+  });
+});
+
+describe('computeEpoxy (실 단가표)', () => {
+  it('갈바 한글 100mm 획30 = 50000 × 글자수', () => {
+    const r = computeEpoxy(REAL_CALC, '갈바에폭시', '가나', 'H100', 30, 'ko');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.unit).toBe(50000);
+      expect(r.qty).toBe(2);
+    }
+  });
+  it('스텐 영문 200mm 획30 = 83000', () => {
+    const r = computeEpoxy(REAL_CALC, '스텐에폭시', 'AB', 'H200', 30, 'en');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.unit).toBe(83000);
+  });
+  it('없는 획두께면 에러', () => {
+    const r = computeEpoxy(REAL_CALC, '갈바에폭시', '가', 'H100', 999, 'ko');
+    expect(r.ok).toBe(false);
+  });
+  it('epoxyStrokeOptions = 그 사이즈의 등록 획두께', () => {
+    expect(epoxyStrokeOptions(REAL_CALC, '갈바에폭시', '가', 'H100')).toEqual([30, 50]);
+  });
+});
+
+describe('computeChannel (실 단가표)', () => {
+  it('갈바후광(needsLang 아님) 200mm = 29000, 피스단위', () => {
+    const r = computeChannel(REAL_CALC, '갈바후광', 'ABC', 'H200');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.unit).toBe(29000);
+      expect(r.perPiece).toBe(true);
+    }
+  });
+  it('갈바오사이 영문/한글 200mm = 53000 / 62000', () => {
+    const en = computeChannel(REAL_CALC, '갈바오사이', 'ABC', 'H200');
+    const ko = computeChannel(REAL_CALC, '갈바오사이', '가나다', 'H200');
+    expect(en.ok && en.unit).toBe(53000);
+    expect(ko.ok && ko.unit).toBe(62000);
+  });
+  it('타카잔넬 영문 200mm = 29000', () => {
+    const r = computeChannel(REAL_CALC, '타카잔넬', 'AB', 'H200');
+    expect(r.ok && r.unit).toBe(29000);
+  });
+  it('종류 모호(맨 잔넬)면 미지원', () => {
+    const r = computeChannel(REAL_CALC, '잔넬', 'AB', 'H200');
     expect(r.ok).toBe(false);
   });
 });
