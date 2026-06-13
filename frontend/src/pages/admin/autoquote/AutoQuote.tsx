@@ -90,6 +90,7 @@ interface Pin {
   vals: Record<string, string>;
   fi: number; // 입력 단계 인덱스(품목코드=0 … 단가=4). 입력 진행에만 사용; 라벨은 채워진 값 전체 표시.
   splitPending?: boolean;
+  noBubble?: boolean; // true=지시서에 점(핀)만 표시하고 말풍선·리더선은 숨김(글자AI로 읽은 핀).
 }
 
 interface DialogButton {
@@ -495,6 +496,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               lx: hasGeo && g._lx != null ? Number(g._lx) : ax,
               ly: hasGeo && g._ly != null ? Number(g._ly) : ay,
               dragged: hasGeo ? !!g._dragged : false,
+              noBubble: hasGeo ? !!g._noBubble : false,
               fi: FIELDS.length,
               vals: {
                 월일: String(g['월일'] ?? ''),
@@ -1659,7 +1661,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         비고: p.vals['비고'] || '',
         // 핀 위치(말풍선 ax,ay / 리더선 lx,ly / 드래그여부) — 재오픈 시 원위치 복원용.
         // _ 접두사라 이지폼 셀(7키)·공유 합성과 무관(에이전트/매핑이 무시). 옛 저장본엔 없어 복원 시 폴백.
-        _ax: p.ax, _ay: p.ay, _lx: p.lx, _ly: p.ly, _dragged: p.dragged,
+        _ax: p.ax, _ay: p.ay, _lx: p.lx, _ly: p.ly, _dragged: p.dragged, _noBubble: p.noBubble || undefined,
       };
     });
   };
@@ -2082,20 +2084,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     setMaskHasInk(false);
   };
 
-  // 읽은 글자 → 칠한 자리(anchor)에 새 말풍선 생성. 품목코드(fi=0)부터 입력 포커스, 품목엔 읽은
-  // 글자가 미리 채워져 있어(prefill effect) Enter 로 품목 단계에 가면 바로 수정·확정 가능.
+  // 읽은 글자 → 칠한 자리(anchor)에 점(핀)만 찍는다(말풍선·리더선 없음 = noBubble). 품목=읽은 글자,
+  // 수량=글자수가 행에 prefill 되고, 나머지 칸은 오른쪽 명세서에서 채운다.
   const createPinFromOcr = (anchor: { x: number; y: number }, text: string) => {
     const ax = anchor.x;
     const ay = anchor.y;
     const qty = charCount(text, 'all'); // 글자수(공백 제외) = 수량.
     setPins((prev) => {
-      // 점=영역 중앙, 말풍선=우상단으로 살짝 비켜 리더선 연결(주변에 생성).
-      // 품목=읽은 글자, 수량=글자수(둘 다 prefill — 단계 진행 시 입력칸에 채워져 나옴).
-      const next = [
+      // 점=영역 중앙. 말풍선을 안 띄우므로 lx/ly 는 점과 같게 둔다(리더선도 숨김).
+      const next: Pin[] = [
         ...prev,
-        { ax, ay, lx: ax + 36, ly: ay - 28, dragged: true, vals: { 품목: ocrTruncItem(text), 수량: String(qty) }, fi: 0 },
+        { ax, ay, lx: ax, ly: ay, dragged: true, noBubble: true, vals: { 품목: ocrTruncItem(text), 수량: String(qty) }, fi: FIELDS.length },
       ];
-      setActive(next.length - 1);
       return next;
     });
     setSelPin(null);
@@ -2571,7 +2571,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                   확대해도 화면상 일정한 얇은 선이 된다. (vector-effect 는 조상 CSS transform 엔 안 먹어서 미사용.) */}
               <svg className="aq-lines">
                 {pins.map((p, i) =>
-                  p.dragged ? (
+                  p.dragged && !p.noBubble ? (
                     <line key={i} x1={p.ax} y1={p.ay} x2={p.lx} y2={p.ly} stroke={pinColor(i)} strokeWidth={2 / zoom} />
                   ) : null,
                 )}
@@ -2645,7 +2645,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               {/* 말풍선 + 입력 */}
               {pins.map((p, i) => {
                 // 지시서에 배치된(dragged) 핀만 말풍선 표시. 명세서 번호를 끌어다 놓으면 dragged=true 가 된다.
-                if (!p.dragged) return null;
+                // noBubble(글자AI로 읽은 핀)은 점만 찍고 말풍선은 숨긴다.
+                if (!p.dragged || p.noBubble) return null;
                 // 입력 중에는 현재 필드명만 안내. 끝나면 2줄: (위) 품목 규격, (아래) 단가원 ×수량개 = 합계원.
                 const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
                 const dp = num(p.vals['단가']);
