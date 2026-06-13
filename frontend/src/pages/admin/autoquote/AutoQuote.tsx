@@ -442,6 +442,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     painting: false,
   });
   const [dojangPick, setDojangPick] = useState<{ left: number; top: number } | null>(null); // 도장비찾아보기 행 선택기 위치
+  // 도장비 합치기 선택기 — sel = 합칠 행 인덱스(기본 전체). null = 닫힘.
+  const [dojangMerge, setDojangMerge] = useState<{ left: number; top: number; sel: number[] } | null>(null);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const stagewrapRef = useRef<HTMLDivElement>(null);
@@ -1859,13 +1861,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 개별 원자는 요약핀 _dojangParts 에 보관 → 펼치기로 복원, 이지폼엔 요약 한 줄만 나간다.
   const dojangSummary = pins.find((p) => p._dojangParts);
   const dojangAtoms = pins.filter((p) => p.vals['품목코드'] === '도장비' && !p._dojangParts);
-  const mergeDojang = () => {
+  // 선택된 행 인덱스만 합친다(+기존 요약핀 있으면 그 원자들도 함께). 비선택 도장비 행은 개별로 남는다.
+  const mergeDojang = (selIdx: number[]) => {
     setPins((prev) => {
-      const atoms = prev.filter((p) => p.vals['품목코드'] === '도장비' && !p._dojangParts);
+      const selSet = new Set(selIdx);
+      const isAtom = (p: Pin) => p.vals['품목코드'] === '도장비' && !p._dojangParts;
+      const selectedAtoms = prev.filter((p, i) => selSet.has(i) && isAtom(p));
       const existing = prev.find((p) => p._dojangParts);
-      const parts = [...(existing?._dojangParts || []), ...atoms.map((a) => ({ ...a.vals }))];
+      const parts = [...(existing?._dojangParts || []), ...selectedAtoms.map((a) => ({ ...a.vals }))];
       if (parts.length < 2) return prev;
-      const others = prev.filter((p) => p.vals['품목코드'] !== '도장비'); // 기존 요약핀(도장비)도 함께 제거
+      // 제거: 기존 요약핀 + 선택된 원자. (비선택 도장비 원자·나머지 행은 유지)
+      const others = prev.filter((p, i) => p !== existing && !(selSet.has(i) && isAtom(p)));
       const sum = parts.reduce((s, v) => s + (num(v['단가']) || 0), 0);
       const ay = 30 + others.length * 30;
       const summary: Pin = {
@@ -3077,7 +3083,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           {(dojangAtoms.length >= 2 || dojangSummary) && (
             <div className="aq-dojangbar">
               {dojangAtoms.length >= 2 && (
-                <button type="button" className="aq-dojang-merge" onClick={mergeDojang}>
+                <button
+                  type="button"
+                  className="aq-dojang-merge"
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const atomIdx = pins.map((p, i) => i).filter((i) => pins[i].vals['품목코드'] === '도장비' && !pins[i]._dojangParts);
+                    setDojangMerge({ left: r.left, top: r.bottom + 4, sel: atomIdx }); // 기본 전체선택
+                  }}
+                >
                   🔗 도장비 합치기 ({(dojangSummary?._dojangParts?.length || 0) + dojangAtoms.length}건)
                 </button>
               )}
@@ -3511,6 +3525,62 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           </>,
           document.body,
         )}
+
+      {/* 도장비 합치기 — 합칠 행 선택(전체선택 포함). 선택된 행만 '전체도장비' 한 줄로 접는다. */}
+      {dojangMerge &&
+        (() => {
+          const atomIdx = pins.map((p, i) => i).filter((i) => pins[i].vals['품목코드'] === '도장비' && !pins[i]._dojangParts);
+          const sel = dojangMerge.sel;
+          const allOn = atomIdx.length > 0 && atomIdx.every((i) => sel.includes(i));
+          const toggle = (i: number) =>
+            setDojangMerge((d) =>
+              d ? { ...d, sel: d.sel.includes(i) ? d.sel.filter((x) => x !== i) : [...d.sel, i] } : d,
+            );
+          const toggleAll = () => setDojangMerge((d) => (d ? { ...d, sel: allOn ? [] : atomIdx } : d));
+          return createPortal(
+            <>
+              <div className="aq-dojangpick-back" onClick={() => setDojangMerge(null)} />
+              <div className="aq-dojangpick" style={{ left: dojangMerge.left, top: dojangMerge.top }}>
+                <div className="aq-dojangpick-h">합칠 도장비 행을 고르세요</div>
+                <label className="aq-dojangmerge-all">
+                  <input type="checkbox" checked={allOn} onChange={toggleAll} /> 전체선택
+                </label>
+                {atomIdx.map((i) => {
+                  const v = pins[i].vals;
+                  return (
+                    <label className="aq-dojangmerge-row" key={i}>
+                      <input type="checkbox" checked={sel.includes(i)} onChange={() => toggle(i)} />
+                      <span className="aq-dojangpick-n" style={{ background: pinColor(i) }}>
+                        {i + 1}
+                      </span>
+                      <span className="aq-dojangpick-txt">
+                        {[v['품목'] || '도장비', v['규격']].filter(Boolean).join(' · ')}
+                        {v['단가'] ? ` — ${v['단가']}원` : ''}
+                      </span>
+                    </label>
+                  );
+                })}
+                <div className="aq-dojangmerge-btns">
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={sel.length < 2}
+                    onClick={() => {
+                      mergeDojang(sel);
+                      setDojangMerge(null);
+                    }}
+                  >
+                    합치기 ({sel.length})
+                  </button>
+                  <button type="button" onClick={() => setDojangMerge(null)}>
+                    취소
+                  </button>
+                </div>
+              </div>
+            </>,
+            document.body,
+          );
+        })()}
 
       {/* 미니 단가계산기 창 — 드래그 이동·✕ 닫기. 결과는 [N번에 채우기]로 빈 행에 채움. */}
       {calcOpen && (() => {

@@ -831,6 +831,67 @@
   white-space: nowrap;
 }
 
+/* 도장비 합치기 선택기 — 전체선택 + 체크박스 행 + 버튼. */
+.aq-dojangmerge-all {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #8a5a1a;
+  padding: 6px 6px;
+  border-bottom: 1px dashed #eee2cf;
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.aq-dojangmerge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.aq-dojangmerge-row:hover {
+  background: #faf5ec;
+}
+.aq-dojangmerge-row input[type='checkbox'],
+.aq-dojangmerge-all input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #b07d3a;
+  flex-shrink: 0;
+}
+.aq-dojangmerge-btns {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #eee2cf;
+}
+.aq-dojangmerge-btns button {
+  flex: 1;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #d7dde3;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  color: #6b7785;
+  cursor: pointer;
+}
+.aq-dojangmerge-btns button.primary {
+  background: #b07d3a;
+  border-color: #b07d3a;
+  color: #fff;
+}
+.aq-dojangmerge-btns button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .aq-side {
   flex: 1 1 0; /* 명세서가 가로의 약 1/3 차지(나머지) */
   min-width: 340px;
