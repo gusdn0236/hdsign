@@ -679,28 +679,33 @@
   color: var(--teal2, #0a7d8c);
 }
 
-/* 한·영 합계 각주 — 명세서 표 아래, 합산 단가 행 설명. */
+/* 한·영 합계 각주 — 마지막 명세서 행 바로 아래(표 안)에 합산 단가 설명. */
+.aq-sumrow td {
+  padding: 7px 8px !important;
+  background: #f6fbfb;
+  border-top: 1px dashed #c7e0e2 !important;
+  text-align: left !important;
+}
 .aq-sumnotes {
-  margin: 8px 2px 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 .aq-sumnote {
   display: flex;
   align-items: flex-start;
   gap: 7px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #4b5563;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #3a4654;
 }
 .aq-sumnote-n {
   flex-shrink: 0;
-  width: 17px;
-  height: 17px;
+  width: 19px;
+  height: 19px;
   border-radius: 50%;
   color: #fff;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   display: inline-flex;
   align-items: center;
