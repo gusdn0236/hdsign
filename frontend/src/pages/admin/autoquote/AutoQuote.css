@@ -679,14 +679,11 @@
   color: var(--teal2, #0a7d8c);
 }
 
-/* 한·영 합계 각주 — 마지막 명세서 행 바로 아래(표 안)에 합산 단가 설명. */
-.aq-sumrow td {
-  padding: 7px 8px !important;
-  background: #f6fbfb;
-  border-top: 1px dashed #c7e0e2 !important;
-  text-align: left !important;
-}
+/* 한·영 합계 각주 — 10행 표 전체 아래(바깥)에 합산 단가 설명. */
 .aq-sumnotes {
+  margin: 9px 2px 0;
+  padding-top: 9px;
+  border-top: 1px dashed #c7e0e2;
   display: flex;
   flex-direction: column;
   gap: 6px;

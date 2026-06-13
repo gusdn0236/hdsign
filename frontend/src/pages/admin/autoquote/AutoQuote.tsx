@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
@@ -3080,8 +3080,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                   const v = p ? p.vals : {};
                   const isOcrTgt = showTgtRow && i === ocrTarget;
                   return (
-                    <Fragment key={i}>
                     <tr
+                      key={i}
                       className={
                         [
                           i === active ? 'cur' : '',
@@ -3194,35 +3194,30 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                         />
                       </td>
                     </tr>
-                    {/* 한·영 합계 각주 — 마지막 채워진 행 바로 아래(빈 행 위)에 표 안으로. */}
-                    {pins.length > 0 && i === pins.length - 1 && pins.some((q) => q?.sumParts) && (
-                      <tr className="aq-sumrow">
-                        <td colSpan={7}>
-                          <div className="aq-sumnotes">
-                            {pins.map((q, j) =>
-                              q?.sumParts ? (
-                                <div className="aq-sumnote" key={j}>
-                                  <span className="aq-sumnote-n" style={{ background: pinColor(j) }}>
-                                    {j + 1}
-                                  </span>
-                                  <span>
-                                    번째 명세서는 한글 “{q.sumParts.ko || '-'}” {q.sumParts.koAmt.toLocaleString()}원
-                                    {' + '}영문 “{q.sumParts.en || '-'}” {q.sumParts.enAmt.toLocaleString()}원 ={' '}
-                                    <b>{(q.sumParts.koAmt + q.sumParts.enAmt).toLocaleString()}원</b> 합산 단가입니다.
-                                  </span>
-                                </div>
-                              ) : null,
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    </Fragment>
                   );
                 })}
               </tbody>
             </table>
           </div>
+          {/* 한·영 합계 각주 — 10행 표 전체 아래(바깥)에 합산 단가 행 설명. */}
+          {pins.some((p) => p?.sumParts) && (
+            <div className="aq-sumnotes">
+              {pins.map((p, i) =>
+                p?.sumParts ? (
+                  <div className="aq-sumnote" key={i}>
+                    <span className="aq-sumnote-n" style={{ background: pinColor(i) }}>
+                      {i + 1}
+                    </span>
+                    <span>
+                      번째 명세서는 한글 “{p.sumParts.ko || '-'}” {p.sumParts.koAmt.toLocaleString()}원
+                      {' + '}영문 “{p.sumParts.en || '-'}” {p.sumParts.enAmt.toLocaleString()}원 ={' '}
+                      <b>{(p.sumParts.koAmt + p.sumParts.enAmt).toLocaleString()}원</b> 합산 단가입니다.
+                    </span>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          )}
           <div className="aq-foot">
             <div className="aq-tot">
               <span>합계</span>
