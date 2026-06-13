@@ -34,7 +34,7 @@ import {
 } from './annot/api';
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
-import LookupResultModal from './LookupResultModal';
+import LookupResultModal, { type PickedRow } from './LookupResultModal';
 import MiniCalc from './MiniCalc';
 import './AutoQuote.css';
 
@@ -90,6 +90,9 @@ interface Pin {
   vals: Record<string, string>;
   fi: number; // 입력 단계 인덱스(품목코드=0 … 단가=4). 입력 진행에만 사용; 라벨은 채워진 값 전체 표시.
   splitPending?: boolean;
+  // '도장비 합치기' 요약핀이 비파괴로 보관하는 개별 도장비 행들(한글 키 vals). 펼치기로 복원.
+  // _ 접두사라 이지폼 매핑(7키)이 무시 — 이지폼엔 요약 한 줄만 나가고, 웹 저장본엔 원자가 남는다.
+  _dojangParts?: Record<string, string>[];
 }
 
 interface DialogButton {
@@ -505,6 +508,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 단가: String(g['단가'] ?? ''),
                 비고: String(g['비고'] ?? ''),
               },
+              // 도장비 합치기 요약핀이면 보관된 개별 원자 복원(있을 때만).
+              ...(Array.isArray(g._dojangParts)
+                ? { _dojangParts: g._dojangParts as Record<string, string>[] }
+                : {}),
             };
           });
           setPins(restored);
@@ -1640,6 +1647,94 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0);
   };
 
+  // 다중선택(명세서작성) — 단가찾아보기에서 체크한 행들을 명세서 맨 아래에 새 행으로 추가.
+  // 도장비 행은 품목코드를 '도장비'로 통일하고, 규격엔 모달이 채운 짝 가공행 사이즈가 들어온다.
+  // 지시서엔 점을 안 찍는다(dragged:false) — OCR 행 추가와 동일.
+  const applyPickedRows = (rows: PickedRow[]) => {
+    if (!rows.length) {
+      setLookup(null);
+      return;
+    }
+    setPins((prev) => [
+      ...prev,
+      ...rows.map((r, k) => {
+        const fee = r.isDojangFee;
+        const ay = 30 + (prev.length + k) * 30;
+        const vals: Record<string, string> = {
+          품목코드: fee ? '도장비' : r.item_code,
+          품목: fee ? r.item || '도장비' : r.item,
+          규격: r.spec,
+          수량: fee ? '1' : r.qty || '',
+          단가: formatWon(r.unit_price),
+        };
+        return { ax: 30, ay, lx: 30, ly: ay, dragged: false, vals, fi: FIELDS.length };
+      }),
+    ]);
+    setLookup(null);
+  };
+
+  // ---- 도장비 합치기/펼치기 (비파괴) -----------------------------------
+  // 품목코드 '도장비' 개별 행들을 맨 아래 요약행 하나(전체도장비(N건)·수량1·합산단가)로 접는다.
+  // 개별 원자는 요약핀 _dojangParts 에 보관 → 펼치기로 복원, 이지폼엔 요약 한 줄만 나간다.
+  const dojangSummary = pins.find((p) => p._dojangParts);
+  const dojangAtoms = pins.filter((p) => p.vals['품목코드'] === '도장비' && !p._dojangParts);
+  const mergeDojang = () => {
+    setPins((prev) => {
+      const atoms = prev.filter((p) => p.vals['품목코드'] === '도장비' && !p._dojangParts);
+      const existing = prev.find((p) => p._dojangParts);
+      const parts = [...(existing?._dojangParts || []), ...atoms.map((a) => ({ ...a.vals }))];
+      if (parts.length < 2) return prev;
+      const others = prev.filter((p) => p.vals['품목코드'] !== '도장비'); // 기존 요약핀(도장비)도 함께 제거
+      const sum = parts.reduce((s, v) => s + (num(v['단가']) || 0), 0);
+      const ay = 30 + others.length * 30;
+      const summary: Pin = {
+        ax: 30,
+        ay,
+        lx: 30,
+        ly: ay,
+        dragged: false,
+        fi: FIELDS.length,
+        vals: { 품목코드: '도장비', 품목: `전체도장비(${parts.length}건)`, 수량: '1', 단가: formatWon(String(sum)) },
+        _dojangParts: parts,
+      };
+      return [...others, summary];
+    });
+  };
+  const expandDojang = () => {
+    setPins((prev) => {
+      const summary = prev.find((p) => p._dojangParts);
+      if (!summary) return prev;
+      const others = prev.filter((p) => p !== summary);
+      const atoms: Pin[] = summary._dojangParts!.map((vals, k) => {
+        const ay = 30 + (others.length + k) * 30;
+        return { ax: 30, ay, lx: 30, ly: ay, dragged: false, fi: FIELDS.length, vals: { ...vals } };
+      });
+      return [...others, ...atoms];
+    });
+  };
+
+  // 헤더 [🔎 단가찾아보기] 글로벌 버튼 — 특정 행에 묶이지 않은 '둘러보기' 진입.
+  // 활성 행이 있으면 그 코드로 시드, 없으면 빈 모달(품목코드 태그바에서 직접 입력)로 연다.
+  const openLookupBrowse = async () => {
+    priceTargetRef.current = null;
+    const tgt = active;
+    const p = tgt != null ? pins[tgt] : undefined;
+    setLkTargetRow(tgt);
+    const code = p?.vals['품목코드'] || '';
+    const item = p?.vals['품목'] || '';
+    const spec = p?.vals['규격'] || '';
+    const qty = p?.vals['수량'] || '';
+    const client = order?.clientCompanyName || '';
+    lkCtxRef.current = { spec, qty, client, item };
+    const seed = code ? [code] : [];
+    setLkCodes(seed);
+    setLkInput('');
+    setLkAcOpen(false);
+    setLkAcIdx(-1);
+    if (seed.length) await runLookup(seed);
+    else setLookup({ refs: [], ri: 0, q: '', total: 0 }); // 빈 모달 — 태그바에서 코드 입력 시 검색
+  };
+
   // ---- 저장 (slice-12 estimate API) ------------------------------------
   const buildGrid = () => {
     const today = todayMD();
@@ -1660,6 +1755,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         // 핀 위치(말풍선 ax,ay / 리더선 lx,ly / 드래그여부) — 재오픈 시 원위치 복원용.
         // _ 접두사라 이지폼 셀(7키)·공유 합성과 무관(에이전트/매핑이 무시). 옛 저장본엔 없어 복원 시 폴백.
         _ax: p.ax, _ay: p.ay, _lx: p.lx, _ly: p.ly, _dragged: p.dragged,
+        // 도장비 합치기 요약핀이면 개별 도장비 원자를 함께 저장(비파괴) — 재오픈 시 펼치기 가능.
+        ...(p._dojangParts ? { _dojangParts: p._dojangParts } : {}),
       };
     });
   };
@@ -2718,6 +2815,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           <div className="aq-h">
             <b>견적 (이지폼)</b>
             {order && <span className="aq-tag">{order.clientCompanyName || order.orderNumber}</span>}
+            {/* 단가찾아보기(둘러보기) — 계산기 버튼 왼쪽. 과거 명세서를 열어 도장 행 강조 + 다중선택 가져오기. */}
+            <button
+              type="button"
+              className="aq-lookupbtn"
+              onClick={openLookupBrowse}
+              title="과거 명세서에서 단가 찾아 가져오기 (도장 행 강조·다중선택)"
+            >
+              🔎 단가찾아보기
+            </button>
             {/* 미니 단가계산기 토글 — 헤더 맨 오른쪽(공급가액 열 위). 누르면 드래그 가능한 계산기 창이 켜졌다 꺼졌다. */}
             <button
               type="button"
@@ -2728,6 +2834,24 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               🧮 계산기
             </button>
           </div>
+          {/* 도장비 합치기/펼치기 바 — 도장비 행이 2건+ 이거나 이미 합쳐져 있을 때만. */}
+          {(dojangAtoms.length >= 2 || dojangSummary) && (
+            <div className="aq-dojangbar">
+              {dojangAtoms.length >= 2 && (
+                <button type="button" className="aq-dojang-merge" onClick={mergeDojang}>
+                  🔗 도장비 합치기 ({(dojangSummary?._dojangParts?.length || 0) + dojangAtoms.length}건)
+                </button>
+              )}
+              {dojangSummary && (
+                <button type="button" className="aq-dojang-expand" onClick={expandDojang}>
+                  ↕ 도장비 펼치기 ({dojangSummary._dojangParts?.length || 0}건)
+                </button>
+              )}
+              {dojangSummary && (
+                <span className="aq-dojang-note">합쳐진 상태 — 이지폼엔 합산 도장비 한 줄만 입력됩니다</span>
+              )}
+            </div>
+          )}
           <div className="aq-gridwrap">
             <table
               className="aq-tbl"
@@ -3009,6 +3133,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           ri={lookup.ri}
           lpi={lpi}
           onAction={applyPrice}
+          mode="multi"
+          onActionMulti={applyPickedRows}
           totalFound={lookup.total}
           confirmBeforeAction
 

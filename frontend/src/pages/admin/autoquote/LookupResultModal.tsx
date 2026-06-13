@@ -32,6 +32,31 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** 도장 관련 행인지(품목코드·품목 어디든 '도장' 포함). 검색결과 표에서 연한 색으로 강조. */
+export function isDojangRow(g: { item_code?: string; item?: string }): boolean {
+  return /도장/.test((g.item_code || '') + ' ' + (g.item || ''));
+}
+
+/** 실제 '도장비' 청구행(가격 있는 도장행, '도장없음/도장X' 제외) — 가져올 때 품목코드를 '도장비'로 통일. */
+export function isDojangFeeRow(g: { item_code?: string; item?: string; unit_price?: string | number }): boolean {
+  const text = (g.item_code || '') + ' ' + (g.item || '');
+  if (!/도장/.test(text)) return false;
+  if (/도장\s*없음|도장\s*x/i.test(text)) return false; // 명시적 '도장 안 함'은 통일 대상 아님
+  return (num(g.unit_price) ?? 0) > 0;
+}
+
+/** 명세서작성에서 다중선택해 가져오는 한 행. 도장비면 규격에 짝 가공행 사이즈가 채워진다. */
+export interface PickedRow {
+  item_code: string;
+  item: string;
+  spec: string;
+  qty: string;
+  unit_price: string;
+  isDojangFee: boolean;
+  date?: string;
+  client?: string;
+}
+
 /**
  * 지시서 사진 뷰어 — 마우스 휠로 커서 기준 확대·축소(1~6배), 드래그로 이동, 더블클릭 초기화.
  * 사진(src)이 바뀌면 배율·위치를 리셋한다. 모달 스크롤을 막으려 휠은 native non-passive 로 등록.
@@ -111,6 +136,12 @@ interface Props {
   onAction: (price: number) => void;
   totalFound?: number; // 사진 있는 비슷한 명세서 총 건수("총 N건 찾았습니다"). 표시는 30건만.
   confirmBeforeAction?: boolean; // true면 행/버튼 클릭 시 "이 가격으로 결정할까요?" 한번 확인 후 적용.
+  /**
+   * 'single'(기본·단가계산기): 행 클릭 = 그 단가 1개 적용(onAction).
+   * 'multi'(명세서작성): 행 클릭 = 선택 토글, [명세서에 추가]로 선택분 전부 가져옴(onActionMulti).
+   */
+  mode?: 'single' | 'multi';
+  onActionMulti?: (rows: PickedRow[]) => void;
   onPrev: () => void;
   onNext: () => void;
   onClose: () => void;
@@ -153,6 +184,8 @@ export default function LookupResultModal({
   onAction,
   totalFound,
   confirmBeforeAction,
+  mode = 'single',
+  onActionMulti,
   onPrev,
   onNext,
   onClose,
@@ -172,7 +205,28 @@ export default function LookupResultModal({
   bundleLabel,
 }: Props) {
   const working = view === 'working';
+  const multi = mode === 'multi';
   const hasBundle = !!setBi && (bundleCount ?? 0) > 1; // 형제 1+ 있을 때만 묶음 페이저
+
+  // 다중선택(명세서작성) — 후보·묶음을 넘나들며 누적. 키=`${ri}:${bi}:${행번호}`(후보별 grid 가 달라서).
+  const [picked, setPicked] = useState<Record<string, PickedRow>>({});
+  const [pendingMulti, setPendingMulti] = useState(false);
+  // 키(`ri:bi:행`)를 숫자로 정렬 → 후보·행 자연순서로 추가(가공행 다음 그 도장비 순).
+  const pickedList = Object.entries(picked)
+    .sort(([a], [b]) => {
+      const pa = a.split(':').map(Number);
+      const pb = b.split(':').map(Number);
+      return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+    })
+    .map(([, v]) => v);
+  const togglePick = (key: string, row: PickedRow) => {
+    setPicked((prev) => {
+      const next = { ...prev };
+      if (next[key]) delete next[key];
+      else next[key] = row;
+      return next;
+    });
+  };
 
   // 가격 적용 확인 — confirmBeforeAction 일 때 행/버튼 클릭이 바로 적용되지 않고 여기에 담긴다.
   // "이 가격으로 결정할까요?" 확인 바가 뜨고, Enter 또는 [적용] 클릭으로 onAction 호출.
@@ -305,7 +359,11 @@ export default function LookupResultModal({
             <div className="aq-mright lk-right">
               {dateStr ? <div className="lk-date">{dateStr} 명세서</div> : null}
               {/* 예상가·단독 버튼 대신 "표에서 직접 골라라" 안내 — 명세서작성·단가계산기 공통. */}
-              <div className="lk-pick">명세서에서 적용하실 가격을 선택해주세요.</div>
+              <div className="lk-pick">
+                {multi
+                  ? '가져올 행을 클릭해 선택하세요. 도장 행은 노란색입니다. (여러 개 가능)'
+                  : '명세서에서 적용하실 가격을 선택해주세요.'}
+              </div>
               {grid.length ? (
                 <table className="aq-rtbl lk-tbl">
                   <thead>
@@ -325,13 +383,47 @@ export default function LookupResultModal({
                       const supply = price != null ? price * q : null; // 공급가액 = 단가 × 수량
                       const hit = price != null && price === Math.round(Number(R.price));
                       const clk = price != null && price > 0;
+                      const dj = isDojangRow(g);
+                      const feeRow = isDojangFeeRow(g);
+                      // 도장비 행이면 규격에 채울 '짝 가공행 사이즈' = 바로 위쪽 비(非)도장 행 중 규격 있는 첫 행.
+                      let pairedSpec = '';
+                      if (feeRow) {
+                        for (let k = j - 1; k >= 0; k--) {
+                          if (!isDojangRow(grid[k]) && (grid[k].spec || '').trim()) {
+                            pairedSpec = grid[k].spec || '';
+                            break;
+                          }
+                        }
+                      }
+                      const key = `${ri}:${bi}:${j}`;
+                      const sel = multi && !!picked[key];
+                      const onRow = !clk
+                        ? undefined
+                        : multi
+                          ? () =>
+                              togglePick(key, {
+                                item_code: g.item_code || '',
+                                item: g.item || '',
+                                spec: (feeRow ? pairedSpec || g.spec : g.spec) || '',
+                                qty: String(g.qty ?? ''),
+                                unit_price: String(g.unit_price ?? ''),
+                                isDojangFee: feeRow,
+                                date: ev?.date,
+                                client: ev?.client,
+                              })
+                          : () => ask(price as number);
                       return (
                         <tr
                           key={j}
-                          className={(hit ? 'hit ' : '') + (clk ? 'click' : '')}
-                          onClick={clk ? () => ask(price as number) : undefined}
+                          className={
+                            (hit ? 'hit ' : '') + (clk ? 'click ' : '') + (dj ? 'dojang ' : '') + (sel ? 'picked' : '')
+                          }
+                          onClick={onRow}
                         >
-                          <td>{g.item_code || ''}</td>
+                          <td>
+                            {multi && clk ? <span className="lk-chk">{sel ? '☑' : '☐'}</span> : null}
+                            {g.item_code || ''}
+                          </td>
                           <td>{g.item || ''}</td>
                           <td>{g.spec || ''}</td>
                           <td>{g.qty ?? ''}</td>
@@ -359,6 +451,29 @@ export default function LookupResultModal({
               <span className="lk-bundle-lbl">{bundleLabel || '이 후보(기준 명세서)'}</span>
             </div>
           )}
+          {multi && (
+            <div className="lk-multibar">
+              <span className="lk-multi-cnt">
+                선택 <b>{pickedList.length}</b>건
+                {pickedList.some((r) => r.isDojangFee) ? ' · 도장비는 품목코드 "도장비"로 추가됩니다' : ''}
+              </span>
+              <span className="lk-multi-btns">
+                {pickedList.length > 0 && (
+                  <button type="button" className="lk-multi-clear" onClick={() => setPicked({})}>
+                    선택 해제
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="lk-multi-ok"
+                  disabled={pickedList.length === 0}
+                  onClick={() => setPendingMulti(true)}
+                >
+                  명세서에 추가 ({pickedList.length})
+                </button>
+              </span>
+            </div>
+          )}
           </>
         )}
         {pending != null && (
@@ -378,6 +493,30 @@ export default function LookupResultModal({
                   적용 (Enter)
                 </button>
                 <button className="lk-confirm-cancel" onClick={() => setPending(null)}>
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {pendingMulti && (
+          <div className="lk-confirm" onClick={(e) => e.target === e.currentTarget && setPendingMulti(false)}>
+            <div className="lk-confirm-box">
+              <div className="lk-confirm-q">
+                선택한 <b>{pickedList.length}개 행</b>을 작성 중인 명세서에 추가할까요?
+              </div>
+              <div className="lk-confirm-btns">
+                <button
+                  className="lk-confirm-ok"
+                  onClick={() => {
+                    onActionMulti?.(pickedList);
+                    setPendingMulti(false);
+                    setPicked({});
+                  }}
+                >
+                  추가
+                </button>
+                <button className="lk-confirm-cancel" onClick={() => setPendingMulti(false)}>
                   취소
                 </button>
               </div>

@@ -673,6 +673,27 @@
   border-radius: 20px;
 }
 /* 견적 헤더 맨 오른쪽 — 미니 단가계산기 토글(공급가액 열 위). 켜지면 진한 청록. */
+/* 단가찾아보기(둘러보기) 버튼 — 계산기 버튼 왼쪽에 한 쌍으로 오른쪽 정렬. */
+.aq-lookupbtn {
+  margin-left: auto;
+  border: 1px solid var(--teal, #0a7d8c);
+  background: #fff;
+  color: var(--teal, #0a7d8c);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aq-lookupbtn:hover {
+  background: #ecf8f9;
+}
+/* 한 쌍일 때 계산기 버튼은 auto 대신 작은 간격만(둘이 붙어서 오른쪽 끝에). */
+.aq-lookupbtn + .aq-calcbtn {
+  margin-left: 6px;
+}
 .aq-calcbtn {
   margin-left: auto;
   border: 1px solid var(--teal, #0a7d8c);
@@ -692,6 +713,37 @@
 .aq-calcbtn.on {
   background: #0a7d8c;
   color: #fff;
+}
+/* 도장비 합치기/펼치기 바 */
+.aq-dojangbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #fff7d6;
+  border-bottom: 1px solid #ecdfa6;
+  flex-wrap: wrap;
+}
+.aq-dojang-merge,
+.aq-dojang-expand {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  border: 1px solid #c9a227;
+  background: #fff;
+  color: #8a6d10;
+  white-space: nowrap;
+}
+.aq-dojang-merge:hover,
+.aq-dojang-expand:hover {
+  background: #fff0b8;
+}
+.aq-dojang-note {
+  font-size: 11.5px;
+  color: #8a6d10;
 }
 .aq-gridwrap {
   flex: 1;
@@ -1500,4 +1552,75 @@
 }
 .lk-modal .lk-working .aq-rtbl {
   margin-top: 0;
+}
+
+/* ── 단가찾아보기 도장 행 강조 + 다중선택(명세서작성) ── */
+/* 도장 관련 행은 연한 노란색 — '이 사이즈 도장이 얼마였나' 한눈에. */
+.aq-rtbl tr.dojang td {
+  background: #fff7d6;
+}
+.aq-rtbl tr.dojang.click:hover td {
+  background: #ffeeb0;
+}
+/* 선택된 행(체크) — 테두리+청록 틴트. 도장 노란색 위에 덧입혀도 보이게 box-shadow 로. */
+.aq-rtbl tr.picked td {
+  background: #d7f0f4;
+  box-shadow: inset 3px 0 0 var(--teal, #0a7d8c);
+}
+.aq-rtbl tr.picked.dojang td {
+  background: #e8f3d8; /* 도장(노랑)+선택(청록) = 연한 연두 */
+}
+.aq-rtbl tr.picked.click:hover td {
+  background: #c7e8ee;
+}
+.lk-chk {
+  margin-right: 4px;
+  font-size: 12px;
+  color: var(--teal, #0a7d8c);
+}
+/* 하단 선택 요약 바 */
+.lk-multibar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 16px 0;
+  padding: 9px 12px;
+  border-top: 1px solid #e3e8ec;
+  background: #f7fafb;
+  border-radius: 8px;
+}
+.lk-multi-cnt {
+  font-size: 12.5px;
+  color: #3f5560;
+}
+.lk-multi-cnt b {
+  color: var(--teal, #0a7d8c);
+  font-size: 14px;
+}
+.lk-multi-btns {
+  display: flex;
+  gap: 8px;
+}
+.lk-multi-clear,
+.lk-multi-ok {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 7px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: none;
+}
+.lk-multi-clear {
+  background: #eef1f4;
+  color: #3f5560;
+}
+.lk-multi-ok {
+  background: var(--teal, #0a7d8c);
+  color: #fff;
+}
+.lk-multi-ok:disabled {
+  background: #c4ced4;
+  cursor: default;
 }
