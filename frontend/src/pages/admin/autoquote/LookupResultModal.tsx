@@ -333,7 +333,11 @@ export default function LookupResultModal({
         ) : !refs.length || !R ? (
           <div className="aq-mbody">
             <div className="aq-mleft">
-              <div className="none">관련 과거 단가가 없습니다. 품목코드/규격을 확인해 보세요.</div>
+              <div className="none">
+                {multi
+                  ? '위 검색창에 품목코드를 입력하고 Enter 를 누르면 과거 명세서를 찾아줍니다.'
+                  : '관련 과거 단가가 없습니다. 품목코드/규격을 확인해 보세요.'}
+              </div>
             </div>
             <div className="aq-mright" />
           </div>

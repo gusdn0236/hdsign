@@ -363,6 +363,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [lkCodes, setLkCodes] = useState<string[]>([]);
   const [lkSugg, setLkSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩
   const [lkInput, setLkInput] = useState('');
+  const lkInputRef = useRef<HTMLInputElement>(null); // 둘러보기 진입 시 검색창 자동 포커스
   const [lkAcOpen, setLkAcOpen] = useState(false);
   const [lkAcIdx, setLkAcIdx] = useState(-1);
   const [lkView, setLkView] = useState<'search' | 'working'>('search'); // 단가찾아보기 모달: 검색결과↔작성중 토글
@@ -1713,26 +1714,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     });
   };
 
-  // 헤더 [🔎 단가찾아보기] 글로벌 버튼 — 특정 행에 묶이지 않은 '둘러보기' 진입.
-  // 활성 행이 있으면 그 코드로 시드, 없으면 빈 모달(품목코드 태그바에서 직접 입력)로 연다.
-  const openLookupBrowse = async () => {
+  // 헤더 [🔎 단가찾아보기] 글로벌 버튼 — 빈 검색 모달을 열고 검색창에 바로 입력받는다.
+  // (특정 행/코드로 시드하지 않음 — 사용자가 품목코드를 쳐서 찾는다. 거래처 컨텍스트만 유지.)
+  const openLookupBrowse = () => {
     priceTargetRef.current = null;
-    const tgt = active;
-    const p = tgt != null ? pins[tgt] : undefined;
-    setLkTargetRow(tgt);
-    const code = p?.vals['품목코드'] || '';
-    const item = p?.vals['품목'] || '';
-    const spec = p?.vals['규격'] || '';
-    const qty = p?.vals['수량'] || '';
+    setLkTargetRow(null);
     const client = order?.clientCompanyName || '';
-    lkCtxRef.current = { spec, qty, client, item };
-    const seed = code ? [code] : [];
-    setLkCodes(seed);
+    lkCtxRef.current = { spec: '', qty: '', client, item: '' };
+    setLkCodes([]);
+    setLkSugg([]);
     setLkInput('');
     setLkAcOpen(false);
     setLkAcIdx(-1);
-    if (seed.length) await runLookup(seed);
-    else setLookup({ refs: [], ri: 0, q: '', total: 0 }); // 빈 모달 — 태그바에서 코드 입력 시 검색
+    setLookup({ refs: [], ri: 0, q: '', total: 0 }); // 빈 모달 — 검색창 입력 시 검색
+    setTimeout(() => lkInputRef.current?.focus(), 60); // 모달 렌더 후 검색창 포커스
   };
 
   // ---- 저장 (slice-12 estimate API) ------------------------------------
@@ -3220,6 +3215,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 )}
                 <div className="aq-lkinput">
                   <input
+                    ref={lkInputRef}
                     value={lkInput}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -3232,7 +3228,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                     onFocus={() => setLkAcOpen(true)}
                     onBlur={() => setTimeout(() => setLkAcOpen(false), 150)}
                     onKeyDown={onLkKey}
-                    placeholder="+ 코드 추가 (Enter) — 같은 물건 다른 코드 함께"
+                    placeholder={
+                      lkCodes.length
+                        ? '+ 코드 추가 (Enter) — 같은 물건 다른 코드 함께'
+                        : '품목코드 입력 후 Enter로 검색'
+                    }
                   />
                   {lkAcOpen &&
                     lkInput.trim() &&
