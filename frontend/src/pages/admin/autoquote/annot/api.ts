@@ -429,6 +429,48 @@ export interface Segment {
   clients: number;
   revenue: number;
 }
+export interface YearPace {
+  year: number;
+  throughMonth: number;
+  ytdRevenue: number;
+  lastYearYtd: number;
+  lastYearFull: number;
+  projectedRevenue: number;
+  projectedYoyPct: number | null;
+  ytdYoyPct: number | null;
+}
+export interface Mover {
+  name: string;
+  current: number;
+  previous: number;
+  delta: number;
+}
+export interface Movers {
+  basis: string;
+  risers: Mover[];
+  fallers: Mover[];
+}
+export interface ClientMonth {
+  ym: string;
+  revenue: number;
+  count: number;
+}
+export interface ClientItem {
+  name: string;
+  revenue: number;
+  count: number;
+}
+export interface ClientDetail {
+  name: string;
+  totalRevenue: number;
+  orderCount: number;
+  firstYm: string | null;
+  lastYm: string | null;
+  inactiveMonths: number;
+  segment: string;
+  monthly: ClientMonth[];
+  topItems: ClientItem[];
+}
 export interface SalesAnalytics {
   summary: SalesSummary;
   monthly: MonthPoint[];
@@ -441,6 +483,9 @@ export interface SalesAnalytics {
   churnRisk: ChurnClient[];
   newClientsByYear: NewYear[];
   segments: Segment[];
+  yearPace: YearPace;
+  movers: Movers;
+  clientDetails: Record<string, ClientDetail>;
 }
 
 /** 매출분석 집계 — 상세 명세서 기반. 미프로비저닝(503)이면 null. */

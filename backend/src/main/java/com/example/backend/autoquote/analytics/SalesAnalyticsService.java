@@ -7,9 +7,12 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
@@ -73,6 +76,8 @@ public class SalesAnalyticsService {
         Map<Integer, long[]> yearly = new TreeMap<>();    // year -> [revenue, invoices]
         Map<String, long[]> clients = new LinkedHashMap<>(); // client -> [revenue, count]
         Map<String, String[]> clientYm = new LinkedHashMap<>(); // client -> [firstYm, lastYm]
+        Map<String, Map<String, long[]>> clientMonthly = new LinkedHashMap<>(); // client -> ym -> [rev,count] (드릴다운·무버스)
+        Map<String, Map<String, long[]>> clientItems = new LinkedHashMap<>();    // client -> label -> [rev,count] (드릴다운 주력품목)
         Map<String, long[]> items = new LinkedHashMap<>();   // itemCode -> [revenue, qty, count]
         Map<String, Long> materials = new LinkedHashMap<>(); // category -> revenue
         long[] seasonByMonth = new long[13];              // 1..12 합계(계절성)
@@ -132,6 +137,10 @@ public class SalesAnalyticsService {
                         if (ym.compareTo(span[1]) > 0) {
                             span[1] = ym;
                         }
+                        long[] cmv = clientMonthly.computeIfAbsent(client, k -> new TreeMap<>())
+                                .computeIfAbsent(ym, k -> new long[2]);
+                        cmv[0] += revenue;
+                        cmv[1] += 1;
                     }
                     // 라인(품목/자재) 집계 — 라인 매출 = 수량 × 단가.
                     JsonNode grid = inv.get("grid");
@@ -152,6 +161,12 @@ public class SalesAnalyticsService {
                                 items.get(label)[0] += lineRev;
                                 items.get(label)[1] += (qty == 0 ? 1 : qty);
                                 items.get(label)[2] += 1;
+                                if (!client.isBlank()) {
+                                    long[] civ = clientItems.computeIfAbsent(client, k -> new LinkedHashMap<>())
+                                            .computeIfAbsent(label, k -> new long[2]);
+                                    civ[0] += lineRev;
+                                    civ[1] += 1;
+                                }
                             }
                             String mat = material(code, item); // 코드+품목 함께
                             materials.merge(mat, lineRev, Long::sum);
@@ -200,6 +215,7 @@ public class SalesAnalyticsService {
         List<ChurnClient> churn = new ArrayList<>();
         Map<Integer, Integer> newByYearMap = new TreeMap<>();
         Map<String, long[]> segAgg = new LinkedHashMap<>(); // seg -> [clients, revenue]
+        Map<String, String> clientSeg = new HashMap<>();    // client -> 세그먼트(드릴다운 배지)
         if (refYm != null) {
             for (Map.Entry<String, long[]> e : clients.entrySet()) {
                 String name = e.getKey();
@@ -225,6 +241,7 @@ public class SalesAnalyticsService {
                 segAgg.computeIfAbsent(seg, k -> new long[2]);
                 segAgg.get(seg)[0] += 1;
                 segAgg.get(seg)[1] += rev;
+                clientSeg.put(name, seg);
                 if (cnt >= 3) {
                     int avgGap = Math.max(1, monthsBetween(span[1], span[0]) / (cnt - 1));
                     if (recency >= Math.max(4, avgGap * 2)) {
@@ -241,9 +258,120 @@ public class SalesAnalyticsService {
                 .map(e -> new Segment(e.getKey(), (int) e.getValue()[0], e.getValue()[1]))
                 .sorted((a, b) -> Long.compare(b.revenue(), a.revenue())).toList();
 
+        // ---- 올해 페이스(예상매출) + 거래처 무버스(YTD 동기간 증감) ----
+        int curYear = 0;
+        int curMonth = 0;
+        if (refYm != null) {
+            curYear = Integer.parseInt(refYm.substring(0, 4));
+            curMonth = Integer.parseInt(refYm.substring(5, 7));
+        }
+        YearPace yearPace = yearPace(monthlyList, yearlyList, curYear, curMonth);
+        Movers movers = movers(clientMonthly, curYear, curMonth);
+
+        // ---- 거래처 드릴다운 상세 — 화면에 이름이 노출되는 거래처만(TOP/무버스/이탈위험) 한정 ----
+        Set<String> need = new LinkedHashSet<>();
+        topClients.forEach(c -> need.add(c.name()));
+        movers.risers().forEach(m -> need.add(m.name()));
+        movers.fallers().forEach(m -> need.add(m.name()));
+        churnTop.forEach(c -> need.add(c.name()));
+        Map<String, ClientDetail> clientDetails = new LinkedHashMap<>();
+        for (String name : need) {
+            long[] info = clients.get(name);
+            if (info == null) {
+                continue;
+            }
+            List<ClientMonth> cMonthly = clientMonthly.getOrDefault(name, Map.of()).entrySet().stream()
+                    .map(en -> new ClientMonth(en.getKey(), en.getValue()[0], (int) en.getValue()[1]))
+                    .sorted(Comparator.comparing(ClientMonth::ym)).toList();
+            List<ClientItem> cItems = clientItems.getOrDefault(name, Map.of()).entrySet().stream()
+                    .map(en -> new ClientItem(en.getKey(), en.getValue()[0], (int) en.getValue()[1]))
+                    .sorted(Comparator.comparingLong(ClientItem::revenue).reversed()).limit(6).toList();
+            String[] span = clientYm.get(name);
+            String fYm = span == null ? null : span[0];
+            String lYm = span == null ? null : span[1];
+            int inactive = (refYm != null && lYm != null) ? monthsBetween(refYm, lYm) : 0;
+            clientDetails.put(name, new ClientDetail(name, info[0], (int) info[1], fYm, lYm, inactive,
+                    clientSeg.getOrDefault(name, ""), cMonthly, cItems));
+        }
+
         Summary summary = summary(monthlyList, yearlyList, totalRevenue, totalInvoices, clients.size());
         return new SalesAnalytics(summary, monthlyList, yearlyList, topClients, topItems, materialList,
-                seasonality, concentration, churnTop, newByYear, segments);
+                seasonality, concentration, churnTop, newByYear, segments,
+                yearPace, movers, clientDetails);
+    }
+
+    /**
+     * 올해 예상매출(run-rate) — 올해 누적(YTD)을 작년 동기간 대비 성장률로 작년 전체에 투영.
+     * 계절 타는 간판업이라 단순 ×12/월보다 작년 패턴 기반 투영이 정확. 작년 데이터 없으면 ×12/월 폴백.
+     */
+    private static YearPace yearPace(List<MonthPoint> monthly, List<YearPoint> yearly, int curYear, int curMonth) {
+        long ytd = 0;
+        long lastYtd = 0;
+        for (MonthPoint mp : monthly) {
+            int yy = Integer.parseInt(mp.ym().substring(0, 4));
+            int mm = Integer.parseInt(mp.ym().substring(5, 7));
+            if (mm <= curMonth) {
+                if (yy == curYear) {
+                    ytd += mp.revenue();
+                } else if (yy == curYear - 1) {
+                    lastYtd += mp.revenue();
+                }
+            }
+        }
+        long lastFull = 0;
+        for (YearPoint yp : yearly) {
+            if (yp.year() == curYear - 1) {
+                lastFull = yp.revenue();
+            }
+        }
+        long projected;
+        Double projYoy = null;
+        Double ytdYoy = null;
+        if (lastYtd > 0 && lastFull > 0) {
+            double growth = (double) ytd / lastYtd;
+            projected = Math.round(lastFull * growth);
+            ytdYoy = round1((ytd - lastYtd) * 100.0 / lastYtd);
+            projYoy = round1((projected - lastFull) * 100.0 / lastFull);
+        } else {
+            projected = curMonth > 0 ? Math.round(ytd * 12.0 / curMonth) : ytd;
+        }
+        return new YearPace(curYear, curMonth, ytd, lastYtd, lastFull, projected, projYoy, ytdYoy);
+    }
+
+    /**
+     * 거래처 무버스 — 올해 누적(1~curMonth) vs 작년 같은 기간의 거래처별 매출 증감.
+     * 신규(작년 0)는 급상승, 끊긴 단골(올해 0)은 급감으로 자연히 잡힌다. 각 8곳.
+     */
+    private static Movers movers(Map<String, Map<String, long[]>> clientMonthly, int curYear, int curMonth) {
+        if (curYear <= 0) {
+            return new Movers("", List.of(), List.of());
+        }
+        List<Mover> all = new ArrayList<>();
+        for (Map.Entry<String, Map<String, long[]>> e : clientMonthly.entrySet()) {
+            long thisYtd = 0;
+            long lastYtd = 0;
+            for (Map.Entry<String, long[]> me : e.getValue().entrySet()) {
+                int yy = Integer.parseInt(me.getKey().substring(0, 4));
+                int mm = Integer.parseInt(me.getKey().substring(5, 7));
+                if (mm <= curMonth) {
+                    if (yy == curYear) {
+                        thisYtd += me.getValue()[0];
+                    } else if (yy == curYear - 1) {
+                        lastYtd += me.getValue()[0];
+                    }
+                }
+            }
+            if (thisYtd == 0 && lastYtd == 0) {
+                continue;
+            }
+            all.add(new Mover(e.getKey(), thisYtd, lastYtd, thisYtd - lastYtd));
+        }
+        List<Mover> risers = all.stream().filter(m -> m.delta() > 0)
+                .sorted(Comparator.comparingLong(Mover::delta).reversed()).limit(8).toList();
+        List<Mover> fallers = all.stream().filter(m -> m.delta() < 0)
+                .sorted(Comparator.comparingLong(Mover::delta)).limit(8).toList();
+        String basis = curYear + " 1~" + curMonth + "월 vs " + (curYear - 1) + " 1~" + curMonth + "월";
+        return new Movers(basis, risers, fallers);
     }
 
     private static Concentration concentration(List<long[]> revSorted, long total, int n) {
@@ -453,7 +581,38 @@ public class SalesAnalyticsService {
                                  List<NameRevenue> topClients, List<ItemStat> topItems,
                                  List<NameRevenue> materials, List<MonthAvg> seasonality,
                                  Concentration concentration, List<ChurnClient> churnRisk,
-                                 List<NewYear> newClientsByYear, List<Segment> segments) {
+                                 List<NewYear> newClientsByYear, List<Segment> segments,
+                                 YearPace yearPace, Movers movers,
+                                 Map<String, ClientDetail> clientDetails) {
+    }
+
+    /**
+     * 올해 페이스 — 누적(YTD)·작년 동기간·작년 전체·예상 연매출(run-rate)·예상 YoY·누적 YoY.
+     * 프론트의 목표 달성률 링은 클라이언트(localStorage 목표)에서 ytdRevenue/projected로 계산.
+     */
+    public record YearPace(int year, int throughMonth, long ytdRevenue, long lastYearYtd,
+                           long lastYearFull, long projectedRevenue, Double projectedYoyPct,
+                           Double ytdYoyPct) {
+    }
+
+    /** 거래처 무버스 — 비교 기준 라벨 + 급상승/급감 각 8곳. */
+    public record Movers(String basis, List<Mover> risers, List<Mover> fallers) {
+    }
+
+    /** 무버 한 곳 — 올해 누적 vs 작년 동기간 + 증감액. */
+    public record Mover(String name, long current, long previous, long delta) {
+    }
+
+    /** 거래처 드릴다운 상세 — 월별 추이 + 주력 품목 + 메타(세그먼트·마지막거래). */
+    public record ClientDetail(String name, long totalRevenue, int orderCount, String firstYm,
+                               String lastYm, int inactiveMonths, String segment,
+                               List<ClientMonth> monthly, List<ClientItem> topItems) {
+    }
+
+    public record ClientMonth(String ym, long revenue, int count) {
+    }
+
+    public record ClientItem(String name, long revenue, int count) {
     }
 
     /** 거래처 집중도 — 상위 N개 매출 점유율 + HHI + 파레토(매출 80% 차지 거래처 수/비율). */
