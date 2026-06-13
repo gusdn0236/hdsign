@@ -1067,15 +1067,15 @@
 }
 .aq-lkinput {
   position: relative;
-  flex: 1;
-  min-width: 180px;
+  flex: 0 1 190px;
+  min-width: 130px;
 }
 .aq-lkinput input {
   width: 100%;
-  padding: 6px 9px;
+  padding: 5px 8px;
   border: 1.5px solid var(--line);
   border-radius: 7px;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .aq-lkinput input:focus {
   outline: none;
@@ -1086,14 +1086,14 @@
   margin-left: 6px;
 }
 .aq-lkspec {
-  flex: 0 0 150px;
+  flex: 0 0 120px;
 }
 .aq-lkspec input {
   width: 100%;
-  padding: 6px 9px;
+  padding: 5px 8px;
   border: 1.5px solid var(--line);
   border-radius: 7px;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .aq-lkspec input:focus {
   outline: none;
