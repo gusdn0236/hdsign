@@ -3042,16 +3042,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           <div className="aq-h">
             <b>견적 (이지폼)</b>
             {order && <span className="aq-tag">{order.clientCompanyName || order.orderNumber}</span>}
-            {/* 단가찾아보기(둘러보기) — 계산기 버튼 왼쪽. 과거 명세서를 열어 도장 행 강조 + 다중선택 가져오기. */}
-            <button
-              type="button"
-              className="aq-lookupbtn"
-              onClick={openLookupBrowse}
-              title="과거 명세서에서 단가 찾아 가져오기 (도장 행 강조·다중선택)"
-            >
-              🔎 단가찾아보기
-            </button>
-            {/* 도장비찾아보기 — 행을 하나 골라, 그 품목 기준으로 '도장 포함 명세서'만 추려 과거 단가를 본다. */}
+            {/* 도장비찾아보기 — 단가찾아보기 왼쪽. 행을 하나 골라 '도장 포함 명세서'만 추려 과거 단가를 본다. */}
             <button
               type="button"
               className="aq-lookupbtn aq-dojang-find"
@@ -3062,6 +3053,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               title="행 하나 선택 → 그 품목과 비슷하면서 '도장'이 포함된 과거 명세서만 찾아 도장비 참고"
             >
               🎨 도장비찾아보기
+            </button>
+            {/* 단가찾아보기(둘러보기) — 계산기 버튼 왼쪽. 과거 명세서를 열어 도장 행 강조 + 다중선택 가져오기. */}
+            <button
+              type="button"
+              className="aq-lookupbtn"
+              onClick={openLookupBrowse}
+              title="과거 명세서에서 단가 찾아 가져오기 (도장 행 강조·다중선택)"
+            >
+              🔎 단가찾아보기
             </button>
             {/* 미니 단가계산기 토글 — 헤더 맨 오른쪽(공급가액 열 위). 누르면 드래그 가능한 계산기 창이 켜졌다 꺼졌다. */}
             <button
