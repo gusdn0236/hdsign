@@ -21,7 +21,6 @@ import {
 } from './annot/calc';
 import {
   lookupPricesMerged,
-  similarCodes,
   evidence as fetchEvidence,
   getOrder,
   getEstimate,
@@ -1666,41 +1665,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         const m = String(d || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
         return m ? +m[1] * 10000 + +m[2] * 100 + +m[3] : 0;
       };
-      // 입력 품목코드 결과가 적으면(같은 물건이 코드 변형으로 분산된 경우) 연관 코드까지 순회해 합친다.
-      // 입력 코드만으로 충분(>=ENOUGH)하면 그대로 둔다. (옛 '혹시 이걸 찾으시나요?' 칩을 자동 검색으로 대체)
-      const ENOUGH = 12;
-      if (codes.length && withPhoto(preds).length < ENOUGH) {
-        const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
-        const have = new Set(codes.map(nrm));
-        const sugLists = await Promise.all(codes.filter(Boolean).map((c) => similarCodes(token, c, 8)));
-        if (mySeq !== lookupSeq.current) return;
-        const seenC = new Set<string>();
-        const related: string[] = [];
-        for (const s of sugLists.flat().sort((a, b) => b.count - a.count)) {
-          const k = nrm(s.code);
-          if (have.has(k) || seenC.has(k)) continue;
-          seenC.add(k);
-          related.push(s.code);
-          if (related.length >= 6) break; // 상위 6개만(너무 많으면 느려짐)
-        }
-        if (related.length) {
-          const more = await lookupPricesMerged(token, client, related, spec, qty, {
-            limit: 100,
-            paintingOnly: !!painting,
-          });
-          if (mySeq !== lookupSeq.current) return;
-          if (more && more.length) {
-            const seen = new Set(preds.map((p) => `${p.ref_file}|${p.ref_invoice_idx}|${p.price}`));
-            for (const p of more) {
-              const key = `${p.ref_file}|${p.ref_invoice_idx}|${p.price}`;
-              if (!seen.has(key)) {
-                seen.add(key);
-                preds.push(p);
-              }
-            }
-          }
-        }
-      }
+      // 연관(유사) 코드 확장은 백엔드 lookup 이 한 번에 처리한다(왕복 1번) — 프론트 2차 호출 없음.
       // 사이즈 근접도(score) 우선 → 동률은 최신순. (연관코드까지 한 풀에서 가장 비슷한 사이즈가 위로)
       const sorted = withPhoto(preds).sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || dnum(b.date) - dnum(a.date));
       const total = sorted.length;

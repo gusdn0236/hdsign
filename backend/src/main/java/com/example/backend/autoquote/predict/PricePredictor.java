@@ -139,6 +139,16 @@ public class PricePredictor {
                 }
             }
         }
+        // 입력 코드 결과가 적으면(같은 물건이 코드 변형으로 분산) 유사 코드 버킷도 합친다 — byCode 맵 조회라
+        // 추가 풀스캔/HTTP 왕복 없이 서버에서 한 번에 확장(프론트가 similar-codes 2차 호출을 안 해도 됨).
+        if (!codeNorm.isBlank() && coded.size() < 24) {
+            for (String key : similarKeys(idx, codeNorm, 6)) {
+                List<Line> b = idx.byCode.get(key);
+                if (b != null) {
+                    coded.addAll(b);
+                }
+            }
+        }
         if (paintingOnly) {
             coded.removeIf(r -> !idx.paintingInvoices.contains(invoiceKey(r)));
         }
@@ -194,19 +204,34 @@ public class PricePredictor {
         if (idx == null) {
             return List.of();
         }
-        String q = ccode(queryCode);
+        List<CodeSuggestion> out = new ArrayList<>();
+        for (String key : similarKeys(idx, ccode(queryCode), limit)) {
+            List<Line> b = idx.byCode.get(key);
+            if (b != null && !b.isEmpty()) {
+                out.add(new CodeSuggestion(displayCode(b), b.size()));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * q 와 '비슷한' byCode 키(정규화)들을 유사도·건수순으로. 유사도 = ① 부분포함(짧은쪽≥3) 0.95,
+     * ② 글자 bigram Sørensen–Dice(≥0.4). 정확히 같은 코드는 제외. {@link #similarCodes}(칩 표시)와
+     * lookup 내부 확장(유사코드 버킷 합치기)이 공유 — 추가 풀스캔 없이 byCode 맵 조회만으로 확장한다.
+     */
+    private List<String> similarKeys(Index idx, String q, int limit) {
         if (q.isBlank()) {
             return List.of();
         }
         Set<String> qb = bigrams(q);
         int cap = Math.max(1, Math.min(limit, 20));
-        record Cand(String code, int count, double sim) {
+        record Cand(String key, int count, double sim) {
         }
         List<Cand> cands = new ArrayList<>();
         for (Map.Entry<String, List<Line>> e : idx.byCode.entrySet()) {
             String c = e.getKey();
             if (c.equals(q)) {
-                continue; // 정확히 같은 코드는 이미 검색됨
+                continue;
             }
             double sim;
             int minLen = Math.min(q.length(), c.length());
@@ -226,12 +251,12 @@ public class PricePredictor {
             if (sim < 0.4) {
                 continue;
             }
-            cands.add(new Cand(displayCode(e.getValue()), e.getValue().size(), sim));
+            cands.add(new Cand(c, e.getValue().size(), sim));
         }
         cands.sort((a, b) -> a.sim != b.sim ? Double.compare(b.sim, a.sim) : Integer.compare(b.count, a.count));
-        List<CodeSuggestion> out = new ArrayList<>();
+        List<String> out = new ArrayList<>();
         for (Cand c : cands) {
-            out.add(new CodeSuggestion(c.code, c.count));
+            out.add(c.key);
             if (out.size() >= cap) {
                 break;
             }
