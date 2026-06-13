@@ -402,6 +402,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [gridAc, setGridAc] = useState<{ row: number; idx: number; left: number; top: number; width: number } | null>(null);
   // 우측 표 단가칸 포커스 시 뜨는 계산기/단가찾아보기 툴바(말풍선과 동일). 포털+fixed.
   const [gridTool, setGridTool] = useState<{ row: number; left: number; top: number } | null>(null);
+  // 수량AI — 수량칸 포커스 시 뜨는 툴바(🔢 수량AI). 누르면 박스/연필/지우개로 영역을 칠하고 ✓ 누르면
+  // 읽은 글자 갯수가 그 행 수량에 적힌다(모달 없음). qtyAiRow = 현재 수량AI 대상 행(없으면 null).
+  const [qtyTool, setQtyTool] = useState<{ row: number; left: number; top: number } | null>(null);
+  const [qtyAiRow, setQtyAiRow] = useState<number | null>(null);
+  const qtyAiRowRef = useRef<number | null>(null);
+  qtyAiRowRef.current = qtyAiRow;
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
@@ -2345,6 +2351,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     setConfirmAt(null);
   };
 
+  // 수량AI 시작 — 그 행을 대상으로 영역 OCR 모드 진입(박스). 칠하고 ✓ 누르면 글자 갯수가 수량에 적힌다.
+  const startQtyAi = (row: number) => {
+    resetMaskAndUndo();
+    setMode('ocr');
+    setOcrTool('box');
+    setQtyAiRow(row);
+  };
+  // 수량AI 종료 — 모드/툴바 정리하고 이동(hand) 모드로.
+  const endQtyAi = () => {
+    setQtyAiRow(null);
+    setQtyTool(null);
+    setMode('hand');
+  };
+
   // 읽은 글자 → 명세서 행만 추가한다(지시서엔 점·말풍선 안 찍음 = dragged:false). 품목=읽은 글자,
   // 수량=글자수가 행에 prefill 되고, 나머지 칸은 오른쪽 명세서에서 채운다. ax/ay 는 나중에 표 번호를
   // 지시서로 끌어다 놓을 때의 폴백 위치로만 보관.
@@ -2443,6 +2463,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         setStatus('');
         if (!text) {
           cdlg('이 영역에서 글자를 못 읽었어요. 읽을 부분을 더 크게/정확히 칠해보세요.', [{ label: '확인', sec: true }]);
+          return;
+        }
+        // 수량AI — 모달 없이 읽은 글자 갯수를 그 행 수량에 바로 적고 종료.
+        if (qtyAiRowRef.current != null) {
+          setCell(qtyAiRowRef.current, '수량', String(charCount(text, 'all')));
+          endQtyAi();
           return;
         }
         const esc = text.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c] || c);
@@ -2764,7 +2790,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           )}
           {imgSrc && !showRef && mode === 'ocr' && !ocrBusy && (
             <div className="aq-ocrhint">
-              {`${ocrTarget + 1}번 항목 — 박스/연필로 칠한 뒤 ✓ 누르면 그 자리에 말풍선이 생겨요`}
+              {qtyAiRow != null
+                ? `${qtyAiRow + 1}번 수량 — 박스/연필로 셀 부분을 칠한 뒤 ✓ 누르면 글자 갯수가 수량에 적혀요`
+                : `${ocrTarget + 1}번 항목 — 박스/연필로 칠한 뒤 ✓ 누르면 그 자리에 말풍선이 생겨요`}
             </div>
           )}
           {ocrBusy && !showRef && <div className="aq-ocrbusy">글자 읽는 중…</div>}
@@ -3163,7 +3191,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                         <input value={v['규격'] || ''} onChange={(e) => setCell(i, '규격', e.target.value)} data-gr={i} data-gc={2} onKeyDown={(e) => onGridKey(e, i, 2)} />
                       </td>
                       <td>
-                        <input value={v['수량'] || ''} onChange={(e) => setCell(i, '수량', e.target.value)} data-gr={i} data-gc={3} onKeyDown={(e) => onGridKey(e, i, 3)} />
+                        <input
+                          value={v['수량'] || ''}
+                          onChange={(e) => setCell(i, '수량', e.target.value)}
+                          onFocus={(e) => {
+                            const r = e.currentTarget.getBoundingClientRect();
+                            setQtyTool({ row: i, left: r.left, top: r.bottom });
+                          }}
+                          onBlur={() =>
+                            setTimeout(
+                              () => setQtyTool((t) => (t && t.row === i && qtyAiRowRef.current == null ? null : t)),
+                              200,
+                            )
+                          }
+                          data-gr={i}
+                          data-gc={3}
+                          onKeyDown={(e) => onGridKey(e, i, 3)}
+                        />
                       </td>
                       <td className="p">
                         <input
@@ -3328,6 +3372,65 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
             >
               🔎 단가 찾아보기
             </button>
+          </div>,
+          document.body,
+        )}
+
+      {/* 수량칸 포커스 시 뜨는 수량AI 툴바 — 누르면 박스/연필/지우개로 칠하고 ✓ 누르면 갯수가 수량에. */}
+      {qtyTool &&
+        imgSrc &&
+        !showRef &&
+        createPortal(
+          <div
+            style={{ position: 'fixed', left: qtyTool.left, top: qtyTool.top + 3, zIndex: 3000, display: 'flex', gap: 6, alignItems: 'center' }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            {qtyAiRow === qtyTool.row ? (
+              <div className="aq-qtyai-tools">
+                <span className="aq-qtyai-label">읽을 곳 칠하고 ✓</span>
+                <button
+                  type="button"
+                  className={'aq-octbtn' + (ocrTool === 'box' ? ' on' : '')}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setOcrTool('box')}
+                >
+                  ⬚ 박스
+                </button>
+                <button
+                  type="button"
+                  className={'aq-octbtn' + (ocrTool === 'pencil' ? ' on' : '')}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setOcrTool('pencil')}
+                >
+                  ✏️ 연필
+                </button>
+                <button
+                  type="button"
+                  className={'aq-octbtn' + (ocrTool === 'eraser' ? ' on' : '')}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setOcrTool('eraser')}
+                >
+                  🩹 지우개
+                </button>
+                <button
+                  type="button"
+                  className="aq-qtyai-cancel"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={endQtyAi}
+                >
+                  취소
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="aq-qtyai-btn"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => startQtyAi(qtyTool.row)}
+              >
+                🔢 수량AI
+              </button>
+            )}
           </div>,
           document.body,
         )}
