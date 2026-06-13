@@ -26,11 +26,6 @@ export function ymdLabel(d?: string): string {
   return m ? `${m[1]}년 ${+m[2]}월` : s;
 }
 
-/** 500원 단위 반올림(예상 가격 안내용). */
-function round500(n: number): number {
-  return Math.round(n / 500) * 500;
-}
-
 /** 문자열/숫자 → 숫자(없으면 null). 명세서 단가 셀 파싱용. */
 function num(v: unknown): number | null {
   const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
@@ -113,13 +108,6 @@ interface Props {
   refs: LookupRef[];
   ri: number;
   lpi: number; // 현재 후보의 지시서 사진 인덱스(다장 갤러리)
-  userSpec: string; // 사용자가 입력한 규격(예상 가격 안내문에 표시)
-  actionLabel: string; // 기본 버튼 라벨(복사/적용)
-  /**
-   * 설정 시 예상가 한 줄 + 단독 액션 버튼을 숨기고 이 안내 문구만 표시(단가계산기 탭 전용).
-   * 표의 단가 행은 그대로 클릭 가능 — "표에서 직접 골라라" 라는 안내로 쓴다.
-   */
-  pickPrompt?: string;
   onAction: (price: number) => void;
   totalFound?: number; // 사진 있는 비슷한 명세서 총 건수("총 N건 찾았습니다"). 표시는 30건만.
   confirmBeforeAction?: boolean; // true면 행/버튼 클릭 시 "이 가격으로 결정할까요?" 한번 확인 후 적용.
@@ -162,9 +150,6 @@ export default function LookupResultModal({
   refs,
   ri,
   lpi,
-  userSpec,
-  actionLabel,
-  pickPrompt,
   onAction,
   totalFound,
   confirmBeforeAction,
@@ -253,7 +238,6 @@ export default function LookupResultModal({
   const corp = ev?.client || R?.src || '거래처';
   const dateStr = ymdLabel(ev?.date || R?.date);
   const title = R ? corp : '단가 찾아보기';
-  const est = !onSibling && R?.est != null ? round500(R.est) : null;
   const grid = ev?.grid || [];
 
   return (
@@ -320,22 +304,8 @@ export default function LookupResultModal({
             </div>
             <div className="aq-mright lk-right">
               {dateStr ? <div className="lk-date">{dateStr} 명세서</div> : null}
-              {pickPrompt ? (
-                <div className="lk-pick">{pickPrompt}</div>
-              ) : (
-                <>
-                  {est != null && userSpec ? (
-                    <div className="lk-est">
-                      현재 입력하신 <b>{userSpec}</b> 사이즈의 예상 가격은 <b>{est.toLocaleString()}원</b> 입니다.
-                    </div>
-                  ) : null}
-                  {!onSibling && (
-                    <button className="aq-btn sh lk-action" onClick={() => ask(R.price)}>
-                      {actionLabel}
-                    </button>
-                  )}
-                </>
-              )}
+              {/* 예상가·단독 버튼 대신 "표에서 직접 골라라" 안내 — 명세서작성·단가계산기 공통. */}
+              <div className="lk-pick">명세서에서 적용하실 가격을 선택해주세요.</div>
               {grid.length ? (
                 <table className="aq-rtbl lk-tbl">
                   <thead>

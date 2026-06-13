@@ -3013,8 +3013,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           refs={lookup.refs}
           ri={lookup.ri}
           lpi={lpi}
-          userSpec={lkCtxRef.current.spec}
-          actionLabel="이 단가 적용 →"
           onAction={applyPrice}
           totalFound={lookup.total}
           confirmBeforeAction

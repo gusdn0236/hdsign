@@ -363,9 +363,6 @@ export default function PriceLookup() {
               refs={lk.refs}
               ri={lk.ri}
               lpi={lk.lpi}
-              userSpec={spec}
-              actionLabel="이 단가 복사 📋"
-              pickPrompt="명세서에서 적용하실 가격을 선택해주세요."
               totalFound={lk.total}
               onAction={(p) => navigator.clipboard?.writeText(String(p))}
               onPrev={() => setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0, bi: 0 } : l))}
