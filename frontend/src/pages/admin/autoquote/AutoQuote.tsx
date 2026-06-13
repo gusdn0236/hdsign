@@ -33,7 +33,6 @@ import {
   type Evidence,
   type OrderContext,
   type VisionQuota,
-  type CodeSuggestion,
 } from './annot/api';
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
@@ -423,7 +422,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [lpi, setLpi] = useState(0); // 단가찾아보기 모달 — 현재 후보의 사진 인덱스(다장 갤러리)
   // 단가찾아보기 다중 코드 태그(같은 물건 다른 코드 함께 검색) — 행 코드로 시드, 추가 시 재검색.
   const [lkCodes, setLkCodes] = useState<string[]>([]);
-  const [lkSugg, setLkSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩
   const [lkInput, setLkInput] = useState('');
   const lkInputRef = useRef<HTMLInputElement>(null); // 둘러보기 진입 시 검색창 자동 포커스
   const [lkSpec, setLkSpec] = useState(''); // 둘러보기 검색 — 규격(사이즈) 입력. lkCtxRef.spec 로 검색에 반영
@@ -1659,19 +1657,54 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         setStatus('');
         return;
       }
-      // 1차: 품목코드·품목·사이즈로 분류된 후보 중 '매칭된 사진이 있는' 것만 남긴다.
-      // (백엔드가 싼 존재확인으로 photo_available 을 채워줌. 구버전 백엔드라 전부 undefined 면 필터 생략.)
-      const hasFlag = preds.some((p) => p.photo_available !== undefined);
-      const photoed = hasFlag ? preds.filter((p) => p.photo_available) : preds;
-      // 2차: 사진 있는 명세서들을 '최신순(날짜 내림차순)'으로 정렬.
+      // 사진 있는 후보만(백엔드가 싼 존재확인으로 photo_available 채움. 구버전이라 전부 undefined 면 필터 생략).
+      const withPhoto = <T extends { photo_available?: boolean }>(list: T[]): T[] => {
+        const hasFlag = list.some((p) => p.photo_available !== undefined);
+        return hasFlag ? list.filter((p) => p.photo_available) : list;
+      };
       const dnum = (d?: string) => {
         const m = String(d || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
         return m ? +m[1] * 10000 + +m[2] * 100 + +m[3] : 0;
       };
-      const sorted = [...photoed].sort((a, b) => dnum(b.date) - dnum(a.date));
+      // 입력 품목코드 결과가 적으면(같은 물건이 코드 변형으로 분산된 경우) 연관 코드까지 순회해 합친다.
+      // 입력 코드만으로 충분(>=ENOUGH)하면 그대로 둔다. (옛 '혹시 이걸 찾으시나요?' 칩을 자동 검색으로 대체)
+      const ENOUGH = 12;
+      if (codes.length && withPhoto(preds).length < ENOUGH) {
+        const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
+        const have = new Set(codes.map(nrm));
+        const sugLists = await Promise.all(codes.filter(Boolean).map((c) => similarCodes(token, c, 8)));
+        if (mySeq !== lookupSeq.current) return;
+        const seenC = new Set<string>();
+        const related: string[] = [];
+        for (const s of sugLists.flat().sort((a, b) => b.count - a.count)) {
+          const k = nrm(s.code);
+          if (have.has(k) || seenC.has(k)) continue;
+          seenC.add(k);
+          related.push(s.code);
+          if (related.length >= 6) break; // 상위 6개만(너무 많으면 느려짐)
+        }
+        if (related.length) {
+          const more = await lookupPricesMerged(token, client, related, spec, qty, {
+            limit: 100,
+            paintingOnly: !!painting,
+          });
+          if (mySeq !== lookupSeq.current) return;
+          if (more && more.length) {
+            const seen = new Set(preds.map((p) => `${p.ref_file}|${p.ref_invoice_idx}|${p.price}`));
+            for (const p of more) {
+              const key = `${p.ref_file}|${p.ref_invoice_idx}|${p.price}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                preds.push(p);
+              }
+            }
+          }
+        }
+      }
+      // 사이즈 근접도(score) 우선 → 동률은 최신순. (연관코드까지 한 풀에서 가장 비슷한 사이즈가 위로)
+      const sorted = withPhoto(preds).sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || dnum(b.date) - dnum(a.date));
       const total = sorted.length;
-      const top = sorted.slice(0, 30); // 총 N건 중 최신 30건만 표시.
-      // 명세서(텍스트)만으로 후보 골격을 먼저 만든다(evidence=null → 모달은 "사진 불러오는 중").
+      const top = sorted.slice(0, 30);
       const refs: LookupRef[] = top.map((pr) => ({
         reason: pr.reason,
         src: pr.src,
@@ -1687,8 +1720,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         (painting ? '🎨 도장비 · ' : '') +
         `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}` +
         (painting ? ' (도장 포함 명세서)' : '');
-      // 무거운 건 사진. 앞 5장만 먼저 받아 모달을 바로 띄우고, 나머지는 사용자가 그 5장을
-      // 보는 동안 백그라운드로 채운다(아래). 실패는 null(모달이 "사진 없음" 처리).
+      // 빠른 렌더: 사진(무거움)을 기다리지 않고 모달을 즉시 띄운 뒤, 사진은 백그라운드로 채운다
+      // (보이는 첫 후보부터 순서대로 — evidence=null 이면 모달이 "사진 불러오는 중" 표시).
+      setLpi(0);
+      setLkView('search'); // 새 검색 → 검색결과 보기로 복귀
+      setLookup({ refs, ri: 0, q, total });
+      setStatus('');
       const loadEv = async (pr: (typeof top)[number]): Promise<Evidence | null> => {
         try {
           return await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
@@ -1696,19 +1733,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           return null;
         }
       };
-      const EAGER = 5;
-      const head = await Promise.all(top.slice(0, EAGER).map(loadEv));
-      if (mySeq !== lookupSeq.current) return;
-      head.forEach((ev, i) => {
-        refs[i].evidence = ev;
-      });
-      setLpi(0);
-      setLkView('search'); // 새 검색 → 검색결과 보기로 복귀(토글은 이 시점부터 다시 시작)
-      setLookup({ refs, ri: 0, q, total });
-      setStatus('');
-      // 나머지 사진은 백그라운드로 — 도착하는 대로 해당 후보에 끼워 넣는다(세대 일치할 때만).
-      top.slice(EAGER).forEach((pr, k) => {
-        const idx = EAGER + k;
+      top.forEach((pr, idx) => {
         loadEv(pr).then((ev) => {
           if (mySeq !== lookupSeq.current) return;
           setLookup((l) => {
@@ -1719,24 +1744,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           });
         });
       });
-      // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
-      const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
-      const activeN = new Set(codes.map(nrm));
-      const lists = await Promise.all(codes.filter(Boolean).map((c) => similarCodes(token, c, 8)));
-      if (mySeq !== lookupSeq.current) return; // 새 검색이 시작됨 → 추천칩 갱신 폐기
-      const seen = new Set<string>();
-      setLkSugg(
-        lists
-          .flat()
-          .filter((x) => {
-            const k = nrm(x.code);
-            if (activeN.has(k) || seen.has(k)) return false;
-            seen.add(k);
-            return true;
-          })
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 10),
-      );
     } catch (e) {
       console.error(e);
       cdlg('단가 조회에 실패했습니다.', [{ label: '확인', sec: true }]);
@@ -1908,7 +1915,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     const client = order?.clientCompanyName || '';
     lkCtxRef.current = { spec: '', qty: '', client, item: '' };
     setLkCodes([]);
-    setLkSugg([]);
     setLkInput('');
     setLkSpec('');
     setLkAcOpen(false);
@@ -3755,16 +3761,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                   />
                 </div>
               </div>
-              {lkSugg.length > 0 && (
-                <div className="aq-lksugg">
-                  <span className="aq-lksugg-label">혹시 이걸 찾으시나요?</span>
-                  {lkSugg.map((s) => (
-                    <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => addLkTag(s.code)}>
-                      {s.code} <em>{s.count}건</em>
-                    </button>
-                  ))}
-                </div>
-              )}
             </>
           }
         />
