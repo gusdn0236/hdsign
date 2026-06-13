@@ -495,3 +495,14 @@ export async function salesAnalytics(token: string | null | undefined): Promise<
   if (!res.ok) throw new Error(`매출분석 실패 (${res.status})`);
   return res.json();
 }
+
+/** 매출분석 캐시 비우고 재집계 — 거래처관리 별칭/명세서 변경 즉시 반영. 미프로비저닝(503)이면 null. */
+export async function refreshSalesAnalytics(token: string | null | undefined): Promise<SalesAnalytics | null> {
+  const res = await fetch(`${BASE_URL}/api/admin/analytics/sales/refresh`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  if (res.status === 503) return null;
+  if (!res.ok) throw new Error(`매출분석 새로고침 실패 (${res.status})`);
+  return res.json();
+}

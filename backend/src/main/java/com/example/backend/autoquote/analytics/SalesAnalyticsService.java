@@ -3,11 +3,15 @@ package com.example.backend.autoquote.analytics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.backend.autoquote.predict.AutoQuoteDataSource;
+import com.example.backend.entity.ClientUser;
+import com.example.backend.repository.ClientUserRepository;
 import org.springframework.stereotype.Service;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,11 +55,13 @@ public class SalesAnalyticsService {
     };
 
     private final AutoQuoteDataSource dataSource;
+    private final ClientUserRepository clientRepo;
     private final ObjectMapper json = new ObjectMapper();
     private final AtomicReference<SalesAnalytics> cache = new AtomicReference<>();
 
-    public SalesAnalyticsService(AutoQuoteDataSource dataSource) {
+    public SalesAnalyticsService(AutoQuoteDataSource dataSource, ClientUserRepository clientRepo) {
         this.dataSource = dataSource;
+        this.clientRepo = clientRepo;
     }
 
     /** 집계 결과(캐시). 명세서 자산 미프로비저닝이면 {@code null}(호출부 503). */
@@ -71,6 +77,11 @@ public class SalesAnalyticsService {
         return built;
     }
 
+    /** 캐시 비우기 — 거래처관리 별칭/명세서가 바뀐 뒤 다음 호출에서 재집계하도록. */
+    public void clearCache() {
+        cache.set(null);
+    }
+
     private SalesAnalytics build() {
         Map<String, long[]> monthly = new TreeMap<>();   // ym -> [revenue, invoices]
         Map<Integer, long[]> yearly = new TreeMap<>();    // year -> [revenue, invoices]
@@ -84,6 +95,9 @@ public class SalesAnalyticsService {
         long totalRevenue = 0;
         int totalInvoices = 0;
         boolean any = false;
+
+        // 거래처관리(ClientUser) 정식명으로 병합하는 정규화기 — 원본 명세서는 미변경, 집계 키만 정식명.
+        Canonicalizer canon = Canonicalizer.from(safeClients());
 
         for (int year = 2022; year <= 2031; year++) {
             for (String type : new String[] {"corp", "personal"}) {
@@ -125,7 +139,7 @@ public class SalesAnalyticsService {
                     if (mo >= 1 && mo <= 12) {
                         seasonByMonth[mo] += revenue;
                     }
-                    String client = norm(text(inv, "client"));
+                    String client = canon.canonical(norm(text(inv, "client")));
                     if (!client.isBlank()) {
                         clients.computeIfAbsent(client, k -> new long[2]);
                         clients.get(client)[0] += revenue;
@@ -155,7 +169,8 @@ public class SalesAnalyticsService {
                             String code = norm(text(g, "item_code"));
                             String item = norm(text(g, "item"));
                             // 품목 TOP — 숫자/빈칸 코드(200 등)는 무의미하므로 품목내용(괄호=현장명 제거)으로 표시·그룹.
-                            String label = (!code.isBlank() && !isNumericCode(code)) ? code : stripParens(item);
+                            // 두께(2T/3T)·사이즈(가로x세로) 토큰은 떼어 '아크릴2T/3T/8T'를 '아크릴'로 통합.
+                            String label = groupItemLabel((!code.isBlank() && !isNumericCode(code)) ? code : stripParens(item));
                             if (!label.isBlank()) {
                                 items.computeIfAbsent(label, k -> new long[3]);
                                 items.get(label)[0] += lineRev;
@@ -537,6 +552,160 @@ public class SalesAnalyticsService {
     /** 품목에서 괄호(현장명/설명) 제거 — 200 같은 숫자코드의 표시 라벨용. */
     private static String stripParens(String s) {
         return s == null ? "" : s.replaceAll("\\([^)]*\\)", " ").replaceAll("\\s+", " ").trim();
+    }
+
+    /** 거래처 마스터 로드 — DB 오류여도 분석이 죽지 않게 빈 목록 폴백(이 경우 병합 없이 raw 표시). */
+    private List<ClientUser> safeClients() {
+        try {
+            return clientRepo.findAll();
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private static final Pattern P_THICK = Pattern.compile("\\d+(?:\\.\\d+)?\\s*[tT](?![a-zA-Z])");
+    private static final Pattern P_DIM =
+        Pattern.compile("\\d+\\s*[*xX×]\\s*\\d+(?:\\s*[*xX×]\\s*\\d+)?");
+
+    /**
+     * 품목 라벨 통합 — 두께(숫자+T)·사이즈(가로x세로) 토큰을 떼어 같은 품목으로 묶는다.
+     * 예) '아크릴2T'·'아크릴 3T'·'아크릴8T'→'아크릴', '포맥스5T'→'포맥스', '고무스카시3T'→'고무스카시'.
+     * 토큰을 떼면 빈 문자열이 되는(=토큰만 있던) 라벨은 원본을 유지.
+     */
+    static String groupItemLabel(String s) {
+        if (s == null) {
+            return "";
+        }
+        String x = P_DIM.matcher(s).replaceAll(" ");
+        x = P_THICK.matcher(x).replaceAll(" ");
+        x = x.replaceAll("\\s+", " ").trim();
+        return x.isBlank() ? s.trim() : x;
+    }
+
+    // ---- 거래처 정식명 병합(표시 전용) -------------------------------------------------
+    private static final Pattern P_PAREN = Pattern.compile("\\([^)]*\\)");
+    private static final Pattern P_COMPANY_MARK =
+        Pattern.compile("\\(주\\)|주식회사|\\(유\\)|유한회사|\\(사\\)|사단법인");
+    private static final Pattern P_NON_NAME = Pattern.compile("[^0-9a-z가-힣]");
+
+    /** NFC + 공백제거 + 소문자 — 정식명/별칭 정확일치 키. */
+    private static String normKey(String s) {
+        if (s == null) {
+            return "";
+        }
+        String n = Normalizer.normalize(s, Normalizer.Form.NFC);
+        StringBuilder sb = new StringBuilder(n.length());
+        for (int i = 0; i < n.length(); i++) {
+            char ch = n.charAt(i);
+            if (!Character.isWhitespace(ch)) {
+                sb.append(ch);
+            }
+        }
+        return sb.toString().toLowerCase();
+    }
+
+    /** (주)·주식회사·괄호(지점·구명칭) 제거 후 영숫자/한글만 — 핵심이름 키('(주)오디'·'미조사(제주)'→'오디'·'미조사'). */
+    private static String coreKey(String s) {
+        if (s == null) {
+            return "";
+        }
+        String x = Normalizer.normalize(s, Normalizer.Form.NFC).toLowerCase();
+        x = P_PAREN.matcher(x).replaceAll(" ");
+        x = P_COMPANY_MARK.matcher(x).replaceAll(" ");
+        return P_NON_NAME.matcher(x).replaceAll("");
+    }
+
+    private static List<String> splitAliases(String aliases) {
+        if (aliases == null || aliases.isBlank()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String t : aliases.split("[,;\\n]")) {
+            if (!t.isBlank()) {
+                out.add(t.trim());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 명세서 raw client 문자열을 거래처관리(ClientUser) 정식명으로 매핑한다(표시 전용, 원본 미변경).
+     * ① 정식명/별칭/폴더명 정확일치(공백·대소문자 무시) ② (주)·괄호 뗀 핵심이름 일치.
+     * 핵심이름이 둘 이상 거래처에 겹치면(모호) 오병합 방지를 위해 매핑하지 않고 raw 유지.
+     */
+    private static final class Canonicalizer {
+        private final Map<String, String> exact; // normKey -> companyName
+        private final Map<String, String> core;   // coreKey -> companyName(모호 키 제외)
+
+        private Canonicalizer(Map<String, String> exact, Map<String, String> core) {
+            this.exact = exact;
+            this.core = core;
+        }
+
+        static Canonicalizer from(List<ClientUser> clients) {
+            Map<String, String> exact = new HashMap<>();
+            Map<String, String> coreFirst = new HashMap<>(); // coreKey -> 최초 매핑
+            Set<String> ambiguous = new HashSet<>();
+            for (ClientUser c : clients) {
+                String name = c.getCompanyName();
+                if (name == null || name.isBlank()) {
+                    continue;
+                }
+                String canonName = name.trim();
+                List<String> aliases = splitAliases(c.getAliases());
+                registerExact(exact, name, canonName);
+                registerExact(exact, c.getNetworkFolderName(), canonName);
+                for (String al : aliases) {
+                    registerExact(exact, al, canonName);
+                }
+                List<String> srcs = new ArrayList<>();
+                srcs.add(name);
+                srcs.addAll(aliases);
+                for (String src : srcs) {
+                    String ck = coreKey(src);
+                    if (ck.isBlank()) {
+                        continue;
+                    }
+                    String prev = coreFirst.putIfAbsent(ck, canonName);
+                    if (prev != null && !prev.equals(canonName)) {
+                        ambiguous.add(ck); // 서로 다른 거래처가 같은 핵심이름 → 병합 금지
+                    }
+                }
+            }
+            Map<String, String> core = new HashMap<>();
+            for (Map.Entry<String, String> e : coreFirst.entrySet()) {
+                if (!ambiguous.contains(e.getKey())) {
+                    core.put(e.getKey(), e.getValue());
+                }
+            }
+            return new Canonicalizer(exact, core);
+        }
+
+        /** raw → 정식명. 매칭 없으면 raw(trim) 그대로. */
+        String canonical(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return raw == null ? "" : raw;
+            }
+            String hit = exact.get(normKey(raw));
+            if (hit != null) {
+                return hit;
+            }
+            String ck = coreKey(raw);
+            if (!ck.isBlank()) {
+                hit = core.get(ck);
+                if (hit != null) {
+                    return hit;
+                }
+            }
+            return raw.trim();
+        }
+
+        private static void registerExact(Map<String, String> idx, String src, String canonName) {
+            if (src == null || src.isBlank()) {
+                return;
+            }
+            idx.putIfAbsent(normKey(src), canonName);
+        }
     }
 
     /** 'YYYY.MM.DD' / 'YYYY-MM-..' → 'YYYY.MM'. 파싱 실패면 null. */

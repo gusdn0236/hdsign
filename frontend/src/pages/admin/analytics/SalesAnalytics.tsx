@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../../context/AuthContext.jsx';
-import { salesAnalytics } from '../autoquote/annot/api';
+import { salesAnalytics, refreshSalesAnalytics } from '../autoquote/annot/api';
 import type { SalesAnalytics as SA, NameRevenue, Mover, ClientDetail } from '../autoquote/annot/api';
 import './SalesAnalytics.css';
 
@@ -28,6 +28,16 @@ export default function SalesAnalytics() {
   const [goal, setGoal] = useState<number | null>(null);
   const [goalEditing, setGoalEditing] = useState(false);
   const [goalInput, setGoalInput] = useState('');
+  const [refreshing, setRefreshing] = useState(false); // 캐시 재집계 중
+
+  const refresh = () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    refreshSalesAnalytics(token)
+      .then((d) => d && setData(d))
+      .catch(() => {})
+      .finally(() => setRefreshing(false));
+  };
   // 2차 비밀번호 잠금 — 세션 동안 1회만(세션스토리지). 실매출이라 옆사람 가림막.
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem('sa-unlocked') === '1');
   const [pw, setPw] = useState('');
@@ -193,6 +203,9 @@ export default function SalesAnalytics() {
         <span>
           상세 명세서 {summary.totalInvoices.toLocaleString()}건 · {summary.firstYm}~{summary.lastYm}
         </span>
+        <button className="sa-refresh" onClick={refresh} disabled={refreshing} title="거래처관리 별칭/명세서 변경을 다시 집계">
+          {refreshing ? '집계 중…' : '↻ 새로고침'}
+        </button>
       </div>
 
       {/* 히어로 — 최근 달 매출 + 자연어 인사이트 */}

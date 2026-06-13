@@ -97,6 +97,25 @@
   font-size: 13px;
   color: #9aa5b1;
 }
+.sa-refresh {
+  margin-left: auto;
+  border: 1px solid #d7dde3;
+  background: #fff;
+  color: #6b7785;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 7px 13px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.sa-refresh:hover:not(:disabled) {
+  border-color: #0a9396;
+  color: #0a9396;
+}
+.sa-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 
 /* 히어로 — 밝은 톤(뱅크샐러드 리포트 느낌) */
 .sa-hero {
