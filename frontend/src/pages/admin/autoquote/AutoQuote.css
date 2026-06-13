@@ -1424,6 +1424,7 @@
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
+  justify-content: flex-end; /* 품목코드·규격 입력칸을 박스 오른쪽으로 정렬 */
 }
 .lk-right .aq-lksugg {
   margin-top: -4px;
