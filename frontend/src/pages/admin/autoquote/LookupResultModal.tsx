@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useReducer, useState, type ReactNode } from 'react';
 import type { Evidence } from './annot/api';
 
 /**
@@ -37,12 +37,89 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * 지시서 사진 뷰어 — 마우스 휠로 커서 기준 확대·축소(1~6배), 드래그로 이동, 더블클릭 초기화.
+ * 사진(src)이 바뀌면 배율·위치를 리셋한다. 모달 스크롤을 막으려 휠은 native non-passive 로 등록.
+ */
+function ZoomImg({ src, alt }: { src: string; alt: string }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const t = useRef({ scale: 1, tx: 0, ty: 0 }); // 현재 변환(휠 핸들러가 최신값을 읽도록 ref)
+  const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  const [, force] = useReducer((x) => x + 1, 0);
+  const apply = (scale: number, tx: number, ty: number) => {
+    t.current = { scale, tx, ty };
+    force();
+  };
+
+  // 사진이 바뀌면 확대·이동 초기화.
+  useEffect(() => {
+    apply(1, 0, 0);
+  }, [src]);
+
+  // 휠 줌(커서 아래 지점 고정). React onWheel 은 passive 라 preventDefault 가 안 먹어 native 로 등록.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cx = e.clientX - rect.left - rect.width / 2; // 컨테이너 중심 기준 커서
+      const cy = e.clientY - rect.top - rect.height / 2;
+      const { scale, tx, ty } = t.current;
+      const next = Math.max(1, Math.min(6, scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      if (next === 1) {
+        apply(1, 0, 0);
+        return;
+      }
+      const k = next / scale;
+      apply(next, cx - (cx - tx) * k, cy - (cy - ty) * k);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  const onDown = (e: React.MouseEvent) => {
+    if (t.current.scale === 1) return; // 확대 안 했으면 이동 불필요
+    e.preventDefault();
+    drag.current = { x: e.clientX, y: e.clientY, tx: t.current.tx, ty: t.current.ty };
+  };
+  const onMove = (e: React.MouseEvent) => {
+    if (!drag.current) return;
+    apply(t.current.scale, drag.current.tx + (e.clientX - drag.current.x), drag.current.ty + (e.clientY - drag.current.y));
+  };
+  const onUp = () => {
+    drag.current = null;
+  };
+
+  const { scale, tx, ty } = t.current;
+  return (
+    <div
+      ref={wrapRef}
+      className="lk-zoom"
+      onMouseDown={onDown}
+      onMouseMove={onMove}
+      onMouseUp={onUp}
+      onMouseLeave={onUp}
+      onDoubleClick={() => apply(1, 0, 0)}
+      style={{ cursor: scale > 1 ? (drag.current ? 'grabbing' : 'grab') : 'zoom-in' }}
+      title="휠: 확대·축소 · 드래그: 이동 · 더블클릭: 원래대로"
+    >
+      <img src={src} alt={alt} draggable={false} style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }} />
+    </div>
+  );
+}
+
 interface Props {
   refs: LookupRef[];
   ri: number;
   lpi: number; // 현재 후보의 지시서 사진 인덱스(다장 갤러리)
   userSpec: string; // 사용자가 입력한 규격(예상 가격 안내문에 표시)
   actionLabel: string; // 기본 버튼 라벨(복사/적용)
+  /**
+   * 설정 시 예상가 한 줄 + 단독 액션 버튼을 숨기고 이 안내 문구만 표시(단가계산기 탭 전용).
+   * 표의 단가 행은 그대로 클릭 가능 — "표에서 직접 골라라" 라는 안내로 쓴다.
+   */
+  pickPrompt?: string;
   onAction: (price: number) => void;
   totalFound?: number; // 사진 있는 비슷한 명세서 총 건수("총 N건 찾았습니다"). 표시는 30건만.
   confirmBeforeAction?: boolean; // true면 행/버튼 클릭 시 "이 가격으로 결정할까요?" 한번 확인 후 적용.
@@ -87,6 +164,7 @@ export default function LookupResultModal({
   lpi,
   userSpec,
   actionLabel,
+  pickPrompt,
   onAction,
   totalFound,
   confirmBeforeAction,
@@ -225,7 +303,11 @@ export default function LookupResultModal({
           <>
           <div className="aq-mbody">
             <div className="aq-mleft" style={{ position: 'relative' }}>
-              {photo ? <img src={photo} alt="과거 작업지시서" /> : <div className="none">사진 없음</div>}
+              {photo ? (
+                <ZoomImg src={photo} alt="과거 작업지시서" />
+              ) : (
+                <div className="none">{ev == null && !onSibling ? '사진 불러오는 중…' : '사진 없음'}</div>
+              )}
               {phs.length > 1 && (
                 <div className="lk-gal">
                   <button onClick={() => setLpi((i) => (i > 0 ? i - 1 : phs.length - 1))}>‹</button>
@@ -238,15 +320,21 @@ export default function LookupResultModal({
             </div>
             <div className="aq-mright lk-right">
               {dateStr ? <div className="lk-date">{dateStr} 명세서</div> : null}
-              {est != null && userSpec ? (
-                <div className="lk-est">
-                  현재 입력하신 <b>{userSpec}</b> 사이즈의 예상 가격은 <b>{est.toLocaleString()}원</b> 입니다.
-                </div>
-              ) : null}
-              {!onSibling && (
-                <button className="aq-btn sh lk-action" onClick={() => ask(R.price)}>
-                  {actionLabel}
-                </button>
+              {pickPrompt ? (
+                <div className="lk-pick">{pickPrompt}</div>
+              ) : (
+                <>
+                  {est != null && userSpec ? (
+                    <div className="lk-est">
+                      현재 입력하신 <b>{userSpec}</b> 사이즈의 예상 가격은 <b>{est.toLocaleString()}원</b> 입니다.
+                    </div>
+                  ) : null}
+                  {!onSibling && (
+                    <button className="aq-btn sh lk-action" onClick={() => ask(R.price)}>
+                      {actionLabel}
+                    </button>
+                  )}
+                </>
               )}
               {grid.length ? (
                 <table className="aq-rtbl lk-tbl">

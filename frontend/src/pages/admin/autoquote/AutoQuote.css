@@ -1080,6 +1080,21 @@
   max-height: 100%;
   object-fit: contain;
 }
+/* 사진 확대·이동 뷰어(ZoomImg) — 컨테이너를 채우고 넘치는 부분은 잘라낸다 */
+.lk-zoom {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+}
+.lk-zoom img {
+  transform-origin: center center;
+  will-change: transform;
+  -webkit-user-drag: none;
+}
 .aq-mleft .none {
   color: #7a8;
   font-size: 14px;
@@ -1385,6 +1400,18 @@
   padding: 11px 24px;
   font-size: 15px;
 }
+/* 예상가·복사 버튼 대신 "표에서 직접 골라라" 안내(단가계산기 탭 전용) */
+.lk-pick {
+  margin-top: 6px;
+  padding: 14px 17px;
+  background: #fff6e9;
+  border: 1px solid #f3d9a8;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.6;
+  color: #7a4f12;
+}
 /* 다장 지시서 사진 갤러리 — 사진 위 떠있는 페이저 */
 .lk-gal {
   position: absolute;
@@ -1399,6 +1426,7 @@
   border-radius: 16px;
   padding: 4px 10px;
   font-size: 13px;
+  z-index: 2; /* 확대 뷰어(.lk-zoom) 위에 떠 있도록 */
 }
 .lk-gal button {
   background: none;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../../context/AuthContext.jsx';
 import { lookupPricesMerged, similarCodes, evidence as fetchEvidence, bundle as fetchBundle } from '../autoquote/annot/api';
 import type { Evidence, CodeSuggestion, Bundle } from '../autoquote/annot/api';
@@ -35,6 +35,7 @@ interface LkState {
   lpi: number;
   bi: number; // 묶음뷰: 0=후보 본인, 1..n=형제 명세서
   q: string;
+  total: number; // 사진 있는 후보 총 건수(표시는 최신 30건). "총 N건 찾았습니다"용.
   bundles: Record<number, Bundle | null>; // ri별 묶음(미조회=undefined, 없음=null)
 }
 
@@ -52,6 +53,7 @@ export default function PriceLookup() {
   const [acOpen, setAcOpen] = useState(false);
   const [acIdx, setAcIdx] = useState(-1); // 품목코드 드롭다운 하이라이트(-1=없음)
   const [lk, setLk] = useState<LkState | null>(null);
+  const runSeq = useRef(0); // 검색 세대 — 늦게 도착한 백그라운드 사진이 새 검색을 덮어쓰지 않게.
   const [msg, setMsg] = useState('');
   const [sugg, setSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩(같은 물건 다른 표기/오타)
 
@@ -88,46 +90,81 @@ export default function PriceLookup() {
       setMsg('품목코드 또는 규격을 입력하세요.');
       return;
     }
+    const mySeq = ++runSeq.current;
     setBusy(true);
     setAcOpen(false);
     setMsg('');
     try {
       // 여러 코드 후보를 합쳐 ① 사이즈 근접도(정확일치=1.0) ② 같은 거래처 우선으로 정렬(공용 헬퍼).
-      const merged = await lookupPricesMerged(token, client, active, spec, '', { limit: 50 });
+      const merged = await lookupPricesMerged(token, client, active, spec, '', { limit: 100 });
+      if (mySeq !== runSeq.current) return; // 더 새로운 검색이 시작됨 → 폐기
       if (merged == null) {
         setMsg('학습 데이터(코퍼스)가 서버에 아직 없습니다.');
         setBusy(false);
         return;
       }
-      const refs: Ref[] = await Promise.all(
-        merged.map(async (pr) => {
-          let ev: Evidence | null = null;
-          try {
-            ev = await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
-          } catch {
-            ev = null;
-          }
-          return {
-            reason: pr.reason,
-            src: pr.src,
-            price: pr.price,
-            evidence: ev,
-            date: pr.date,
-            cspec: pr.size,
-            est: estForSize(pr.price, pr.size, spec),
-            file: pr.ref_file,
-            invoiceIdx: pr.ref_invoice_idx,
-          };
-        }),
-      );
+      // 명세서작성 탭과 같은 기준: ① 매칭 사진 있는 후보만(백엔드 싼 존재확인 photo_available)
+      // ② 최신순(날짜 내림차순) ③ 최신 30건만 표시. 사진(evidence)은 무거우니 아직 안 받는다.
+      const hasFlag = merged.some((p) => p.photo_available !== undefined);
+      const photoed = hasFlag ? merged.filter((p) => p.photo_available) : merged;
+      const dnum = (d?: string) => {
+        const m = String(d || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+        return m ? +m[1] * 10000 + +m[2] * 100 + +m[3] : 0;
+      };
+      const sorted = [...photoed].sort((a, b) => dnum(b.date) - dnum(a.date));
+      const total = sorted.length;
+      const top = sorted.slice(0, 30);
+      // 명세서(텍스트)만으로 후보 골격을 먼저 만든다(evidence=null → 모달은 "사진 불러오는 중").
+      const refs: Ref[] = top.map((pr) => ({
+        reason: pr.reason,
+        src: pr.src,
+        price: pr.price,
+        evidence: null,
+        date: pr.date,
+        cspec: pr.size,
+        est: estForSize(pr.price, pr.size, spec),
+        file: pr.ref_file,
+        invoiceIdx: pr.ref_invoice_idx,
+      }));
       const codeLabel = active.length ? active.join(' + ') : '품목';
       const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
-      setLk({ refs, ri: 0, lpi: 0, bi: 0, q, bundles: {} });
+
+      // 무거운 건 사진. 앞 5장만 먼저 받아 모달을 바로 띄우고, 나머지는 사용자가 그 5장을
+      // 보는 동안 백그라운드로 채운다(아래). 실패는 null(모달이 "사진 없음" 처리).
+      const loadEv = async (r: Ref): Promise<Evidence | null> => {
+        try {
+          return await fetchEvidence(token, r.invoiceIdx, r.file);
+        } catch {
+          return null;
+        }
+      };
+      const EAGER = 5;
+      const head = await Promise.all(refs.slice(0, EAGER).map(loadEv));
+      if (mySeq !== runSeq.current) return;
+      head.forEach((ev, i) => {
+        refs[i].evidence = ev;
+      });
+      setLk({ refs, ri: 0, lpi: 0, bi: 0, q, total, bundles: {} });
+      setBusy(false);
       if (!refs.length) setMsg('관련 과거 단가를 찾지 못했습니다.');
+      // 나머지 사진은 백그라운드로 — 도착하는 대로 해당 후보에 끼워 넣는다(세대 일치할 때만).
+      refs.slice(EAGER).forEach((r, k) => {
+        const idx = EAGER + k;
+        loadEv(r).then((ev) => {
+          if (mySeq !== runSeq.current) return;
+          setLk((l) => {
+            if (!l) return l;
+            const next = l.refs.slice();
+            if (next[idx]) next[idx] = { ...next[idx], evidence: ev };
+            return { ...l, refs: next };
+          });
+        });
+      });
       // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
       const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
       const activeN = new Set(active.map(nrm));
       const lists = await Promise.all(active.filter(Boolean).map((c) => similarCodes(token, c, 8)));
+      if (mySeq !== runSeq.current) return; // 새 검색이 시작됨 → 추천칩 갱신 폐기
       const seen = new Set<string>();
       setSugg(
         lists
@@ -162,9 +199,10 @@ export default function PriceLookup() {
     return () => {
       cancelled = true;
     };
-    // lk.ri/lk.refs 변화에만 반응(bundles 갱신으로는 재실행 안 됨).
+    // 현재 후보(파일+idx)가 바뀔 때만 반응. 백그라운드 사진이 다른 후보에 끼워져 refs 가
+    // 갱신돼도(현 후보 idx 동일) 재실행 안 됨 — 묶음 중복조회 방지.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lk?.ri, lk?.refs, token]);
+  }, [lk?.ri, lk?.refs[lk?.ri ?? 0]?.file, lk?.refs[lk?.ri ?? 0]?.invoiceIdx, token]);
 
   const ms = acOpen && code.trim() ? matchCodes(code).filter((c) => !codes.includes(c)) : [];
   const dym = ms.length ? didYouMean(code, ms) : null;
@@ -327,6 +365,8 @@ export default function PriceLookup() {
               lpi={lk.lpi}
               userSpec={spec}
               actionLabel="이 단가 복사 📋"
+              pickPrompt="명세서에서 적용하실 가격을 선택해주세요."
+              totalFound={lk.total}
               onAction={(p) => navigator.clipboard?.writeText(String(p))}
               onPrev={() => setLk((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1, lpi: 0, bi: 0 } : l))}
               onNext={() =>

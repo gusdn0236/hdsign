@@ -352,6 +352,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
 
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string; total: number } | null>(null);
+  const lookupSeq = useRef(0); // 검색 세대 — 늦게 온 백그라운드 사진이 새 검색을 덮어쓰지 않게.
   // 단가찾아보기를 연 '작성 중이던 행'(우측 명세서 인덱스). 작성중보기에서 그 행을 노란색으로 표시.
   const [lkTargetRow, setLkTargetRow] = useState<number | null>(null);
   const [lpi, setLpi] = useState(0); // 단가찾아보기 모달 — 현재 후보의 사진 인덱스(다장 갤러리)
@@ -1459,12 +1460,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 태그된 코드들로 병합 검색(공용 헬퍼) → 후보별 근거(사진+명세서 grid) 로드 → 모달 갱신.
   const runLookup = async (codes: string[]) => {
     const { spec, qty, client, item } = lkCtxRef.current;
+    const mySeq = ++lookupSeq.current;
     setStatus('과거 단가 조회 중…');
     try {
       const preds = await lookupPricesMerged(token, client, codes, spec, qty, {
         fallbackText: `${codes[0] || ''} ${item}`.trim(),
         limit: 100,
       });
+      if (mySeq !== lookupSeq.current) return; // 더 새로운 검색이 시작됨 → 폐기
       if (preds == null) {
         cdlg('학습 데이터(코퍼스)가 서버에 아직 없습니다. 관리자에게 R2 업로드를 요청하세요.', [{ label: '확인', sec: true }]);
         setStatus('');
@@ -1482,37 +1485,56 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       const sorted = [...photoed].sort((a, b) => dnum(b.date) - dnum(a.date));
       const total = sorted.length;
       const top = sorted.slice(0, 30); // 총 N건 중 최신 30건만 표시.
-      // 표시할 30건의 근거(과거 지시서 사진 + 명세서 grid)를 병렬로 로드(순차면 N배 느림). 실패는 null.
-      const refs: LookupRef[] = await Promise.all(
-        top.map(async (pr) => {
-          let ev: Evidence | null = null;
-          try {
-            ev = await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
-          } catch {
-            ev = null;
-          }
-          return {
-            reason: pr.reason,
-            src: pr.src,
-            price: pr.price,
-            evidence: ev,
-            hitPrice: pr.price,
-            date: pr.date,
-            cspec: pr.size,
-            est: estForSize(pr.price, pr.size, spec),
-          };
-        }),
-      );
+      // 명세서(텍스트)만으로 후보 골격을 먼저 만든다(evidence=null → 모달은 "사진 불러오는 중").
+      const refs: LookupRef[] = top.map((pr) => ({
+        reason: pr.reason,
+        src: pr.src,
+        price: pr.price,
+        evidence: null,
+        hitPrice: pr.price,
+        date: pr.date,
+        cspec: pr.size,
+        est: estForSize(pr.price, pr.size, spec),
+      }));
       const codeLabel = codes.length ? codes.join(' + ') : item || '품목';
       const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
+      // 무거운 건 사진. 앞 5장만 먼저 받아 모달을 바로 띄우고, 나머지는 사용자가 그 5장을
+      // 보는 동안 백그라운드로 채운다(아래). 실패는 null(모달이 "사진 없음" 처리).
+      const loadEv = async (pr: (typeof top)[number]): Promise<Evidence | null> => {
+        try {
+          return await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
+        } catch {
+          return null;
+        }
+      };
+      const EAGER = 5;
+      const head = await Promise.all(top.slice(0, EAGER).map(loadEv));
+      if (mySeq !== lookupSeq.current) return;
+      head.forEach((ev, i) => {
+        refs[i].evidence = ev;
+      });
       setLpi(0);
       setLkView('search'); // 새 검색 → 검색결과 보기로 복귀(토글은 이 시점부터 다시 시작)
       setLookup({ refs, ri: 0, q, total });
       setStatus('');
+      // 나머지 사진은 백그라운드로 — 도착하는 대로 해당 후보에 끼워 넣는다(세대 일치할 때만).
+      top.slice(EAGER).forEach((pr, k) => {
+        const idx = EAGER + k;
+        loadEv(pr).then((ev) => {
+          if (mySeq !== lookupSeq.current) return;
+          setLookup((l) => {
+            if (!l) return l;
+            const next = l.refs.slice();
+            if (next[idx]) next[idx] = { ...next[idx], evidence: ev };
+            return { ...l, refs: next };
+          });
+        });
+      });
       // 비슷한 코드 추천(같은 물건 다른 표기/오타) — 이미 태그된 건 제외.
       const nrm = (s: string) => s.trim().replace(/[\s/]/g, '').toUpperCase();
       const activeN = new Set(codes.map(nrm));
       const lists = await Promise.all(codes.filter(Boolean).map((c) => similarCodes(token, c, 8)));
+      if (mySeq !== lookupSeq.current) return; // 새 검색이 시작됨 → 추천칩 갱신 폐기
       const seen = new Set<string>();
       setLkSugg(
         lists
