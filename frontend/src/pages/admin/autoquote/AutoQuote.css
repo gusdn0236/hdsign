@@ -679,23 +679,36 @@
   color: var(--teal2, #0a7d8c);
 }
 
-/* '한·영 합계' 배지 — 단가가 한글+영문 글자단가를 합산한 한 줄 단가임을 표시. */
-.aq-unitcell {
-  position: relative;
+/* 한·영 합계 각주 — 명세서 표 아래, 합산 단가 행 설명. */
+.aq-sumnotes {
+  margin: 8px 2px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
-.aq-sumbadge {
-  position: absolute;
-  top: 1px;
-  right: 2px;
-  background: #0a7d8c;
+.aq-sumnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #4b5563;
+}
+.aq-sumnote-n {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
   color: #fff;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
-  line-height: 1;
-  padding: 2px 4px;
-  border-radius: 5px;
-  pointer-events: none;
-  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.aq-sumnote b {
+  color: #0a7d8c;
 }
 
 .aq-side {

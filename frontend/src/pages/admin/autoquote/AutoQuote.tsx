@@ -93,8 +93,8 @@ interface Pin {
   vals: Record<string, string>;
   fi: number; // 입력 단계 인덱스(품목코드=0 … 단가=4). 입력 진행에만 사용; 라벨은 채워진 값 전체 표시.
   splitPending?: boolean;
-  // 단가가 '한글+영문 합계'로 계산된 행 표시(배지). 헷갈림 방지용. _priceNote 로 저장(이지폼 무시).
-  priceNote?: string;
+  // 단가가 '한글+영문 합계'로 계산된 행의 내역(각주 표시용). _sumParts 로 저장(이지폼 무시).
+  sumParts?: { ko: string; koAmt: number; en: string; enAmt: number };
   // '도장비 합치기' 요약핀이 비파괴로 보관하는 개별 도장비 행들(한글 키 vals). 펼치기로 복원.
   // _ 접두사라 이지폼 매핑(7키)이 무시 — 이지폼엔 요약 한 줄만 나가고, 웹 저장본엔 원자가 남는다.
   _dojangParts?: Record<string, string>[];
@@ -165,6 +165,8 @@ export interface AutoPrice {
   qty: number;
   /** 한글+영문 혼합 합산('한글+영문 합계') 등 — 있으면 수량까지 확정(수량=1)된 상태. */
   note?: string;
+  /** 혼합 합산 내역(각주 표시용) — 한글/영문 텍스트와 각 소계. */
+  parts?: { ko: string; koAmt: number; en: string; enAmt: number };
   /** 피스 단위(잔넬) — 수량은 사용자 입력(글자수로 덮지 않음). */
   perPiece?: boolean;
 }
@@ -203,7 +205,14 @@ function computeAuto(code: string, item: string, spec: string): AutoPrice | null
       const rKo = computeAcryl(CALC, pc.tk || '', '한글', koOnly(item), spec, 'ko');
       const rEn = computeAcryl(CALC, pc.tk || '', '영문', enOnly(item), spec, 'en');
       if (rKo.ok && rEn.ok) {
-        return { unit: rKo.unit * rKo.qty + rEn.unit * rEn.qty, qty: 1, note: '한글+영문 합계' };
+        const koAmt = rKo.unit * rKo.qty;
+        const enAmt = rEn.unit * rEn.qty;
+        return {
+          unit: koAmt + enAmt,
+          qty: 1,
+          note: '한글+영문 합계',
+          parts: { ko: koOnly(item), koAmt, en: enOnly(item), enAmt },
+        };
       }
       return null;
     }
@@ -236,7 +245,7 @@ function pinLabel(p: Pin): string {
   const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
   const dp = num(p.vals['단가']);
   const qty = num(p.vals['수량']) || 1;
-  const sum = p.priceNote ? ` (${p.priceNote})` : '';
+  const sum = p.sumParts ? ' (한·영 합계)' : '';
   const priceLine = dp != null ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원${sum}` : '';
   return [top, priceLine].filter(Boolean).join(' / ');
 }
@@ -556,8 +565,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 단가: String(g['단가'] ?? ''),
                 비고: String(g['비고'] ?? ''),
               },
-              // 단가 '한·영 합계' 배지 복원.
-              ...(g._priceNote ? { priceNote: String(g._priceNote) } : {}),
+              // 단가 '한·영 합계' 내역 복원(각주).
+              ...(g._sumParts && typeof g._sumParts === 'object'
+                ? { sumParts: g._sumParts as Pin['sumParts'] }
+                : {}),
               // 도장비 합치기 요약핀이면 보관된 개별 원자 복원(있을 때만).
               ...(Array.isArray(g._dojangParts)
                 ? { _dojangParts: g._dojangParts as Record<string, string>[] }
@@ -1172,7 +1183,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                     ...(auto.note ? { 수량: String(auto.qty) } : {}),
                   },
                   fi: auto.note ? FIELDS.length : p.fi + 1,
-                  priceNote: auto.note ? '한·영 합계' : undefined,
+                  sumParts: auto.parts,
                 }
               : p,
           ),
@@ -1289,8 +1300,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           : {
               ...next[i],
               vals: { ...next[i].vals, [key]: value },
-              // 단가를 직접 고치면 '한·영 합계' 배지는 의미가 없어지므로 제거.
-              ...(key === '단가' ? { priceNote: undefined } : {}),
+              // 단가를 직접 고치면 '한·영 합계' 내역은 의미가 없어지므로 제거.
+              ...(key === '단가' ? { sumParts: undefined } : {}),
             };
       return next;
     });
@@ -1312,7 +1323,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           ? {
               ...p,
               vals: { ...p.vals, 단가: String(auto.unit), ...(auto.note ? { 수량: String(auto.qty) } : {}) },
-              priceNote: auto.note ? '한·영 합계' : undefined,
+              sumParts: auto.parts,
             }
           : p,
       ),
@@ -1330,12 +1341,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     const hasEn = /[A-Za-z]/.test(item);
     let unit: number | null = null;
     let qty = 1;
+    let parts: { ko: string; koAmt: number; en: string; enAmt: number } | undefined;
     if (hasKo && hasEn) {
       const rKo = computeEpoxy(CALC, code, koOnly(item), spec, stroke, 'ko');
       const rEn = computeEpoxy(CALC, code, enOnly(item), spec, stroke, 'en');
       if (rKo.ok && rEn.ok) {
-        unit = rKo.unit * rKo.qty + rEn.unit * rEn.qty;
+        const koAmt = rKo.unit * rKo.qty;
+        const enAmt = rEn.unit * rEn.qty;
+        unit = koAmt + enAmt;
         qty = 1;
+        parts = { ko: koOnly(item), koAmt, en: enOnly(item), enAmt };
       }
     } else if (item) {
       const r = computeEpoxy(CALC, code, item, spec, stroke, hasKo ? 'ko' : 'en');
@@ -1350,8 +1365,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     }
     setCell(row, '단가', String(unit));
     setCell(row, '수량', String(qty));
-    const mixedFlag = hasKo && hasEn;
-    setPins((prev) => prev.map((p, i) => (i === row ? { ...p, priceNote: mixedFlag ? '한·영 합계' : undefined } : p)));
+    setPins((prev) => prev.map((p, i) => (i === row ? { ...p, sumParts: parts } : p)));
     setGridTool(null);
   };
 
@@ -1481,13 +1495,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 계산기/단가찾아보기 결과를 적용할 대상. null=말풍선 active 핀 흐름, 숫자=우측 표 그 행.
   const priceTargetRef = useRef<number | null>(null);
 
-  const applyResult = (unit: number, qty: number, desc: string, unitWord = '자', note?: string) => {
+  const applyResult = (
+    unit: number,
+    qty: number,
+    desc: string,
+    unitWord = '자',
+    parts?: { ko: string; koAmt: number; en: string; enAmt: number },
+  ) => {
     const tgt = priceTargetRef.current != null ? priceTargetRef.current : active;
     if (tgt == null) return;
     setPins((prev) =>
       prev.map((p, i) =>
         i === tgt
-          ? { ...p, vals: { ...p.vals, 수량: String(qty), 단가: String(unit) }, fi: FIELDS.length, priceNote: note }
+          ? { ...p, vals: { ...p.vals, 수량: String(qty), 단가: String(unit) }, fi: FIELDS.length, sumParts: parts }
           : p,
       ),
     );
@@ -1592,7 +1612,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
             label: '합계로 넣기',
             fn: () => {
               const a = computeAuto(code, item, spec);
-              if (a) applyResult(a.unit, a.qty, a.note || '한글+영문 합계', '건', '한·영 합계');
+              if (a) applyResult(a.unit, a.qty, a.note || '한글+영문 합계', '건', a.parts);
               else cdlg('합계 계산에 실패했어요. 두께·규격을 확인하세요.', [{ label: '확인', sec: true }]);
             },
           },
@@ -1897,8 +1917,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         // 핀 위치(말풍선 ax,ay / 리더선 lx,ly / 드래그여부) — 재오픈 시 원위치 복원용.
         // _ 접두사라 이지폼 셀(7키)·공유 합성과 무관(에이전트/매핑이 무시). 옛 저장본엔 없어 복원 시 폴백.
         _ax: p.ax, _ay: p.ay, _lx: p.lx, _ly: p.ly, _dragged: p.dragged,
-        // 단가 '한·영 합계' 표시(배지) — 재오픈 시 복원. _ 접두사라 이지폼엔 안 나간다.
-        ...(p.priceNote ? { _priceNote: p.priceNote } : {}),
+        // 단가 '한·영 합계' 내역 — 재오픈 시 각주 복원. _ 접두사라 이지폼엔 안 나간다.
+        ...(p.sumParts ? { _sumParts: p.sumParts } : {}),
         // 도장비 합치기 요약핀이면 개별 도장비 원자를 함께 저장(비파괴) — 재오픈 시 펼치기 가능.
         ...(p._dojangParts ? { _dojangParts: p._dojangParts } : {}),
       };
@@ -3145,7 +3165,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                       <td>
                         <input value={v['수량'] || ''} onChange={(e) => setCell(i, '수량', e.target.value)} data-gr={i} data-gc={3} onKeyDown={(e) => onGridKey(e, i, 3)} />
                       </td>
-                      <td className="p aq-unitcell">
+                      <td className="p">
                         <input
                           value={v['단가'] || ''}
                           onChange={(e) => setCell(i, '단가', e.target.value)}
@@ -3158,11 +3178,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                           data-gc={4}
                           onKeyDown={(e) => onGridKey(e, i, 4)}
                         />
-                        {p?.priceNote && (
-                          <span className="aq-sumbadge" title="한글·영문 글자 단가를 합산한 한 줄 단가입니다 (수량 1)">
-                            {p.priceNote}
-                          </span>
-                        )}
                       </td>
                       <td className="p">
                         {/* 공급가액 = 단가×수량 (총액). 읽기전용 — 단가·수량은 말풍선/위 칸에서 수정. */}
@@ -3184,6 +3199,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               </tbody>
             </table>
           </div>
+          {/* 한·영 합계 각주 — 단가가 한글+영문 글자단가를 합산한 행을 명세서 맨 밑에 설명. */}
+          {pins.some((p) => p?.sumParts) && (
+            <div className="aq-sumnotes">
+              {pins.map((p, i) =>
+                p?.sumParts ? (
+                  <div className="aq-sumnote" key={i}>
+                    <span className="aq-sumnote-n" style={{ background: pinColor(i) }}>
+                      {i + 1}
+                    </span>
+                    <span>
+                      번째 명세서는 한글 “{p.sumParts.ko || '-'}” {p.sumParts.koAmt.toLocaleString()}원
+                      {' + '}영문 “{p.sumParts.en || '-'}” {p.sumParts.enAmt.toLocaleString()}원 ={' '}
+                      <b>{(p.sumParts.koAmt + p.sumParts.enAmt).toLocaleString()}원</b> 합산 단가입니다.
+                    </span>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          )}
           <div className="aq-foot">
             <div className="aq-tot">
               <span>합계</span>
