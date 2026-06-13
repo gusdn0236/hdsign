@@ -365,8 +365,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [lkInput, setLkInput] = useState('');
   const lkInputRef = useRef<HTMLInputElement>(null); // 둘러보기 진입 시 검색창 자동 포커스
   const [lkSpec, setLkSpec] = useState(''); // 둘러보기 검색 — 규격(사이즈) 입력. lkCtxRef.spec 로 검색에 반영
-  const [gsCode, setGsCode] = useState(''); // 명세서 그리드 위 상시 검색창 — 품목코드
-  const [gsSpec, setGsSpec] = useState(''); // 명세서 그리드 위 상시 검색창 — 규격
   const [lkAcOpen, setLkAcOpen] = useState(false);
   const [lkAcIdx, setLkAcIdx] = useState(-1);
   const [lkView, setLkView] = useState<'search' | 'working'>('search'); // 단가찾아보기 모달: 검색결과↔작성중 토글
@@ -1735,25 +1733,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     setTimeout(() => lkInputRef.current?.focus(), 60); // 모달 렌더 후 검색창 포커스
   };
 
-  // 명세서 그리드 위 상시 검색창 — 품목코드(+규격)로 바로 찾으면 결과 모달이 열린다.
-  const runGridSearch = () => {
-    const code = gsCode.trim();
-    if (!code) {
-      cdlg('품목코드를 입력해주세요.', [{ label: '확인', sec: true }]);
-      return;
-    }
-    priceTargetRef.current = null;
-    setLkTargetRow(null);
-    const client = order?.clientCompanyName || '';
-    const spec = gsSpec.trim();
-    lkCtxRef.current = { spec, qty: '', client, item: '' };
-    setLkCodes([code]);
-    setLkSpec(spec);
-    setLkInput('');
-    setLkSugg([]);
-    runLookup([code]);
-  };
-
   // ---- 저장 (slice-12 estimate API) ------------------------------------
   const buildGrid = () => {
     const today = todayMD();
@@ -2851,37 +2830,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               title="단가계산기 창 열기/닫기"
             >
               🧮 계산기
-            </button>
-          </div>
-          {/* 명세서 위 상시 단가검색창 — 품목코드(+규격) 입력 후 찾기/Enter → 결과 모달. */}
-          <div className="aq-gridsearch">
-            <span className="aq-gridsearch-ic">🔎</span>
-            <input
-              className="aq-gs-code"
-              value={gsCode}
-              onChange={(e) => setGsCode(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  runGridSearch();
-                }
-              }}
-              placeholder="품목코드"
-            />
-            <input
-              className="aq-gs-spec"
-              value={gsSpec}
-              onChange={(e) => setGsSpec(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  runGridSearch();
-                }
-              }}
-              placeholder="규격 예:500*300"
-            />
-            <button type="button" className="aq-gs-btn" onClick={runGridSearch}>
-              찾기
             </button>
           </div>
           {/* 도장비 합치기/펼치기 바 — 도장비 행이 2건+ 이거나 이미 합쳐져 있을 때만. */}

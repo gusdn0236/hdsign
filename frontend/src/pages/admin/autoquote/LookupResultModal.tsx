@@ -324,7 +324,6 @@ export default function LookupResultModal({
             {totalFound > refs.length ? ` (최신 ${refs.length}건 표시)` : ''}
           </div>
         )}
-        {!working && extras}
         {working ? (
           <div className="aq-mbody">
             <div className="aq-mleft" style={{ position: 'relative' }}>{workingLeft}</div>
@@ -335,11 +334,11 @@ export default function LookupResultModal({
             <div className="aq-mleft">
               <div className="none">
                 {multi
-                  ? '위 검색창에 품목코드를 입력하고 Enter 를 누르면 과거 명세서를 찾아줍니다.'
+                  ? '오른쪽 검색창에 품목코드를 입력하고 Enter 를 누르면 과거 명세서를 찾아줍니다.'
                   : '관련 과거 단가가 없습니다. 품목코드/규격을 확인해 보세요.'}
               </div>
             </div>
-            <div className="aq-mright" />
+            <div className="aq-mright lk-right">{extras}</div>
           </div>
         ) : (
           <>
@@ -361,6 +360,7 @@ export default function LookupResultModal({
               )}
             </div>
             <div className="aq-mright lk-right">
+              {extras}
               {dateStr ? <div className="lk-date">{dateStr} 명세서</div> : null}
               {/* 예상가·단독 버튼 대신 "표에서 직접 골라라" 안내 — 명세서작성·단가계산기 공통. */}
               <div className="lk-pick">

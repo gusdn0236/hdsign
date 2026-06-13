@@ -714,52 +714,6 @@
   background: #0a7d8c;
   color: #fff;
 }
-/* 명세서 위 상시 단가검색창 */
-.aq-gridsearch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 8px;
-  background: #eef6f7;
-  border-bottom: 1px solid var(--line);
-}
-.aq-gridsearch-ic {
-  font-size: 13px;
-  opacity: 0.75;
-}
-.aq-gridsearch input {
-  padding: 5px 8px;
-  border: 1.5px solid var(--line);
-  border-radius: 7px;
-  font-size: 12.5px;
-}
-.aq-gridsearch input:focus {
-  outline: none;
-  border-color: #0a9396;
-}
-.aq-gs-code {
-  flex: 1 1 auto;
-  min-width: 80px;
-}
-.aq-gs-spec {
-  flex: 0 0 110px;
-}
-.aq-gs-btn {
-  flex: 0 0 auto;
-  border: none;
-  background: var(--teal, #0a7d8c);
-  color: #fff;
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 700;
-  padding: 6px 14px;
-  border-radius: 7px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.aq-gs-btn:hover {
-  background: #0a9396;
-}
 /* 도장비 합치기/펼치기 바 */
 .aq-dojangbar {
   display: flex;
@@ -1464,6 +1418,15 @@
   gap: 12px;
   padding: 20px 22px;
   overflow: auto;
+}
+/* 오른쪽 명세서 위로 옮긴 검색바(품목코드·규격) — 상단 full-bleed 대신 인셋 박스로. */
+.lk-right .aq-lkbar {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.lk-right .aq-lksugg {
+  margin-top: -4px;
 }
 /* 과거 명세서 발행일 — 규격·단가(표) 위에 표시 */
 .lk-right .lk-date {
