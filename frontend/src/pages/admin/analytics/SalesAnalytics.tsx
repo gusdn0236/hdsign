@@ -54,7 +54,7 @@ export default function SalesAnalytics() {
 
   // 데이터가 오면 그 해의 연 목표(localStorage)를 불러온다.
   useEffect(() => {
-    if (!data) return;
+    if (!data?.yearPace) return; // 백엔드 구버전(필드 없음)이면 목표 기능 비활성
     const v = localStorage.getItem(`sa-goal-${data.yearPace.year}`);
     setGoal(v ? Number(v) : null);
   }, [data]);
@@ -114,7 +114,11 @@ export default function SalesAnalytics() {
   }
 
   const { summary, monthly, yearly, topClients, topItems, materials, seasonality } = data;
-  const { concentration, churnRisk, newClientsByYear, segments, yearPace, movers, clientDetails } = data;
+  const { concentration, churnRisk, newClientsByYear, segments } = data;
+  // 새 필드(무버스·연페이스·드릴다운) — 백엔드 구버전/캐시 미갱신이면 없을 수 있어 안전 폴백.
+  const yearPace = data.yearPace ?? null;
+  const movers = data.movers ?? { basis: '', risers: [], fallers: [] };
+  const clientDetails = data.clientDetails ?? {};
 
   // 전년동월 매출 조회용 맵 ('2026.06' → 매출). YoY 고스트 막대·히어로 동월비교에 사용.
   const ymRev = new Map(monthly.map((m) => [m.ym, m.revenue]));
@@ -126,10 +130,12 @@ export default function SalesAnalytics() {
   })();
 
   // 올해 페이스 — 목표 달성률(누적 기준) + 예상 달성률.
-  const goalPct = goal && goal > 0 ? Math.round((yearPace.ytdRevenue / goal) * 100) : null;
-  const goalProjPct = goal && goal > 0 ? Math.round((yearPace.projectedRevenue / goal) * 100) : null;
-  const goalRemain = goal && goal > 0 ? Math.max(0, goal - yearPace.ytdRevenue) : 0;
+  const hasGoal = !!(yearPace && goal && goal > 0);
+  const goalPct = hasGoal ? Math.round((yearPace!.ytdRevenue / goal!) * 100) : null;
+  const goalProjPct = hasGoal ? Math.round((yearPace!.projectedRevenue / goal!) * 100) : null;
+  const goalRemain = hasGoal ? Math.max(0, goal! - yearPace!.ytdRevenue) : 0;
   const saveGoal = () => {
+    if (!yearPace) return;
     const v = Math.round(Number(goalInput.replace(/[^\d]/g, '')) || 0);
     if (v > 0) {
       localStorage.setItem(`sa-goal-${yearPace.year}`, String(v));
@@ -212,6 +218,7 @@ export default function SalesAnalytics() {
       </div>
 
       {/* 올해 페이스 — 예상 연매출(run-rate) + 목표 달성률 링 */}
+      {yearPace && (
       <div className="sa-pace">
         <div className="sa-pace-main">
           <div className="sa-pace-head">
@@ -282,6 +289,7 @@ export default function SalesAnalytics() {
           )}
         </div>
       </div>
+      )}
 
       {/* 요약 카드 */}
       <div className="sa-cards">
