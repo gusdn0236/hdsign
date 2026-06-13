@@ -3392,14 +3392,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 <button
                   type="button"
                   className={'aq-octbtn' + (ocrTool === 'box' ? ' on' : '')}
+                  title="박스 — 사각 영역을 읽을 영역으로 채움"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setOcrTool('box')}
                 >
-                  ⬚ 박스
+                  ▭ 박스
                 </button>
                 <button
                   type="button"
                   className={'aq-octbtn' + (ocrTool === 'pencil' ? ' on' : '')}
+                  title="연필 — 읽을 글자를 칠해서 추가"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setOcrTool('pencil')}
                 >
@@ -3408,10 +3410,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 <button
                   type="button"
                   className={'aq-octbtn' + (ocrTool === 'eraser' ? ' on' : '')}
+                  title="지우개 — 칠한 영역에서 빼기"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setOcrTool('eraser')}
                 >
-                  🩹 지우개
+                  🧽 지우개
                 </button>
                 <button
                   type="button"
