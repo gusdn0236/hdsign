@@ -364,6 +364,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [lkSugg, setLkSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩
   const [lkInput, setLkInput] = useState('');
   const lkInputRef = useRef<HTMLInputElement>(null); // 둘러보기 진입 시 검색창 자동 포커스
+  const [lkSpec, setLkSpec] = useState(''); // 둘러보기 검색 — 규격(사이즈) 입력. lkCtxRef.spec 로 검색에 반영
   const [lkAcOpen, setLkAcOpen] = useState(false);
   const [lkAcIdx, setLkAcIdx] = useState(-1);
   const [lkView, setLkView] = useState<'search' | 'working'>('search'); // 단가찾아보기 모달: 검색결과↔작성중 토글
@@ -1582,6 +1583,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     const seed = code ? [code] : [];
     setLkCodes(seed);
     setLkInput('');
+    setLkSpec(spec); // 규격 입력칸에 그 행 사이즈 표시(사용자가 조정 가능)
     setLkAcOpen(false);
     setLkAcIdx(-1);
     await runLookup(seed);
@@ -1724,6 +1726,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     setLkCodes([]);
     setLkSugg([]);
     setLkInput('');
+    setLkSpec('');
     setLkAcOpen(false);
     setLkAcIdx(-1);
     setLookup({ refs: [], ri: 0, q: '', total: 0 }); // 빈 모달 — 검색창 입력 시 검색
@@ -3258,6 +3261,27 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                         </div>
                       );
                     })()}
+                </div>
+                {/* 규격(사이즈) 입력 — 검색 컨텍스트(lkCtxRef.spec)로 들어가 사이즈 기준 예상단가에 반영. */}
+                <span className="aq-lkbar-label aq-lkbar-label2">규격</span>
+                <div className="aq-lkspec">
+                  <input
+                    value={lkSpec}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setLkSpec(v);
+                      lkCtxRef.current = { ...lkCtxRef.current, spec: v };
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        lkCtxRef.current = { ...lkCtxRef.current, spec: lkSpec };
+                        if (lkInput.trim()) addLkTag(lkInput); // 코드 입력 중이면 그 코드로 검색
+                        else if (lkCodes.length) runLookup(lkCodes); // 이미 검색한 상태면 사이즈 반영해 재검색
+                      }
+                    }}
+                    placeholder="예: 500*300 또는 h:500"
+                  />
                 </div>
               </div>
               {lkSugg.length > 0 && (
