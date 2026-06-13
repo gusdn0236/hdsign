@@ -404,7 +404,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [gridTool, setGridTool] = useState<{ row: number; left: number; top: number } | null>(null);
   // 수량AI — 수량칸 포커스 시 뜨는 툴바(🔢 수량AI). 누르면 박스/연필/지우개로 영역을 칠하고 ✓ 누르면
   // 읽은 글자 갯수가 그 행 수량에 적힌다(모달 없음). qtyAiRow = 현재 수량AI 대상 행(없으면 null).
-  const [qtyTool, setQtyTool] = useState<{ row: number; left: number; top: number } | null>(null);
+  // right = 뷰포트 오른쪽에서의 거리(셀 오른쪽 끝 기준). 툴바가 왼쪽으로 펼쳐져 오른쪽이 안 잘리게.
+  const [qtyTool, setQtyTool] = useState<{ row: number; right: number; top: number } | null>(null);
   const [qtyAiRow, setQtyAiRow] = useState<number | null>(null);
   const qtyAiRowRef = useRef<number | null>(null);
   qtyAiRowRef.current = qtyAiRow;
@@ -3196,7 +3197,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                           onChange={(e) => setCell(i, '수량', e.target.value)}
                           onFocus={(e) => {
                             const r = e.currentTarget.getBoundingClientRect();
-                            setQtyTool({ row: i, left: r.left, top: r.bottom });
+                            setQtyTool({ row: i, right: Math.max(6, window.innerWidth - r.right), top: r.bottom });
                           }}
                           onBlur={() =>
                             setTimeout(
@@ -3382,7 +3383,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         !showRef &&
         createPortal(
           <div
-            style={{ position: 'fixed', left: qtyTool.left, top: qtyTool.top + 3, zIndex: 3000, display: 'flex', gap: 6, alignItems: 'center' }}
+            style={{ position: 'fixed', right: qtyTool.right, top: qtyTool.top + 3, zIndex: 3000, display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end' }}
             onMouseDown={(e) => e.preventDefault()}
           >
             {qtyAiRow === qtyTool.row ? (
