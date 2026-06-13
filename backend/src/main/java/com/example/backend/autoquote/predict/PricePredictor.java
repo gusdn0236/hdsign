@@ -98,6 +98,14 @@ public class PricePredictor {
      * 코퍼스 미프로비저닝이면 {@code null}.
      */
     public List<Prediction> lookup(String client, Item it, int limit) {
+        return lookup(client, it, limit, false);
+    }
+
+    /**
+     * 단가 찾아보기(+도장 필터). {@code paintingOnly=true} 면 후보를 '도장 포함 명세서'(코드 500-2 또는
+     * 품목에 도장 키워드가 있는 라인을 포함한 (file,idx))의 라인으로만 좁힌다. '도장비 찾아보기'에 쓴다.
+     */
+    public List<Prediction> lookup(String client, Item it, int limit, boolean paintingOnly) {
         Index idx = index();
         if (idx == null) {
             return null;
@@ -131,6 +139,9 @@ public class PricePredictor {
                 }
             }
         }
+        if (paintingOnly) {
+            coded.removeIf(r -> !idx.paintingInvoices.contains(invoiceKey(r)));
+        }
         if (!coded.isEmpty()) {
             List<Line> same = new ArrayList<>();
             List<Line> other = new ArrayList<>();
@@ -156,6 +167,9 @@ public class PricePredictor {
         List<Scored> rel = new ArrayList<>();
         for (List<Line> lines : idx.byClient.values()) {
             for (Line r : lines) {
+                if (paintingOnly && !idx.paintingInvoices.contains(invoiceKey(r))) {
+                    continue;
+                }
                 double j = jaccard(qtok, r.itok);
                 if (j >= JACCARD_MIN) {
                     rel.add(new Scored(r, j * 0.7 + dimProximity(qd, r.dims) * 0.3));
@@ -511,7 +525,7 @@ public class PricePredictor {
         Map<String, List<Line>> byCode = new LinkedHashMap<>();
         JsonNode bc = root.get("by_client");
         if (bc == null || !bc.isObject()) {
-            return new Index(byClient, byItem, byCode);
+            return new Index(byClient, byItem, byCode, Set.of());
         }
         List<Line> all = new ArrayList<>();
         var fields = bc.fields();
@@ -532,14 +546,18 @@ public class PricePredictor {
         // 자재코드 어휘 빌드 후, byCode 를 resolveCode(코드+품목)로 키잉. 숫자/빈칸 코드(전체 39%)는
         // 품목에 적힌 실제 자재타입으로 귀속 → "200/갈바레이저타공" 도 갈바레이저타공으로 검색됨.
         List<String> vocab = buildVocab(all);
+        Set<String> paintingInvoices = new HashSet<>();
         for (Line line : all) {
             byItem.computeIfAbsent(inorm(line.item), k -> new ArrayList<>()).add(line);
             String rc = resolveCode(line.code, line.item, vocab);
             if (!rc.isBlank()) {
                 byCode.computeIfAbsent(rc, k -> new ArrayList<>()).add(line);
             }
+            if (lineIsPainting(line)) {
+                paintingInvoices.add(invoiceKey(line));
+            }
         }
-        return new Index(byClient, byItem, byCode);
+        return new Index(byClient, byItem, byCode, paintingInvoices);
     }
 
     private static final java.util.regex.Pattern P_NUMCODE = java.util.regex.Pattern.compile("[0-9][0-9\\-]*");
@@ -729,6 +747,23 @@ public class PricePredictor {
     }
 
     private record Index(Map<String, List<Line>> byClient, Map<String, List<Line>> byItem,
-                         Map<String, List<Line>> byCode) {
+                         Map<String, List<Line>> byCode, Set<String> paintingInvoices) {
+    }
+
+    /** 도장 관련 라인 — 전용 코드 500-2 또는 품목에 도장 키워드(없음/x 제외). 명세서의 '도장 포함' 판정. */
+    private static final Pattern P_DOJANG = Pattern.compile("도장|도색|우레탄|분체|페인트|락카|락커");
+
+    private static boolean lineIsPainting(Line l) {
+        String code = l.code == null ? "" : l.code.trim();
+        if ("500-2".equals(code)) {
+            return true;
+        }
+        String it = l.item == null ? "" : l.item;
+        return P_DOJANG.matcher(it).find() && !it.contains("없음") && !it.matches(".*도장\\s*[xX].*");
+    }
+
+    /** 명세서 키 — 같은 (file, idx) 라인들은 한 명세서. 도장 포함 명세서 집합·필터에 사용. */
+    private static String invoiceKey(Line l) {
+        return (l.file == null ? "" : l.file) + "|" + String.valueOf(l.idx);
     }
 }

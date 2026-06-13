@@ -123,9 +123,10 @@ class AdminAutoQuotePredictControllerTest {
         assertThat(body).hasSize(1);
 
         JsonNode p = body.get(0);
-        // spec 계약: 정확히 10개 snake_case 키가 모두 존재(date = 후보 명세서 연·월).
+        // spec 계약: snake_case 키가 모두 존재(date = 후보 명세서 연·월, photo_available = 사진 존재 플래그).
         assertThat(iteratorToList(p.fieldNames())).containsExactlyInAnyOrder(
-                "item", "size", "qty", "price", "ref_invoice_idx", "ref_file", "src", "score", "reason", "date");
+                "item", "size", "qty", "price", "ref_invoice_idx", "ref_file", "src", "score", "reason", "date",
+                "photo_available");
         // 응답 스키마: price>0, ref_invoice_idx(snake_case) 존재, reason 존재.
         assertThat(p.get("price").asInt()).isGreaterThan(0);
         assertThat(p.hasNonNull("ref_invoice_idx")).isTrue();

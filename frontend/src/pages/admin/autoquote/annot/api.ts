@@ -63,11 +63,12 @@ export async function lookupPrices(
   client: string,
   item: PredictItem,
   limit = 8,
+  paintingOnly = false,
 ): Promise<Prediction[] | null> {
   const res = await fetch(`${BASE_URL}/api/admin/autoquote/predict/lookup`, {
     method: 'POST',
     headers: authHeaders(token, true),
-    body: JSON.stringify({ client, item, limit }),
+    body: JSON.stringify({ client, item, limit, paintingOnly }),
   });
   if (res.status === 503) return null; // corpus 미프로비저닝
   if (!res.ok) throw new Error(`단가 찾아보기 실패 (${res.status})`);
@@ -86,14 +87,17 @@ export async function lookupPricesMerged(
   codes: string[],
   spec: string,
   qty: string,
-  opts?: { fallbackText?: string; limit?: number },
+  opts?: { fallbackText?: string; limit?: number; paintingOnly?: boolean },
 ): Promise<Prediction[] | null> {
   const limit = opts?.limit ?? 50;
+  const paintingOnly = opts?.paintingOnly ?? false;
   const targets = codes.length
     ? codes.map((c) => ({ text: c, material: c }))
     : [{ text: opts?.fallbackText ?? '', material: '' }];
   const lists = await Promise.all(
-    targets.map((t) => lookupPrices(token, client, { text: t.text, material: t.material, size: spec, qty }, limit)),
+    targets.map((t) =>
+      lookupPrices(token, client, { text: t.text, material: t.material, size: spec, qty }, limit, paintingOnly),
+    ),
   );
   if (lists.every((l) => l == null)) return null; // 코퍼스 미프로비저닝
   const sp = (s: string) => (s === '이력' ? 0 : s === '타거래처' ? 1 : 2);

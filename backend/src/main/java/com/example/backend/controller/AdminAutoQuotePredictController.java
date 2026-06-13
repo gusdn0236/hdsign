@@ -50,8 +50,8 @@ public class AdminAutoQuotePredictController {
     public record ItemRequest(String text, String material, String size, String qty) {
     }
 
-    /** 단가 찾아보기 요청: 거래처 + 품목 1개 + (선택) 최대 개수. */
-    public record LookupRequest(String client, ItemRequest item, Integer limit) {
+    /** 단가 찾아보기 요청: 거래처 + 품목 1개 + (선택) 최대 개수 + (선택) 도장 포함 명세서만. */
+    public record LookupRequest(String client, ItemRequest item, Integer limit, Boolean paintingOnly) {
     }
 
     @PostMapping(value = "/predict", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -89,7 +89,8 @@ public class AdminAutoQuotePredictController {
         ItemRequest i = req.item();
         PricePredictor.Item it = new PricePredictor.Item(i.text(), i.material(), i.size(), i.qty());
         int limit = req.limit() != null ? req.limit() : 8;
-        List<PricePredictor.Prediction> out = predictor.lookup(req.client(), it, limit);
+        boolean paintingOnly = Boolean.TRUE.equals(req.paintingOnly());
+        List<PricePredictor.Prediction> out = predictor.lookup(req.client(), it, limit, paintingOnly);
         if (out == null) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "autoquote_data_unavailable"));

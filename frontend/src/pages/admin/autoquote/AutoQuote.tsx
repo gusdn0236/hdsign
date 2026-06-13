@@ -433,12 +433,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [calcOpen, setCalcOpen] = useState(false); // 미니 단가계산기 창 토글(드래그 이동 가능, 헤더 🧮 버튼).
 
 
-  const lkCtxRef = useRef<{ spec: string; qty: string; client: string; item: string }>({
+  // painting=true 면 '도장비 찾아보기' — 도장 포함 명세서 후보만. addLkTag 등 재검색에도 유지된다.
+  const lkCtxRef = useRef<{ spec: string; qty: string; client: string; item: string; painting?: boolean }>({
     spec: '',
     qty: '',
     client: '',
     item: '',
+    painting: false,
   });
+  const [dojangPick, setDojangPick] = useState<{ left: number; top: number } | null>(null); // 도장비찾아보기 행 선택기 위치
 
   const stageRef = useRef<HTMLDivElement>(null);
   const stagewrapRef = useRef<HTMLDivElement>(null);
@@ -1639,13 +1642,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // ---- 단가 찾아보기 (slice-11 predict + evidence) ----------------------
   // 태그된 코드들로 병합 검색(공용 헬퍼) → 후보별 근거(사진+명세서 grid) 로드 → 모달 갱신.
   const runLookup = async (codes: string[]) => {
-    const { spec, qty, client, item } = lkCtxRef.current;
+    const { spec, qty, client, item, painting } = lkCtxRef.current;
     const mySeq = ++lookupSeq.current;
-    setStatus('과거 단가 조회 중…');
+    setStatus(painting ? '도장 포함 과거 명세서 조회 중…' : '과거 단가 조회 중…');
     try {
       const preds = await lookupPricesMerged(token, client, codes, spec, qty, {
         fallbackText: `${codes[0] || ''} ${item}`.trim(),
         limit: 100,
+        paintingOnly: !!painting,
       });
       if (mySeq !== lookupSeq.current) return; // 더 새로운 검색이 시작됨 → 폐기
       if (preds == null) {
@@ -1677,7 +1681,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         est: estForSize(pr.price, pr.size, spec),
       }));
       const codeLabel = codes.length ? codes.join(' + ') : item || '품목';
-      const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
+      const q =
+        (painting ? '🎨 도장비 · ' : '') +
+        `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}` +
+        (painting ? ' (도장 포함 명세서)' : '');
       // 무거운 건 사진. 앞 5장만 먼저 받아 모달을 바로 띄우고, 나머지는 사용자가 그 5장을
       // 보는 동안 백그라운드로 채운다(아래). 실패는 null(모달이 "사진 없음" 처리).
       const loadEv = async (pr: (typeof top)[number]): Promise<Evidence | null> => {
@@ -1735,7 +1742,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     }
   };
 
-  const openLookup = async (row?: number) => {
+  const openLookup = async (row?: number, painting = false) => {
     const tgt = row != null ? row : active;
     if (tgt == null) return;
     priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행 단가에 적용
@@ -1750,7 +1757,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     const spec = p?.vals['규격'] || '';
     const qty = p?.vals['수량'] || '';
     const client = order?.clientCompanyName || '';
-    lkCtxRef.current = { spec, qty, client, item };
+    lkCtxRef.current = { spec, qty, client, item, painting };
     const seed = code ? [code] : [];
     setLkCodes(seed);
     setLkInput('');
@@ -3044,6 +3051,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
             >
               🔎 단가찾아보기
             </button>
+            {/* 도장비찾아보기 — 행을 하나 골라, 그 품목 기준으로 '도장 포함 명세서'만 추려 과거 단가를 본다. */}
+            <button
+              type="button"
+              className="aq-lookupbtn aq-dojang-find"
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setDojangPick((d) => (d ? null : { left: r.left, top: r.bottom + 4 }));
+              }}
+              title="행 하나 선택 → 그 품목과 비슷하면서 '도장'이 포함된 과거 명세서만 찾아 도장비 참고"
+            >
+              🎨 도장비찾아보기
+            </button>
             {/* 미니 단가계산기 토글 — 헤더 맨 오른쪽(공급가액 열 위). 누르면 드래그 가능한 계산기 창이 켜졌다 꺼졌다. */}
             <button
               type="button"
@@ -3454,6 +3473,42 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           >
             🗑 삭제
           </button>,
+          document.body,
+        )}
+
+      {/* 도장비찾아보기 행 선택기 — 채워진 행을 골라 그 품목 기준 도장 포함 명세서 검색. */}
+      {dojangPick &&
+        createPortal(
+          <>
+            <div className="aq-dojangpick-back" onClick={() => setDojangPick(null)} />
+            <div className="aq-dojangpick" style={{ left: dojangPick.left, top: dojangPick.top }}>
+              <div className="aq-dojangpick-h">어느 행 기준으로 도장비를 찾을까요?</div>
+              {pins.filter((p) => p.vals['품목코드'] || p.vals['품목']).length === 0 ? (
+                <div className="aq-dojangpick-empty">먼저 품목코드/품목을 입력한 행이 있어야 해요.</div>
+              ) : (
+                pins.map((p, i) =>
+                  p.vals['품목코드'] || p.vals['품목'] ? (
+                    <button
+                      key={i}
+                      type="button"
+                      className="aq-dojangpick-row"
+                      onClick={() => {
+                        setDojangPick(null);
+                        openLookup(i, true);
+                      }}
+                    >
+                      <span className="aq-dojangpick-n" style={{ background: pinColor(i) }}>
+                        {i + 1}
+                      </span>
+                      <span className="aq-dojangpick-txt">
+                        {[p.vals['품목코드'], p.vals['품목'], p.vals['규격']].filter(Boolean).join(' · ') || '(빈 행)'}
+                      </span>
+                    </button>
+                  ) : null,
+                )
+              )}
+            </div>
+          </>,
           document.body,
         )}
 
