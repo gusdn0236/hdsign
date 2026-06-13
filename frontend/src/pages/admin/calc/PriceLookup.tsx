@@ -103,10 +103,13 @@ export default function PriceLookup() {
         setBusy(false);
         return;
       }
+      // 거래처를 입력했으면 그 거래처 명세서만(백엔드가 같은 거래처를 src '이력'으로 분류).
+      // 비우면 전체 거래처. 이 필터만 단가계산기 전용 — 이후 분류·정렬 기준은 명세서작성과 동일.
+      const scoped = client.trim() ? merged.filter((p) => p.src === '이력') : merged;
       // 명세서작성 탭과 같은 기준: ① 매칭 사진 있는 후보만(백엔드 싼 존재확인 photo_available)
       // ② 최신순(날짜 내림차순) ③ 최신 30건만 표시. 사진(evidence)은 무거우니 아직 안 받는다.
-      const hasFlag = merged.some((p) => p.photo_available !== undefined);
-      const photoed = hasFlag ? merged.filter((p) => p.photo_available) : merged;
+      const hasFlag = scoped.some((p) => p.photo_available !== undefined);
+      const photoed = hasFlag ? scoped.filter((p) => p.photo_available) : scoped;
       const dnum = (d?: string) => {
         const m = String(d || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
         return m ? +m[1] * 10000 + +m[2] * 100 + +m[3] : 0;
@@ -146,7 +149,12 @@ export default function PriceLookup() {
       });
       setLk({ refs, ri: 0, lpi: 0, bi: 0, q, total, bundles: {} });
       setBusy(false);
-      if (!refs.length) setMsg('관련 과거 단가를 찾지 못했습니다.');
+      if (!refs.length)
+        setMsg(
+          client.trim()
+            ? `'${client.trim()}' 거래처의 관련 과거 단가를 찾지 못했습니다.`
+            : '관련 과거 단가를 찾지 못했습니다.',
+        );
       // 나머지 사진은 백그라운드로 — 도착하는 대로 해당 후보에 끼워 넣는다(세대 일치할 때만).
       refs.slice(EAGER).forEach((r, k) => {
         const idx = EAGER + k;
@@ -325,7 +333,9 @@ export default function PriceLookup() {
           />
         </div>
         <div className="pl-field">
-          <label>거래처 (선택)</label>
+          <label>
+            거래처 (선택) <span className="pl-hint">입력하면 그 거래처 명세서만 — 비우면 전체</span>
+          </label>
           <input
             value={client}
             onChange={(e) => setClient(e.target.value)}
