@@ -3496,7 +3496,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           <>
             <div className="aq-dojangpick-back" onClick={() => setDojangPick(null)} />
             <div className="aq-dojangpick" style={{ left: dojangPick.left, top: dojangPick.top }}>
-              <div className="aq-dojangpick-h">어느 행 기준으로 도장비를 찾을까요?</div>
+              <div className="aq-dojangpick-h">어느 작업의 도장비를 찾을까요?</div>
               {pins.filter((p) => p.vals['품목코드'] || p.vals['품목']).length === 0 ? (
                 <div className="aq-dojangpick-empty">먼저 품목코드/품목을 입력한 행이 있어야 해요.</div>
               ) : (

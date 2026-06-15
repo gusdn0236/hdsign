@@ -365,7 +365,7 @@ export default function LookupResultModal({
               {/* 예상가·단독 버튼 대신 "표에서 직접 골라라" 안내 — 명세서작성·단가계산기 공통. */}
               <div className="lk-pick">
                 {multi
-                  ? '가져올 행을 클릭해 선택하세요. 도장 행은 노란색입니다. (여러 개 가능)'
+                  ? '가져올 행을 클릭해 선택하세요.(여러개 가능)'
                   : '명세서에서 적용하실 가격을 선택해주세요.'}
               </div>
               {grid.length ? (

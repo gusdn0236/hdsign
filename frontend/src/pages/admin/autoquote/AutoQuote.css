@@ -630,14 +630,19 @@
 }
 .aq-lookup {
   background: #fff;
-  border: 1.5px solid var(--teal);
-  color: var(--teal);
+  /* 옆 에폭시 획두께 알약과 짝이 맞게 같은 초록 테두리(--teal2)+그림자. */
+  border: 1.5px solid var(--teal2, #0a7d8c);
+  color: var(--teal2, #0a7d8c);
   border-radius: 7px;
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
   flex: 1;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+.aq-lookup:hover {
+  background: #e8f6f7;
 }
 .aq-lookup.calc {
   border-color: var(--teal2);
