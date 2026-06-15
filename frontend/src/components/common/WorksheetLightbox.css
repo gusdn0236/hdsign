@@ -83,21 +83,25 @@
     font-weight: 600;
 }
 
+/* 닫기 X 는 좌상단 — 브라우저 --app 창의 우상단 닫기버튼과 겹치지 않게(현장 사이드바에서
+   둘이 같은 자리면 모달 대신 브라우저를 닫아 프로그램이 통째로 꺼지는 오조작이 잦았다).
+   눈에 잘 띄게 크고 진하게 + 테두리. Esc 로도 닫힌다. */
 .wlb-close {
     position: absolute;
     top: 16px;
-    right: 20px;
-    width: 40px;
-    height: 40px;
-    border: none;
+    left: 20px;
+    width: 46px;
+    height: 46px;
+    border: 1.5px solid rgba(255, 255, 255, 0.5);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(0, 0, 0, 0.45);
     color: #fff;
-    font-size: 24px;
+    font-size: 26px;
     line-height: 1;
     cursor: pointer;
+    z-index: 5;
 }
-.wlb-close:hover { background: rgba(255, 255, 255, 0.28); }
+.wlb-close:hover { background: rgba(0, 0, 0, 0.7); border-color: #fff; }
 
 .wlb-nav {
     position: absolute;
