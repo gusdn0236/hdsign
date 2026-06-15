@@ -47,6 +47,9 @@ try:
                 return 1.0
 
         EF_DPI_SCALE = _ef_scale()
+        # 작성 직전 폼을 기준 위치로 옮긴 뒤 격자 기준 잔차를 담는 평행이동값(가상좌표).
+        # ef_click/ef_right_click 이 모든 클릭에 가산 → 창을 옮겨도 같은 칸을 누른다. fill 끝나면 0 으로.
+        _EF_OFFSET = [0, 0]
 
         _user32.OpenClipboard.argtypes = [wintypes.HWND]; _user32.OpenClipboard.restype = wintypes.BOOL
         _user32.EmptyClipboard.restype = wintypes.BOOL
@@ -123,8 +126,8 @@ try:
         def ef_click(x: int, y: int) -> None:
             # 논리좌표 → 물리 px → 절대좌표(0..65535). 모든 마우스 입력을 SendInput 으로 '주입'한다
             # (SetCursorPos 아님) → 입력가드(LL 훅)가 우리 클릭은 통과시키고 사용자 물리 입력만 차단 가능.
-            px = int(x * EF_DPI_SCALE)
-            py = int(y * EF_DPI_SCALE)
+            px = int((x + _EF_OFFSET[0]) * EF_DPI_SCALE)
+            py = int((y + _EF_OFFSET[1]) * EF_DPI_SCALE)
             nx = int(px * 65535 / max(1, EF_SCREEN_W - 1))
             ny = int(py * 65535 / max(1, EF_SCREEN_H - 1))
             mv = _EF_MI(nx, ny, 0, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, 0, None)
@@ -141,8 +144,8 @@ try:
 
         def ef_right_click(x: int, y: int) -> None:
             # 절대좌표 주입 우클릭(컨텍스트 메뉴 열기). 이지폼이 Ctrl+V 를 막아 '붙여넣기' 메뉴로 대체.
-            px = int(x * EF_DPI_SCALE)
-            py = int(y * EF_DPI_SCALE)
+            px = int((x + _EF_OFFSET[0]) * EF_DPI_SCALE)
+            py = int((y + _EF_OFFSET[1]) * EF_DPI_SCALE)
             nx = int(px * 65535 / max(1, EF_SCREEN_W - 1))
             ny = int(py * 65535 / max(1, EF_SCREEN_H - 1))
             mv = _EF_MI(nx, ny, 0, _MOUSEEVENTF_MOVE | _MOUSEEVENTF_ABSOLUTE, 0, None)
@@ -201,6 +204,20 @@ try:
         _user32.ShowWindow.restype = wintypes.BOOL
         _user32.IsIconic.argtypes = [wintypes.HWND]
         _user32.IsIconic.restype = wintypes.BOOL
+        _user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        _user32.GetClassNameW.restype = ctypes.c_int
+        _user32.EnumChildWindows.argtypes = [wintypes.HWND, _EF_WNDENUMPROC, wintypes.LPARAM]
+        _user32.EnumChildWindows.restype = wintypes.BOOL
+        _user32.GetParent.argtypes = [wintypes.HWND]
+        _user32.GetParent.restype = wintypes.HWND
+        _user32.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+        _user32.ScreenToClient.restype = wintypes.BOOL
+        _user32.MoveWindow.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.BOOL]
+        _user32.MoveWindow.restype = wintypes.BOOL
+        _user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        _user32.GetWindowRect.restype = wintypes.BOOL
+        _user32.BringWindowToTop.argtypes = [wintypes.HWND]
+        _user32.BringWindowToTop.restype = wintypes.BOOL
 
         def _ef_find_easyform_hwnd():
             matches: list = []
@@ -223,16 +240,102 @@ try:
                     return hwnd
             return matches[0][0]      # 없으면 메인 앱 창
 
+        # ── 클래스 기반 정확 추적 ── 입력폼 = 'TfrmExchange' (목록창 'TfrmListExchange'·보고서와 안 헷갈림).
+        #   입력폼은 메인 앱(TfrmBookMain) 안의 MDI 자식이라 EnumWindows(최상위)로는 못 찾음 → 자식까지 탐색.
+        EF_FORM_HOME = (2, 45)   # 작성 직전 폼을 끌어다 놓을 화면 위치(가상좌표). 항상 화면 안 + EF_CELLS 유효.
+        EF_GRID_REF = (8, 267)   # 보정 시점 격자(TAdvStringGrid) 좌상단(가상좌표). 이동 후 잔차 보정 기준.
+
+        def _ef_classname(hwnd) -> str:
+            b = ctypes.create_unicode_buffer(256)
+            _user32.GetClassNameW(hwnd, b, 256)
+            return b.value or ""
+
+        def _ef_find_toplevel_class(klass):
+            out: list = []
+
+            def _cb(hwnd, _):
+                if _ef_classname(hwnd) == klass:
+                    out.append(hwnd)
+                return True
+
+            _user32.EnumWindows(_EF_WNDENUMPROC(_cb), 0)
+            return out[0] if out else None
+
+        def _ef_find_child_class(parent, klass):
+            out: list = []
+
+            def _cb(hwnd, _):
+                if _ef_classname(hwnd) == klass:
+                    out.append(hwnd)
+                return True
+
+            _user32.EnumChildWindows(parent, _EF_WNDENUMPROC(_cb), 0)
+            return out[0] if out else None
+
+        def _ef_find_main_form():
+            main = _ef_find_toplevel_class("TfrmBookMain")
+            if not main:
+                return None, None
+            return main, _ef_find_child_class(main, "TfrmExchange")
+
+        def _ef_topleft(hwnd):
+            r = wintypes.RECT()
+            _user32.GetWindowRect(hwnd, ctypes.byref(r))
+            return r.left, r.top
+
+        def _ef_move_to_screen(hwnd, sx: int, sy: int) -> None:
+            # 자식창(MDI) 은 부모 클라이언트 좌표로 이동해야 한다 → 화면좌표를 ScreenToClient 로 변환.
+            r = wintypes.RECT()
+            _user32.GetWindowRect(hwnd, ctypes.byref(r))
+            w, h = r.right - r.left, r.bottom - r.top
+            parent = _user32.GetParent(hwnd)
+            pt = wintypes.POINT(sx, sy)
+            if parent:
+                _user32.ScreenToClient(parent, ctypes.byref(pt))
+            _user32.MoveWindow(hwnd, pt.x, pt.y, w, h, True)
+
         def ef_focus_easyform() -> bool:
-            hwnd = _ef_find_easyform_hwnd()
-            if not hwnd:
+            """입력폼(TfrmExchange)을 찾아 최상위로. 폼이 없으면 False(호출부가 '폼 띄우세요' 안내)."""
+            main, form = _ef_find_main_form()
+            if not form:
                 return False
             try:
-                if _user32.IsIconic(hwnd):
-                    _user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                _user32.SetForegroundWindow(hwnd)
+                if _user32.IsIconic(main):
+                    _user32.ShowWindow(main, 9)  # SW_RESTORE
+                _user32.SetForegroundWindow(main)
+                _user32.BringWindowToTop(form)
+                _user32.SetForegroundWindow(main)
             except Exception:
                 pass
+            return True
+
+        def ef_dock_and_offset() -> bool:
+            """작성 직전: 입력폼을 앞으로 + 항상 기준 위치로 이동 + 격자 기준 잔차를 _EF_OFFSET 에 설정.
+            창을 어디로 옮기든/가장자리로 밀든 같은 칸에 입력되게 하고 off-screen 을 원천 차단한다."""
+            main, form = _ef_find_main_form()
+            if not form:
+                return False
+            try:
+                if _user32.IsIconic(main):
+                    _user32.ShowWindow(main, 9)
+                _user32.SetForegroundWindow(main)
+                _user32.BringWindowToTop(form)
+                _user32.SetForegroundWindow(main)
+                _ef_move_to_screen(form, EF_FORM_HOME[0], EF_FORM_HOME[1])
+                time.sleep(0.28)  # 창 이동·포커스 안정화 대기(첫 클릭/키 씹힘 방지)
+                _user32.SetForegroundWindow(main)  # 이동 후 포커스 재확정
+                grid = _ef_find_child_class(form, "TAdvStringGrid")
+                if grid:
+                    gl, gt = _ef_topleft(grid)
+                    _EF_OFFSET[0] = gl - EF_GRID_REF[0]
+                    _EF_OFFSET[1] = gt - EF_GRID_REF[1]
+                else:
+                    _EF_OFFSET[0] = 0
+                    _EF_OFFSET[1] = 0
+            except Exception:
+                logging.exception("이지폼 폼 이동/보정 실패")
+                _EF_OFFSET[0] = 0
+                _EF_OFFSET[1] = 0
             return True
 
         # ── 입력 가드: 매크로 중 사용자 물리 마우스/키보드 차단 + ESC 즉시 중단 ──
@@ -378,6 +481,12 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
     # 입력 가드 ON — 사용자 물리 마우스/키보드 차단, ESC 누르면 ef_aborted()=True. 끝나면 항상 해제.
     ef_guard_start()
     try:
+        # ★ 작성 직전: 입력폼(TfrmExchange)을 클래스로 찾아 항상 기준 위치로 이동 + 격자기준 잔차 보정.
+        #   사용자가 창을 옮기거나 가장자리로 밀어도 정확히 같은 칸에 입력되고, off-screen 을 차단한다.
+        if not ef_dock_and_offset():
+            return False, "이지폼 '매출 거래명세서' 새로작성 창을 못 찾았습니다(먼저 띄우세요)."
+        time.sleep(0.15)  # 입력 시작 전 추가 안정화
+
         # 0) 첫 행 품목칸 클릭 — 그리드 활성화 + 첫 행 월일 자동기입 트리거
         ef_click(*EF_CELLS[0][EF_COLS.index("item")])
         time.sleep(0.06)
@@ -448,6 +557,8 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
         commit_cells = EF_CELLS[min(n, cap - 1)] if n <= cap else last_row_cells
         ef_click(*commit_cells[EF_COLS.index("item")])
     finally:
+        _EF_OFFSET[0] = 0   # 평행이동 보정값 원복(다른 클릭에 영향 없게)
+        _EF_OFFSET[1] = 0
         ef_guard_stop()  # 입력 가드 OFF — 사용자 입력 복구(항상 실행)
     return True, f"{n}개 행을 기입했습니다. 내용 확인 후 직접 저장(F5)하세요."
 
