@@ -558,13 +558,125 @@ def flexisign_is_running(exe_path: str | None, config: dict) -> bool:
 
 
 def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
-    """.fs 를 윈도우 기본 연결로 연다 — FlexiSIGN 이 이미 떠 있으면 그 창에서 열린다.
-    (.fs 더블클릭과 동일. 새 인스턴스를 띄우지 않으려고 exe 를 직접 Popen 하지 않는다.)"""
+    """.fs 를 윈도우 기본 연결로 연다 — FlexiSIGN 이 이미 떠 있으면 그 창에 포커스만 준다.
+    (.fs 더블클릭과 동일. 이미 그 파일이 저장 안 한 변경과 함께 열려 있으면 그 상태 그대로 보임.)
+    reopen_in_flexisign 자동화가 실패할 때의 폴백."""
     try:
         os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
         return True, str(fs_file)
     except Exception as e:
         return False, f".fs 열기 실패({e}) — .fs 가 FlexiSIGN 에 연결돼 있는지 확인하세요."
+
+
+# FlexiSIGN '파일 > 열기'(Ctrl+O) 자동화 — 이미 열린(저장 안 한 변경 포함) 파일이라도 디스크의
+# 최종저장본을 새로 열어준다(탐색기 더블클릭=포커스만 과 다름). 동작:
+#   1) FlexiSIGN 메인 창을 활성화(AppActivate)
+#   2) Ctrl+O → 표준 열기 대화상자(#32770) 가 포그라운드로 뜰 때까지 대기
+#   3) 전체 경로를 클립보드로 넣고 Ctrl+V(한글 경로도 안전) → Enter
+# 입력(환경변수): HD_FS_PATH(전체경로), HD_FS_PROCS(프로세스명 후보 ; 구분, 확장자 제외)
+# 출력(stdout): OK / NOFLEXI(창 못 찾음) / BLOCKED(모달 못 닫음) / NODLG(열기창 안 뜸). OK 외엔 폴백.
+#
+# 안전장치:
+#  - Ctrl+O 전에 FlexiSIGN '자기 소유'의 모달 대화상자(#32770: 이미 떠 있던 열기/다른이름저장/
+#    메시지박스)가 포그라운드면 Esc 로 닫고 다시 Ctrl+O. (포커스가 모달에 막혀 Ctrl+O 가 안 먹는 것 방지)
+#  - DesignCentral / Fill·Stroke Editor 같은 '도구 패널'은 #32770 이 아니라(커스텀 클래스) 절대 안 닫음.
+#  - 다른 앱의 대화상자는 PID 가 FlexiSIGN 과 다르므로 Esc 대상에서 제외(엉뚱한 창 안 닫음).
+#  - 우리가 띄운 열기창인지도 PID 로 확인한 뒤에만 경로를 붙여넣음.
+_REOPEN_FS_PS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class HDWin {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+}
+"@
+function FgClass {
+  $sb = New-Object System.Text.StringBuilder 256
+  [void][HDWin]::GetClassName([HDWin]::GetForegroundWindow(), $sb, 256)
+  $sb.ToString()
+}
+function FgPid {
+  $p = [uint32]0
+  [void][HDWin]::GetWindowThreadProcessId([HDWin]::GetForegroundWindow(), [ref]$p)
+  $p
+}
+$names = @()
+if ($env:HD_FS_PROCS) { $names = ($env:HD_FS_PROCS -split ';') | Where-Object { $_ } }
+$proc = Get-Process | Where-Object {
+  $_.MainWindowHandle -ne 0 -and (
+    ($names -contains $_.ProcessName.ToLower()) -or
+    ($_.MainWindowTitle -match 'FlexiSIGN') -or ($_.MainWindowTitle -match '\.fs')
+  )
+} | Select-Object -First 1
+if (-not $proc) { Write-Output 'NOFLEXI'; exit }
+$ws = New-Object -ComObject WScript.Shell
+$null = $ws.AppActivate($proc.Id)
+Start-Sleep -Milliseconds 300
+# FlexiSIGN 자기 소유의 모달 대화상자가 떠 있으면 Esc 로 닫는다(도구 패널·타 앱 창은 제외).
+for ($k = 0; $k -lt 5; $k++) {
+  if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) {
+    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+    Start-Sleep -Milliseconds 250
+    $null = $ws.AppActivate($proc.Id)
+    Start-Sleep -Milliseconds 150
+  } else { break }
+}
+if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { Write-Output 'BLOCKED'; exit }
+$null = $ws.AppActivate($proc.Id)
+Start-Sleep -Milliseconds 150
+[System.Windows.Forms.SendKeys]::SendWait('^o')
+$opened = $false
+for ($i = 0; $i -lt 25; $i++) {
+  Start-Sleep -Milliseconds 120
+  if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { $opened = $true; break }
+}
+if (-not $opened) { Write-Output 'NODLG'; exit }
+Set-Clipboard -Value $env:HD_FS_PATH
+Start-Sleep -Milliseconds 150
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 300
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+Write-Output 'OK'
+"""
+
+
+def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
+    """FlexiSIGN '파일 > 열기'(Ctrl+O) 자동화로 .fs 의 최종저장본을 새로 연다. 반환 (성공, 사유).
+    창/대화상자 자동화라 실패할 수 있음 — 그 경우 (False, 사유) 로 호출부가 os.startfile 폴백."""
+    exe = resolve_flexisign_exe(config.get("flexisign_exe"))
+    procs = ";".join(
+        (n[:-4] if n.lower().endswith(".exe") else n)
+        for n in _flexisign_process_names(exe, config)
+    )
+    env = dict(os.environ)
+    env["HD_FS_PATH"] = str(fs_file)
+    env["HD_FS_PROCS"] = procs
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
+             "-Command", _REOPEN_FS_PS],
+            capture_output=True, text=True, timeout=30, env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as e:
+        return False, f"FlexiSIGN 자동 열기 실행 실패: {e}"
+    out = (r.stdout or "")
+    logging.info("reopen_in_flexisign rc=%s out=%r err=%r", r.returncode,
+                 out.strip()[:120], (r.stderr or "").strip()[:120])
+    if "OK" in out:
+        return True, str(fs_file)
+    if "NOFLEXI" in out:
+        return False, "FlexiSIGN 창을 찾지 못했습니다(최소화/미실행)."
+    if "BLOCKED" in out:
+        return False, "FlexiSIGN 모달 창을 닫지 못해 열기를 진행하지 못했습니다."
+    if "NODLG" in out:
+        return False, "FlexiSIGN 열기 대화상자가 뜨지 않았습니다."
+    return False, f"FlexiSIGN 자동 열기 미확인(rc={r.returncode})."
 
 
 # 탐색기 창 재활용 — [폴더열기] 클릭마다 새 창이 쌓이지 않게 "직전에 우리가 연 창" 을
@@ -893,10 +1005,18 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
                 "needsFlexiSign": True,
                 "message": "FlexiSIGN 이 실행돼 있지 않습니다. FlexiSIGN 을 먼저 켠 뒤 다시 [FS에서 열기] 를 누르세요.",
             }
-        ok, info = open_in_flexisign(fs_file)
+        # 1순위 — FlexiSIGN '파일 > 열기'(Ctrl+O) 자동화로 최종저장본을 새로 연다(이미 열려 있어
+        # 저장 안 한 변경이 있어도 디스크 저장본으로). 실패하면(창 못 찾음/모달 못 닫음/대화상자
+        # 안 뜸) os.startfile 로 폴백 — 그 경우 기존처럼 그 창에 포커스만 준다.
+        ok, info = reopen_in_flexisign(fs_file, config)
+        open_kind = "reopen"
+        if not ok:
+            logging.info("FS 자동 열기 폴백(os.startfile) [%s]: %s", order_number, info)
+            ok, info = open_in_flexisign(fs_file)
+            open_kind = "startfile"
         if not ok:
             return {"opened": False, "message": info}
-        logging.info("FS 실행 [%s] → %s (%s)", order_number, fs_file.name, reason)
+        logging.info("FS 실행 [%s] → %s (%s, %s)", order_number, fs_file.name, reason, open_kind)
         return {
             "opened": True,
             "matchedFile": fs_file.name,
