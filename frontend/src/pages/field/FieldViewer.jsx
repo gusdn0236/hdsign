@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
-import WorksheetLightbox from '../../components/common/WorksheetLightbox.jsx';
 import KakaoShareButton from '../../components/common/KakaoShareButton.jsx';
 import { safeFileName } from '../../utils/shareImage.js';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
@@ -68,8 +67,6 @@ export default function FieldViewer() {
     const [toast, setToast] = useState(null);             // {kind, text}
     const [confirmAction, setConfirmAction] = useState(null); // {message, confirmText, onConfirm}
     const [selectedIndex, setSelectedIndex] = useState(-1);   // 키보드 선택 카드(검색→↓ 로 진입)
-    // 작업지시서 확대 보기 — 돋보기로 연 지시서의 orderNumber(목록 폴링에도 안전).
-    const [lightboxOrder, setLightboxOrder] = useState(null);
     // '여시겠습니까?' 확인창 — { item }. openChoice 로 [FS에서 열기]/[폴더열기] 중 선택.
     const [openConfirm, setOpenConfirm] = useState(null);
     const [openChoice, setOpenChoice] = useState('fs'); // 'fs'=FS에서 열기(기본) | 'folder'=폴더열기
@@ -401,8 +398,6 @@ export default function FieldViewer() {
         if (!it) return;
         const fsReady = !!(it.networkFolderName || it.companyName);
         if (!fsReady) {
-            // 거래처 정보 없음 → 폴더 자체를 못 찾음. 확대 보기를 닫아 안내 토스트가 보이게 한다.
-            setLightboxOrder(null);
             handleOpenFs(it);
             return;
         }
@@ -412,18 +407,26 @@ export default function FieldViewer() {
         setOpenConfirm({ item: it });
     }, [handleOpenFs]);
 
-    // 확인창에서 고른 동작 실행 — 기본 Enter=FS, →+Enter=폴더. 확대 보기도 함께 닫아
-    // 결과 토스트가 가려지지 않게 한다.
+    // 확인창에서 고른 동작 실행 — 기본 Enter=FS, →+Enter=폴더.
     const runOpenChoice = useCallback((choice) => {
         const it = openConfirm?.item;
         setOpenConfirm(null);
-        setLightboxOrder(null);
         if (!it) return;
         if (choice === 'folder') handleOpenFolder(it);
         else handleOpenFs(it);
     }, [openConfirm, handleOpenFolder, handleOpenFs]);
 
-    const closeLightbox = useCallback(() => setLightboxOrder(null), []);
+    // 돋보기 — 지시서(PDF, 없으면 썸네일 이미지)를 새 브라우저 창으로 띄운다. 모달이 아니라
+    // 별도 창이라, 다 본 뒤 그 창을 닫아도 사이드바(현장 프로그램)는 그대로 살아 있다. 또
+    // 사이드바 창의 닫기버튼과 헷갈릴 일도 없다(예전 in-page 모달의 문제).
+    const openEnlarged = useCallback((it) => {
+        const url = it.worksheetPdfUrl || it.worksheetThumbnailUrl;
+        if (!url) {
+            showToast('warn', '확대해서 볼 지시서가 아직 없습니다.', 4000);
+            return;
+        }
+        window.open(url, '_blank', 'noopener');
+    }, [showToast]);
 
     // 확인창 arm — 마운트 때부터 항상 듣는 keyup 리스너. 확인창을 띄운 키를 떼는 순간을
     // 절대 놓치지 않으려고 여기서 잡는다(아래 확인창 이펙트의 리스너는 저사양 현장 PC 에서
@@ -455,40 +458,10 @@ export default function FieldViewer() {
         return () => window.removeEventListener('keydown', onKey);
     }, [openConfirm, openChoice, runOpenChoice]);
 
-    // 확대 보기를 열면 — 현장 사이드바 창은 폭 420px 라 지시서가 작게 보인다. 그동안만
-    // 브라우저 창을 모니터 중앙의 큰 크기로 키우고, 닫으면 원래 도킹 위치·크기로 되돌린다.
-    // (라이트박스·PdfViewer 는 vw/vh + resize 리스너라 창 크기에 맞춰 자동으로 커진다.)
-    // 의존성을 lightboxOpen(불리언)으로 둬 ←/→ 로 지시서를 넘길 땐 창이 안 흔들리게 한다.
-    const lightboxOpen = lightboxOrder != null;
-    useEffect(() => {
-        if (!lightboxOpen) return undefined;
-        const prev = {
-            x: window.screenX, y: window.screenY,
-            w: window.outerWidth, h: window.outerHeight,
-        };
-        try {
-            const scr = window.screen;
-            const aw = scr.availWidth;
-            const ah = scr.availHeight;
-            const al = scr.availLeft || 0;
-            const at = scr.availTop || 0;
-            const w = Math.min(1280, Math.round(aw * 0.94));
-            const h = Math.round(ah * 0.96);
-            window.resizeTo(w, h);
-            window.moveTo(al + Math.round((aw - w) / 2), at + Math.round((ah - h) / 2));
-        } catch { /* resizeTo/moveTo 가 막힌 환경 — 현재 창 크기 그대로 표시 */ }
-        return () => {
-            try {
-                window.resizeTo(prev.w, prev.h);
-                window.moveTo(prev.x, prev.y);
-            } catch { /* ignore */ }
-        };
-    }, [lightboxOpen]);
-
     // fv-cards 영역(검색창에서 ↓ 로 진입)에서의 키 처리.
     const handleCardsKeyDown = useCallback((e) => {
-        // 라이트박스나 확인창이 떠 있으면 그쪽 키 핸들러가 처리 — 카드 영역은 양보(중복 방지).
-        if (lightboxOrder || openConfirm) return;
+        // 확인창이 떠 있으면 그쪽 키 핸들러가 처리 — 카드 영역은 양보(중복 방지).
+        if (openConfirm) return;
         if (e.key === 'ArrowDown') {
             e.preventDefault();
             setSelectedIndex((i) => Math.min((i < 0 ? -1 : i) + 1, sorted.length - 1));
@@ -504,7 +477,7 @@ export default function FieldViewer() {
                 askOpen(sorted[selectedIndex]);
             }
         }
-    }, [sorted, selectedIndex, askOpen, lightboxOrder, openConfirm]);
+    }, [sorted, selectedIndex, askOpen, openConfirm]);
 
     const handleComplete = useCallback((it) => {
         if (!worker) {
@@ -788,8 +761,8 @@ export default function FieldViewer() {
                                         <button
                                             type="button"
                                             className="fv-thumb-zoom"
-                                            onClick={(e) => { e.stopPropagation(); setLightboxOrder(it.orderNumber); }}
-                                            title="크게 보기"
+                                            onClick={(e) => { e.stopPropagation(); openEnlarged(it); }}
+                                            title="크게 보기 (새 창)"
                                             aria-label="작업지시서 크게 보기"
                                         >
                                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -889,17 +862,6 @@ export default function FieldViewer() {
                 <div className={`fv-toast fv-toast-${toast.kind}`} role="status">
                     {toast.text}
                 </div>
-            )}
-
-            {lightboxOrder && (
-                <WorksheetLightbox
-                    items={sorted}
-                    orderNumber={lightboxOrder}
-                    onClose={closeLightbox}
-                    onNavigate={setLightboxOrder}
-                    onRequestOpen={askOpen}
-                    confirmActive={!!openConfirm}
-                />
             )}
 
             {openConfirm && (
