@@ -416,16 +416,32 @@ export default function FieldViewer() {
         else handleOpenFs(it);
     }, [openConfirm, handleOpenFolder, handleOpenFs]);
 
-    // 돋보기 — 지시서(PDF, 없으면 썸네일 이미지)를 새 브라우저 창으로 띄운다. 모달이 아니라
-    // 별도 창이라, 다 본 뒤 그 창을 닫아도 사이드바(현장 프로그램)는 그대로 살아 있다. 또
-    // 사이드바 창의 닫기버튼과 헷갈릴 일도 없다(예전 in-page 모달의 문제).
+    // 돋보기 — 지시서를 새 브라우저 창(팝업)으로 띄운다. 모달이 아니라 별도 창이라, 다 본 뒤
+    // 그 창을 닫아도 사이드바(현장 프로그램)는 그대로 살아 있고, 사이드바 닫기버튼과 헷갈릴
+    // 일도 없다. PDF 는 전용 뷰어(/field/zoom — 휠 확대/축소·드래그 이동)로, 화면 중앙에 띄우고
+    // PDF 비율에 맞춰 창 크기를 맞춘다(뷰어가 로드 후 보정). 이미지뿐이면 브라우저 기본 뷰어로.
     const openEnlarged = useCallback((it) => {
         const url = it.worksheetPdfUrl || it.worksheetThumbnailUrl;
         if (!url) {
             showToast('warn', '확대해서 볼 지시서가 아직 없습니다.', 4000);
             return;
         }
-        window.open(url, '_blank', 'noopener');
+        // 화면 중앙 + 세로형 지시서 기본 크기(A4 세로 ≈ 0.71). 뷰어가 실제 비율로 다시 맞춘다.
+        const sw = window.screen.availWidth;
+        const sh = window.screen.availHeight;
+        const sl = window.screen.availLeft || 0;
+        const st = window.screen.availTop || 0;
+        const h = Math.round(sh * 0.92);
+        const w = Math.round(Math.min(h * 0.72, sw * 0.92));
+        const left = Math.round(sl + (sw - w) / 2);
+        const top = Math.round(st + (sh - h) / 2);
+        const feat = `popup,width=${w},height=${h},left=${left},top=${top}`;
+        if (it.worksheetPdfUrl) {
+            const viewer = `${window.location.origin}/field/zoom?src=${encodeURIComponent(url)}`;
+            window.open(viewer, '_blank', feat);
+        } else {
+            window.open(url, '_blank', feat);
+        }
     }, [showToast]);
 
     // 확인창 arm — 마운트 때부터 항상 듣는 keyup 리스너. 확인창을 띄운 키를 떼는 순간을

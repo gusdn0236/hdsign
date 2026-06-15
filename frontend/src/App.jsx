@@ -127,6 +127,7 @@ const EvidenceQuickCapture = lazyWithRetry(() => import('./pages/evidence/Eviden
 const WorksheetList    = lazyWithRetry(() => import('./pages/mobile/WorksheetList.jsx'))
 const WorksheetViewer  = lazyWithRetry(() => import('./pages/mobile/WorksheetViewer.jsx'))
 const FieldViewer      = lazyWithRetry(() => import('./pages/field/FieldViewer.jsx'))
+const FieldZoomViewer  = lazyWithRetry(() => import('./pages/field/FieldZoomViewer.jsx'))
 
 const RouteFallback = () => (
     <div style={{
@@ -205,6 +206,7 @@ function App() {
                         <Route path="/m/worksheets/:orderNumber" element={<WorksheetViewer />} />
 
                         <Route path="/field" element={<FieldViewer />} />
+                        <Route path="/field/zoom" element={<FieldZoomViewer />} />
 
                         <Route path="/client/login" element={<ClientLogin />} />
                         <Route path="/client/signup" element={<ClientSignup />} />
