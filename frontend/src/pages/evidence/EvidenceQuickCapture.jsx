@@ -3,38 +3,10 @@ import { useParams } from 'react-router-dom';
 import { ALL_WORKERS } from '../../data/workers.js';
 import { getStoredWorker, setStoredWorker } from '../../data/workerStorage.js';
 import CompletionConfirmModal from '../../components/common/CompletionConfirmModal.jsx';
+import { compressImage } from '../../utils/compressImage.js';
 import './EvidenceQuickCapture.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-const COMPRESS_MAX_DIM = 1600;
-const COMPRESS_QUALITY = 0.82;
-
-async function compressImage(file) {
-    if (!file || !file.type || !file.type.startsWith('image/')) return file;
-    let bitmap;
-    try {
-        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    } catch { return file; }
-
-    const { width, height } = bitmap;
-    const longest = Math.max(width, height);
-    const scale = longest > COMPRESS_MAX_DIM ? COMPRESS_MAX_DIM / longest : 1;
-    const w = Math.max(1, Math.round(width * scale));
-    const h = Math.max(1, Math.round(height * scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) { bitmap.close?.(); return file; }
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close?.();
-
-    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', COMPRESS_QUALITY));
-    if (!blob || blob.size >= file.size) return file;
-    const baseName = (file.name || 'photo').replace(/\.[^/.]+$/, '') || 'photo';
-    return new File([blob], baseName + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
-}
 
 export default function EvidenceQuickCapture() {
     const { orderNumber } = useParams();

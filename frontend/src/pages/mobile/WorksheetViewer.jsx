@@ -8,6 +8,7 @@ import './WorksheetViewer.css';
 import { ALL_WORKERS } from '../../data/workers.js';
 import { getStoredWorker, setStoredWorker } from '../../data/workerStorage.js';
 import CompletionConfirmModal from '../../components/common/CompletionConfirmModal.jsx';
+import { compressImage } from '../../utils/compressImage.js';
 import {
     peekDetail,
     rememberDetail,
@@ -18,8 +19,6 @@ import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-const COMPRESS_MAX_DIM = 1600;
-const COMPRESS_QUALITY = 0.82;
 const DEFAULT_PAGE_RATIO = 1 / Math.sqrt(2);
 // PDF 렌더 DPR — 두 단계로 그린다. 첫 paint 는 FAST(낮은 DPR)로 빠르게 띄우고,
 // onRenderSuccess 직후 requestIdleCallback 으로 DETAIL(높은 DPR)로 재렌더해 선명도를 올린다.
@@ -63,35 +62,6 @@ const OVERLAY_MIN_SCALE = 1.05; // 이 배율 초과부터 오버레이 표시(1
 function getPdfQualityScale(scale) {
     const value = Number.isFinite(scale) ? Math.max(1, Math.min(PINCH_MAX_SCALE, scale)) : 1;
     return PDF_ZOOM_RENDER_STEPS.find((step) => value <= step) || PINCH_MAX_SCALE;
-}
-
-async function compressImage(file) {
-    if (!file || !file.type || !file.type.startsWith('image/')) return file;
-    let bitmap;
-    try {
-        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    } catch {
-        return file;
-    }
-    const { width, height } = bitmap;
-    const longest = Math.max(width, height);
-    const scale = longest > COMPRESS_MAX_DIM ? COMPRESS_MAX_DIM / longest : 1;
-    const w = Math.max(1, Math.round(width * scale));
-    const h = Math.max(1, Math.round(height * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-        bitmap.close?.();
-        return file;
-    }
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close?.();
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', COMPRESS_QUALITY));
-    if (!blob || blob.size >= file.size) return file;
-    const baseName = (file.name || 'photo').replace(/\.[^/.]+$/, '') || 'photo';
-    return new File([blob], baseName + '.jpg', { type: 'image/jpeg', lastModified: Date.now() });
 }
 
 const DELIVERY_LABELS = {
@@ -804,6 +774,8 @@ export default function WorksheetViewer() {
             let f = file;
             try { f = await compressImage(file); } catch { f = file; }
             processed.push({ file: f, previewUrl: URL.createObjectURL(f) });
+            // 여러 장 연속 처리 시 직전 캔버스/버퍼가 GC 될 틈을 준다 — 안드로이드 메모리 압박 완화.
+            await new Promise((r) => setTimeout(r, 0));
         }
         setQueued((prev) => [...prev, ...processed]);
         setSheetOpen(true);
