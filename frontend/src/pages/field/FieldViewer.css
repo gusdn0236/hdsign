@@ -392,7 +392,8 @@
 /* [FS에서 열기]·[폴더열기] — launcher 가 여는 420px 폭 창에 3버튼이 한 줄로 들어가도록
    글자·좌우 여백을 콤팩트하게(카톡공유 아이콘 버튼은 폭 그대로 둔다). */
 .fv-card-actions .fv-btn-fs,
-.fv-card-actions .fv-btn-folder {
+.fv-card-actions .fv-btn-folder,
+.fv-card-actions .fv-btn-designate {
     font-size: 11px;
     padding-left: 5px;
     padding-right: 5px;
@@ -434,6 +435,14 @@
     border-color: #bfdbfe;
 }
 .fv-btn-folder:hover:not(:disabled) { background: #dbeafe; border-color: #93c5fd; }
+
+/* [파일지정] — 보조/유틸 동작(옛 건 .fs 수동 고정). 중립 아웃라인으로 FS·폴더와 구분. */
+.fv-btn-designate {
+    background: #fff;
+    color: #92400e;
+    border-color: #fcd34d;
+}
+.fv-btn-designate:hover:not(:disabled) { background: #fffbeb; border-color: #f59e0b; }
 
 .fv-btn-done {
     background: #ffffff;
