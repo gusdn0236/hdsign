@@ -399,7 +399,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 우측 표 품목코드 자동완성(말풍선과 동일) — 표는 overflow 클리핑이라 포털+fixed 로 띄운다.
   const [gridAc, setGridAc] = useState<{ row: number; idx: number; left: number; top: number; width: number } | null>(null);
   // 우측 표 단가칸 포커스 시 뜨는 계산기/단가찾아보기 툴바(말풍선과 동일). 포털+fixed.
-  const [gridTool, setGridTool] = useState<{ row: number; left: number; top: number } | null>(null);
+  const [gridTool, setGridTool] = useState<{ row: number; right: number; top: number } | null>(null);
   // 수량AI — 수량칸 포커스 시 뜨는 툴바(🔢 수량AI). 누르면 박스/연필/지우개로 영역을 칠하고 ✓ 누르면
   // 읽은 글자 갯수가 그 행 수량에 적힌다(모달 없음). qtyAiRow = 현재 수량AI 대상 행(없으면 null).
   // right = 뷰포트 오른쪽에서의 거리(셀 오른쪽 끝 기준). 툴바가 왼쪽으로 펼쳐져 오른쪽이 안 잘리게.
@@ -3219,8 +3219,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                           value={v['단가'] || ''}
                           onChange={(e) => setCell(i, '단가', e.target.value)}
                           onFocus={(e) => {
+                            // 단가칸은 표 오른쪽이라 왼쪽기준이면 (에폭시 획두께+찾아보기) 툴바가 화면 밖으로 잘린다.
+                            // 수량AI 툴바처럼 오른쪽기준으로 띄워 왼쪽으로 자라게 한다.
                             const r = e.currentTarget.getBoundingClientRect();
-                            setGridTool({ row: i, left: r.left, top: r.bottom });
+                            setGridTool({ row: i, right: Math.max(6, window.innerWidth - r.right), top: r.bottom });
                           }}
                           onBlur={() => setTimeout(() => setGridTool((g) => (g && g.row === i ? null : g)), 200)}
                           data-gr={i}
@@ -3336,10 +3338,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       {gridTool &&
         createPortal(
           <div
-            style={{ position: 'fixed', left: gridTool.left, top: gridTool.top + 3, zIndex: 3000, display: 'flex', gap: 6, alignItems: 'center' }}
+            style={{ position: 'fixed', right: gridTool.right, top: gridTool.top + 3, zIndex: 3000, display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', maxWidth: 'calc(100vw - 12px)', flexWrap: 'wrap' }}
             onMouseDown={(e) => e.preventDefault()}
           >
-            {/* 에폭시(갈바/스텐)면 단가칸에 획두께 선택 버튼 — 고르면 그 줄수 단가로 채운다. */}
+            {/* 에폭시(갈바/스텐)면 단가칸에 획두께 선택 버튼 — 고르면 그 줄수 단가로 단가표대로 채운다.
+                옆의 단가찾아보기와 함께 떠서: 획두께로 단가표대로 쓸지 / 기존가격 참고할지 사용자가 고른다. */}
             {(() => {
               const v = pinsRef.current[gridTool.row]?.vals;
               if (!v || !isEpoxyCode(v['품목코드'] || '')) return null;
@@ -3350,20 +3353,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
               const labelOf = (val: number) =>
                 strokeLabels.find((s) => s.value === val)?.label || String(val);
               return (
-                <div className="aq-epoxy-strokes">
-                  <span className="aq-epoxy-label">에폭시 획두께</span>
-                  {opts.map((o) => (
-                    <button
-                      key={o}
-                      type="button"
-                      className="aq-epoxy-btn"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => applyEpoxy(gridTool.row, o)}
-                    >
-                      {labelOf(o)}
-                    </button>
-                  ))}
-                </div>
+                <>
+                  <div className="aq-epoxy-strokes">
+                    <span className="aq-epoxy-label">에폭시 획두께</span>
+                    {opts.map((o) => (
+                      <button
+                        key={o}
+                        type="button"
+                        className="aq-epoxy-btn"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => applyEpoxy(gridTool.row, o)}
+                      >
+                        {labelOf(o)}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="aq-epoxy-or">또는</span>
+                </>
               );
             })()}
             <button

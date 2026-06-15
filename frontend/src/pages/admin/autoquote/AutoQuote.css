@@ -678,6 +678,13 @@
   background: #e8f6f7;
   color: var(--teal2, #0a7d8c);
 }
+/* 두 갈래(획두께=단가표대로 / 단가찾아보기=기존가격 참고) 사이 구분. */
+.aq-epoxy-or {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a98a6;
+  white-space: nowrap;
+}
 
 /* 한·영 합계 각주 — 10행 표 전체 아래(바깥)에 합산 단가 설명. */
 .aq-sumnotes {
