@@ -22,7 +22,6 @@ import time
 import unicodedata
 import urllib.parse
 import urllib.request
-import uuid
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -348,20 +347,6 @@ def _read_ads_fsuid(fs_file: Path) -> str | None:
         return v or None
     except (OSError, ValueError):
         return None
-
-
-def _write_fs_uid_ads(fs_file: Path) -> str:
-    """fs_file 에 새 UID 를 발급해 NTFS ADS(hdsign.fsuid)로 기록하고 그 UID 를 반환. 실패면 ""
-    (그 경우 호출자는 경로만 저장 — 이름 안 바뀌는 한 originalFsPath 로 열림). 워처의 동명
-    함수와 같은 동작 — '파일 직접 지정'(/designate) 때 사용자가 고른 .fs 에 도장을 찍는다."""
-    uid = uuid.uuid4().hex
-    try:
-        with open(f"{fs_file}:{_FS_UID_STREAM}", "w", encoding="utf-8") as f:
-            f.write(uid)
-        return uid
-    except Exception as e:
-        logging.warning(".fs UID 스탬프 실패(%s): %s", fs_file.name, e)
-        return ""
 
 
 def resolve_fs_for_order(meta: dict, customer_folder: Path | None,
@@ -760,72 +745,6 @@ def fetch_worksheet(api_base: str, order_number: str) -> dict | None:
         return None
 
 
-def post_fs_binding(api_base: str, order_number: str, fs_uid: str, fs_path: str) -> bool:
-    """'파일 직접 지정' 결과를 백엔드에 저장 — PDF 재업로드 없이 originalFsUid/originalFsPath 만
-    갱신한다(POST /api/public/orders/{n}/fs-binding). 서버-서버 호출(브라우저 아님)."""
-    params = []
-    if fs_uid:
-        params.append(("originalFsUid", fs_uid))
-    if fs_path:
-        params.append(("originalFsPath", fs_path))
-    if not params:
-        return False
-    url = f"{api_base.rstrip('/')}/api/public/orders/{urllib.parse.quote(order_number, safe='')}/fs-binding"
-    data = urllib.parse.urlencode(params).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    try:
-        with urllib.request.urlopen(req, timeout=15, context=SSL_CONTEXT) as resp:
-            resp.read()
-        return True
-    except Exception as e:
-        logging.warning("fs-binding 저장 실패 [%s]: %s", order_number, e)
-        return False
-
-
-# 파일 선택창(.fs) PowerShell — WinForms OpenFileDialog. -STA 필수. 입력(환경변수):
-# HD_DLG_DIR(시작 폴더), HD_DLG_TITLE(제목). 출력(stdout): 고른 파일 전체경로(취소면 빈 출력).
-# TopMost owner 폼으로 사이드바(--app) 위로 떠 사용자가 바로 고를 수 있게 한다.
-_PICK_FS_PS = r"""
-$ErrorActionPreference = 'SilentlyContinue'
-Add-Type -AssemblyName System.Windows.Forms | Out-Null
-$dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Filter = 'FlexiSIGN 파일 (*.fs)|*.fs|모든 파일 (*.*)|*.*'
-$dlg.Title = $env:HD_DLG_TITLE
-if ($env:HD_DLG_DIR -and (Test-Path -LiteralPath $env:HD_DLG_DIR)) { $dlg.InitialDirectory = $env:HD_DLG_DIR }
-$dlg.Multiselect = $false
-$owner = New-Object System.Windows.Forms.Form
-$owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.Opacity = 0
-$owner.Show() | Out-Null; $owner.Activate()
-$res = $dlg.ShowDialog($owner)
-$owner.Close()
-if ($res -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dlg.FileName }
-"""
-
-
-def _pick_fs_file_dialog(initial_dir: str, title: str) -> str | None:
-    """파일 선택창을 띄워 사용자가 고른 .fs 전체경로를 반환. 취소/실패면 None.
-    사용자 상호작용이라 응답이 느릴 수 있어 넉넉한 타임아웃(5분)."""
-    env = dict(os.environ)
-    env["HD_DLG_DIR"] = initial_dir or ""
-    env["HD_DLG_TITLE"] = title or "지시서 .fs 파일 선택"
-    try:
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
-             "-Command", _PICK_FS_PS],
-            capture_output=True, text=True, timeout=300, env=env,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except Exception as e:
-        logging.warning("파일 선택창 실행 실패: %s", e)
-        return None
-    for line in reversed((r.stdout or "").splitlines()):
-        s = line.strip()
-        if s:
-            return s
-    return None
-
-
 # ─── HTTP 핸들러 ───────────────────────────────────────────────────────
 
 class FieldAgentHandler(BaseHTTPRequestHandler):
@@ -875,7 +794,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             return
         # /open, /open-folder 는 비-단순(custom header) POST 만 허용 → CSRF 노출 최소화.
         # 그래도 GET 으로 들어오는 단순 fetch 케이스를 친절히 안내.
-        if parsed.path in ("/open", "/open-folder", "/designate"):
+        if parsed.path in ("/open", "/open-folder"):
             origin = self._origin_allowed()
             self._send_json(405, {"message": "POST 로 호출하세요."}, origin)
             return
@@ -890,7 +809,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             self.send_response(403)
             self.end_headers()
             return
-        if parsed.path not in ("/open", "/open-folder", "/designate"):
+        if parsed.path not in ("/open", "/open-folder"):
             self.send_response(404)
             self._send_cors(origin)
             self.end_headers()
@@ -921,8 +840,6 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/open-folder":
             result = self.process_open_folder(order_number)
-        elif parsed.path == "/designate":
-            result = self.process_designate(order_number)
         else:
             result = self.process_open(order_number)
         self._send_json(200, result, origin)  # 200 + opened/opened=false 로 통일(웹은 메시지로 분기)
@@ -1032,59 +949,6 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             "customerFolder": str(customer_folder) if customer_folder is not None else None,
             "message": (f"{matched_file} 가 든 폴더를 열었습니다." if matched_file
                         else "거래처 폴더를 열었습니다."),
-        }
-
-    def process_designate(self, order_number: str) -> dict:
-        """[파일지정] — 사용자가 파일선택창에서 이 지시서의 .fs 를 직접 고르면, 그 파일에 UID
-        도장(ADS)을 찍고 백엔드(originalFsUid/originalFsPath)에 저장한다. 그 뒤부터 [FS에서 열기]
-        는 이 UID 로 그 파일을 정확히 연다 — 이름을 바꿔도 따라감. UID 도입 전 옛 지시서를
-        재인쇄 없이 정확 매칭으로 전환하는 용도. FlexiSIGN 은 건드리지 않는다."""
-        config = self.config
-        api_base = (config.get("api_base") or "").strip()
-        network_base_str = (config.get("network_customer_base") or "").strip()
-        if not api_base:
-            return {"opened": False, "message": "config.json 의 api_base 가 설정되지 않았습니다."}
-
-        meta = fetch_worksheet(api_base, order_number)
-        if not meta:
-            return {"opened": False, "message": f"백엔드에서 [{order_number}] 정보를 가져오지 못했습니다."}
-
-        # 파일선택창 시작 폴더 — 가능하면 그 거래처 폴더, 없으면 네트워크 베이스.
-        init_dir = network_base_str
-        if network_base_str:
-            company = (meta.get("companyName") or "").strip()
-            network_folder_name = (meta.get("networkFolderName") or "").strip()
-            if network_folder_name or company:
-                cf = find_customer_folder(Path(network_base_str), network_folder_name, company)
-                if cf is not None:
-                    init_dir = str(cf)
-
-        title = f"[{order_number}] 이 지시서로 쓸 .fs 파일을 선택하세요"
-        picked = _pick_fs_file_dialog(init_dir, title)
-        if not picked:
-            return {"opened": False, "canceled": True, "message": "파일 선택을 취소했습니다."}
-
-        fs_file = Path(picked)
-        try:
-            is_file = fs_file.is_file()
-        except OSError:
-            is_file = False
-        if not is_file:
-            return {"opened": False, "message": f"선택한 파일을 찾을 수 없습니다: {picked}"}
-
-        # 고른 .fs 에 UID 도장(ADS). 실패해도 경로만으로 저장(이름 안 바뀌는 한 열림).
-        uid = _write_fs_uid_ads(fs_file)
-        if not post_fs_binding(api_base, order_number, uid, str(fs_file)):
-            return {"opened": False,
-                    "message": "파일은 골랐지만 서버 저장에 실패했습니다. 잠시 후 다시 시도하세요."}
-        logging.info("FS 지정 [%s] → %s (UID=%s)", order_number, fs_file.name, uid or "미발급")
-        return {
-            "opened": True,
-            "designated": True,
-            "matchedFile": fs_file.name,
-            "matchKind": "designated+uid" if uid else "designated",
-            "message": (f"'{fs_file.name}' 로 지정했습니다. 이제 [FS에서 열기]가 이 파일을 엽니다."
-                        + ("" if uid else " (이 폴더는 UID 도장이 안 돼 파일명을 바꾸면 다시 지정해야 합니다.)")),
         }
 
 

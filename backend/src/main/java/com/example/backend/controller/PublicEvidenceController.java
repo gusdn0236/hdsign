@@ -519,44 +519,6 @@ public class PublicEvidenceController {
     }
 
     /**
-     * .fs 직접 지정 — 현장 에이전트가 사용자가 파일선택창에서 고른 .fs 의 UID·경로만 저장.
-     * PDF 재업로드(썸네일/시각 갱신) 없이 매칭 바인딩만 갱신한다. 옛(이번 UID 도입 전) 지시서를
-     * 재인쇄 없이 정확 매칭으로 전환할 때 쓴다. 에이전트가 그 .fs 의 ADS(hdsign.fsuid)에 같은
-     * UID 를 박은 뒤 서버-서버로 호출한다(브라우저 직접 호출 아님).
-     */
-    @PostMapping("/{orderNumber}/fs-binding")
-    public ResponseEntity<?> setFsBinding(
-            @PathVariable String orderNumber,
-            @RequestParam(value = "originalFsUid", required = false) String originalFsUid,
-            @RequestParam(value = "originalFsPath", required = false) String originalFsPath
-    ) {
-        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
-        if (order == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
-        }
-        boolean changed = false;
-        if (originalFsUid != null && !originalFsUid.isBlank()) {
-            String uid = originalFsUid.trim();
-            if (uid.length() > 64) uid = uid.substring(0, 64);
-            order.setOriginalFsUid(uid);
-            changed = true;
-        }
-        if (originalFsPath != null && !originalFsPath.isBlank()) {
-            String fsPath = originalFsPath.trim();
-            if (fsPath.length() > 500) fsPath = fsPath.substring(fsPath.length() - 500);
-            order.setOriginalFsPath(fsPath);
-            changed = true;
-        }
-        if (!changed) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("message", "originalFsUid/originalFsPath 가 둘 다 비어 있습니다."));
-        }
-        orderRepository.save(order);
-        return ResponseEntity.ok(Map.of("ok", true));
-    }
-
-    /**
      * 워처가 변환 직후 같이 만들어 보내는 지시서 PDF.
      * 주문 1건당 항상 최신 1개만 유지(덮어쓰기). 거래처 작업현황 화면 맨 위에 노출된다.
      */

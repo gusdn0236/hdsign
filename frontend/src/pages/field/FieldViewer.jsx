@@ -64,7 +64,6 @@ export default function FieldViewer() {
     const [workerDraft, setWorkerDraft] = useState('');
     const [openingFs, setOpeningFs] = useState(null);     // orderNumber 진행중
     const [openingFolder, setOpeningFolder] = useState(null); // orderNumber 진행중
-    const [designating, setDesignating] = useState(null); // orderNumber 진행중 ([파일지정])
     const [completing, setCompleting] = useState(null);   // orderNumber 진행중
     const [toast, setToast] = useState(null);             // {kind, text}
     const [confirmAction, setConfirmAction] = useState(null); // {message, confirmText, onConfirm}
@@ -389,46 +388,6 @@ export default function FieldViewer() {
             );
         } finally {
             setOpeningFolder(null);
-        }
-    }, [showToast]);
-
-    // [파일지정] — 사용자가 파일선택창에서 이 지시서의 .fs 를 직접 고른다. 에이전트가 고른
-    // 파일에 UID 도장(ADS)을 찍고 서버(originalFsUid/경로)에 저장 → 이후 [FS에서 열기]가 정확히
-    // 그 파일을 연다(이름 바꿔도 따라감). UID 도입 전 옛 지시서/매칭이 틀린 건을 재인쇄 없이 고정.
-    const handleDesignate = useCallback(async (it) => {
-        if (!(it.networkFolderName || it.companyName)) {
-            showToast('warn', '거래처 정보가 비어 있어 폴더를 찾을 수 없는 지시서입니다.', 5000);
-            return;
-        }
-        setDesignating(it.orderNumber);
-        try {
-            const res = await fetch(`${AGENT_URL}/designate`, {
-                method: 'POST',
-                mode: 'cors',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-HDSign-Field': '1',
-                },
-                body: JSON.stringify({ orderNumber: it.orderNumber }),
-            });
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                throw new Error(body.message || `에이전트 응답 ${res.status}`);
-            }
-            const body = await res.json();
-            if (body.designated) {
-                showToast('success', body.message || '파일을 지정했습니다.', 5000);
-            } else {
-                showToast('warn', body.message || '파일을 지정하지 못했습니다.', 5000);
-            }
-        } catch {
-            showToast(
-                'error',
-                '에이전트 연결 실패 — 트레이의 HD사인 작업뷰어 프로그램이 켜져있는지 확인하세요.',
-                6000,
-            );
-        } finally {
-            setDesignating(null);
         }
     }, [showToast]);
 
@@ -812,7 +771,6 @@ export default function FieldViewer() {
                             && it.workerCompletions.some((c) => c.worker === worker);
                         const opening = openingFs === it.orderNumber;
                         const openingDir = openingFolder === it.orderNumber;
-                        const designatingThis = designating === it.orderNumber;
                         const closing = completing === it.orderNumber;
                         return (
                             <article
@@ -887,17 +845,6 @@ export default function FieldViewer() {
                                                 : '이 지시서의 .fs(찾으면) 가 든 폴더를 탐색기로 엽니다'}
                                         >
                                             {openingDir ? '여는 중…' : '폴더열기'}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="fv-btn fv-btn-designate"
-                                            onClick={() => handleDesignate(it)}
-                                            disabled={!fsReady || designatingThis}
-                                            title={!fsReady
-                                                ? '거래처 정보가 비어 있어 폴더를 찾을 수 없습니다'
-                                                : '이 지시서로 쓸 .fs 파일을 직접 골라 고정합니다(이름 바꿔도 따라감). 옛 지시서·매칭이 틀릴 때 사용.'}
-                                        >
-                                            {designatingThis ? '지정 중…' : '파일지정'}
                                         </button>
                                         {it.worksheetPdfUrl && (
                                             <KakaoShareButton
