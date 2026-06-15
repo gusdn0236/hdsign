@@ -32,6 +32,7 @@ import {
   type Evidence,
   type OrderContext,
   type VisionQuota,
+  type Prediction,
 } from './annot/api';
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
@@ -416,6 +417,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [lookup, setLookup] = useState<{ refs: LookupRef[]; ri: number; q: string; total: number } | null>(null);
   const lookupSeq = useRef(0); // 검색 세대 — 늦게 온 백그라운드 사진이 새 검색을 덮어쓰지 않게.
+  // 사진(근거)은 보이는 후보 주변 창(window)만 받는다 — 모달은 한 장씩 넘겨 보는데 30장을 한꺼번에
+  // 받으면 대부분 안 보고 닫혀 서버·대역폭 낭비라서. lkPredsRef=후보 원본(idx/file 보유), lkEvReqRef=이미 요청한 인덱스.
+  const lkPredsRef = useRef<Prediction[]>([]);
+  const lkEvReqRef = useRef<Set<number>>(new Set());
   // 단가찾아보기를 연 '작성 중이던 행'(우측 명세서 인덱스). 작성중보기에서 그 행을 노란색으로 표시.
   const [lkTargetRow, setLkTargetRow] = useState<number | null>(null);
   const [lpi, setLpi] = useState(0); // 단가찾아보기 모달 — 현재 후보의 사진 인덱스(다장 갤러리)
@@ -1638,6 +1643,38 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     }
   };
 
+  /**
+   * 보이는 후보(ri) 주변 창의 근거(사진+grid)만 받아 refs 에 채운다. 모달은 ‹ › 로 한 장씩 넘겨 보므로
+   * 30장을 한꺼번에 받을 필요가 없다 — 현재 ±몇 칸만 미리 받고 나머지는 넘길 때 받는다(서버·대역폭 절감,
+   * 첫 사진도 더 빨리 뜸). 이미 요청한 인덱스는 건너뛰고, 늦게 온 응답이 새 검색을 덮지 않게 seq 로 가드.
+   */
+  const prefetchEvAround = (ri: number, seq: number) => {
+    const preds = lkPredsRef.current;
+    const AHEAD = 3;
+    const BEHIND = 1;
+    const lo = Math.max(0, ri - BEHIND);
+    const hi = Math.min(preds.length - 1, ri + AHEAD);
+    for (let i = lo; i <= hi; i++) {
+      if (lkEvReqRef.current.has(i)) continue;
+      lkEvReqRef.current.add(i);
+      const pr = preds[i];
+      fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file)
+        .then((ev) => {
+          if (seq !== lookupSeq.current) return;
+          setLookup((l) => {
+            if (!l) return l;
+            const next = l.refs.slice();
+            if (next[i]) next[i] = { ...next[i], evidence: ev };
+            return { ...l, refs: next };
+          });
+        })
+        .catch(() => {
+          // 실패는 evidence=null 유지(모달이 '불러오는 중' 표시) + 요청기록에서 빼 재시도 가능하게.
+          if (seq === lookupSeq.current) lkEvReqRef.current.delete(i);
+        });
+    }
+  };
+
   // ---- 단가 찾아보기 (slice-11 predict + evidence) ----------------------
   // 태그된 코드들로 병합 검색(공용 헬퍼) → 후보별 근거(사진+명세서 grid) 로드 → 모달 갱신.
   const runLookup = async (codes: string[]) => {
@@ -1686,29 +1723,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}` +
         (painting ? ' (도장 포함 명세서)' : '');
       // 빠른 렌더: 사진(무거움)을 기다리지 않고 모달을 즉시 띄운 뒤, 사진은 백그라운드로 채운다
-      // (보이는 첫 후보부터 순서대로 — evidence=null 이면 모달이 "사진 불러오는 중" 표시).
+      // (보이는 후보부터 — evidence=null 이면 모달이 "사진 불러오는 중" 표시).
       setLpi(0);
       setLkView('search'); // 새 검색 → 검색결과 보기로 복귀
       setLookup({ refs, ri: 0, q, total });
       setStatus('');
-      const loadEv = async (pr: (typeof top)[number]): Promise<Evidence | null> => {
-        try {
-          return await fetchEvidence(token, pr.ref_invoice_idx, pr.ref_file);
-        } catch {
-          return null;
-        }
-      };
-      top.forEach((pr, idx) => {
-        loadEv(pr).then((ev) => {
-          if (mySeq !== lookupSeq.current) return;
-          setLookup((l) => {
-            if (!l) return l;
-            const next = l.refs.slice();
-            if (next[idx]) next[idx] = { ...next[idx], evidence: ev };
-            return { ...l, refs: next };
-          });
-        });
-      });
+      // 후보 원본 보관 + 요청기록 초기화 → 보이는 첫 후보 주변만 미리 받고, 나머지는 넘길 때 받는다.
+      lkPredsRef.current = top;
+      lkEvReqRef.current = new Set();
+      prefetchEvAround(0, mySeq);
     } catch (e) {
       console.error(e);
       cdlg('단가 조회에 실패했습니다.', [{ label: '확인', sec: true }]);
@@ -3586,11 +3609,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
 
           onPrev={() => {
             setLpi(0);
-            setLookup((l) => (l && l.ri > 0 ? { ...l, ri: l.ri - 1 } : l));
+            setLookup((l) => {
+              if (!l || l.ri <= 0) return l;
+              const ri = l.ri - 1;
+              prefetchEvAround(ri, lookupSeq.current); // 넘긴 곳 주변 사진 미리 받기(이미 받았으면 건너뜀).
+              return { ...l, ri };
+            });
           }}
           onNext={() => {
             setLpi(0);
-            setLookup((l) => (l && l.ri < l.refs.length - 1 ? { ...l, ri: l.ri + 1 } : l));
+            setLookup((l) => {
+              if (!l || l.ri >= l.refs.length - 1) return l;
+              const ri = l.ri + 1;
+              prefetchEvAround(ri, lookupSeq.current);
+              return { ...l, ri };
+            });
           }}
           onClose={() => setLookup(null)}
           setLpi={setLpi}

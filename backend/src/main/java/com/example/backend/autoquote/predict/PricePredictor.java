@@ -132,7 +132,8 @@ public class PricePredictor {
             if (codeNorm.length() >= 2) {
                 for (List<Line> lines : idx.byClient.values()) {
                     for (Line r : lines) {
-                        if (itemHasCode(r.item, codeNorm)) {
+                        // 미리 정규화해 둔 품목(itemCodeNorm)에 부분일치 — 줄마다 정규식 컴파일 안 함.
+                        if (r.itemCodeNorm.contains(codeNorm)) {
                             coded.add(r);
                         }
                     }
@@ -238,7 +239,7 @@ public class PricePredictor {
             if (minLen >= 3 && (c.contains(q) || q.contains(c))) {
                 sim = 0.95; // 부분포함(예: 갈바레이저타공 ⊂ 1.2T갈바레이저타공·갈바레이저타공후렘)
             } else {
-                Set<String> cb = bigrams(c);
+                Set<String> cb = idx.codeBigrams().getOrDefault(c, Set.of()); // 미리 계산해 둔 bigram.
                 int inter = 0;
                 for (String b : qb) {
                     if (cb.contains(b)) {
@@ -401,20 +402,15 @@ public class PricePredictor {
         return blank(it.material()) ? n(it.size()) : it.material() + " " + n(it.size());
     }
 
+    /** 공백/슬래시 — 코드·품목 정규화 공용 패턴(줄마다 컴파일하지 않도록 미리 만들어 둠). */
+    private static final Pattern P_WS_SLASH = Pattern.compile("[\\s/]");
+
     /** 품목코드 정규화(프론트 normCode 와 동일 규칙: 공백/슬래시 제거 + 라틴 대문자). 한글은 불변. */
     static String ccode(String s) {
         if (s == null) {
             return "";
         }
-        return s.trim().replaceAll("[\\s/]", "").toUpperCase();
-    }
-
-    /** 품목(item)에 검색 코드가 포함되는지 — 코드와 동일 정규화(공백/슬래시 제거+대문자)로 부분일치. */
-    private static boolean itemHasCode(String item, String codeNorm) {
-        if (item == null || item.isBlank()) {
-            return false;
-        }
-        return item.replaceAll("[\\s/]", "").toUpperCase().contains(codeNorm);
+        return P_WS_SLASH.matcher(s.trim()).replaceAll("").toUpperCase();
     }
 
     /** 여러 견적 라인을 예측. 코퍼스 미프로비저닝이면 {@code null}(호출부가 503 처리). */
@@ -550,7 +546,7 @@ public class PricePredictor {
         Map<String, List<Line>> byCode = new LinkedHashMap<>();
         JsonNode bc = root.get("by_client");
         if (bc == null || !bc.isObject()) {
-            return new Index(byClient, byItem, byCode, Set.of());
+            return new Index(byClient, byItem, byCode, Set.of(), Map.of());
         }
         List<Line> all = new ArrayList<>();
         var fields = bc.fields();
@@ -582,7 +578,11 @@ public class PricePredictor {
                 paintingInvoices.add(invoiceKey(line));
             }
         }
-        return new Index(byClient, byItem, byCode, paintingInvoices);
+        Map<String, Set<String>> codeBigrams = new java.util.HashMap<>();
+        for (String key : byCode.keySet()) {
+            codeBigrams.put(key, bigrams(key));
+        }
+        return new Index(byClient, byItem, byCode, paintingInvoices, codeBigrams);
     }
 
     private static final java.util.regex.Pattern P_NUMCODE = java.util.regex.Pattern.compile("[0-9][0-9\\-]*");
@@ -659,7 +659,9 @@ public class PricePredictor {
                 : null;
         String file = text(ln, "file");
         String date = text(ln, "date");
-        return new Line(idx, file, item, spec, up, sz, itoks(item, spec), code, clientNorm, sizeDims(item, spec), date);
+        String itemCodeNorm = item == null ? "" : P_WS_SLASH.matcher(item).replaceAll("").toUpperCase();
+        return new Line(idx, file, item, spec, up, sz, itoks(item, spec), code, clientNorm,
+                sizeDims(item, spec), date, itemCodeNorm);
     }
 
     // ---- 포팅된 정규화/토큰/사이즈 함수 (build_learn_corpus.py) -------------
@@ -764,15 +766,21 @@ public class PricePredictor {
 
     // ---- 내부 자료구조 ------------------------------------------------------
 
+    // itemCodeNorm = 품목코드 부분일치용으로 미리 정규화한 품목(공백/슬래시 제거+대문자). 인덱스 빌드
+    // 때 한 번만 계산 → lookup 의 전체 코퍼스 스캔에서 줄마다 정규식 컴파일하던 비용을 없앤다.
     private record Line(Object idx, String file, String item, String spec, int up, Long sz,
-                        Set<String> itok, String code, String cl, int[] dims, String date) {
+                        Set<String> itok, String code, String cl, int[] dims, String date,
+                        String itemCodeNorm) {
     }
 
     private record Scored(Line line, double score) {
     }
 
+    // codeBigrams = byCode 키별 글자 bigram 집합(유사코드 확장용). 빌드 때 1회 계산 → similarKeys 가
+    // 매 확장마다 모든 코드의 bigram 을 재계산하던 비용을 없앤다.
     private record Index(Map<String, List<Line>> byClient, Map<String, List<Line>> byItem,
-                         Map<String, List<Line>> byCode, Set<String> paintingInvoices) {
+                         Map<String, List<Line>> byCode, Set<String> paintingInvoices,
+                         Map<String, Set<String>> codeBigrams) {
     }
 
     /** 도장 관련 라인 — 전용 코드 500-2 또는 품목에 도장 키워드(없음/x 제외). 명세서의 '도장 포함' 판정. */

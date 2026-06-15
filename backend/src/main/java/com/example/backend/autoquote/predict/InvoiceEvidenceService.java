@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -29,6 +30,19 @@ public class InvoiceEvidenceService {
 
     private final AutoQuoteDataSource dataSource;
     private final ObjectMapper json = new ObjectMapper();
+
+    /**
+     * 파싱·인덱싱된 명세서 캐시: {@code file → (invoice_idx → 명세서메타)}. 단가찾아보기 1회가
+     * 같은 easyform 파일에 대해 수십 번 {@link #find} 를 부르는데, 캐시가 없으면 그때마다
+     * 파일 전체를 R2 에서 재다운로드+재파싱했다(지배적 지연). 파일당 1회만 파싱해 둔다 —
+     * 자산은 인덱스 수명 동안 거의 안 바뀌므로 안전(새 자산은 앱 재기동 시 반영, {@code existsCache} 와 동일 정책).
+     * 사진(base64, 무거움)은 캐시하지 않고 그때그때 best-effort 로드한다.
+     */
+    private final ConcurrentHashMap<String, Map<String, InvoiceMeta>> fileCache = new ConcurrentHashMap<>();
+
+    /** 한 명세서에서 사진을 뺀 파싱 결과(캐시 단위). */
+    private record InvoiceMeta(Object idx, String date, String client, String total, List<GridRow> grid) {
+    }
 
     public InvoiceEvidenceService(AutoQuoteDataSource dataSource) {
         this.dataSource = dataSource;
@@ -82,6 +96,44 @@ public class InvoiceEvidenceService {
      * @return 찾았으면 {@link Evidence}, 파일/명세서가 없으면 {@code null}(컨트롤러가 404 처리).
      */
     public Evidence find(String file, String invoiceIdx) {
+        Map<String, InvoiceMeta> idxMap = fileIndex(file);
+        if (idxMap == null) {
+            return null;
+        }
+        InvoiceMeta m = idxMap.get(invoiceIdx);
+        if (m == null) {
+            return null;
+        }
+        // 사진만 매번 best-effort 로드(캐시 안 함) — grid/메타는 캐시에서 즉시.
+        List<Photo> photos = loadPhotos(file, invoiceIdx);
+        Photo first = photos.isEmpty() ? null : photos.get(0);
+        List<PhotoItem> items = new ArrayList<>();
+        for (Photo p : photos) {
+            items.add(new PhotoItem(p.contentType(), p.base64()));
+        }
+        return new Evidence(
+                m.idx(),
+                file,
+                m.date(),
+                m.client(),
+                m.total(),
+                m.grid(),
+                first != null,
+                first == null ? null : first.contentType(),
+                first == null ? null : first.base64(),
+                items);
+    }
+
+    /**
+     * {@code file} 명세서를 파싱해 {@code invoice_idx → 메타} 맵으로 만들어 캐시한다(파일당 1회).
+     * 못 읽거나(미프로비저닝) 손상 JSON 이면 {@code null} 을 돌려주고 <b>캐시하지 않는다</b>
+     * (일시적 R2 오류를 영구 캐시하지 않도록 — 정상 자산은 다음 호출에서 채워진다).
+     */
+    private Map<String, InvoiceMeta> fileIndex(String file) {
+        Map<String, InvoiceMeta> cached = fileCache.get(file);
+        if (cached != null) {
+            return cached;
+        }
         byte[] bytes = dataSource.load(file);
         if (bytes == null) {
             return null;
@@ -96,47 +148,31 @@ public class InvoiceEvidenceService {
         if (invoices == null || !invoices.isArray()) {
             return null;
         }
+        Map<String, InvoiceMeta> map = new LinkedHashMap<>();
         for (JsonNode inv : invoices) {
             JsonNode idxNode = inv.get("invoice_idx");
-            if (idxNode == null || !idxNode.asText().equals(invoiceIdx)) {
+            if (idxNode == null) {
                 continue;
             }
-            return toEvidence(file, invoiceIdx, idxNode, inv);
-        }
-        return null;
-    }
-
-    private Evidence toEvidence(String file, String invoiceIdx, JsonNode idxNode, JsonNode inv) {
-        List<GridRow> grid = new ArrayList<>();
-        JsonNode gridNode = inv.get("grid");
-        if (gridNode != null && gridNode.isArray()) {
-            for (JsonNode g : gridNode) {
-                grid.add(new GridRow(
-                        text(g, "item_code"),
-                        text(g, "item"),
-                        text(g, "spec"),
-                        text(g, "qty"),
-                        text(g, "unit_price")));
+            List<GridRow> grid = new ArrayList<>();
+            JsonNode gridNode = inv.get("grid");
+            if (gridNode != null && gridNode.isArray()) {
+                for (JsonNode g : gridNode) {
+                    grid.add(new GridRow(
+                            text(g, "item_code"),
+                            text(g, "item"),
+                            text(g, "spec"),
+                            text(g, "qty"),
+                            text(g, "unit_price")));
+                }
             }
+            Object idx = idxNode.isNumber() ? (Object) idxNode.asInt() : idxNode.asText();
+            // 같은 idx 가 둘이면 첫 줄을 유지(원래 find 의 '첫 매칭' 동작 보존).
+            map.putIfAbsent(idxNode.asText(), new InvoiceMeta(idx, text(inv, "date"),
+                    text(inv, "client"), text(inv, "total"), grid));
         }
-        Object idx = idxNode.isNumber() ? (Object) idxNode.asInt() : idxNode.asText();
-        List<Photo> photos = loadPhotos(file, invoiceIdx);
-        Photo first = photos.isEmpty() ? null : photos.get(0);
-        List<PhotoItem> items = new ArrayList<>();
-        for (Photo p : photos) {
-            items.add(new PhotoItem(p.contentType(), p.base64()));
-        }
-        return new Evidence(
-                idx,
-                file,
-                text(inv, "date"),
-                text(inv, "client"),
-                text(inv, "total"),
-                grid,
-                first != null,
-                first == null ? null : first.contentType(),
-                first == null ? null : first.base64(),
-                items);
+        fileCache.putIfAbsent(file, map);
+        return fileCache.get(file);
     }
 
     /**
