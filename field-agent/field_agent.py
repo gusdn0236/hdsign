@@ -273,9 +273,12 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
          접두사("FlexiSIGN - " 등) 제거본 둘 다 시도.
       2. 유사 매칭 — 같은 폴더(또는 어디든) 의 .fs 파일들 중 stem 유사도(공백/특수
          문자 정규화 후 SequenceMatcher) 가 임계값 이상 + 후보 단일이면 자동 채택
-      3. PDF 명이 PDF24 시각형(저장 전 인쇄) 이면 — 그 시각 ±30분에 저장된 .fs 로 폴백
-         (단일이면 채택, 여럿이면 시각이 가장 가까운 것)
-      4. 모두 실패 → (None, 사유)
+      3. 모두 실패 → (None, 사유). PDF 명이 PDF24 시각형이면 안내 메시지를 덧붙인다.
+
+    ※ 예전엔 시각형 파일명일 때 인쇄 시각 ±30분의 .fs 를 자동으로 열었으나, 우연히 다른
+      지시서를 여는 오작동이 잦아 제거했다(이름이 아니라 시각으로 맞히는 추측이라 신뢰 불가).
+      새 인쇄는 워처가 박는 UID(ADS, resolve_fs_for_order 1·2순위)로 정확 매칭되므로 이 이름
+      매칭은 UID 가 없는 옛 지시서 전용 폴백이다.
 
     여러 .fs 가 동일 stem 으로 있으면 가장 최근 수정된 것을 채택(같은 작업의
     버전관리 케이스). 반환: (Path 또는 None, 이유 텍스트)."""
@@ -287,14 +290,12 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
 
     target_keys = [_normalize_key(s) for s in _stem_candidates(pdf_stem)]
     target_keys = [k for k in target_keys if k]
-    all_fs: list[Path] = []
     exact_matches: list[Path] = []
     fuzzy_pool: list[tuple[float, Path]] = []
     try:
         for fs in customer_folder.rglob("*.fs"):
             if not fs.is_file():
                 continue
-            all_fs.append(fs)
             fs_key = _normalize_key(fs.stem)
             if fs_key in target_keys:
                 exact_matches.append(fs)
@@ -317,40 +318,56 @@ def find_fs_file(customer_folder: Path, pdf_filename: str,
             return None, f"유사 .fs 후보가 여러 개({len(fuzzy_pool)}건) — 거래처 폴더를 엽니다."
         return fuzzy_pool[0][1], f"fuzzy({fuzzy_pool[0][0]:.0%})"
 
-    # PDF24 시각형 파일명 — 인쇄 시각 근처에 저장된 .fs 로 폴백.
-    ts = _parse_pdf24_timestamp(pdf_stem)
-    if ts is not None:
-        window = 30 * 60  # 인쇄 시각 ±30분
-        near = sorted(
-            (p for p in all_fs if abs(p.stat().st_mtime - ts) <= window),
-            key=lambda p: abs(p.stat().st_mtime - ts),
-        )
-        if len(near) == 1:
-            return near[0], "timestamp-mtime"
-        if len(near) >= 2:
-            return near[0], f"timestamp-mtime(가장 가까움/{len(near)}건)"
+    # PDF24 시각형 파일명 — 이름에 원본 정보가 없어 .fs 를 이름으로 특정할 수 없다. 예전엔
+    # 인쇄 시각 ±30분의 .fs 를 자동으로 열었으나 우연히 다른 지시서를 여는 오작동이 잦아
+    # 제거했다(시각으로 맞히는 추측은 신뢰 불가). 자동으로 열지 않고 안내만 한다 — 새로 인쇄
+    # (웹반영) 하면 워처가 UID(ADS)를 박아 다음부턴 이름·시각과 무관하게 정확히 열린다.
+    if _parse_pdf24_timestamp(pdf_stem) is not None:
         return None, (
-            f"PDF 파일명이 시각값({pdf_stem})입니다 — FlexiSIGN 에서 .fs 를 저장하기 전에 "
-            f"인쇄된 것 같습니다. .fs 를 이 거래처 폴더에 저장한 뒤 다시 인쇄하면 자동으로 열립니다. "
+            f"PDF 파일명이 시각값({pdf_stem})이라 .fs 를 이름으로 특정할 수 없습니다 — "
+            f"FlexiSIGN 에서 .fs 를 저장한 뒤 다시 인쇄(웹반영)하면 자동으로 정확히 열립니다. "
             f"거래처 폴더를 열었습니다."
         )
 
     return None, f"동일 stem 의 .fs 를 찾지 못했습니다: {pdf_stem}.fs (거래처 폴더를 열었습니다)"
 
 
+# 워처가 .fs 에 박아 둔 NTFS ADS 이름 — 인쇄마다 발급된 UID 가 여기 들어 있다.
+# (워처의 _FS_UID_STREAM 과 반드시 동일해야 한다.) ADS 는 같은 NTFS 볼륨/SMB 공유 안에서
+# 파일을 rename·이동해도 따라다니므로, 작업자가 .fs 이름을 바꿔도 이 UID 로 정확히 매칭된다.
+_FS_UID_STREAM = "hdsign.fsuid"
+
+
+def _read_ads_fsuid(fs_file: Path) -> str | None:
+    """fs_file 의 NTFS ADS(hdsign.fsuid)에 적힌 UID 를 읽어 반환. 스트림이 없거나(스탬프 안 됨)
+    읽기 실패면 None. 혹시 모를 BOM 까지 흡수하도록 utf-8-sig 로 읽는다."""
+    try:
+        with open(f"{fs_file}:{_FS_UID_STREAM}", "r", encoding="utf-8-sig") as f:
+            v = f.read().strip()
+        return v or None
+    except (OSError, ValueError):
+        return None
+
+
 def resolve_fs_for_order(meta: dict, customer_folder: Path | None,
                          fuzzy_threshold: float) -> tuple[Path | None, str]:
     """주문 메타로 .fs 파일을 결정. 반환 (Path 또는 None, 매칭종류/이유 텍스트).
 
-    1순위 — originalFsPath: 워처가 인쇄 시점에 거래처 폴더에서 못 박은 .fs 전체 경로.
-      그 경로가 실재하면 이름 추측·시각값 폴백·퍼지매칭 없이 그대로 연다 — 한 폴더에
-      .fs 가 여럿이어도 지시서마다 자기 파일이 고정돼 엉뚱한 .fs 가 안 열린다.
-      리터럴 경로가 죽었으면(현장 PC 의 드라이브 매핑이 다르거나 파일이 폴더 안에서
-      옮겨짐) 그 .fs 파일명으로 거래처 폴더를 재탐색한다.
-    2순위 — originalPdfFilename: 옛 지시서이거나 워처가 경로를 못 박은 경우. 기존
-      find_fs_file(정확/유사/PDF24 시각값 ±30분 폴백) 매칭으로 폴백.
+    1순위 — originalFsUid(.fs 에 박힌 ADS UID): 워처가 인쇄 시점에 그 .fs 에 발급해 박은 전역
+      고유 ID. originalFsPath(절대경로)가 살아 있으면 그 파일의 ADS 가 UID 와 같은지 확인까지
+      해서(다른 작업으로 덮어쓰여 같은 경로에 엉뚱한 .fs 가 놓인 경우 차단) 곧장 연다. 경로가
+      죽었거나(이름변경/이동) ADS 가 어긋나면 거래처 폴더를 UID 로 스캔해 정확히 회수한다 —
+      작업자가 파일명을 바꿔도 ADS 가 따라다녀 매칭된다.
+    2순위 — originalFsPath 만 있고 UID 가 없는 옛 지시서: 경로 실재 시 그대로, 죽었으면 그
+      .fs 파일명으로 재탐색.
+    3순위 — originalPdfFilename: UID·경로 둘 다 없는 옛 지시서. 이름 정확/유사 매칭으로 폴백
+      (시각값 자동 채택은 제거 — 우연 오작동 방지).
     """
+    fs_uid = (meta.get("originalFsUid") or "").strip()
     fs_path = (meta.get("originalFsPath") or "").strip()
+
+    # ── 1·2순위: originalFsPath(절대경로)가 살아 있는가 ───────────────────────────
+    path_uid_missing: Path | None = None  # 경로는 살아 있는데 ADS 스탬프만 소실된 경우 최후 폴백.
     if fs_path:
         direct = Path(fs_path)
         try:
@@ -358,16 +375,45 @@ def resolve_fs_for_order(meta: dict, customer_folder: Path | None,
         except OSError:
             is_file = False
         if is_file:
-            return direct, "fspath"
-        # 리터럴 경로가 죽음 — .fs 파일명으로 거래처 폴더에서 재탐색.
-        if customer_folder is not None:
-            relocated, _r = find_fs_file(customer_folder, direct.name, fuzzy_threshold)
-            if relocated is not None:
-                return relocated, "fspath-relocated"
+            if not fs_uid:
+                return direct, "fspath"  # 옛 지시서(UID 없음) — 기존 동작 유지.
+            ads = _read_ads_fsuid(direct)
+            if ads == fs_uid:
+                return direct, "fspath+uid"
+            if ads is None:
+                # 경로의 .fs 에 스탬프가 없음(비-NTFS 복사 등으로 소실). 경로는 맞을 가능성이
+                # 높으나, 먼저 UID 스캔으로 진짜 스탬프된 파일을 찾고 없으면 이 경로로 폴백.
+                path_uid_missing = direct
+            # ads != fs_uid → 그 경로엔 다른 작업의 .fs 가 놓임. 경로 신뢰 안 함 → UID 스캔으로.
 
+    # ── 1순위(회수): UID 스캔 — 이름이 바뀌거나 옮겨졌어도 ADS 로 정확히 찾는다 ──────────
+    if fs_uid and customer_folder is not None:
+        try:
+            hits = [p for p in customer_folder.rglob("*.fs")
+                    if p.is_file() and _read_ads_fsuid(p) == fs_uid]
+        except Exception:
+            hits = []
+        if len(hits) == 1:
+            return hits[0], "uid"
+        if len(hits) >= 2:
+            # 같은 UID 가 여럿(예: .fs 를 복사해 둠) — 가장 최근 수정본 채택.
+            best = max(hits, key=lambda p: p.stat().st_mtime)
+            return best, f"uid(가장 최근/{len(hits)}건)"
+
+    # 경로의 .fs 는 살아 있는데 스탬프만 소실된 케이스 — UID 스캔도 비었으면 그 경로로 연다.
+    if path_uid_missing is not None:
+        return path_uid_missing, "fspath(uid-missing)"
+
+    # 경로가 죽었으면 그 .fs 파일명으로 거래처 폴더 재탐색(이동/이름변경 이름 기반 폴백).
+    if fs_path and customer_folder is not None:
+        relocated, _r = find_fs_file(customer_folder, Path(fs_path).name, fuzzy_threshold)
+        if relocated is not None:
+            return relocated, "fspath-relocated"
+
+    # ── 3순위: originalPdfFilename 이름 매칭(옛 지시서 전용) ─────────────────────────
     pdf_filename = (meta.get("originalPdfFilename") or "").strip()
     if not pdf_filename:
-        return None, ("이 지시서엔 .fs 경로도 원본 PDF 파일명도 없어 자동으로 .fs 를 못 찾습니다 "
+        return None, ("이 지시서엔 .fs UID·경로도 원본 PDF 파일명도 없어 자동으로 .fs 를 못 찾습니다 "
                       "(워처가 새로 인쇄·'웹에 적용' 하면 다음부턴 자동).")
     if customer_folder is None:
         return None, "거래처 폴더를 찾지 못했습니다."

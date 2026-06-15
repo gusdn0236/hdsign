@@ -152,6 +152,7 @@ public class PublicWorksheetController {
                     b.put("networkFolderName", o.getClient() != null ? o.getClient().getNetworkFolderName() : null);
                     b.put("originalPdfFilename", o.getOriginalPdfFilename());
                     b.put("originalFsPath", o.getOriginalFsPath());
+                    b.put("originalFsUid", o.getOriginalFsUid());
                     return ResponseEntity.ok(b);
                 })
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -369,6 +370,7 @@ public class PublicWorksheetController {
         // + networkFolderName 으로 폴백 매칭. 셋 다 비면 프론트는 [FS에서 열기] 버튼 비활성.
         item.put("originalPdfFilename", o.getOriginalPdfFilename());
         item.put("originalFsPath", o.getOriginalFsPath());
+        item.put("originalFsUid", o.getOriginalFsUid());
         item.put("networkFolderName", o.getClient() != null ? o.getClient().getNetworkFolderName() : null);
         return item;
     }

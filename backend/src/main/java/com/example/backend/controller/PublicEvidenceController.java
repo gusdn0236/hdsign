@@ -539,7 +539,11 @@ public class PublicEvidenceController {
             @RequestParam(value = "preserveChangeNote", required = false) Boolean preserveChangeNote,
             // 워처가 인쇄 시점에 확정한 지시서 .fs 의 전체 경로. 현장 뷰어 [FS에서 열기] 가
             // 이 경로로 .fs 를 곧장 연다. 워처가 경로를 확정하지 못했거나 구버전 워처면 미전송.
-            @RequestParam(value = "originalFsPath", required = false) String originalFsPath
+            @RequestParam(value = "originalFsPath", required = false) String originalFsPath,
+            // 워처가 이번 인쇄에 발급해 그 .fs 의 ADS(hdsign.fsuid)에도 박은 전역 고유 ID.
+            // 현장 뷰어 [FS에서 열기] 가 이 UID 로 .fs 를 찾는다 — 파일명이 바뀌어도 정확 매칭.
+            // 워처가 .fs 를 단일 확정하지 못했거나 구버전 워처면 미전송.
+            @RequestParam(value = "originalFsUid", required = false) String originalFsUid
     ) {
         Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
         if (order == null) {
@@ -649,6 +653,14 @@ public class PublicEvidenceController {
             String fsPath = originalFsPath.trim();
             if (fsPath.length() > 500) fsPath = fsPath.substring(fsPath.length() - 500);
             order.setOriginalFsPath(fsPath);
+        }
+        // 워처가 이번 인쇄에 발급해 .fs ADS 에 박은 UID — 현장 [FS에서 열기] 가 이 UID 로 .fs 를
+        // 찾는다. 빈 값/미전송이면 보존(이번 인쇄에서 .fs 를 단일 확정 못 했다고 옛 UID 를 지우지
+        // 않음 — originalFsPath 보존과 같은 원칙).
+        if (originalFsUid != null && !originalFsUid.isBlank()) {
+            String fsUid = originalFsUid.trim();
+            if (fsUid.length() > 64) fsUid = fsUid.substring(0, 64);
+            order.setOriginalFsUid(fsUid);
         }
         if (firstAttachment || userMarkedChanged) {
             order.setWorksheetUpdatedAt(LocalDateTime.now());

@@ -19,6 +19,7 @@ import threading
 import time
 import tkinter as tk
 import unicodedata
+import uuid
 try:
     import winsound  # Windows 표준 — 새 주문 알림음 재생. 다른 OS 에서 import 단계에서 죽지 않게 가드.
 except Exception:
@@ -4785,7 +4786,8 @@ def _auto_save_flexisign_for_print(
     return True, 'saved'
 
 
-def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str) -> Path:
+def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str,
+                                    doc_stem: str | None = None) -> Path:
     """인쇄 PDF 를 가능하면 원본 도큐먼트명 stem 으로 리네임해서 반환.
 
     배경: PDF24 자동저장 파일명을 시각값(%y%m%d_%H%M%S)으로 두면 ASCII 라 ErrorCode 123
@@ -4795,12 +4797,16 @@ def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str) -> Path:
     정확 매칭(시각 ±30분 mtime 폴백 불필요)한다.
 
     이름 출처 우선순위:
-      ① FlexiSIGN 창에 열려 있는 .fs 의 stem  (사무실 대다수 — 거래처 .fs 에 헤더만 붙여 인쇄)
+      ① 인쇄 시점에 캡처한 FlexiSIGN 도큐먼트 stem(doc_stem)  (사무실 대다수 — 거래처 .fs 에
+         헤더만 붙여 인쇄). doc_stem 이 없으면 지금 창 제목에서 다시 읽는다(폴백).
       ② 인쇄 매칭 큐(remember_order_for_print)의 원본 .ai 명  (워처가 .ai 를 FlexiSIGN 에 넣은 자동작성 흐름)
-    둘 다 없거나 리네임 실패 시 원래 경로 그대로 반환 — 그 경우 현장 에이전트의 PDF24 시각형 폴백이 받는다."""
+    둘 다 없거나 리네임 실패 시 원래 경로 그대로 반환 — 그 경우 현장 에이전트의 PDF24 시각형 폴백이 받는다.
+
+    doc_stem 을 .fs UID 스탬프(_resolve_and_stamp_printed_fs)와 같은 출처로 받으면, 썸네일 PDF
+    이름과 못 박는 .fs 가 같은 도큐먼트를 가리켜 '썸네일 ≠ 열리는 파일' 어긋남을 막는다."""
     try:
         new_stem = ""
-        fs_stem = _flexisign_document_stem()
+        fs_stem = (doc_stem or "").strip() or _flexisign_document_stem()
         if fs_stem:
             new_stem = safe_filename_stem(fs_stem)
         if not new_stem:
@@ -4827,56 +4833,87 @@ def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str) -> Path:
         return pdf_path
 
 
-def _resolve_printed_fs_path(order_number: str) -> str:
-    """인쇄된 지시서에 대응하는 .fs 파일의 전체 경로를 거래처 폴더에서 찾아 반환.
+# .fs 파일에 박는 NTFS Alternate Data Stream 이름. 이 스트림에 인쇄마다 새로 발급한
+# UID(uuid hex) 를 적어두면, 현장 에이전트가 파일명·시각이 아니라 이 UID 로 .fs 를 찾는다.
+# ADS 는 같은 NTFS 볼륨(이 회사의 \\Main\현대공유 SMB 공유 포함) 안에서 파일을 rename·이동해도
+# 따라다닌다(검증 완료 2026-06-15). exFAT/FAT 로 복사하거나 zip·메일로 보내면 소실되지만,
+# 거래처 폴더 안에서의 통상적인 이름변경·정리에는 견딘다. FlexiSIGN 이 .fs 본 스트림을 열어
+# 둔 상태에서도 별도 named stream 쓰기는 충돌하지 않는다(검증 완료).
+_FS_UID_STREAM = "hdsign.fsuid"
 
-    현장 에이전트 [FS에서 열기] 가 이 경로로 .fs 를 곧장 열게 하기 위함 — 파일명 추측·
-    시각값 ±30분 폴백·퍼지매칭이 전부 불필요해지고, 한 폴더에 .fs 가 여럿이어도
-    지시서마다 자기 파일을 못 박아 엉뚱한 .fs 가 열리지 않는다.
 
-    아래를 모두 만족할 때만 경로를 반환, 아니면 "" (현장은 기존 originalPdfFilename 매칭 폴백):
-      - FlexiSIGN 창에 저장된 .fs 가 열려 있어 stem 을 읽을 수 있음
+def _write_fs_uid_ads(fs_file: Path) -> str:
+    """fs_file 에 새 UID 를 발급해 NTFS ADS(hdsign.fsuid)로 기록하고 그 UID 를 반환.
+    기록 실패(비-NTFS 대상·권한·잠금 등)면 "" 반환 — 호출자는 UID 없이 경로만 전송한다.
+
+    인쇄마다 새 UID 를 발급해 덮어쓴다(last-print-wins). 주문번호와 무관한 전역 고유값이라
+    주문을 지우고 다시 만들어도 옛 스탬프와 충돌하지 않는다."""
+    uid = uuid.uuid4().hex
+    try:
+        with open(f"{fs_file}:{_FS_UID_STREAM}", "w", encoding="utf-8") as f:
+            f.write(uid)
+        return uid
+    except Exception as e:
+        ui_log(f"인쇄 .fs UID 스탬프 실패({fs_file.name}: {e}) → UID 미전송, 경로만 사용")
+        return ""
+
+
+def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None) -> tuple[str, str]:
+    """인쇄된 지시서에 대응하는 .fs 를 거래처 폴더에서 단일 확정하고, 그 파일에 UID(ADS)를
+    박은 뒤 (전체경로, UID) 를 반환. 확정 못 하면 ("", "") — 현장은 originalPdfFilename 폴백.
+
+    현장 에이전트 [FS에서 열기] 가 이 UID 로 .fs 를 찾으므로, 파일명을 바꾸거나 폴더 안에서
+    옮겨도 정확히 매칭된다(이름 추측·시각값 ±30분 폴백·퍼지매칭 불필요). 한 폴더에 .fs 가
+    여럿이어도 지시서마다 자기 파일을 못 박는다.
+
+    doc_stem: 인쇄 시점에 캡처해 둔 FlexiSIGN 도큐먼트 stem(권장 — 인쇄 후 사용자가 다른
+      창으로 전환해도 인쇄한 그 문서를 가리킴). None 이면 지금 창 제목에서 다시 읽는다(폴백).
+
+    아래를 모두 만족할 때만 확정:
+      - 인쇄한 도큐먼트의 .fs stem 을 알 수 있음
       - config 의 network_customer_base 가 설정돼 있고 거래처 폴더가 실재
       - 그 거래처 폴더(하위 포함)에 <stem>.fs 가 유일하게 존재
-    후보가 0개거나 2개 이상이면 모호 → "" 반환(잘못된 .fs 를 여느니 폴백이 낫다).
+    후보가 0개거나 2개 이상이면 모호 → ("", "") (잘못된 .fs 를 못 박느니 폴백이 낫다).
 
-    어떤 경우에도 예외를 밖으로 던지지 않는다 — 실패 시 "" 반환, 인쇄/업로드 흐름은 그대로 진행.
+    어떤 경우에도 예외를 밖으로 던지지 않는다 — 실패 시 ("", "") 반환, 인쇄/업로드 흐름은 진행.
     """
     try:
-        fs_stem = _flexisign_document_stem()
+        fs_stem = (doc_stem or "").strip() or _flexisign_document_stem()
         if not fs_stem:
-            ui_log("인쇄 .fs 경로 — FlexiSIGN 에서 저장된 .fs stem 을 못 읽음 → 경로 미전송")
-            return ""
+            ui_log("인쇄 .fs — FlexiSIGN 에서 저장된 .fs stem 을 못 읽음 → UID/경로 미전송")
+            return "", ""
         base_str = (_load_config().get("network_customer_base") or "").strip()
         if not base_str:
-            return ""
+            return "", ""
         detail = fetch_public_worksheet_detail(order_number)
         if not detail:
-            return ""
+            return "", ""
         network_folder = (detail.get("networkFolderName") or "").strip()
         company = (detail.get("companyName") or "").strip()
         if not network_folder and not company:
-            return ""
+            return "", ""
         customer_folder = resolve_customer_folder(Path(base_str), network_folder, company)
         if not customer_folder.exists():
-            ui_log(f"인쇄 .fs 경로 — 거래처 폴더 없음({customer_folder}) → 경로 미전송")
-            return ""
+            ui_log(f"인쇄 .fs — 거래처 폴더 없음({customer_folder}) → UID/경로 미전송")
+            return "", ""
         target = unicodedata.normalize("NFC", fs_stem).casefold()
         hits = [
             p for p in customer_folder.rglob("*.fs")
             if p.is_file() and unicodedata.normalize("NFC", p.stem).casefold() == target
         ]
         if len(hits) == 1:
-            ui_log(f"인쇄 .fs 경로 확정: {hits[0]}")
-            return str(hits[0])
+            fs_path = hits[0]
+            uid = _write_fs_uid_ads(fs_path)
+            ui_log(f"인쇄 .fs 확정: {fs_path} (UID={uid or '미발급'})")
+            return str(fs_path), uid
         if len(hits) >= 2:
-            ui_log(f"인쇄 .fs 경로 — '{fs_stem}.fs' 후보 {len(hits)}건(모호) → 경로 미전송, 현장 폴백")
+            ui_log(f"인쇄 .fs — '{fs_stem}.fs' 후보 {len(hits)}건(모호) → UID/경로 미전송, 현장 폴백")
         else:
-            ui_log(f"인쇄 .fs 경로 — 거래처 폴더에 '{fs_stem}.fs' 없음 → 경로 미전송, 현장 폴백")
-        return ""
+            ui_log(f"인쇄 .fs — 거래처 폴더에 '{fs_stem}.fs' 없음 → UID/경로 미전송, 현장 폴백")
+        return "", ""
     except Exception as e:
-        ui_log(f"인쇄 .fs 경로 확정 실패: {e}")
-        return ""
+        ui_log(f"인쇄 .fs 확정 실패: {e}")
+        return "", ""
 
 
 def _qr_order_from_payload(data: str) -> str | None:
@@ -5878,17 +5915,31 @@ def _process_printed_pdf(pdf_path: Path):
     # 사용자가 메모를 새로 입력/수정했을 때만 contentChanged=true. prefill 된 이전 메모를
     # 그대로 두고 confirm 한 단순 재인쇄는 preserve_note=True 로 보내 DB 의 메모만 보존
     # (worksheetUpdatedAt 도 갱신 안 됨 → 모바일/관리자 변경 배지 트리거 X).
-    # PDF24 가 시각값 파일명으로 떨궜어도, QR 로 매칭된 주문의 원본 .ai 명을 알면 그 stem 으로
-    # 리네임 → 업로드되는 originalPdfFilename 이 깔끔해져 현장에서 .fs 이름 매칭이 정확해진다.
-    pdf_path = _rename_printed_pdf_to_original(pdf_path, order_number)
-    # 거래처 폴더에서 이 지시서의 .fs 전체 경로를 확정 — 현장 [FS에서 열기] 가 그 경로로 직행.
-    # 확정 못 하면 "" → 현장은 기존 originalPdfFilename 매칭으로 폴백한다.
-    fs_path = _resolve_printed_fs_path(order_number)
+    # 인쇄한 도큐먼트 stem 을 단일 출처로 확정 — 인쇄 직전(다이얼로그 전) 캡처한 _intent_stem 을
+    # 우선 쓴다(인쇄 후 사용자가 다른 FlexiSIGN 창으로 전환해도 '인쇄한 그 문서'를 가리킴).
+    # _intent_stem 이 없으면(새 도큐먼트라 Save As 로 이제야 이름이 생긴 경우 등) 지금 창에서 한 번 읽는다.
+    # 이 stem 을 PDF 리네임(썸네일 이름)과 .fs UID 스탬프 양쪽에 같이 넘겨, 썸네일과 못 박는
+    # .fs 가 같은 도큐먼트를 가리키게 한다('썸네일 ≠ 열리는 파일' 어긋남 원천 차단).
+    printed_stem = _intent_stem
+    if not printed_stem:
+        try:
+            _ps_status, _ps_stem, _ = _flexisign_window_status()
+            printed_stem = _ps_stem
+        except Exception:
+            printed_stem = None
+
+    # PDF24 가 시각값 파일명으로 떨궜어도, 인쇄한 도큐먼트 stem 으로 리네임 → 업로드되는
+    # originalPdfFilename 이 깔끔해져 (UID 가 없는 옛/폴백 케이스에서) .fs 이름 매칭이 정확해진다.
+    pdf_path = _rename_printed_pdf_to_original(pdf_path, order_number, doc_stem=printed_stem)
+    # 거래처 폴더에서 이 지시서의 .fs 를 단일 확정하고 그 파일에 UID(ADS)를 박는다 — 현장
+    # [FS에서 열기] 가 그 UID(없으면 경로)로 직행. 확정 못 하면 ("","") → 현장은 이름 매칭 폴백.
+    fs_path, fs_uid = _resolve_and_stamp_printed_fs(order_number, doc_stem=printed_stem)
     upload_ok = upload_worksheet_pdf(order_number, pdf_path,
                                      content_changed=bool(sel.get("content_changed", False)),
                                      change_note=sel.get("change_note") or "",
                                      preserve_note=bool(sel.get("preserve_note", False)),
-                                     original_fs_path=fs_path)
+                                     original_fs_path=fs_path,
+                                     original_fs_uid=fs_uid)
     # "웹에만 적용하고 인쇄 안 함" 선택 또는 확정 매수 0 인 경우 종이 인쇄 생략.
     print_done = False
     if sel.get("skip_print"):
@@ -6799,23 +6850,40 @@ def _find_ghostscript() -> str | None:
     return None
 
 
-# 이미지 다운샘플 기준 — 가장 긴 변이 이 px 를 넘는 래스터 이미지만 줄인다.
-# A4 폭(8.27in) 기준 ~195dpi 라 참고사진엔 충분하고, 텍스트는 벡터라 영향 없음.
-_UPLOAD_IMG_MAX_DIM = 1600
-_UPLOAD_IMG_JPEG_QUALITY = 72
+# 업로드 PDF 백드롭(참고사진) 화질 ↔ 용량 트레이드오프. 벡터(텍스트/QR/치수선)는 이 값과
+# 무관하게 항상 원본 그대로 선명하다 — 이 DPI 는 '참고사진이 얼마나 또렷한가'만 정한다.
+# 300 ≈ 0.6MB / 0.5초. 렌더가 빨라 DPI 를 올려도 속도는 거의 동일(용량만 증가) — 참고사진을
+# 또렷하게. 더 가볍게 원하면 ↓(160 ≈ 0.3MB). 벡터(텍스트/QR/치수선) 선명도와는 무관한 값.
+_UPLOAD_BACKDROP_DPI = 300
+_UPLOAD_BACKDROP_JPEG_QUALITY = 65
+# 백드롭 가장 긴 변 픽셀 상한 — A4 보다 큰 페이지(대형 도안)에서 백드롭이 비대해지는 것 방어.
+# A4 @300DPI = 3508px 라 4000 이면 A4 는 풀 300DPI, A3+ 는 적응 하향.
+_UPLOAD_BACKDROP_MAX_PX = 4000
 
 
 def compress_pdf_for_upload(src: Path) -> Path:
-    """업로드 직전, PDF 안의 '큰 래스터 이미지(참고사진)'만 다운샘플한다. 벡터 텍스트/도형은
-    전혀 건드리지 않으므로 글씨는 원본 그대로 선명하다.
+    """업로드 직전, 참고사진을 저해상 '백드롭' 한 장으로 평탄화하되 벡터(텍스트/QR/치수선)는
+    원본 그대로 선명하게 유지한다.
 
-    왜: FlexSign 참고사진이 초고해상 원본으로 박히면 PDF 가 수십~수백 MB 가 되고(관측: 200MB),
-    그대로 올리면 ~384MB 힙의 백엔드가 디코드하다 OOM → 컨테이너 즉사(연결 강제 끊김). 메모리가
-    넉넉한 사무실 PC 가 여기서 이미지만 줄여 올리면 백엔드는 작은 PDF 만 보게 되어 OOM 이 사라지고
-    업로드·평탄화·썸네일·모바일 렌더까지 전부 빨라진다.
+    왜: FlexSign→PDF24 는 참고사진 1장을 PDF 로 내보낼 때 종종 가로 1px 스캔라인 수백~수천 조각
+    (관측: 사진 7장에 4030개 image XObject)으로 분해한다. 이전 방식(조각마다 resize+replace_image)은
+    replace_image 가 호출마다 문서를 재구성해 거의 O(n²) 로 터졌고(실측 880조각 415초), 용량도
+    12% 밖에 안 줄었다. 게다가 이미지 수가 많으면 백엔드가 400DPI 전체 재렌더(평탄화)까지 돌려
+    업로드가 3~5분씩 걸렸다.
 
-    PyMuPDF(fitz)+PIL 로 이미지 xref 스트림만 교체. 마스크/투명·1비트 이미지는 재인코딩 시 깨질 수
-    있어 건너뛴다(안전 우선). 줄일 큰 이미지가 없거나(=일반 지시서) 어떤 실패든 발생하면 원본 반환."""
+    방식(페이지마다) — 2레이어 분리:
+      1) 백드롭(아래): 페이지를 복사해 벡터·텍스트를 제거(이미지만 남김) 후 저해상 JPEG 1장으로
+         렌더 → '사진만' 담기고 벡터 자리는 흰 여백. (벡터까지 같이 구우면 흐린 벡터 잔상이
+         위 선명 벡터 주변으로 번져 더 지저분해지므로 반드시 분리.)
+      2) 윗장(벡터): 원본 페이지에서 이미지(사진 조각)만 apply_redactions 로 제거, 벡터·텍스트 보존
+         (수천 조각도 0.6초)
+      3) 사진 백드롭을 overlay=False 로 벡터 '밑'에 삽입 → 선명한 벡터는 깨끗한 흰 배경 위, 사진만
+         저해상으로 비친다.
+    결과: 6.5MB/880조각 → ~0.4MB, 약 1초. 백엔드도 이미지 1개짜리만 받아 평탄화/이중처리가
+    자동으로 안 걸린다. 사진 화질은 _UPLOAD_BACKDROP_DPI 한 줄로 조절(참고용이라 다소 깨져도 OK).
+
+    이미지가 0개인 순수 벡터 지시서는 건드리지 않고 원본 반환(이미 작고 빠름). 어떤 실패든
+    발생하면 원본 반환 — 압축은 절대 업로드를 막지 않는다."""
     if fitz is None:
         return src
     import io
@@ -6825,50 +6893,68 @@ def compress_pdf_for_upload(src: Path) -> Path:
     except Exception as e:
         ui_log(f"이미지 압축 — PDF 열기 실패: {e} (원본 그대로 업로드)")
         return src
-    changed = 0
-    done: set[int] = set()
     try:
-        for page in doc:
-            for img in page.get_images(full=True):
-                # img = (xref, smask, width, height, bpc, colorspace, alt_cs, name, filter, ...)
-                xref = img[0]
-                if xref in done:
-                    continue
-                done.add(xref)
-                smask, w, h, bpc = img[1], img[2], img[3], img[4]
-                if smask:                       # 투명(소프트마스크) — JPEG 가 알파를 날림
-                    continue
-                if bpc == 1:                    # 1비트 라인아트/스텐실 — 작고, 흐려지면 안 됨
-                    continue
-                if max(w, h) <= _UPLOAD_IMG_MAX_DIM:
-                    continue
-                try:
-                    base = doc.extract_image(xref)
-                    raw = base.get("image") if base else None
-                    if not raw:
-                        continue
-                    im = Image.open(io.BytesIO(raw))
-                    if im.mode not in ("RGB", "L"):
-                        im = im.convert("RGB")
-                    scale = _UPLOAD_IMG_MAX_DIM / float(max(w, h))
-                    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
-                    im = im.resize((nw, nh), Image.LANCZOS)
-                    buf = io.BytesIO()
-                    im.save(buf, format="JPEG", quality=_UPLOAD_IMG_JPEG_QUALITY)
-                    page.replace_image(xref, stream=buf.getvalue())
-                    changed += 1
-                except Exception as e:
-                    ui_log(f"이미지 압축 건너뜀(xref {xref}): {e}")
-                    continue
-        if changed == 0:
+        total_imgs = sum(len(page.get_images()) for page in doc)
+        if total_imgs == 0:
             doc.close()
-            ui_log("이미지 압축 — 줄일 큰 사진 없음 (원본 그대로 업로드)")
+            ui_log("이미지 압축 — 래스터 사진 없음, 순수 벡터 (원본 그대로 업로드)")
             return src
+        for page in doc:
+            if page.rect.width <= 0 or page.rect.height <= 0:
+                continue
+            # ★ /Rotate 가 걸린 페이지(FlexSign 가로 지시서는 보통 rot=90, mediabox 는 세로)는
+            # 회전 0 공간에서 일관 처리한 뒤 원래 회전을 복원한다. 안 그러면 get_pixmap(회전 적용)
+            # 과 insert_image(회전 미적용 좌표)가 어긋나 백드롭이 90도 돌아간 채 박혀 지시서가
+            # 세로로 보인다. 회전 0 에서 렌더·삽입하면 벡터·백드롭이 같은 좌표라 복원 시 함께 회전.
+            rot = page.rotation
+            page.set_rotation(0)
+            rect = page.rect  # 회전 0 → mediabox
+            # 가장 긴 변 픽셀이 상한을 넘지 않도록 DPI 적응 하향(대형 페이지 방어).
+            longest_in = max(rect.width, rect.height) / 72.0
+            dpi = _UPLOAD_BACKDROP_DPI
+            if longest_in > 0:
+                dpi = min(dpi, _UPLOAD_BACKDROP_MAX_PX / longest_in)
+            # ── 백드롭(아래 레이어): '사진만' 굽는다 ──
+            # 이 페이지만 별도 문서로 복사해 벡터/텍스트를 제거(이미지는 유지)하고 저해상 렌더.
+            # 벡터까지 같이 구우면 그 '흐린 벡터'가 위에 올린 선명한 벡터 주변으로 번져(잔상)
+            # 오히려 더 지저분해진다. 그래서 백드롭엔 사진만 담고 벡터 자리는 흰 여백으로 비운다.
+            tmp = fitz.open()
+            tmp.insert_pdf(doc, from_page=page.number, to_page=page.number)
+            tpage = tmp[0]
+            tpage.set_rotation(0)
+            tpage.add_redact_annot(tpage.rect, fill=False)
+            tpage.apply_redactions(
+                images=fitz.PDF_REDACT_IMAGE_NONE,                     # 이미지 유지
+                graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,  # 벡터(line art) 제거
+                text=fitz.PDF_REDACT_TEXT_REMOVE,                     # 텍스트 제거
+            )
+            pix = tpage.get_pixmap(matrix=fitz.Matrix(dpi / 72.0, dpi / 72.0), alpha=False)
+            im = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=_UPLOAD_BACKDROP_JPEG_QUALITY)
+            backdrop = buf.getvalue()
+            tmp.close()
+            # ── 윗 레이어: '벡터만' 남긴다 ── 이미지(사진 조각)만 제거, 벡터·텍스트는 보존.
+            # fill=False 라 흰 박스를 안 칠해 밑에 깔 사진 백드롭이 비친다.
+            page.add_redact_annot(rect, fill=False)
+            page.apply_redactions(
+                images=fitz.PDF_REDACT_IMAGE_REMOVE,
+                graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                text=fitz.PDF_REDACT_TEXT_NONE,
+            )
+            # 사진만 든 백드롭을 벡터 '밑'에 삽입 → 선명한 벡터는 깨끗한 흰 배경 위, 사진만 저해상.
+            page.insert_image(rect, stream=backdrop, overlay=False)
+            page.set_rotation(rot)  # ★ 원래 회전 복원 → 벡터+백드롭 함께 회전
         doc.save(str(out), garbage=4, deflate=True)
         doc.close()
     except Exception as e:
         try:
             doc.close()
+        except Exception:
+            pass
+        try:
+            if out.exists():
+                out.unlink()
         except Exception:
             pass
         ui_log(f"이미지 압축 실패: {e} — 원본으로 업로드")
@@ -6878,7 +6964,8 @@ def compress_pdf_for_upload(src: Path) -> Path:
             before_kb = src.stat().st_size // 1024
             after_kb = out.stat().st_size // 1024
             ui_log(f"이미지 압축: {before_kb}KB → {after_kb}KB "
-                   f"({100 - after_kb * 100 // max(before_kb, 1)}% 절감, 사진 {changed}장 축소)")
+                   f"({100 - after_kb * 100 // max(before_kb, 1)}% 절감, "
+                   f"사진 {total_imgs}조각→백드롭, 벡터 보존)")
             return out
         if out.exists():
             out.unlink()
@@ -6891,7 +6978,8 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                          content_changed: bool = False,
                          change_note: str = "",
                          preserve_note: bool = False,
-                         original_fs_path: str = "") -> bool:
+                         original_fs_path: str = "",
+                         original_fs_uid: str = "") -> bool:
     """변환된 PDF를 백엔드에 업로드. 거래처 카드에 노출되는 단일 PDF로 덮어씀.
     업로드 직전 Ghostscript 로 다운샘플링해 용량을 줄인다 (텍스트는 벡터 유지).
     multipart/form-data 를 표준 라이브러리만으로 구성한다 (외부 의존성 추가 없음).
@@ -6905,7 +6993,10 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                  content_changed 와 동시 True 일 일은 없음(상호 배타) — 다이얼로그가 그렇게 분기.
     original_fs_path: 워처가 인쇄 시점에 확정한 지시서 .fs 의 전체 경로. 비어 있지 않으면
                  originalFsPath 폼 필드로 보내 백엔드에 저장 — 현장 [FS에서 열기] 가 그 경로로
-                 직행한다. 빈 문자열이면 필드를 안 보내 백엔드가 기존 값을 보존."""
+                 직행한다. 빈 문자열이면 필드를 안 보내 백엔드가 기존 값을 보존.
+    original_fs_uid: 워처가 이번 인쇄에 발급해 그 .fs 의 ADS(hdsign.fsuid)에도 박은 전역 고유 ID.
+                 비어 있지 않으면 originalFsUid 폼 필드로 보내 저장 — 현장이 이 UID 로 .fs 를
+                 찾아 파일명이 바뀌어도 정확 매칭. 빈 문자열이면 필드를 안 보내 기존 값을 보존."""
     if not order_number or not pdf_path.exists():
         return False
 
@@ -6958,6 +7049,15 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="originalFsPath"\r\n\r\n'
             f"{original_fs_path}\r\n"
+        ).encode("utf-8")
+
+    # 이번 인쇄에 발급한 .fs UID(.fs 의 ADS 에도 동일 기록) — 현장 [FS에서 열기] 가 이 UID 로
+    # .fs 를 찾는다. 빈 문자열이면 필드를 안 보내 백엔드가 기존 UID 를 보존.
+    if original_fs_uid:
+        extra_field += (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="originalFsUid"\r\n\r\n'
+            f"{original_fs_uid}\r\n"
         ).encode("utf-8")
 
     file_head = (
