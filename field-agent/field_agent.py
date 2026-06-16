@@ -573,8 +573,12 @@ def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
 #   1) FlexiSIGN 메인 창을 활성화(AppActivate)
 #   2) Ctrl+O → 표준 열기 대화상자(#32770) 가 포그라운드로 뜰 때까지 대기
 #   3) 전체 경로를 클립보드로 넣고 Ctrl+V(한글 경로도 안전) → Enter
-# 입력(환경변수): HD_FS_PATH(전체경로), HD_FS_PROCS(프로세스명 후보 ; 구분, 확장자 제외)
-# 출력(stdout): OK / NOFLEXI(창 못 찾음) / BLOCKED(모달 못 닫음) / NODLG(열기창 안 뜸). OK 외엔 폴백.
+# 입력(환경변수): HD_FS_PATH(전체경로), HD_FS_PROCS(프로세스명 후보 ; 구분, 확장자 제외),
+#                 HD_FS_MAINCLASS(선택: WinSpy 로 딴 메인창 클래스명 — 있으면 그 창을 강제 활성화)
+# 출력(stdout): OK / OK_PROMPT(파일 선택 후 FlexiSIGN 프롬프트가 떠 있음 — 작업자 처리 대기) /
+#               NOFLEXI(창 못 찾음) / BLOCKED(모달 못 닫음) / NODLG(열기창 안 뜸). OK/OK_PROMPT 외엔 폴백.
+#   PROMPT 가 뜨면 다음 줄에 `PROMPT|<제목>|<자식컨트롤 텍스트들>` 을 함께 출력(버튼 라벨 파악용).
+# 진단: 각 단계의 foreground class/title/pid 를 stderr 로 흘려 디버그 콘솔에서 흐름을 추적.
 #
 # 안전장치:
 #  - Ctrl+O 전에 FlexiSIGN '자기 소유'의 모달 대화상자(#32770: 이미 떠 있던 열기/다른이름저장/
@@ -582,6 +586,8 @@ def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
 #  - DesignCentral / Fill·Stroke Editor 같은 '도구 패널'은 #32770 이 아니라(커스텀 클래스) 절대 안 닫음.
 #  - 다른 앱의 대화상자는 PID 가 FlexiSIGN 과 다르므로 Esc 대상에서 제외(엉뚱한 창 안 닫음).
 #  - 우리가 띄운 열기창인지도 PID 로 확인한 뒤에만 경로를 붙여넣음.
+#  - 파일 선택(Enter) 후 FlexiSIGN 이 새 #32770(예: '변경 저장?')을 띄우면 절대 임의로 누르지 않고
+#    그 제목·버튼 텍스트만 캡처해 작업자에게 맡긴다(미저장 작업이 무단으로 날아가는 것 방지).
 _REOPEN_FS_PS = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Windows.Forms
@@ -592,7 +598,33 @@ using System.Runtime.InteropServices;
 public class HDWin {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  public delegate bool EnumProc(IntPtr h, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lp);
+  public static string ChildTexts(IntPtr parent) {
+    var sb = new StringBuilder();
+    EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) {
+      var t = new StringBuilder(256); GetWindowText(h, t, 256);
+      var s = t.ToString().Trim();
+      if (s.Length > 0) { sb.Append(s); sb.Append(" / "); }
+      return true;
+    }, IntPtr.Zero);
+    return sb.ToString();
+  }
+  public static IntPtr FindByClass(uint pid, string cls) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint p; GetWindowThreadProcessId(h, out p);
+      if (p != pid) return true;
+      var c = new StringBuilder(256); GetClassName(h, c, 256);
+      if (c.ToString() == cls) { found = h; return false; }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 function FgClass {
@@ -600,10 +632,26 @@ function FgClass {
   [void][HDWin]::GetClassName([HDWin]::GetForegroundWindow(), $sb, 256)
   $sb.ToString()
 }
+function FgTitle {
+  $sb = New-Object System.Text.StringBuilder 256
+  [void][HDWin]::GetWindowText([HDWin]::GetForegroundWindow(), $sb, 256)
+  $sb.ToString()
+}
 function FgPid {
   $p = [uint32]0
   [void][HDWin]::GetWindowThreadProcessId([HDWin]::GetForegroundWindow(), [ref]$p)
   $p
+}
+function Trace($tag) {
+  [Console]::Error.WriteLine(("[reopen] {0}: class={1} pid={2} title={3}" -f $tag, (FgClass), (FgPid), (FgTitle)))
+}
+function Activate($proc) {
+  # HD_FS_MAINCLASS 가 있으면 그 클래스의 메인창을 직접 전면화(도구 패널 오인 방지), 없으면 AppActivate.
+  if ($env:HD_FS_MAINCLASS) {
+    $h = [HDWin]::FindByClass([uint32]$proc.Id, $env:HD_FS_MAINCLASS)
+    if ($h -ne [IntPtr]::Zero) { [void][HDWin]::SetForegroundWindow($h); return }
+  }
+  $null = $ws.AppActivate($proc.Id)
 }
 $names = @()
 if ($env:HD_FS_PROCS) { $names = ($env:HD_FS_PROCS -split ';') | Where-Object { $_ } }
@@ -615,19 +663,21 @@ $proc = Get-Process | Where-Object {
 } | Select-Object -First 1
 if (-not $proc) { Write-Output 'NOFLEXI'; exit }
 $ws = New-Object -ComObject WScript.Shell
-$null = $ws.AppActivate($proc.Id)
+Activate $proc
 Start-Sleep -Milliseconds 300
+Trace 'after-activate'
 # FlexiSIGN 자기 소유의 모달 대화상자가 떠 있으면 Esc 로 닫는다(도구 패널·타 앱 창은 제외).
 for ($k = 0; $k -lt 5; $k++) {
   if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) {
+    Trace 'pre-modal-esc'
     [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
     Start-Sleep -Milliseconds 250
-    $null = $ws.AppActivate($proc.Id)
+    Activate $proc
     Start-Sleep -Milliseconds 150
   } else { break }
 }
-if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { Write-Output 'BLOCKED'; exit }
-$null = $ws.AppActivate($proc.Id)
+if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { Trace 'blocked'; Write-Output 'BLOCKED'; exit }
+Activate $proc
 Start-Sleep -Milliseconds 150
 [System.Windows.Forms.SendKeys]::SendWait('^o')
 $opened = $false
@@ -635,12 +685,31 @@ for ($i = 0; $i -lt 25; $i++) {
   Start-Sleep -Milliseconds 120
   if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { $opened = $true; break }
 }
-if (-not $opened) { Write-Output 'NODLG'; exit }
+if (-not $opened) { Trace 'nodlg'; Write-Output 'NODLG'; exit }
+$openH = [HDWin]::GetForegroundWindow()
+Trace 'open-dialog'
 Set-Clipboard -Value $env:HD_FS_PATH
 Start-Sleep -Milliseconds 150
 [System.Windows.Forms.SendKeys]::SendWait('^v')
 Start-Sleep -Milliseconds 300
 [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+# 파일 선택 후 FlexiSIGN 이 새 프롬프트(#32770, openH 와 다른 창)를 띄우는지 ~3초 관찰.
+$prompt = [IntPtr]::Zero
+for ($j = 0; $j -lt 25; $j++) {
+  Start-Sleep -Milliseconds 120
+  $fg = [HDWin]::GetForegroundWindow()
+  if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id -and $fg -ne $openH) { $prompt = $fg; break }
+}
+if ($prompt -ne [IntPtr]::Zero) {
+  $pt = New-Object System.Text.StringBuilder 256
+  [void][HDWin]::GetWindowText($prompt, $pt, 256)
+  $kids = [HDWin]::ChildTexts($prompt)
+  Trace 'post-enter-prompt'
+  Write-Output 'OK_PROMPT'
+  Write-Output ("PROMPT|{0}|{1}" -f $pt.ToString(), $kids)
+  exit
+}
+Trace 'after-enter'
 Write-Output 'OK'
 """
 
@@ -656,6 +725,9 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
     env = dict(os.environ)
     env["HD_FS_PATH"] = str(fs_file)
     env["HD_FS_PROCS"] = procs
+    main_class = (config.get("flexisign_main_class") or "").strip()
+    if main_class:
+        env["HD_FS_MAINCLASS"] = main_class
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
@@ -666,8 +738,17 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, f"FlexiSIGN 자동 열기 실행 실패: {e}"
     out = (r.stdout or "")
-    logging.info("reopen_in_flexisign rc=%s out=%r err=%r", r.returncode,
-                 out.strip()[:120], (r.stderr or "").strip()[:120])
+    # stderr 에 단계별 Trace 가 담김 — 디버그 빌드에서 흐름 추적용으로 더 길게 남긴다.
+    logging.info("reopen_in_flexisign rc=%s out=%r", r.returncode, out.strip()[:200])
+    if r.stderr:
+        logging.info("reopen_in_flexisign trace=%r", r.stderr.strip()[:600])
+    if "OK_PROMPT" in out:
+        # 파일은 선택됐으나 FlexiSIGN 이 프롬프트(예: '변경 저장?')를 띄워 작업자 처리 대기 중.
+        # 임의로 누르지 않았으므로 '열림'으로 보되, 어떤 프롬프트였는지 로그에 남긴다.
+        prompt = next((ln for ln in out.splitlines() if ln.startswith("PROMPT|")), "")
+        if prompt:
+            logging.warning("reopen_in_flexisign 프롬프트 대기: %s", prompt[:300])
+        return True, str(fs_file)
     if "OK" in out:
         return True, str(fs_file)
     if "NOFLEXI" in out:
