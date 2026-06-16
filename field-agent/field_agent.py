@@ -599,25 +599,31 @@ public class HDWin {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool BlockInput(bool block);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint a, uint b, IntPtr c, uint d);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   public delegate bool EnumProc(IntPtr h, IntPtr lp);
   [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lp);
-  // AppActivate(WScript.Shell)는 포그라운드 잠금 때문에 다른 프로세스 창을 못 올리는 일이 잦다.
-  // 현재 포그라운드 스레드에 AttachThreadInput 으로 붙어 SetForegroundWindow 권한을 얻어 강제 전면화.
+  // 다른 프로세스(예: Chrome 사이드바)가 전면일 때 FlexiSIGN 을 전면으로 끌어올린다.
+  // AppActivate/단순 SetForegroundWindow 는 '포그라운드 잠금 타임아웃' 때문에 실패한다(로그상 forceFg=False).
+  //   → ① 잠금 타임아웃을 0 으로(SPI_SETFOREGROUNDLOCKTIMEOUT) ② 현재 전면 스레드에 AttachThreadInput
+  //      으로 붙어 ③ SetForegroundWindow + BringWindowToTop. 반환은 '실제로 전면이 됐는가' 로 판정.
   public static bool ForceForeground(IntPtr hwnd) {
     if (hwnd == IntPtr.Zero) return false;
     if (IsIconic(hwnd)) ShowWindow(hwnd, 9); // SW_RESTORE
-    IntPtr fg = GetForegroundWindow();
+    SystemParametersInfo(0x2001 /*SPI_SETFOREGROUNDLOCKTIMEOUT*/, 0, IntPtr.Zero, 2 /*SPIF_SENDCHANGE*/);
     uint pid;
-    uint fgThread = GetWindowThreadProcessId(fg, out pid);
+    uint fgThread = GetWindowThreadProcessId(GetForegroundWindow(), out pid);
     uint myThread = GetCurrentThreadId();
-    if (fgThread != myThread) AttachThreadInput(myThread, fgThread, true);
-    bool ok = SetForegroundWindow(hwnd);
-    if (fgThread != myThread) AttachThreadInput(myThread, fgThread, false);
-    return ok;
+    bool attached = (fgThread != 0 && fgThread != myThread && AttachThreadInput(myThread, fgThread, true));
+    SetForegroundWindow(hwnd);
+    BringWindowToTop(hwnd);
+    ShowWindow(hwnd, 5); // SW_SHOW
+    if (attached) AttachThreadInput(myThread, fgThread, false);
+    return GetForegroundWindow() == hwnd;
   }
   public static string ChildTexts(IntPtr parent) {
     var sb = new StringBuilder();
@@ -653,9 +659,16 @@ if (-not $proc) { Write-Output 'NOFLEXI'; exit }
 $mainH = $proc.MainWindowHandle
 [void][HDWin]::BlockInput($true)
 try {
-  $fgOk = [HDWin]::ForceForeground($mainH)
-  Start-Sleep -Milliseconds 200
-  [Console]::Error.WriteLine(("[reopen] activate: forceFg={0} fgPid={1} fgClass={2} (flexiPid={3})" -f $fgOk, (FgPid), (FgClass), $proc.Id))
+  # FlexiSIGN 메인창을 전면으로 — 다른 앱(Chrome 사이드바)이 전면이면 잠금 때문에 한 번에 안 될 수
+  # 있어 여러 번 시도하며 실제 전면이 될 때까지 폴링한다.
+  $got = $false
+  for ($a = 0; $a -lt 10; $a++) {
+    if ([HDWin]::ForceForeground($mainH)) { $got = $true; break }
+    Start-Sleep -Milliseconds 120
+    if ((FgPid) -eq $proc.Id) { $got = $true; break }
+  }
+  [Console]::Error.WriteLine(("[reopen] activate: got={0} fgPid={1} fgClass={2} (flexiPid={3})" -f $got, (FgPid), (FgClass), $proc.Id))
+  if (-not $got) { Write-Output 'NOFG'; return }   # 전면화 실패 → ^o 가 엉뚱한 창에 가므로 폴백.
   # FlexiSIGN 자기 소유의 모달(#32770)이 떠 있으면 Esc 로 닫는다(도구 패널·타 앱 창 제외).
   for ($k = 0; $k -lt 5; $k++) {
     if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) {
@@ -668,11 +681,7 @@ try {
   if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { Write-Output 'BLOCKED'; return }
   [void][HDWin]::ForceForeground($mainH)
   Start-Sleep -Milliseconds 120
-  # FlexiSIGN 메인창이 실제로 전면인지 확인 — 아니면 ^o 가 엉뚱한 창에 가므로 NOFG 로 폴백.
-  if ((FgPid) -ne $proc.Id) {
-    [Console]::Error.WriteLine(("[reopen] NOFG: fgPid={0} != flexiPid={1}" -f (FgPid), $proc.Id))
-    Write-Output 'NOFG'; return
-  }
+  if ((FgPid) -ne $proc.Id) { Write-Output 'NOFG'; return }
   [System.Windows.Forms.SendKeys]::SendWait('^o')
   $opened = $false
   for ($i = 0; $i -lt 20; $i++) {
