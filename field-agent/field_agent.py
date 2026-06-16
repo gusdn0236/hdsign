@@ -664,6 +664,72 @@ def input_guard_aborted() -> bool:
     return _guard_abort.is_set()
 
 
+# ─── "여는 중" 안내 배너 ──────────────────────────────────────────────────────
+# 입력이 잠긴 동안 작업자가 "멈췄나?" 오해하지 않게 상단 중앙에 작은 띠를 띄운다. 포커스를 절대
+# 안 가져가야(WS_EX_NOACTIVATE) FlexiSIGN 열기 자동화를 안 깬다 — 게다가 배너 표시 직후 PS 가
+# FlexiSIGN 을 다시 전면화하므로 안전. tkinter 미가용/실패 시 배너만 생략(잠금·열기는 그대로).
+_banner_stop = threading.Event()
+
+
+def _banner_thread(text: str) -> None:
+    try:
+        import tkinter as tk
+        import ctypes as _ct
+    except Exception:
+        return
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.overrideredirect(True)          # 타이틀바 없음(=활성화 안 뺏는 팝업)
+        root.attributes("-topmost", True)
+        try:
+            root.attributes("-alpha", 0.96)
+        except Exception:
+            pass
+        w, h = 480, 56
+        x = max(0, (root.winfo_screenwidth() - w) // 2)
+        root.geometry("%dx%d+%d+%d" % (w, h, x, 22))
+        root.configure(bg="#111827")
+        tk.Label(root, text=text, fg="#ffffff", bg="#111827",
+                 font=("맑은 고딕", 13, "bold")).pack(expand=True, fill="both")
+        root.update_idletasks()
+        # WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW — 포커스 절대 안 뺏기 + 작업표시줄에 안 뜸.
+        try:
+            GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = -20, 0x08000000, 0x00000080
+            hwnd = _ct.windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
+            cur = _ct.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            _ct.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
+                                             cur | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+            # 활성화 없이(SWP_NOACTIVATE) 최상단 표시.
+            _ct.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40)
+        except Exception:
+            pass
+        root.deiconify()
+
+        def _poll():
+            if _banner_stop.is_set():
+                try:
+                    root.destroy()
+                except Exception:
+                    pass
+                return
+            root.after(50, _poll)
+
+        root.after(50, _poll)
+        root.mainloop()
+    except Exception:
+        pass
+
+
+def banner_show(text: str) -> None:
+    _banner_stop.clear()
+    threading.Thread(target=_banner_thread, args=(text,), daemon=True).start()
+
+
+def banner_hide() -> None:
+    _banner_stop.set()
+
+
 def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
     """.fs 를 윈도우 기본 연결로 연다(= 탐색기 더블클릭). reopen_in_flexisign 폴백용.
 
@@ -850,6 +916,7 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
     locked = input_guard_start()
     if locked:
         logging.info("입력 잠금 ON — 자동 열기 중 키보드/마우스 차단(ESC 취소)")
+    banner_show("🔒 FlexiSIGN에서 여는 중…  잠시 기다려 주세요  (ESC 취소)")
     try:
         try:
             proc = subprocess.Popen(
@@ -877,6 +944,7 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
             out, err = "", ""
     finally:
         input_guard_stop()
+        banner_hide()
     out = out or ""
     if aborted:
         logging.info("reopen_in_flexisign 사용자 ESC 중단")

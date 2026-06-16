@@ -48,7 +48,8 @@ function Invoke-PiBuild([string]$name, [string]$mode) {
     # $mode: '--noconsole' 또는 '--console'
     Push-Location $here
     try {
-        & py -3 -m PyInstaller --noconfirm --onefile $mode --name $name --icon $icoRepo (Join-Path $here 'field_agent.py')
+        # --hidden-import tkinter: '여는 중' 안내 배너용(런타임 지연 import 라 명시해 번들 보장).
+        & py -3 -m PyInstaller --noconfirm --onefile $mode --name $name --icon $icoRepo --hidden-import tkinter (Join-Path $here 'field_agent.py')
     } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller 빌드 실패 ($name). exit=$LASTEXITCODE" }
 }
