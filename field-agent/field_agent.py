@@ -558,34 +558,177 @@ def flexisign_is_running(exe_path: str | None, config: dict) -> bool:
 
 
 def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
-    """.fs 를 윈도우 기본 연결로 연다(= 탐색기 더블클릭과 동일). [FS에서 열기] 의 유일한 동작.
+    """.fs 를 윈도우 기본 연결로 연다(= 탐색기 더블클릭). reopen_in_flexisign 폴백용.
 
-    동작:
-      - FlexiSIGN 에 그 .fs 가 안 열려 있으면 → 디스크 최종저장본을 새 창에 그대로 연다.
-      - 이미 열려 있으면 → FlexiSIGN 이 스스로 '이미 열려있는 문서입니다. 다시 여시겠습니까?'
-        프롬프트를 띄운다. 작업자가 Enter(예) 를 누르면 디스크 최종저장본으로 새로 읽어들인다
-        (저장 안 한 변경은 버려짐 — 그게 '최종저장본 새로 보기' 의도). 아니오면 그대로 둔다.
-
-    원본 파일 자체를 열기 때문에 거기서 편집·재인쇄(웹반영) 하면 원본에 그대로 반영된다.
-    SendKeys/창 자동화가 전혀 없어 작업자가 키보드·마우스를 건드려도 오조작 위험이 없고 즉시 열린다.
-    (구 Ctrl+O 자동화 reopen_in_flexisign 은 제거 — 2026-06-16, 위 네이티브 프롬프트로 충분.)
-
-    구현: 'explorer.exe <경로>' 로 연다(= 진짜 더블클릭). os.startfile(ShellExecute)는 FlexiSIGN
-    처럼 DDE 로 파일 열기를 받는 앱에선 더블클릭과 달리 '다시 여시겠습니까?' 프롬프트를 안 띄우고
-    포커스만 주는 경우가 있어, 탐색기에게 직접 열게 해 더블클릭과 동일 동작을 보장한다.
-    explorer.exe 는 성공해도 종료코드 1 을 흔히 반환하므로 returncode 로 성공 판단하지 않는다."""
+    주의: FlexiSIGN 은 이미 열린 .fs 를 '탐색기 더블클릭/ShellExecute' 로 다시 열면 **새로 안 읽고
+    그 창에 포커스만** 준다(검증: 더블클릭=포커스만). 디스크 최종본을 새로 읽으려면 FlexiSIGN
+    내부 '파일>열기'(Ctrl+O)를 거쳐야 '다시 여시겠습니까?' 프롬프트가 떠 새 창으로 열린다 →
+    그건 reopen_in_flexisign 이 담당. 이 함수는 그게 실패할 때(창 못 찾음 등)의 폴백."""
     try:
-        # shell=False, 전체 경로 한 인자 — explorer 가 .fs 연결 동작(=더블클릭)을 수행.
-        subprocess.Popen(["explorer", str(fs_file)],
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
         return True, str(fs_file)
     except Exception as e:
-        # explorer 호출 자체가 실패하면 ShellExecute 로 폴백(최소한 포커스/열기는 시도).
-        try:
-            os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
-            return True, str(fs_file)
-        except Exception as e2:
-            return False, f".fs 열기 실패({e} / {e2}) — .fs 가 FlexiSIGN 에 연결돼 있는지 확인하세요."
+        return False, f".fs 열기 실패({e}) — .fs 가 FlexiSIGN 에 연결돼 있는지 확인하세요."
+
+
+# FlexiSIGN '파일 > 열기'(Ctrl+O) 자동화 — 탐색기 더블클릭과 달리, 이미 열린 .fs 라도 디스크
+# 최종저장본을 **새 창으로** 열 수 있는 유일한 경로(FlexiSIGN 이 File>Open 때만 '다시 여시겠습니까?'
+# 프롬프트를 띄움). 동작: FlexiSIGN 활성화 → (자기 모달 있으면 Esc) → Ctrl+O → 경로 붙여넣기 →
+# Enter(파일 선택) → '다시 여시겠습니까?' 프롬프트가 뜨면 그게 reopen 프롬프트일 때만 Enter 로 확정.
+#
+# 안전장치(사장님 요구 반영):
+#  - 오조작 방지: 키 전송 동안 BlockInput 으로 작업자의 물리 키보드·마우스를 잠근다(합성 SendKeys
+#    는 통과). finally 로 반드시 해제 → 잠긴 채 안 남음.
+#  - 저장 사고 방지: 파일 선택 후 뜨는 프롬프트가 '다시 여시겠습니까?'(reopen)일 때만 자동 Enter.
+#    '변경 저장?'(저장) 류면 절대 자동으로 안 누르고 작업자에게 맡긴다(미저장 작업 무단 저장 방지).
+#  - DesignCentral/Fill·Stroke 같은 도구 패널(#32770 아님)·타 앱 창(PID 다름)은 안 건드림.
+# 출력(stdout): OK(이미 안 열려 있어 새 창) / OK_REOPENED(reopen 프롬프트 자동 확정) /
+#   OK_PROMPT(프롬프트 떴으나 저장류/불명이라 작업자 대기, 다음 줄 PROMPT|제목|버튼들) /
+#   NOFLEXI / BLOCKED / NODLG. OK* 는 성공, 나머지는 호출부가 os.startfile 폴백.
+_REOPEN_FS_PS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class HDWin {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool BlockInput(bool block);
+  public delegate bool EnumProc(IntPtr h, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lp);
+  public static string ChildTexts(IntPtr parent) {
+    var sb = new StringBuilder();
+    EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) {
+      var t = new StringBuilder(256); GetWindowText(h, t, 256);
+      var s = t.ToString().Trim();
+      if (s.Length > 0) { sb.Append(s); sb.Append(" / "); }
+      return true;
+    }, IntPtr.Zero);
+    return sb.ToString();
+  }
+}
+"@
+function FgClass {
+  $sb = New-Object System.Text.StringBuilder 256
+  [void][HDWin]::GetClassName([HDWin]::GetForegroundWindow(), $sb, 256)
+  $sb.ToString()
+}
+function FgPid {
+  $p = [uint32]0
+  [void][HDWin]::GetWindowThreadProcessId([HDWin]::GetForegroundWindow(), [ref]$p)
+  $p
+}
+$names = @()
+if ($env:HD_FS_PROCS) { $names = ($env:HD_FS_PROCS -split ';') | Where-Object { $_ } }
+$proc = Get-Process | Where-Object {
+  $_.MainWindowHandle -ne 0 -and (
+    ($names -contains $_.ProcessName.ToLower()) -or
+    ($_.MainWindowTitle -match 'FlexiSIGN') -or ($_.MainWindowTitle -match '\.fs')
+  )
+} | Select-Object -First 1
+if (-not $proc) { Write-Output 'NOFLEXI'; exit }
+$ws = New-Object -ComObject WScript.Shell
+[void][HDWin]::BlockInput($true)
+try {
+  $null = $ws.AppActivate($proc.Id)
+  Start-Sleep -Milliseconds 150
+  # FlexiSIGN 자기 소유의 모달(#32770)이 떠 있으면 Esc 로 닫는다(도구 패널·타 앱 창 제외).
+  for ($k = 0; $k -lt 5; $k++) {
+    if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) {
+      [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+      Start-Sleep -Milliseconds 180
+      $null = $ws.AppActivate($proc.Id)
+      Start-Sleep -Milliseconds 100
+    } else { break }
+  }
+  if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { Write-Output 'BLOCKED'; return }
+  $null = $ws.AppActivate($proc.Id)
+  Start-Sleep -Milliseconds 100
+  [System.Windows.Forms.SendKeys]::SendWait('^o')
+  $opened = $false
+  for ($i = 0; $i -lt 20; $i++) {
+    Start-Sleep -Milliseconds 100
+    if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { $opened = $true; break }
+  }
+  if (-not $opened) { Write-Output 'NODLG'; return }
+  $openH = [HDWin]::GetForegroundWindow()
+  Set-Clipboard -Value $env:HD_FS_PATH
+  Start-Sleep -Milliseconds 100
+  [System.Windows.Forms.SendKeys]::SendWait('^v')
+  Start-Sleep -Milliseconds 150
+  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  # 파일 선택 후 FlexiSIGN 이 새 프롬프트(#32770, openH 와 다른 창)를 띄우는지 ~1.5초 관찰.
+  $prompt = [IntPtr]::Zero
+  for ($j = 0; $j -lt 15; $j++) {
+    Start-Sleep -Milliseconds 100
+    $fg = [HDWin]::GetForegroundWindow()
+    if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id -and $fg -ne $openH) { $prompt = $fg; break }
+  }
+  if ($prompt -eq [IntPtr]::Zero) { Write-Output 'OK'; return }  # 안 열려 있던 파일 → 새 창으로 바로 열림.
+  $pt = New-Object System.Text.StringBuilder 256
+  [void][HDWin]::GetWindowText($prompt, $pt, 256)
+  $kids = [HDWin]::ChildTexts($prompt)
+  $msg = ($pt.ToString() + ' ' + $kids)
+  # '저장' 류 프롬프트면 절대 자동 확정 안 함(미저장 작업 보호). reopen 프롬프트일 때만 Enter.
+  if ($msg -match '저장|save') {
+    Write-Output 'OK_PROMPT'
+    Write-Output ("PROMPT|{0}|{1}" -f $pt.ToString(), $kids)
+    return
+  }
+  if ($msg -match '여시|다시|이미 열|already|reopen|re-open') {
+    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')   # '다시 여시겠습니까?' = 예 → 디스크본 새로
+    Write-Output 'OK_REOPENED'
+    return
+  }
+  # 정체불명 프롬프트 — 자동으로 안 누르고 작업자에게.
+  Write-Output 'OK_PROMPT'
+  Write-Output ("PROMPT|{0}|{1}" -f $pt.ToString(), $kids)
+} finally {
+  [void][HDWin]::BlockInput($false)
+}
+"""
+
+
+def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
+    """FlexiSIGN '파일>열기'(Ctrl+O) 자동화로 .fs 의 최종저장본을 새 창으로 연다. 반환 (성공, 사유).
+    창/대화상자 자동화라 실패할 수 있음 — 그 경우 (False, 사유) 로 호출부가 os.startfile 폴백."""
+    exe = resolve_flexisign_exe(config.get("flexisign_exe"))
+    procs = ";".join(
+        (n[:-4] if n.lower().endswith(".exe") else n)
+        for n in _flexisign_process_names(exe, config)
+    )
+    env = dict(os.environ)
+    env["HD_FS_PATH"] = str(fs_file)
+    env["HD_FS_PROCS"] = procs
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
+             "-Command", _REOPEN_FS_PS],
+            capture_output=True, text=True, timeout=30, env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as e:
+        return False, f"FlexiSIGN 자동 열기 실행 실패: {e}"
+    out = (r.stdout or "")
+    logging.info("reopen_in_flexisign rc=%s out=%r", r.returncode, out.strip()[:200])
+    if "OK_PROMPT" in out:
+        prompt = next((ln for ln in out.splitlines() if ln.startswith("PROMPT|")), "")
+        if prompt:
+            logging.warning("reopen_in_flexisign 프롬프트 대기(작업자 처리): %s", prompt[:300])
+        return True, str(fs_file)   # 파일은 선택됨 — 작업자가 프롬프트 확정하면 열림.
+    if "OK_REOPENED" in out or "OK" in out:
+        return True, str(fs_file)
+    if "NOFLEXI" in out:
+        return False, "FlexiSIGN 창을 찾지 못했습니다(최소화/미실행)."
+    if "BLOCKED" in out:
+        return False, "FlexiSIGN 모달 창을 닫지 못해 열기를 진행하지 못했습니다."
+    if "NODLG" in out:
+        return False, "FlexiSIGN 열기 대화상자가 뜨지 않았습니다."
+    return False, f"FlexiSIGN 자동 열기 미확인(rc={r.returncode})."
 
 
 # 탐색기 창 재활용 — [폴더열기] 클릭마다 새 창이 쌓이지 않게 "직전에 우리가 연 창" 을
@@ -914,10 +1057,13 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
                 "needsFlexiSign": True,
                 "message": "FlexiSIGN 이 실행돼 있지 않습니다. FlexiSIGN 을 먼저 켠 뒤 다시 [FS에서 열기] 를 누르세요.",
             }
-        # os.startfile(= 탐색기 더블클릭)로 .fs 를 연다. 안 열려 있으면 디스크 최종저장본이 새로
-        # 뜨고, 이미 열려 있으면 FlexiSIGN 이 '다시 여시겠습니까?' 를 띄워 작업자가 Enter 로 디스크
-        # 최종본을 새로 읽는다(미저장 변경 버림). SendKeys 없음 → 오조작/지연 없음, 원본에 편집·재인쇄 반영.
-        ok, info = open_in_flexisign(fs_file)
+        # 1순위 — FlexiSIGN '파일>열기'(Ctrl+O) 자동화로 디스크 최종본을 새 창으로 연다(탐색기
+        # 더블클릭은 이미 열린 파일에 포커스만 주므로 안 됨). BlockInput 으로 자동화 중 오조작 차단,
+        # '다시 여시겠습니까?' reopen 프롬프트만 자동 확정('저장' 류는 작업자에게). 실패 시 os.startfile 폴백.
+        ok, info = reopen_in_flexisign(fs_file, config)
+        if not ok:
+            logging.info("FS 자동 열기 폴백(os.startfile) [%s]: %s", order_number, info)
+            ok, info = open_in_flexisign(fs_file)
         if not ok:
             return {"opened": False, "message": info}
         logging.info("FS 실행 [%s] → %s (%s)", order_number, fs_file.name, reason)
