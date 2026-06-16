@@ -678,33 +678,49 @@ def _banner_thread(text: str) -> None:
     except Exception:
         return
     try:
+        # 색 팔레트(슬레이트 다크 + 스카이 accent).
+        BG, CARD, ACCENT, FG, SUB = "#0b1220", "#111a2e", "#38bdf8", "#f8fafc", "#94a3b8"
+        w, h = 440, 184
         root = tk.Tk()
         root.withdraw()
         root.overrideredirect(True)          # 타이틀바 없음(=활성화 안 뺏는 팝업)
         root.attributes("-topmost", True)
         try:
-            root.attributes("-alpha", 0.96)
+            root.attributes("-alpha", 0.97)
         except Exception:
             pass
-        w, h = 480, 56
-        x = max(0, (root.winfo_screenwidth() - w) // 2)
-        root.geometry("%dx%d+%d+%d" % (w, h, x, 22))
-        root.configure(bg="#111827")
-        tk.Label(root, text=text, fg="#ffffff", bg="#111827",
-                 font=("맑은 고딕", 13, "bold")).pack(expand=True, fill="both")
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        # 가로는 정중앙, 세로는 살짝 위(28%) — 정중앙에 뜨는 FlexiSIGN '열기' 대화상자와 안 겹치게.
+        x, y = max(0, (sw - w) // 2), max(0, int(sh * 0.28) - h // 2)
+        root.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        root.configure(bg=ACCENT)            # 1px accent 테두리 효과
+        card = tk.Frame(root, bg=CARD)
+        card.pack(fill="both", expand=True, padx=2, pady=2)
+        tk.Frame(card, bg=ACCENT, height=4).pack(fill="x")   # 상단 accent 바
+        body = tk.Frame(card, bg=CARD)
+        body.pack(fill="both", expand=True, padx=26, pady=18)
+        tk.Label(body, text="🔒", bg=CARD, fg=ACCENT, font=("Segoe UI Emoji", 34)).pack()
+        title = tk.Label(body, text="FlexiSIGN에서 여는 중", bg=CARD, fg=FG,
+                         font=("맑은 고딕", 15, "bold"))
+        title.pack(pady=(8, 2))
+        tk.Label(body, text="잠시만 기다려 주세요  ·  ESC 키로 취소", bg=CARD, fg=SUB,
+                 font=("맑은 고딕", 10)).pack()
         root.update_idletasks()
-        # WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW — 포커스 절대 안 뺏기 + 작업표시줄에 안 뜸.
+        # WS_EX_NOACTIVATE(포커스 안 뺏기) + WS_EX_TOOLWINDOW(작업표시줄 숨김) +
+        # WS_EX_TRANSPARENT(클릭 통과 — 혹시 겹쳐도 밑의 열기창으로 클릭 전달).
         try:
-            GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = -20, 0x08000000, 0x00000080
+            GWL_EXSTYLE = -20
+            WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x20, 0x80, 0x08000000
             hwnd = _ct.windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
             cur = _ct.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             _ct.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
-                                             cur | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
-            # 활성화 없이(SWP_NOACTIVATE) 최상단 표시.
+                                             cur | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT)
             _ct.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40)
         except Exception:
             pass
         root.deiconify()
+
+        _tick = [0]
 
         def _poll():
             if _banner_stop.is_set():
@@ -713,6 +729,12 @@ def _banner_thread(text: str) -> None:
                 except Exception:
                     pass
                 return
+            _tick[0] += 1
+            dots = "." * (1 + (_tick[0] // 6) % 3)   # 여는 중. → .. → ... 애니메이션(~300ms)
+            try:
+                title.config(text="FlexiSIGN에서 여는 중" + dots)
+            except Exception:
+                pass
             root.after(50, _poll)
 
         root.after(50, _poll)
