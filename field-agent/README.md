@@ -25,7 +25,6 @@ run.bat
 - `network_customer_base` — 사무실 네트워크 거래처 폴더 베이스 (워처와 동일 경로)
 - `flexisign_exe` — FlexiSIGN 실행파일 절대경로. **보통 비워둔다(`""`)** — 비어 있거나 경로가 없으면 자동 탐지(레지스트리의 `.fs` 연결 프로그램 → `Program Files\SAi\**` 글롭). 이 경로는 **실행 여부 확인 + 시작 로그**에만 쓰이고, 에이전트는 FlexiSIGN 을 새로 띄우지 않는다. 강제로 특정 PC만 다른 경로를 쓰게 하려면 그 PC의 `%LOCALAPPDATA%\HDSignFieldViewer\config.local.json` 에 `{"flexisign_exe": "D:\\...\\App.exe"}` 한 줄을 두면 공유 `config.json` 위에 덮어쓴다.
 - `flexisign_process_name` — 실행 여부를 확인할 프로세스 이미지명. 보통 비워둔다(`flexisign_exe` 파일명으로 자동, 그것도 없으면 `FlexiSign.exe`/`Flexi.exe`/`App.exe` 후보군). 설치 exe 이름이 너무 흔할 때(예: `App.exe` 가 다른 앱과 겹침)만 명시.
-- `flexisign_main_class` — (선택) [FS에서 열기] 자동 재열기(Ctrl+O)가 메인 창 대신 도구 패널을 활성화해 실패할 때만 채운다. WinSpy++ 등으로 FlexiSIGN **메인 편집창**의 Window Class 를 따서 넣으면 그 클래스 창을 직접 전면화한다. 비우면 기존 AppActivate 사용.
 - `port` — 충돌 시만 변경. 변경 시 프론트 환경변수 `VITE_HDSIGN_AGENT_URL` 도 같이.
 - `allowed_origins` — 호출 허용 도메인. 운영 도메인 + 로컬 개발(`http://localhost:5173`) 권장.
 - `fuzzy_threshold` — `.fs` 이름이 미세하게 변형됐을 때 자동 매칭 임계값(0~1, 권장 0.85).
