@@ -568,12 +568,24 @@ def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
 
     원본 파일 자체를 열기 때문에 거기서 편집·재인쇄(웹반영) 하면 원본에 그대로 반영된다.
     SendKeys/창 자동화가 전혀 없어 작업자가 키보드·마우스를 건드려도 오조작 위험이 없고 즉시 열린다.
-    (구 Ctrl+O 자동화 reopen_in_flexisign 은 제거 — 2026-06-16, 위 네이티브 프롬프트로 충분.)"""
+    (구 Ctrl+O 자동화 reopen_in_flexisign 은 제거 — 2026-06-16, 위 네이티브 프롬프트로 충분.)
+
+    구현: 'explorer.exe <경로>' 로 연다(= 진짜 더블클릭). os.startfile(ShellExecute)는 FlexiSIGN
+    처럼 DDE 로 파일 열기를 받는 앱에선 더블클릭과 달리 '다시 여시겠습니까?' 프롬프트를 안 띄우고
+    포커스만 주는 경우가 있어, 탐색기에게 직접 열게 해 더블클릭과 동일 동작을 보장한다.
+    explorer.exe 는 성공해도 종료코드 1 을 흔히 반환하므로 returncode 로 성공 판단하지 않는다."""
     try:
-        os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
+        # shell=False, 전체 경로 한 인자 — explorer 가 .fs 연결 동작(=더블클릭)을 수행.
+        subprocess.Popen(["explorer", str(fs_file)],
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return True, str(fs_file)
     except Exception as e:
-        return False, f".fs 열기 실패({e}) — .fs 가 FlexiSIGN 에 연결돼 있는지 확인하세요."
+        # explorer 호출 자체가 실패하면 ShellExecute 로 폴백(최소한 포커스/열기는 시도).
+        try:
+            os.startfile(str(fs_file))  # type: ignore[attr-defined]  # Windows 전용
+            return True, str(fs_file)
+        except Exception as e2:
+            return False, f".fs 열기 실패({e} / {e2}) — .fs 가 FlexiSIGN 에 연결돼 있는지 확인하세요."
 
 
 # 탐색기 창 재활용 — [폴더열기] 클릭마다 새 창이 쌓이지 않게 "직전에 우리가 연 창" 을
