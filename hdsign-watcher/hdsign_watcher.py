@@ -4226,6 +4226,31 @@ def _schedule_printed_pdf_cleanup(pdf_path: Path, delay_sec: int = 10):
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _fs_stem_from_title(title: str) -> str:
+    """FlexiSIGN 창 제목에서 '<파일명>.fs' 의 stem 을 뽑는다. 못 뽑으면 "".
+
+    FlexiSIGN 은 보통 문서를 'FlexiSIGN - [<파일명>.fs]' 로 [...] 감싸 표시하는데, 파일명
+    자체가 '[변환됨]' 같은 대괄호를 포함할 수 있다(.ai 를 변환해 저장한 거래처는 실제 디스크
+    파일명에 '[변환됨]' 이 박혀 있다 — 예: '...-내,외부 [변환됨].fs'). 옛 추출 정규식은 '[' ']'
+    를 통째로 제외해 '.fs' 바로 앞이 ']' 이면 매칭에 실패 → stem 미검출 → 인쇄 PDF 리네임도
+    .fs UID 스탬프도 조용히 스킵됐다(현장 [FS에서 열기] 가 시각값 폴더만 여는 원인).
+
+    그래서 ① 제목 끝의 [...] 래퍼를 먼저 벗겨 그 안의 '<...>.fs' 를 잡고(대괄호 포함 허용),
+    ② 래퍼가 없는 다른 표기('<파일명>.fs - FlexiSIGN')는 대괄호 없는 기존 패턴으로 폴백한다.
+    """
+    t = (title or "").strip()
+    if not t:
+        return ""
+    # ① 'App - [ ... .fs ]' 래퍼: 끝의 ']' 까지 통째로 잡아 안쪽 '<...>.fs' 추출(브래킷 허용).
+    m = re.search(r'\[(.+\.fs)\]\s*$', t, re.IGNORECASE)
+    if not m:
+        # ② 래퍼 없는 제목 — 경로/금지문자·대괄호 없는 통상 파일명(옛 동작 유지).
+        m = re.search(r'([^\\/:*?"<>|\r\n\[\]]+\.fs)', t, re.IGNORECASE)
+    if not m:
+        return ""
+    return Path(m.group(1).strip()).stem.strip()
+
+
 def _flexisign_window_status() -> tuple[str, str | None, int]:
     """현재 FlexiSIGN(App.exe) 창들 EnumWindows + 제목 분석 → (status, stem, hwnd).
 
@@ -4323,16 +4348,13 @@ def _flexisign_window_status() -> tuple[str, str | None, int]:
         if not windows:
             return ("no_window", None, 0)
 
-        # 제목 어디든 박혀 있는 '<파일명>.fs' 추출 — 경로 포함이면 basename 만.
-        fs_re = re.compile(r'([^\\/:*?"<>|\r\n\[\]]+\.fs)', re.IGNORECASE)
+        # 제목에서 '<파일명>.fs' stem 추출(_fs_stem_from_title) — '[변환됨]' 등 파일명 속
+        # 대괄호까지 포함해 잡는다. 경로 포함이면 basename 만.
         # (stem, hwnd, title) — Z-order 보존. 미저장(더티) 마커 감지는 더 이상 안 함
         # (FlexiSIGN 은 '*' 같은 표기를 안 씀 — 옛 가설은 폐기).
         ordered: list[tuple[str, int, str]] = []
         for h_int, t in windows:
-            m = fs_re.search(t)
-            if not m:
-                continue
-            stem = Path(m.group(1).strip()).stem.strip()
+            stem = _fs_stem_from_title(t)
             if stem and not any(s == stem for s, _, _ in ordered):
                 ordered.append((stem, h_int, t))
         titles_only = [w[1] for w in windows]
