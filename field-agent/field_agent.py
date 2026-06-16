@@ -557,6 +557,113 @@ def flexisign_is_running(exe_path: str | None, config: dict) -> bool:
     return any(f'"{n}"' in out for n in names)
 
 
+# ─── 입력 잠금 가드 (매크로 중 오조작 방지) ──────────────────────────────────
+# [FS에서 열기] Ctrl+O 자동화 동안 작업자의 물리 키보드·마우스를 막는다(사무실 이지폼 입력 가드와
+# 동일 방식). 저수준 훅(WH_MOUSE_LL/WH_KEYBOARD_LL)으로 '주입(SendInput)되지 않은' 물리 입력만
+# 삼키고, 우리 PowerShell 의 SendKeys(INJECTED 플래그)는 통과시킨다 → 자동화 중 작업자가 키보드·
+# 마우스를 건드려도 경로가 깨지거나 엉뚱한 클릭이 안 된다. ESC(물리)는 중단 신호로만 쓴다.
+# BlockInput 과 달리 표준 권한으로도 동작하고 창 포커스를 건드리지 않는다. Ctrl+Alt+Del 은 시스템
+# 예약이라 영구잠김 위험 없음. 자동화 끝나면 항상 해제.
+_guard_abort = threading.Event()
+_guard_tid = 0
+_guard_refs: list = []  # 콜백 GC 방지(살아 있어야 훅 유효)
+_GUARD_AVAILABLE = False
+try:
+    import ctypes
+    from ctypes import wintypes
+    _gu = ctypes.windll.user32
+    _gk = ctypes.windll.kernel32
+    _WH_MOUSE_LL = 14
+    _WH_KEYBOARD_LL = 13
+    _WM_QUIT = 0x0012
+    _LLMHF_INJECTED = 0x00000001
+    _LLKHF_INJECTED = 0x00000010
+    _VK_ESCAPE = 0x1B
+    _LRESULT = ctypes.c_ssize_t
+    _HOOKPROC = ctypes.WINFUNCTYPE(_LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+    class _KBDLL(ctypes.Structure):
+        _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+    class _MSLL(ctypes.Structure):
+        _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD),
+                    ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+    _gu.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+    _gu.SetWindowsHookExW.restype = wintypes.HHOOK
+    _gu.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+    _gu.CallNextHookEx.restype = _LRESULT
+    _gu.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+    _gu.GetMessageW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.UINT]
+    _gu.GetMessageW.restype = ctypes.c_int
+    _gu.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    _gk.GetCurrentThreadId.restype = wintypes.DWORD
+    _gk.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    _gk.GetModuleHandleW.restype = wintypes.HMODULE
+
+    def _mouse_proc(nCode, wParam, lParam):
+        if nCode >= 0:
+            ms = ctypes.cast(lParam, ctypes.POINTER(_MSLL)).contents
+            if not (ms.flags & _LLMHF_INJECTED):
+                return 1  # 사용자 물리 마우스 차단(주입된 우리 입력만 통과)
+        return _gu.CallNextHookEx(None, nCode, wParam, lParam)
+
+    def _kbd_proc(nCode, wParam, lParam):
+        if nCode >= 0:
+            kb = ctypes.cast(lParam, ctypes.POINTER(_KBDLL)).contents
+            if not (kb.flags & _LLKHF_INJECTED):
+                if kb.vkCode == _VK_ESCAPE:
+                    _guard_abort.set()  # ESC → 중단 신호
+                return 1  # 사용자 물리 키 차단
+        return _gu.CallNextHookEx(None, nCode, wParam, lParam)
+
+    def _guard_thread():
+        global _guard_tid
+        _guard_tid = _gk.GetCurrentThreadId()
+        hInst = _gk.GetModuleHandleW(None)
+        mp = _HOOKPROC(_mouse_proc)
+        kp = _HOOKPROC(_kbd_proc)
+        _guard_refs[:] = [mp, kp]
+        hM = _gu.SetWindowsHookExW(_WH_MOUSE_LL, mp, hInst, 0)
+        hK = _gu.SetWindowsHookExW(_WH_KEYBOARD_LL, kp, hInst, 0)
+        msg = wintypes.MSG()
+        while _gu.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            pass  # WM_QUIT 오면 종료
+        if hM:
+            _gu.UnhookWindowsHookEx(hM)
+        if hK:
+            _gu.UnhookWindowsHookEx(hK)
+
+    _GUARD_AVAILABLE = True
+except Exception as _ge:  # noqa: BLE001 — Win32 초기화 실패 시 가드만 비활성, 열기는 그대로 진행
+    logging.warning("입력 잠금 가드 비활성(Win32 초기화 실패): %s", _ge)
+    _GUARD_AVAILABLE = False
+
+
+def input_guard_start() -> bool:
+    """물리 입력 차단 시작. 성공하면 True. (가드 미가용이면 False — 열기는 계속 진행)"""
+    if not _GUARD_AVAILABLE:
+        return False
+    _guard_abort.clear()
+    threading.Thread(target=_guard_thread, daemon=True).start()
+    time.sleep(0.06)  # 훅 설치 + 메시지 큐 생성 잠깐 대기
+    return True
+
+
+def input_guard_stop() -> None:
+    global _guard_tid
+    if _GUARD_AVAILABLE and _guard_tid:
+        _gu.PostThreadMessageW(_guard_tid, _WM_QUIT, 0, 0)
+        _guard_tid = 0
+
+
+def input_guard_aborted() -> bool:
+    return _guard_abort.is_set()
+
+
 def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
     """.fs 를 윈도우 기본 연결로 연다(= 탐색기 더블클릭). reopen_in_flexisign 폴백용.
 
@@ -738,19 +845,45 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
     env = dict(os.environ)
     env["HD_FS_PATH"] = str(fs_file)
     env["HD_FS_PROCS"] = procs
+    # 자동화(Ctrl+O→경로 붙여넣기→Enter) 동안 작업자 물리 입력을 잠가 오조작을 막는다.
+    # 우리 SendKeys 는 주입 입력이라 통과. 작업자가 물리 ESC 를 누르면 즉시 중단(프로세스 종료).
+    locked = input_guard_start()
+    if locked:
+        logging.info("입력 잠금 ON — 자동 열기 중 키보드/마우스 차단(ESC 취소)")
     try:
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
-             "-Command", _REOPEN_FS_PS],
-            capture_output=True, text=True, timeout=30, env=env,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except Exception as e:
-        return False, f"FlexiSIGN 자동 열기 실행 실패: {e}"
-    out = (r.stdout or "")
-    logging.info("reopen_in_flexisign rc=%s out=%r", r.returncode, out.strip()[:200])
-    if r.stderr:  # 단계별 Trace(activate/NOFG 등) — 원인 추적용.
-        logging.info("reopen_in_flexisign trace=%r", r.stderr.strip()[:600])
+        try:
+            proc = subprocess.Popen(
+                ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
+                 "-Command", _REOPEN_FS_PS],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as e:
+            return False, f"FlexiSIGN 자동 열기 실행 실패: {e}"
+        aborted = False
+        deadline = time.monotonic() + 15  # 백스톱(정상 ~2-3초). 멈춰도 이만큼 뒤엔 잠금 해제.
+        while proc.poll() is None:
+            if locked and input_guard_aborted():
+                aborted = True
+                proc.kill()
+                break
+            if time.monotonic() > deadline:
+                proc.kill()
+                break
+            time.sleep(0.1)
+        try:
+            out, err = proc.communicate(timeout=5)
+        except Exception:
+            out, err = "", ""
+    finally:
+        input_guard_stop()
+    out = out or ""
+    if aborted:
+        logging.info("reopen_in_flexisign 사용자 ESC 중단")
+        return False, "사용자가 ESC 로 열기를 취소했습니다."
+    logging.info("reopen_in_flexisign out=%r", out.strip()[:200])
+    if err:  # 단계별 Trace(activate/NOFG 등) — 원인 추적용.
+        logging.info("reopen_in_flexisign trace=%r", err.strip()[:600])
     if "OK_PROMPT" in out:
         prompt = next((ln for ln in out.splitlines() if ln.startswith("PROMPT|")), "")
         if prompt:
@@ -766,7 +899,7 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
         return False, "FlexiSIGN 모달 창을 닫지 못해 열기를 진행하지 못했습니다."
     if "NODLG" in out:
         return False, "FlexiSIGN 열기 대화상자가 뜨지 않았습니다."
-    return False, f"FlexiSIGN 자동 열기 미확인(rc={r.returncode})."
+    return False, "FlexiSIGN 자동 열기 미확인."
 
 
 # 탐색기 창 재활용 — [폴더열기] 클릭마다 새 창이 쌓이지 않게 "직전에 우리가 연 창" 을
