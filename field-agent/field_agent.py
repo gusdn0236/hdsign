@@ -598,8 +598,27 @@ public class HDWin {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool BlockInput(bool block);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   public delegate bool EnumProc(IntPtr h, IntPtr lp);
   [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lp);
+  // AppActivate(WScript.Shell)는 포그라운드 잠금 때문에 다른 프로세스 창을 못 올리는 일이 잦다.
+  // 현재 포그라운드 스레드에 AttachThreadInput 으로 붙어 SetForegroundWindow 권한을 얻어 강제 전면화.
+  public static bool ForceForeground(IntPtr hwnd) {
+    if (hwnd == IntPtr.Zero) return false;
+    if (IsIconic(hwnd)) ShowWindow(hwnd, 9); // SW_RESTORE
+    IntPtr fg = GetForegroundWindow();
+    uint pid;
+    uint fgThread = GetWindowThreadProcessId(fg, out pid);
+    uint myThread = GetCurrentThreadId();
+    if (fgThread != myThread) AttachThreadInput(myThread, fgThread, true);
+    bool ok = SetForegroundWindow(hwnd);
+    if (fgThread != myThread) AttachThreadInput(myThread, fgThread, false);
+    return ok;
+  }
   public static string ChildTexts(IntPtr parent) {
     var sb = new StringBuilder();
     EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) {
@@ -631,23 +650,29 @@ $proc = Get-Process | Where-Object {
   )
 } | Select-Object -First 1
 if (-not $proc) { Write-Output 'NOFLEXI'; exit }
-$ws = New-Object -ComObject WScript.Shell
+$mainH = $proc.MainWindowHandle
 [void][HDWin]::BlockInput($true)
 try {
-  $null = $ws.AppActivate($proc.Id)
-  Start-Sleep -Milliseconds 150
+  $fgOk = [HDWin]::ForceForeground($mainH)
+  Start-Sleep -Milliseconds 200
+  [Console]::Error.WriteLine(("[reopen] activate: forceFg={0} fgPid={1} fgClass={2} (flexiPid={3})" -f $fgOk, (FgPid), (FgClass), $proc.Id))
   # FlexiSIGN 자기 소유의 모달(#32770)이 떠 있으면 Esc 로 닫는다(도구 패널·타 앱 창 제외).
   for ($k = 0; $k -lt 5; $k++) {
     if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) {
       [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
       Start-Sleep -Milliseconds 180
-      $null = $ws.AppActivate($proc.Id)
+      [void][HDWin]::ForceForeground($mainH)
       Start-Sleep -Milliseconds 100
     } else { break }
   }
   if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { Write-Output 'BLOCKED'; return }
-  $null = $ws.AppActivate($proc.Id)
-  Start-Sleep -Milliseconds 100
+  [void][HDWin]::ForceForeground($mainH)
+  Start-Sleep -Milliseconds 120
+  # FlexiSIGN 메인창이 실제로 전면인지 확인 — 아니면 ^o 가 엉뚱한 창에 가므로 NOFG 로 폴백.
+  if ((FgPid) -ne $proc.Id) {
+    [Console]::Error.WriteLine(("[reopen] NOFG: fgPid={0} != flexiPid={1}" -f (FgPid), $proc.Id))
+    Write-Output 'NOFG'; return
+  }
   [System.Windows.Forms.SendKeys]::SendWait('^o')
   $opened = $false
   for ($i = 0; $i -lt 20; $i++) {
@@ -715,6 +740,8 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
         return False, f"FlexiSIGN 자동 열기 실행 실패: {e}"
     out = (r.stdout or "")
     logging.info("reopen_in_flexisign rc=%s out=%r", r.returncode, out.strip()[:200])
+    if r.stderr:  # 단계별 Trace(activate/NOFG 등) — 원인 추적용.
+        logging.info("reopen_in_flexisign trace=%r", r.stderr.strip()[:600])
     if "OK_PROMPT" in out:
         prompt = next((ln for ln in out.splitlines() if ln.startswith("PROMPT|")), "")
         if prompt:
@@ -724,6 +751,8 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
         return True, str(fs_file)
     if "NOFLEXI" in out:
         return False, "FlexiSIGN 창을 찾지 못했습니다(최소화/미실행)."
+    if "NOFG" in out:
+        return False, "FlexiSIGN 창을 전면으로 올리지 못했습니다(포커스 잠금)."
     if "BLOCKED" in out:
         return False, "FlexiSIGN 모달 창을 닫지 못해 열기를 진행하지 못했습니다."
     if "NODLG" in out:
@@ -1144,12 +1173,33 @@ def serve_forever(config: dict) -> None:
         server.server_close()
 
 
+def _log_file_path() -> Path:
+    """진단용 로그 파일 경로 — 정식(창 없음) 빌드는 콘솔이 없어 로그가 사라지므로 파일로도 남긴다."""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    d = Path(base) / "HDSignFieldViewer"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return Path(base) / "hdsign_field_agent.log"
+    return d / "agent.log"
+
+
 def main() -> None:
+    handlers: list = [logging.StreamHandler()]  # 디버그(콘솔) 빌드용.
+    try:
+        from logging.handlers import RotatingFileHandler
+        fh = RotatingFileHandler(str(_log_file_path()), maxBytes=1_000_000,
+                                 backupCount=3, encoding="utf-8")
+        handlers.append(fh)  # 정식 빌드에서도 reopen rc/out·trace 를 파일로 확인 가능.
+    except Exception:
+        pass
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
+        handlers=handlers,
     )
+    logging.info("로그 파일: %s", _log_file_path())
     config = load_config()
     serve_forever(config)
 
