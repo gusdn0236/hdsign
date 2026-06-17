@@ -668,33 +668,66 @@ def input_guard_aborted() -> bool:
 # 입력이 잠긴 동안 작업자가 "멈췄나?" 오해하지 않게 상단 중앙에 작은 띠를 띄운다. 포커스를 절대
 # 안 가져가야(WS_EX_NOACTIVATE) FlexiSIGN 열기 자동화를 안 깬다 — 게다가 배너 표시 직후 PS 가
 # FlexiSIGN 을 다시 전면화하므로 안전. tkinter 미가용/실패 시 배너만 생략(잠금·열기는 그대로).
-_banner_stop = threading.Event()
+#
+# ⚠️ 스레드 안전(이 구조의 핵심 이유): tkinter/Tcl 인터프리터는 "만든 스레드"에서만 다뤄야 한다.
+# 예전엔 [FS에서 열기] 마다 새 데몬 스레드에서 tk.Tk() 를 만들고 destroy 했는데, destroy 후에도
+# 남은 Tcl 객체가 나중에 *다른 스레드*의 GC 로 수거되며
+#     Tcl_AsyncDelete: async handler deleted by the wrong thread   (Windows fatal exception 0x80000003)
+# 로 프로세스가 통째로 죽었다. 특히 [폴더열기]의 subprocess 호출(_navigate_or_open)이 GC 를
+# 유발하는 지점이라, FS 열기 몇 번 뒤 폴더열기를 누르면 에이전트가 꺼지는 증상으로 나타났다.
+# → Tk 를 프로세스 생애 동안 "단 하나"만 만들어 전용 UI 스레드에서 영구 보존하고(절대 destroy 안
+#   함), 배너는 Toplevel 하나를 withdraw/deiconify 로 재사용한다. show/hide 는 큐로 그 UI 스레드에
+#   넘겨 모든 Tcl 호출이 한 스레드 안에서만 일어나게 한다 → 교차 스레드 수거가 원천적으로 불가능.
+import queue as _queue
+
+_BANNER_AVAILABLE = False
+try:
+    import tkinter as _tk_probe  # noqa: F401 — 가용성만 확인(실제 사용은 UI 스레드에서 재import)
+    _BANNER_AVAILABLE = True
+except Exception:
+    _BANNER_AVAILABLE = False
+
+_ui_cmd_q: "_queue.Queue[str]" = _queue.Queue()
+_ui_thread_started = False
+_ui_thread_lock = threading.Lock()
 
 
-def _banner_thread(text: str) -> None:
+def _ui_thread_main() -> None:
+    """단일 Tk 를 만들어 프로세스 생애 동안 보존하는 전용 UI 스레드. mainloop 는 끝나지 않고,
+    Tk/Toplevel 을 destroy 하지 않는다(withdraw 로 숨김). 큐로 들어온 show/hide 만 처리 →
+    모든 Tcl 호출이 이 스레드 안에서만 일어나 교차 스레드 GC 수거(Tcl_AsyncDelete)가 불가능."""
     try:
         import tkinter as tk
         import ctypes as _ct
     except Exception:
         return
     try:
-        # 색 팔레트(슬레이트 다크 + 스카이 accent).
-        BG, CARD, ACCENT, FG, SUB = "#0b1220", "#111a2e", "#38bdf8", "#f8fafc", "#94a3b8"
-        w, h = 440, 184
         root = tk.Tk()
         root.withdraw()
-        root.overrideredirect(True)          # 타이틀바 없음(=활성화 안 뺏는 팝업)
-        root.attributes("-topmost", True)
+    except Exception:
+        return
+
+    # 색 팔레트(슬레이트 다크 + 스카이 accent).
+    CARD, ACCENT, FG, SUB = "#111a2e", "#38bdf8", "#f8fafc", "#94a3b8"
+    w, h = 440, 184
+    state = {"top": None, "title": None, "shown": False, "tick": 0}
+
+    def _build():
+        """배너 Toplevel 을 한 번만 만든다(이후 재사용). 이 함수는 UI 스레드에서만 호출."""
+        top = tk.Toplevel(root)
+        top.withdraw()
+        top.overrideredirect(True)          # 타이틀바 없음(=활성화 안 뺏는 팝업)
+        top.attributes("-topmost", True)
         try:
-            root.attributes("-alpha", 0.97)
+            top.attributes("-alpha", 0.97)
         except Exception:
             pass
-        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
         # 가로는 정중앙, 세로는 살짝 위(28%) — 정중앙에 뜨는 FlexiSIGN '열기' 대화상자와 안 겹치게.
         x, y = max(0, (sw - w) // 2), max(0, int(sh * 0.28) - h // 2)
-        root.geometry("%dx%d+%d+%d" % (w, h, x, y))
-        root.configure(bg=ACCENT)            # 1px accent 테두리 효과
-        card = tk.Frame(root, bg=CARD)
+        top.geometry("%dx%d+%d+%d" % (w, h, x, y))
+        top.configure(bg=ACCENT)            # 1px accent 테두리 효과
+        card = tk.Frame(top, bg=CARD)
         card.pack(fill="both", expand=True, padx=2, pady=2)
         tk.Frame(card, bg=ACCENT, height=4).pack(fill="x")   # 상단 accent 바
         body = tk.Frame(card, bg=CARD)
@@ -705,51 +738,89 @@ def _banner_thread(text: str) -> None:
         title.pack(pady=(8, 2))
         tk.Label(body, text="잠시만 기다려 주세요  ·  ESC 키로 취소", bg=CARD, fg=SUB,
                  font=("맑은 고딕", 10)).pack()
-        root.update_idletasks()
+        top.update_idletasks()
         # WS_EX_NOACTIVATE(포커스 안 뺏기) + WS_EX_TOOLWINDOW(작업표시줄 숨김) +
         # WS_EX_TRANSPARENT(클릭 통과 — 혹시 겹쳐도 밑의 열기창으로 클릭 전달).
         try:
             GWL_EXSTYLE = -20
             WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x20, 0x80, 0x08000000
-            hwnd = _ct.windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
+            hwnd = _ct.windll.user32.GetParent(top.winfo_id()) or top.winfo_id()
             cur = _ct.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             _ct.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
                                              cur | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT)
             _ct.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40)
         except Exception:
             pass
-        root.deiconify()
+        state["top"], state["title"] = top, title
 
-        _tick = [0]
-
-        def _poll():
-            if _banner_stop.is_set():
-                try:
-                    root.destroy()
-                except Exception:
-                    pass
-                return
-            _tick[0] += 1
-            dots = "." * (1 + (_tick[0] // 6) % 3)   # 여는 중. → .. → ... 애니메이션(~300ms)
+    def _poll():
+        # 큐 명령 소진 — 모든 Tcl 조작은 여기(UI 스레드)에서만.
+        try:
+            while True:
+                cmd = _ui_cmd_q.get_nowait()
+                if cmd == "show":
+                    if state["top"] is None:
+                        try:
+                            _build()
+                        except Exception:
+                            state["top"] = None
+                    state["tick"] = 0
+                    state["shown"] = True
+                    if state["top"] is not None:
+                        try:
+                            state["top"].deiconify()
+                            state["top"].lift()
+                        except Exception:
+                            pass
+                elif cmd == "hide":
+                    state["shown"] = False
+                    if state["top"] is not None:
+                        try:
+                            state["top"].withdraw()
+                        except Exception:
+                            pass
+        except _queue.Empty:
+            pass
+        # 여는 중. → .. → ... 애니메이션(~300ms)
+        if state["shown"] and state["title"] is not None:
+            state["tick"] += 1
+            dots = "." * (1 + (state["tick"] // 6) % 3)
             try:
-                title.config(text="FlexiSIGN에서 여는 중" + dots)
+                state["title"].config(text="FlexiSIGN에서 여는 중" + dots)
             except Exception:
                 pass
-            root.after(50, _poll)
-
         root.after(50, _poll)
+
+    root.after(50, _poll)
+    try:
         root.mainloop()
     except Exception:
         pass
 
 
+def _ensure_ui_thread() -> None:
+    """배너 UI 스레드를 (한 번만) 띄운다. 데몬이라 프로세스 종료 시 함께 정리."""
+    global _ui_thread_started
+    if not _BANNER_AVAILABLE:
+        return
+    with _ui_thread_lock:
+        if not _ui_thread_started:
+            threading.Thread(target=_ui_thread_main, daemon=True).start()
+            _ui_thread_started = True
+
+
 def banner_show(text: str) -> None:
-    _banner_stop.clear()
-    threading.Thread(target=_banner_thread, args=(text,), daemon=True).start()
+    # text 는 호환용(현재 배너 문구는 고정). 큐로 UI 스레드에 위임 — Tcl 호출 없음.
+    if not _BANNER_AVAILABLE:
+        return
+    _ensure_ui_thread()
+    _ui_cmd_q.put("show")
 
 
 def banner_hide() -> None:
-    _banner_stop.set()
+    if not _BANNER_AVAILABLE:
+        return
+    _ui_cmd_q.put("hide")
 
 
 def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
