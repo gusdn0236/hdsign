@@ -919,10 +919,27 @@ public class HDWin {
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint a, uint b, IntPtr c, uint d);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   public delegate bool EnumProc(IntPtr h, IntPtr lp);
   [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  // 한 프로세스(FlexiSIGN)에 속한, 떠 있는 #32770 대화상자('열기'/'저장' 등)들을 모은다.
+  // 포그라운드가 아니어도 찾아낸다 — 숨어 있던 '열기'창을 먼저 닫으려고(안 닫으면 Ctrl+O 무효=NODLG).
+  public static System.Collections.Generic.List<IntPtr> DialogWindows(uint pid) {
+    var list = new System.Collections.Generic.List<IntPtr>();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint p; GetWindowThreadProcessId(h, out p);
+      if (p == pid && IsWindowVisible(h)) {
+        var sb = new StringBuilder(64); GetClassName(h, sb, 64);
+        if (sb.ToString() == "#32770") list.Add(h);
+      }
+      return true;
+    }, IntPtr.Zero);
+    return list;
+  }
   // 다른 프로세스(예: Chrome 사이드바)가 전면일 때 FlexiSIGN 을 전면으로 끌어올린다.
   // AppActivate/단순 SetForegroundWindow 는 '포그라운드 잠금 타임아웃' 때문에 실패한다(로그상 forceFg=False).
   //   → ① 잠금 타임아웃을 0 으로(SPI_SETFOREGROUNDLOCKTIMEOUT) ② 현재 전면 스레드에 AttachThreadInput
@@ -973,13 +990,43 @@ $proc = Get-Process | Where-Object {
 } | Select-Object -First 1
 if (-not $proc) { Write-Output 'NOFLEXI'; exit }
 $mainH = $proc.MainWindowHandle
+function ActTarget {
+  # 활성화 대상: 모달(예: 이미 떠 있는 '열기'/'저장' #32770 대화상자)이 있으면 그 모달을,
+  # 없으면 메인창을. 모달이 뜨면 메인창은 disabled 라 SetForegroundWindow 가 안 먹혀
+  # NOFG 로 떨어지던 버그 수정 — 모달을 전면화해야 아래 ESC 루프가 그걸 닫을 수 있다.
+  $t = [HDWin]::GetLastActivePopup($mainH)
+  if ($t -eq [IntPtr]::Zero) { $mainH } else { $t }
+}
 [void][HDWin]::BlockInput($true)
 try {
+  # 0) 이미 떠 있는 FlexiSIGN '열기' 대화상자(#32770, 제목=열기/Open)를 먼저 닫는다. 안 닫으면
+  #    그게 모달이라 새 Ctrl+O 가 무효가 돼 '열기'창이 안 떠 NODLG 로 폴백됐다(포그라운드가 아닌,
+  #    메인창 뒤에 숨은 것도 EnumWindows 로 찾아냄). ⚠️ FlexiSIGN 도구 패널(DesignCentral/
+  #    Fill·Stroke/디자인 편집기)도 #32770 이라, 제목이 '열기/Open' 인 파일 대화상자만 골라 닫는다.
+  #    ESC=취소라 비파괴. 작업자가 [열기]/[폴더열기]를 누른 것 = 그 '열기'창을 새로 열겠다는 뜻.
+  $preN = 0
+  for ($d = 0; $d -lt 6; $d++) {
+    $openDlgs = @()
+    foreach ($dh in @([HDWin]::DialogWindows([uint32]$proc.Id))) {
+      $tt = New-Object System.Text.StringBuilder 256
+      [void][HDWin]::GetWindowText($dh, $tt, 256)
+      if ($tt.ToString() -match '열기|Open') { $openDlgs += $dh }
+    }
+    if ($openDlgs.Count -eq 0) { break }
+    foreach ($dh in $openDlgs) {
+      [void][HDWin]::ForceForeground($dh)
+      Start-Sleep -Milliseconds 80
+      [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+      Start-Sleep -Milliseconds 160
+      $preN++
+    }
+  }
+  [Console]::Error.WriteLine(("[reopen] preclose: closedOpenDlgs={0}" -f $preN))
   # FlexiSIGN 메인창을 전면으로 — 다른 앱(Chrome 사이드바)이 전면이면 잠금 때문에 한 번에 안 될 수
   # 있어 여러 번 시도하며 실제 전면이 될 때까지 폴링한다.
   $got = $false
   for ($a = 0; $a -lt 10; $a++) {
-    if ([HDWin]::ForceForeground($mainH)) { $got = $true; break }
+    if ([HDWin]::ForceForeground((ActTarget))) { $got = $true; break }
     Start-Sleep -Milliseconds 120
     if ((FgPid) -eq $proc.Id) { $got = $true; break }
   }
@@ -990,7 +1037,7 @@ try {
     if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) {
       [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
       Start-Sleep -Milliseconds 180
-      [void][HDWin]::ForceForeground($mainH)
+      [void][HDWin]::ForceForeground((ActTarget))
       Start-Sleep -Milliseconds 100
     } else { break }
   }
