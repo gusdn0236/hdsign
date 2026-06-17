@@ -895,9 +895,12 @@ def open_in_flexisign(fs_file: Path) -> tuple[bool, str]:
 #  - 저장 사고 방지: 파일 선택 후 뜨는 프롬프트가 '다시 여시겠습니까?'(reopen)일 때만 자동 Enter.
 #    '변경 저장?'(저장) 류면 절대 자동으로 안 누르고 작업자에게 맡긴다(미저장 작업 무단 저장 방지).
 #  - DesignCentral/Fill·Stroke 같은 도구 패널(#32770 아님)·타 앱 창(PID 다름)은 안 건드림.
+# 모드(env HD_OPEN_MODE): 기본='file'(파일 열기). 'folder' 면 파일 대신 폴더 경로를 넣고 Enter →
+#   '열기' 대화상자가 그 폴더로 이동만 하고 닫히지 않음(작업자가 직접 파일 선택) → OK_FOLDER.
 # 출력(stdout): OK(이미 안 열려 있어 새 창) / OK_REOPENED(reopen 프롬프트 자동 확정) /
 #   OK_PROMPT(프롬프트 떴으나 저장류/불명이라 작업자 대기, 다음 줄 PROMPT|제목|버튼들) /
-#   NOFLEXI / BLOCKED / NODLG. OK* 는 성공, 나머지는 호출부가 os.startfile 폴백.
+#   OK_FOLDER(폴더 모드 — 대화상자를 그 폴더로 이동) /
+#   NOFLEXI / BLOCKED / NODLG. OK* 는 성공, 나머지는 호출부가 os.startfile/탐색기 폴백.
 _REOPEN_FS_PS = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Windows.Forms
@@ -1008,6 +1011,14 @@ try {
   [System.Windows.Forms.SendKeys]::SendWait('^v')
   Start-Sleep -Milliseconds 150
   [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  if ($env:HD_OPEN_MODE -eq 'folder') {
+    # [폴더열기] — 파일이 아니라 '폴더 경로'를 넣고 Enter → '열기' 대화상자가 그 폴더로 이동만
+    # 하고 닫히지 않는다. 자동화는 여기서 끝 — 호출부가 입력잠금을 풀어 작업자가 그 안에서
+    # 직접 파일을 고른다(탐색기 창을 따로 안 띄움). 대화상자가 살아있으면 성공.
+    Start-Sleep -Milliseconds 250
+    if ((FgClass) -eq '#32770' -and (FgPid) -eq $proc.Id) { Write-Output 'OK_FOLDER'; return }
+    Write-Output 'NODLG'; return   # 대화상자가 닫힘/사라짐(폴더 경로 거부 등) → 탐색기 폴백.
+  }
   # 파일 선택 후 FlexiSIGN 이 새 프롬프트(#32770, openH 와 다른 창)를 띄우는지 ~1.5초 관찰.
   $prompt = [IntPtr]::Zero
   for ($j = 0; $j -lt 15; $j++) {
@@ -1040,16 +1051,24 @@ try {
 """
 
 
-def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
-    """FlexiSIGN '파일>열기'(Ctrl+O) 자동화로 .fs 의 최종저장본을 새 창으로 연다. 반환 (성공, 사유).
-    창/대화상자 자동화라 실패할 수 있음 — 그 경우 (False, 사유) 로 호출부가 os.startfile 폴백."""
+def reopen_in_flexisign(fs_file: Path, config: dict, mode: str = "file") -> tuple[bool, str]:
+    """FlexiSIGN '파일>열기'(Ctrl+O) 자동화. 반환 (성공, 사유).
+    mode='file'(기본): fs_file 의 최종저장본을 새 창으로 연다.
+    mode='folder': fs_file(=폴더 경로) 까지만 넣어 '열기' 대화상자를 그 폴더로 이동시키고 끝
+      (파일 선택은 작업자에게 맡김 — 탐색기 창 안 띄움).
+    창/대화상자 자동화라 실패할 수 있음 — 그 경우 (False, 사유) 로 호출부가 폴백."""
     exe = resolve_flexisign_exe(config.get("flexisign_exe"))
     procs = ";".join(
         (n[:-4] if n.lower().endswith(".exe") else n)
         for n in _flexisign_process_names(exe, config)
     )
+    # 폴더 모드는 경로 끝에 구분자를 붙여 '파일이 아니라 폴더'임을 대화상자에 분명히 알린다.
+    path_str = str(fs_file)
+    if mode == "folder" and not path_str.endswith(("\\", "/")):
+        path_str += "\\"
     env = dict(os.environ)
-    env["HD_FS_PATH"] = str(fs_file)
+    env["HD_FS_PATH"] = path_str
+    env["HD_OPEN_MODE"] = mode
     env["HD_FS_PROCS"] = procs
     # 자동화(Ctrl+O→경로 붙여넣기→Enter) 동안 작업자 물리 입력을 잠가 오조작을 막는다.
     # 우리 SendKeys 는 주입 입력이라 통과. 작업자가 물리 ESC 를 누르면 즉시 중단(프로세스 종료).
@@ -1092,6 +1111,8 @@ def reopen_in_flexisign(fs_file: Path, config: dict) -> tuple[bool, str]:
     logging.info("reopen_in_flexisign out=%r", out.strip()[:200])
     if err:  # 단계별 Trace(activate/NOFG 등) — 원인 추적용.
         logging.info("reopen_in_flexisign trace=%r", err.strip()[:600])
+    if "OK_FOLDER" in out:   # 폴더 모드 — 대화상자를 그 폴더로 이동, 작업자가 파일 선택.
+        return True, str(fs_file)
     if "OK_PROMPT" in out:
         prompt = next((ln for ln in out.splitlines() if ln.startswith("PROMPT|")), "")
         if prompt:
@@ -1464,8 +1485,10 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
         }
 
     def process_open_folder(self, order_number: str) -> dict:
-        """[폴더열기] — 그 지시서의 .fs(찾으면 그 파일이 든 폴더), 못 찾으면 거래처 폴더를
-        탐색기로 연다. FlexiSIGN 은 건드리지 않는다."""
+        """[폴더열기] — 그 지시서의 .fs 가 든 폴더(못 찾으면 거래처 폴더)를 연다.
+        1순위: FlexiSIGN 이 떠 있으면 그 '파일>열기'(Ctrl+O) 대화상자를 이 폴더로 이동시켜
+          작업자가 FlexiSIGN 안에서 바로 파일을 고르게 한다(탐색기 창을 따로 안 띄움).
+        폴백: FlexiSIGN 미실행/대화상자 자동화 실패 시 기존처럼 탐색기로 폴더를 연다."""
         config = self.config
         api_base = (config.get("api_base") or "").strip()
         network_base_str = (config.get("network_customer_base") or "").strip()
@@ -1498,16 +1521,34 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             }
         target = fs_file.parent if fs_file is not None else customer_folder
         matched_file = fs_file.name if fs_file is not None else None
-        open_folder_in_explorer(target)
-        logging.info("폴더 열기 [%s] → %s%s", order_number, target,
-                     f" (.fs: {matched_file})" if matched_file else "")
+
+        # 1순위 — FlexiSIGN 이 떠 있으면 그 '열기' 대화상자를 이 폴더로 이동(작업자가 파일 직접 선택).
+        flexisign_exe = resolve_flexisign_exe(config.get("flexisign_exe"))
+        via_flexi = False
+        if flexisign_is_running(flexisign_exe, config):
+            ok, info = reopen_in_flexisign(target, config, mode="folder")
+            via_flexi = ok
+            if not ok:
+                logging.info("폴더 열기 FS 대화상자 실패 → 탐색기 폴백 [%s]: %s", order_number, info)
+        if not via_flexi:
+            open_folder_in_explorer(target)   # FlexiSIGN 미실행/실패 — 기존 탐색기 열기.
+
+        logging.info("폴더 열기 [%s] → %s%s (%s)", order_number, target,
+                     f" (.fs: {matched_file})" if matched_file else "",
+                     "FS대화상자" if via_flexi else "탐색기")
+        if via_flexi:
+            msg = ("FlexiSIGN '열기' 창을 그 폴더로 옮겼습니다 — 파일을 선택하세요"
+                   + (f" (예: {matched_file})." if matched_file else "."))
+        else:
+            msg = (f"{matched_file} 가 든 폴더를 열었습니다." if matched_file
+                   else "거래처 폴더를 열었습니다.")
         return {
             "opened": True,
             "folder": str(target),
             "matchedFile": matched_file,
+            "viaFlexiSign": via_flexi,
             "customerFolder": str(customer_folder) if customer_folder is not None else None,
-            "message": (f"{matched_file} 가 든 폴더를 열었습니다." if matched_file
-                        else "거래처 폴더를 열었습니다."),
+            "message": msg,
         }
 
 
