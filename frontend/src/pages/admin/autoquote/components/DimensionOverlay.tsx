@@ -77,19 +77,14 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, c
       const by = contentBox.y * stageH;
       const bw = contentBox.w * stageW;
       const bh = contentBox.h * stageH;
+      // 가로(ink bbox 폭)는 아트워크 폭과 정확히 일치함이 확인됨 → 가로를 '기준축'으로 고정(폭 그대로).
+      // 세로는 contentBox 높이에 늘이지 않고 DXF 본래 비율로 높이를 계산해 가운데 정렬한다.
+      // (인쇄 이미지에 섞인 여분 잉크로 세로 ink bbox 가 더 큰 경우의 세로 늘어짐·좌우 압축을 동시에 방지.)
       const ea = ext.w / ext.h;
-      const ba = bw / bh;
-      if (ea >= ba) {
-        cw = bw;
-        ch = bw / ea;
-        ox = bx;
-        oy = by + (bh - ch) / 2;
-      } else {
-        ch = bh;
-        cw = bh * ea;
-        oy = by;
-        ox = bx + (bw - cw) / 2;
-      }
+      cw = bw;
+      ch = bw / ea;
+      ox = bx;
+      oy = by + (bh - ch) / 2;
     } else {
       const ea = ext.w / ext.h;
       const ia = stageW / stageH;
