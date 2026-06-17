@@ -392,7 +392,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [stageH, setStageH] = useState(0);
   const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~10). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
-  const [mode, setMode] = useState<'hand' | 'ocr'>('hand'); // 진입 기본=이동(1). 글자AI=영역 OCR(2). 지시서 위 말풍선 작성(옛 cursor)은 비활성화 — 우측 명세서로만 작성.
+  const [mode, setMode] = useState<'hand' | 'ocr' | 'dim'>('hand'); // 진입 기본=이동(1). 글자AI=영역 OCR(2). 치수=오브젝트 측정(3). 지시서 위 말풍선 작성(옛 cursor)은 비활성화 — 우측 명세서로만 작성.
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
   const [confirmAt, setConfirmAt] = useState<{ x: number; y: number } | null>(null); // ✓/✕ 위치 — 마지막으로 그린 지점(콘텐츠 좌표). 우측상단에 띄움.
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
@@ -413,8 +413,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
-  // 치수 오버레이 — '📐 치수' 토글 시 지시서 위에 오브젝트별 가로세로(mm) 표시. geom 은 토글 시 1회 로드.
-  const [dimMode, setDimMode] = useState(false);
+  // 치수 오버레이 — 3번 모드(mode==='dim')일 때 지시서 위에 오브젝트별/구간 가로세로(mm) 표시.
+  const dimMode = mode === 'dim';
   const [dimGeom, setDimGeom] = useState<DimGeom | null>(null);
   // 치수 모드를 처음 켤 때 서버에서 지오메트리(mm) 1회 로드(공개 프록시). 부차 기능 — 실패 시 조용히.
   useEffect(() => {
@@ -436,6 +436,60 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       alive = false;
     };
   }, [dimMode, dimGeom, order]);
+  // 정렬용 — 렌더된 지시서 이미지의 '흰 여백 제외 내용 영역'(0..1)을 계산해, 도면 extent 를 이 영역에
+  // 매핑(여백만큼 정확). imgSrc 는 pdf.js dataURL 이라 canvas 픽셀 읽기 가능(taint 없음).
+  const [dimContentBox, setDimContentBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  useEffect(() => {
+    if (!dimMode || !imgSrc) return;
+    let alive = true;
+    const im = new Image();
+    im.onload = () => {
+      try {
+        const W = im.naturalWidth;
+        const H = im.naturalHeight;
+        if (!W || !H) return;
+        const scale = Math.min(1, 1100 / Math.max(W, H)); // 속도 위해 다운샘플
+        const cw = Math.max(1, Math.round(W * scale));
+        const ch = Math.max(1, Math.round(H * scale));
+        const c = document.createElement('canvas');
+        c.width = cw;
+        c.height = ch;
+        const ctx = c.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(im, 0, 0, cw, ch);
+        const d = ctx.getImageData(0, 0, cw, ch).data;
+        let minX = cw;
+        let minY = ch;
+        let maxX = -1;
+        let maxY = -1;
+        for (let y = 0; y < ch; y++) {
+          for (let x = 0; x < cw; x++) {
+            const i = (y * cw + x) * 4;
+            if (d[i] < 240 || d[i + 1] < 240 || d[i + 2] < 240) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        if (alive && maxX >= minX && maxY >= minY) {
+          setDimContentBox({
+            x: minX / cw,
+            y: minY / ch,
+            w: (maxX - minX + 1) / cw,
+            h: (maxY - minY + 1) / ch,
+          });
+        }
+      } catch {
+        /* 타이밍/taint 시 폴백(fit-가운데 매핑) */
+      }
+    };
+    im.src = imgSrc;
+    return () => {
+      alive = false;
+    };
+  }, [dimMode, imgSrc]);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
 
@@ -554,8 +608,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           return;
         }
         setOrder(o);
-        setDimMode(false);   // 새 주문 — 치수 오버레이 초기화(다음 토글 시 새로 로드).
+        setMode((m) => (m === 'dim' ? 'hand' : m)); // 새 주문 — 치수 모드면 이동으로.
         setDimGeom(null);
+        setDimContentBox(null);
         const label = `${o.clientCompanyName || ''} · ${o.title || o.orderNumber}`;
         if (o.worksheetPdfUrl) {
           // 화질 우선: 업로드 PDF 1페이지를 고해상 렌더. 실패(CORS 등) 시 썸네일 폴백.
@@ -1073,12 +1128,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   useEffect(() => {
     const onNum = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key !== '1' && e.key !== '2') return;
+      if (e.key !== '1' && e.key !== '2' && e.key !== '3') return;
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
       e.preventDefault();
       if (e.key === '1') {
         setMode('hand'); // 1 = 지시서 이동
+      } else if (e.key === '3') {
+        setMode('dim'); // 3 = 치수(오브젝트 측정)
       } else if (modeRef.current === 'ocr') {
         // 2 = 글자AI. 이미 글자AI 모드면 재입력 = 박스→연필→지우개 순환.
         setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'));
@@ -2665,16 +2722,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         <span className="aq-hint">{status}</span>
         <span className="aq-sp" />
         {imgSrc && <span className="aq-hint" style={{ marginRight: 4 }}>휠로 확대 · {Math.round(zoom * 100)}%</span>}
-        {imgSrc && order?.worksheetObjectsUrl && (
-          <button
-            className="aq-x"
-            title="치수 보기 — 지시서 오브젝트 클릭 시 가로세로(mm)"
-            onClick={() => setDimMode((v) => !v)}
-            style={dimMode ? { background: '#0a9396', color: '#fff' } : undefined}
-          >
-            📐 치수
-          </button>
-        )}
         {zoom !== 1 && (
           <button
             className="aq-x"
@@ -2777,6 +2824,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 >
                   오늘 남은 횟수: {visionQuota.remaining}/{visionQuota.limit}
                 </span>
+              )}
+              {order?.worksheetObjectsUrl && (
+                <button
+                  type="button"
+                  className={'aq-toolbtn' + (mode === 'dim' ? ' on' : '')}
+                  title="치수 — 오브젝트에 올리면 가로세로(mm), 클릭=고정, 드래그=구간 합산 측정 (단축키 3)"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => setMode((m) => (m === 'dim' ? 'hand' : 'dim'))}
+                >
+                  📐 치수
+                </button>
               )}
             </div>
           )}
@@ -2887,8 +2945,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 <>
               {/* 글자수 마스크 — 읽을 영역 색칠(알파=keep-mask). 콘텐츠 해상도, stage 스케일을 함께 탄다. */}
               <canvas ref={maskRef} className="aq-ocrmask" style={{ width: stageW, height: stageH }} />
-              {/* 치수 오버레이 — '📐 치수' 토글 시에만 활성(active). 평소엔 null 이라 핀/OCR 조작 방해 X. */}
-              <DimensionOverlay geom={dimGeom} stageW={stageW} stageH={stageH} zoom={zoom} active={dimMode} />
               {/* SVG stroke 은 sub-pixel 허용(CSS border 의 1px 클램프 없음)이라 strokeWidth=폭/zoom 으로
                   확대해도 화면상 일정한 얇은 선이 된다. (vector-effect 는 조상 CSS transform 엔 안 먹어서 미사용.) */}
               <svg className="aq-lines">
@@ -3070,6 +3126,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                     </div>
                   );
                 })()}
+                {/* 치수 오버레이 — 치수 모드(active)에서만. 맨 위(마지막 자식)라 핀/배지 위에서 클릭·드래그 캡처. */}
+                <DimensionOverlay geom={dimGeom} stageW={stageW} stageH={stageH} zoom={zoom} active={dimMode} contentBox={dimContentBox} />
                 </>
               )}
             </div>

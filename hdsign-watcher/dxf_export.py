@@ -328,16 +328,20 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0):
         log("[치수] 대화상자 컨트롤(콤보/입력칸) 못 찾음")
         return None
 
-    # 저장 위치 = 대화상자의 현재 폴더(CDM_GETFOLDERPATH). 파일명만 넣으면 여기에 저장되므로,
-    # 이 폴더를 탐색 후보 맨 앞에 둔다 → 집(로컬 .fs)/회사(네트워크) 어디서든 생성 파일을 찾는다.
+    # fname 이 전체경로면 그 폴더에 저장되므로(WM_SETTEXT 가 경로 포함을 처리), 그 폴더를 탐색 1순위로.
+    # 추가로 대화상자 현재 폴더(CDM_GETFOLDERPATH)도 가능하면 보탠다(옛 대화상자에선 0 반환할 수 있음).
     CDM_GETFOLDERPATH = 0x0402  # WM_USER+2
+    base = Path(fname).name
     dirs = list(target_dirs)
+    pdir = str(Path(fname).parent)
+    if pdir and pdir not in ('.', ''):
+        dirs.insert(0, pdir)
     try:
         fbuf = ctypes.create_unicode_buffer(600)
         if u.SendMessageW(ctypes.c_void_p(dlg), CDM_GETFOLDERPATH, ctypes.c_void_p(600),
                           ctypes.cast(fbuf, ctypes.c_void_p)) > 0 and fbuf.value:
             dirs.insert(0, fbuf.value)
-            log(f"[치수] 저장 위치: {fbuf.value}")
+            log(f"[치수] 저장 위치(대화상자): {fbuf.value}")
     except Exception:
         pass
     target_dirs = dirs
@@ -399,7 +403,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0):
         for d in target_dirs:
             try:
                 for f in os.listdir(d):
-                    if f.lower() == fname.lower():
+                    if f.lower() == base.lower():
                         p = Path(d) / f
                         if p.stat().st_size > 0:
                             time.sleep(0.3)
@@ -428,25 +432,21 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0):
 
 def restore_format_ai(main_hwnd, search_dirs, log) -> None:
     """더미 AI 저장 후 삭제 → 다음 수동 내보내기 기본 형식을 AI 로 되돌림(세션 내 복원)."""
-    import os
-    dummy = "_hd_fmtreset.ai"
-    for d in search_dirs:
-        try:
-            (Path(d) / dummy).unlink()
-        except Exception:
-            pass
+    import tempfile
+    # 전체 로컬 경로 → 네트워크 폴더 우회. 복원은 형식만 AI 로 바꾸면 되고 파일은 곧 삭제.
+    dummy = str(Path(tempfile.gettempdir()) / "_hd_fmtreset.ai")
     try:
-        p = _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=12.0)
+        Path(dummy).unlink()
+    except Exception:
+        pass
+    try:
+        _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=12.0)
     except Exception as e:
         log(f"[치수] AI 복원 실패: {e}")
-        p = None
-    for d in search_dirs:
-        try:
-            fp = Path(d) / dummy
-            if fp.exists():
-                fp.unlink()
-        except Exception:
-            pass
+    try:
+        Path(dummy).unlink()
+    except Exception:
+        pass
 
 
 def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> dict | None:
@@ -462,7 +462,9 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
         log("[치수] FlexiSIGN 창 없음 — 스킵")
         return None
     import os
-    fname = f"_hdsigndim_{os.getpid()}.dxf"
+    import tempfile
+    # 전체 로컬 경로로 저장 → 대화상자 현재폴더(네트워크일 수 있음)를 무시하고 항상 temp 에 생성·발견.
+    fname = str(Path(tempfile.gettempdir()) / f"_hdsigndim_{os.getpid()}.dxf")
     geom = None
     guarded = input_guard_start()
     try:

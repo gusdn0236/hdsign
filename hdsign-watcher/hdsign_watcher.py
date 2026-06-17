@@ -7158,6 +7158,47 @@ def upload_worksheet_objects(order_number: str, geom: dict) -> bool:
     return False
 
 
+_dim_lock_banner: dict = {"win": None}
+
+
+def _show_lock_banner() -> None:
+    """치수 추출(입력가드) 동안 '마우스/키보드 잠김' 안내 배너. 반드시 메인 UI 스레드(_ui_queue)에서 호출.
+    화면 '상단 중앙'에 띄워 — 내보내기 대화상자(중앙)의 클릭 영역을 가리지 않게(좌표 클릭 방해 X)."""
+    try:
+        if _dim_lock_banner.get("win") is not None:
+            return
+        w = tk.Toplevel()
+        w.overrideredirect(True)
+        w.configure(bg="#18181b")
+        try:
+            w.attributes("-topmost", True)
+        except Exception:
+            pass
+        tk.Label(
+            w,
+            text="🔒  치수 데이터 추출 중입니다  ·  마우스·키보드가 잠깐 잠깁니다  (ESC 취소)",
+            bg="#18181b", fg="#ffffff", font=("맑은 고딕", 12, "bold"),
+            padx=26, pady=14,
+        ).pack()
+        w.update_idletasks()
+        ww = w.winfo_reqwidth()
+        sw = w.winfo_screenwidth()
+        w.geometry(f"+{(sw - ww) // 2}+14")  # 상단 중앙(대화상자 클릭영역 회피)
+        _dim_lock_banner["win"] = w
+    except Exception as e:
+        ui_log(f"치수 잠금 배너 표시 오류: {e}")
+
+
+def _hide_lock_banner() -> None:
+    w = _dim_lock_banner.get("win")
+    _dim_lock_banner["win"] = None
+    if w is not None:
+        try:
+            w.destroy()
+        except Exception:
+            pass
+
+
 def _busy_set_topmost(busy, val) -> None:
     """'웹 반영 중' 모달의 topmost 토글 — 치수 추출 중엔 비-topmost 로 내려 좌표 클릭이
     모달에 가로채이지 않게 한다. (반드시 _ui_queue 로 메인 UI 스레드에서 호출)"""
@@ -7198,15 +7239,17 @@ def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy) -> Non
         dirs.append(str(WATCH_DIR / "converted"))
     except Exception:
         pass
-    # 좌표 클릭이 '웹 반영 중' 모달(topmost)에 가로채이지 않게 잠깐 비-topmost.
+    # 좌표 클릭이 '웹 반영 중' 모달(topmost)에 가로채이지 않게 잠깐 비-topmost + 상단에 잠금 배너.
     _ui_queue.put(("run", lambda: _busy_set_topmost(busy, False)))
-    time.sleep(0.15)
+    _ui_queue.put(("run", _show_lock_banner))
+    time.sleep(0.2)
     geom = None
     try:
         geom = dxf_export.extract_dimensions(hwnd, dirs, log=ui_log)
     except Exception as e:
         ui_log(f"[치수] extract_dimensions 예외(무시): {e}")
     finally:
+        _ui_queue.put(("run", _hide_lock_banner))
         _ui_queue.put(("run", lambda: _busy_set_topmost(busy, True)))
     if geom and geom.get("objects"):
         upload_worksheet_objects(order_number, geom)

@@ -1,16 +1,18 @@
 /**
- * 지시서 위 '오브젝트별 가로세로(mm)' 오버레이.
+ * 지시서 위 '오브젝트별/구간 가로세로(mm)' 측정 오버레이 (치수 모드).
  *
- * 워처가 인쇄 시 .fs→DXF 로 추출해 서버에 올린 지오메트리(mm)를 받아, 명세서 작성 화면의 지시서
- * 사진 위에 투명 클릭영역으로 깐다. 마우스 올리면 그 오브젝트 테두리 강조, 클릭하면 'W×H mm' 라벨
- * 고정(다시 클릭하면 해제). 평소엔 지시서 사진이 그대로 보이고, '치수 모드'일 때만 활성(active).
+ * 워처가 인쇄 시 .fs→DXF 로 추출해 서버에 올린 지오메트리(mm)를 받아, 명세서 작성 화면의 지시서 사진
+ * 위에 투명 측정 레이어로 깐다. 치수 모드(active)에서:
+ *  - 마우스 올리면(호버) 그 오브젝트 테두리 강조 + 'W×H mm' 라벨.
+ *  - 짧게 클릭 = 그 오브젝트 라벨 고정(토글).
+ *  - 드래그(마퀴) = 박스 안에 들어온 오브젝트들의 '끝에서 끝까지' 합산 크기 표시(일반 디자인 툴처럼).
  *
- * 좌표계: 이 SVG 는 AutoQuote 의 .aq-stage(콘텐츠 픽셀 좌표, transform:scale(zoom)) 안에 들어가므로
- * 이미지 자연 픽셀(stageW×stageH) 좌표로 그린다. DXF 는 mm·원점 좌하단·Y 위쪽 → 화면은 Y 아래쪽이라
- * 뒤집는다. DXF 전체 extent 를 이미지에 'fit + 가운데' 로 매핑(인쇄가 도면을 페이지에 맞춰 넣는다는 가정).
- * 정렬이 어긋나면 실제 주문으로 보정 로직을 더한다(현장 검증 항목).
+ * 좌표계: 이 SVG 는 AutoQuote 의 .aq-stage(콘텐츠 픽셀, transform:scale(zoom)) 안에 들어가 이미지와 함께
+ * 스케일된다. 마우스 클라이언트 좌표 → 콘텐츠 좌표는 getScreenCTM().inverse() 로 변환(줌/팬 자동 반영).
+ * DXF extent → 이미지 매핑은 contentBox(흰 여백 제외 실제 내용 영역, 정확)가 있으면 거기에, 없으면 fit-가운데.
+ * DXF 는 Y 위쪽 → 화면 Y 아래쪽이라 뒤집는다.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 export interface DimObject {
   x: number;
@@ -32,6 +34,7 @@ interface Props {
   stageH: number;
   zoom: number;
   active: boolean;
+  contentBox?: { x: number; y: number; w: number; h: number } | null;
 }
 
 interface Mapped {
@@ -39,38 +42,54 @@ interface Mapped {
   sx: number;
   sy: number;
   sw: number;
-  sh: number;
-  w: number;
-  h: number;
+  sh: number; // 화면(콘텐츠 px)
+  mx: number;
+  my: number;
+  mw: number;
+  mh: number; // 실측 mm
 }
 
-export default function DimensionOverlay({ geom, stageW, stageH, zoom, active }: Props) {
+const TEAL = '#0a9396';
+
+export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, contentBox }: Props) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [pinned, setPinned] = useState<number[]>([]);
+  // 드래그(마퀴) — 진행 중 박스(콘텐츠 좌표). 끝나면 selection 결과로.
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const drag = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
+  // 마퀴 선택 결과 — 합산 박스(화면) + 합산 mm.
+  const [sel, setSel] = useState<{ sx: number; sy: number; sw: number; sh: number; mw: number; mh: number } | null>(null);
 
   const mapped = useMemo<Mapped[]>(() => {
     if (!geom || !geom.extent || !stageW || !stageH) return [];
     const ext = geom.extent;
     if (ext.w <= 0 || ext.h <= 0) return [];
-    // 도면 전체(extent)를 이미지에 비율유지 fit + 가운데 정렬.
-    const ea = ext.w / ext.h;
-    const ia = stageW / stageH;
     let cw: number;
     let ch: number;
     let ox: number;
     let oy: number;
-    if (ea > ia) {
-      cw = stageW;
-      ch = stageW / ea;
-      ox = 0;
-      oy = (stageH - ch) / 2;
+    if (contentBox && contentBox.w > 0 && contentBox.h > 0) {
+      ox = contentBox.x * stageW;
+      oy = contentBox.y * stageH;
+      cw = contentBox.w * stageW;
+      ch = contentBox.h * stageH;
     } else {
-      ch = stageH;
-      cw = stageH * ea;
-      ox = (stageW - cw) / 2;
-      oy = 0;
+      const ea = ext.w / ext.h;
+      const ia = stageW / stageH;
+      if (ea > ia) {
+        cw = stageW;
+        ch = stageW / ea;
+        ox = 0;
+        oy = (stageH - ch) / 2;
+      } else {
+        ch = stageH;
+        cw = stageH * ea;
+        ox = (stageW - cw) / 2;
+        oy = 0;
+      }
     }
-    // 큰 것 먼저(뒤), 작은 것 나중(앞) → 겹칠 때 작은(구체) 오브젝트가 호버/클릭에 먼저 잡힘.
+    // 큰 것 먼저(뒤), 작은 것 나중(앞) → 겹칠 때 작은(구체) 오브젝트가 히트테스트에 먼저 잡힘.
     return geom.objects
       .map((o, i) => ({ o, i }))
       .sort((a, b) => b.o.w * b.o.h - a.o.w * a.o.h)
@@ -85,60 +104,179 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active }:
           sy: oy + (1 - ny - nh) * ch, // DXF Y 위쪽 → 화면 Y 아래쪽
           sw: nw * cw,
           sh: nh * ch,
-          w: o.w,
-          h: o.h,
+          mx: o.x,
+          my: o.y,
+          mw: o.w,
+          mh: o.h,
         };
       });
-  }, [geom, stageW, stageH]);
+  }, [geom, stageW, stageH, contentBox]);
 
   if (!active || !geom || !geom.extent || mapped.length === 0) return null;
 
+  // 클라이언트 좌표 → 콘텐츠(SVG) 좌표 (줌/팬 자동 반영).
+  const toContent = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const m = svg.getScreenCTM();
+    if (!m) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const p = pt.matrixTransform(m.inverse());
+    return { x: p.x, y: p.y };
+  };
+
+  // 점을 포함하는 가장 작은(구체적인) 오브젝트 인덱스.
+  const hitTest = (x: number, y: number): number | null => {
+    let best: Mapped | null = null;
+    for (const m of mapped) {
+      if (x >= m.sx && x <= m.sx + m.sw && y >= m.sy && y <= m.sy + m.sh) {
+        if (!best || m.sw * m.sh < best.sw * best.sh) best = m;
+      }
+    }
+    return best ? best.i : null;
+  };
+
+  const onDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation(); // 스테이지 패닝 방지(치수 모드에선 드래그=마퀴).
+    const p = toContent(e.clientX, e.clientY);
+    if (!p) return;
+    drag.current = { x0: p.x, y0: p.y, moved: false };
+    setSel(null);
+    setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+  };
+
+  const onMove = (e: React.MouseEvent) => {
+    const p = toContent(e.clientX, e.clientY);
+    if (!p) return;
+    if (drag.current) {
+      const dx = Math.abs(p.x - drag.current.x0);
+      const dy = Math.abs(p.y - drag.current.y0);
+      if (dx > 3 || dy > 3) drag.current.moved = true;
+      setMarquee({ x0: drag.current.x0, y0: drag.current.y0, x1: p.x, y1: p.y });
+    } else {
+      setHover(hitTest(p.x, p.y));
+    }
+  };
+
+  const onUp = (e: React.MouseEvent) => {
+    const d = drag.current;
+    drag.current = null;
+    setMarquee(null);
+    if (!d) return;
+    e.stopPropagation();
+    const p = toContent(e.clientX, e.clientY);
+    if (!p) return;
+    if (!d.moved) {
+      // 짧은 클릭 = 단일 오브젝트 라벨 토글.
+      const hit = hitTest(p.x, p.y);
+      if (hit != null) {
+        setPinned((arr) => (arr.includes(hit) ? arr.filter((x) => x !== hit) : [...arr, hit]));
+      }
+      return;
+    }
+    // 마퀴 = 박스에 닿은 오브젝트들의 '끝에서 끝까지' 합산 크기.
+    const rx0 = Math.min(d.x0, p.x);
+    const ry0 = Math.min(d.y0, p.y);
+    const rx1 = Math.max(d.x0, p.x);
+    const ry1 = Math.max(d.y0, p.y);
+    const inside = mapped.filter(
+      (m) => m.sx < rx1 && m.sx + m.sw > rx0 && m.sy < ry1 && m.sy + m.sh > ry0,
+    );
+    if (inside.length === 0) {
+      setSel(null);
+      return;
+    }
+    const sx = Math.min(...inside.map((m) => m.sx));
+    const sy = Math.min(...inside.map((m) => m.sy));
+    const sxe = Math.max(...inside.map((m) => m.sx + m.sw));
+    const sye = Math.max(...inside.map((m) => m.sy + m.sh));
+    const mxx = Math.min(...inside.map((m) => m.mx));
+    const myy = Math.min(...inside.map((m) => m.my));
+    const mxe = Math.max(...inside.map((m) => m.mx + m.mw));
+    const mye = Math.max(...inside.map((m) => m.my + m.mh));
+    setSel({ sx, sy, sw: sxe - sx, sh: sye - sy, mw: mxe - mxx, mh: mye - myy });
+  };
+
   const shown = mapped.filter((m) => hover === m.i || pinned.includes(m.i));
+  const lw = 1.5 / zoom;
 
   return (
     <svg
+      ref={svgRef}
       className="aq-dimsvg"
-      style={{ position: 'absolute', left: 0, top: 0, width: stageW, height: stageH, overflow: 'visible' }}
+      style={{ position: 'absolute', left: 0, top: 0, width: stageW, height: stageH, overflow: 'visible', cursor: 'crosshair' }}
+      onMouseDown={onDown}
+      onMouseMove={onMove}
+      onMouseUp={onUp}
+      onMouseLeave={() => {
+        setHover(null);
+        if (drag.current) {
+          drag.current = null;
+          setMarquee(null);
+        }
+      }}
     >
-      {mapped.map((m) => {
-        const on = hover === m.i || pinned.includes(m.i);
-        return (
-          <rect
-            key={m.i}
-            x={m.sx}
-            y={m.sy}
-            width={m.sw}
-            height={m.sh}
-            fill={on ? 'rgba(10,147,150,0.12)' : 'transparent'}
-            stroke={on ? '#0a9396' : 'none'}
-            strokeWidth={1.5 / zoom}
-            style={{ cursor: 'pointer' }}
-            onMouseEnter={() => setHover(m.i)}
-            onMouseLeave={() => setHover((h) => (h === m.i ? null : h))}
-            onClick={() =>
-              setPinned((p) => (p.includes(m.i) ? p.filter((x) => x !== m.i) : [...p, m.i]))
-            }
-          />
-        );
-      })}
-      {/* 라벨 — 호버/핀된 것만. 확대해도 크기 유지(scale 1/zoom), 흰 외곽선으로 가독성. */}
+      {/* 이벤트 캡처용 투명 배경(전체 스테이지) — 빈 곳 드래그도 마퀴로 잡고 스테이지 패닝 차단. */}
+      <rect x={0} y={0} width={stageW} height={stageH} fill="transparent" />
+
+      {/* 호버/핀된 단일 오브젝트 강조 */}
       {shown.map((m) => (
-        <g
-          key={`l${m.i}`}
-          transform={`translate(${m.sx + m.sw / 2}, ${m.sy}) scale(${1 / zoom})`}
-          style={{ pointerEvents: 'none' }}
-        >
-          <text
-            y={-5}
-            textAnchor="middle"
-            fontSize={13}
-            fontWeight={700}
-            fill="#0a9396"
-            stroke="#ffffff"
-            strokeWidth={3}
-            paintOrder="stroke"
-          >
-            {`${Math.round(m.w)} × ${Math.round(m.h)} mm`}
+        <rect
+          key={m.i}
+          x={m.sx}
+          y={m.sy}
+          width={m.sw}
+          height={m.sh}
+          fill="rgba(10,147,150,0.12)"
+          stroke={TEAL}
+          strokeWidth={lw}
+          pointerEvents="none"
+        />
+      ))}
+
+      {/* 마퀴(드래그 중) */}
+      {marquee && (
+        <rect
+          x={Math.min(marquee.x0, marquee.x1)}
+          y={Math.min(marquee.y0, marquee.y1)}
+          width={Math.abs(marquee.x1 - marquee.x0)}
+          height={Math.abs(marquee.y1 - marquee.y0)}
+          fill="rgba(10,147,150,0.08)"
+          stroke={TEAL}
+          strokeWidth={lw}
+          strokeDasharray={`${5 / zoom} ${4 / zoom}`}
+          pointerEvents="none"
+        />
+      )}
+
+      {/* 마퀴 선택 결과(합산 박스 + 끝-끝 mm) */}
+      {sel && (
+        <g pointerEvents="none">
+          <rect
+            x={sel.sx}
+            y={sel.sy}
+            width={sel.sw}
+            height={sel.sh}
+            fill="rgba(238,155,0,0.10)"
+            stroke="#ee9b00"
+            strokeWidth={2 / zoom}
+          />
+          <g transform={`translate(${sel.sx + sel.sw / 2}, ${sel.sy}) scale(${1 / zoom})`}>
+            <text y={-6} textAnchor="middle" fontSize={14} fontWeight={800} fill="#ca6702" stroke="#fff" strokeWidth={3.5} paintOrder="stroke">
+              {`${sel.mw.toFixed(1)} × ${sel.mh.toFixed(1)} mm`}
+            </text>
+          </g>
+        </g>
+      )}
+
+      {/* 호버/핀 단일 라벨 — 확대해도 크기 유지(scale 1/zoom), 흰 외곽선. */}
+      {shown.map((m) => (
+        <g key={`l${m.i}`} transform={`translate(${m.sx + m.sw / 2}, ${m.sy}) scale(${1 / zoom})`} pointerEvents="none">
+          <text y={-5} textAnchor="middle" fontSize={13} fontWeight={700} fill={TEAL} stroke="#ffffff" strokeWidth={3} paintOrder="stroke">
+            {`${m.mw.toFixed(1)} × ${m.mh.toFixed(1)} mm`}
           </text>
         </g>
       ))}
