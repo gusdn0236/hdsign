@@ -295,6 +295,8 @@ export interface OrderContext {
   title: string | null;
   worksheetPdfUrl: string | null;
   worksheetThumbnailUrl: string | null;
+  // 지시서 오브젝트별 가로세로(mm) 지오메트리 JSON 의 R2 URL(있으면 '치수' 오버레이 가능).
+  worksheetObjectsUrl?: string | null;
   hasEstimate?: boolean;
   easyformUploadedAt?: string | null;
 }

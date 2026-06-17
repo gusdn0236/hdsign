@@ -297,6 +297,42 @@ public class PublicWorksheetController {
         }
     }
 
+    /**
+     * 지시서 오브젝트 지오메트리(mm) JSON 프록시 — R2 의 JSON 을 백엔드를 거쳐 같은 출처로 응답.
+     * 명세서 작성 화면이 이 JSON 으로 지시서 위 클릭 시 치수 오버레이를 그린다. 무인증(PDF 프록시와 동일).
+     */
+    @GetMapping("/{orderNumber}/objects")
+    public ResponseEntity<?> proxyObjects(@PathVariable String orderNumber) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String url = order.getWorksheetObjectsUrl();
+        if (url == null || url.isBlank()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        String key = extractKey(url);
+        if (key == null) {
+            log.warn("지오메트리 프록시 — key 추출 실패 [{}], url={}", orderNumber, url);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        try {
+            ResponseInputStream<GetObjectResponse> stream = s3Client.getObject(
+                    GetObjectRequest.builder().bucket(bucket).key(key).build()
+            );
+            long contentLength = stream.response().contentLength();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setContentLength(contentLength);
+            // 워처가 재인쇄하면 worksheetObjectsUrl(R2 키)이 바뀌므로 짧은 캐시면 충분.
+            headers.setCacheControl("public, max-age=60");
+            return new ResponseEntity<>(new InputStreamResource(stream), headers, HttpStatus.OK);
+        } catch (Exception e) {
+            log.warn("지오메트리 프록시 실패 [{}/{}]: {}", orderNumber, key, e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).build();
+        }
+    }
+
     private String extractKey(String url) {
         if (url == null || url.isBlank()) return null;
         if (publicUrl == null || publicUrl.isBlank()) return null;

@@ -34,6 +34,8 @@ public class OrderDto {
         private String worksheetPdfUrl;
         private String worksheetOriginalPdfUrl;
         private String worksheetThumbnailUrl;
+        // 지시서 오브젝트별 가로세로(mm) 지오메트리 JSON 의 R2 URL. 없으면 치수 오버레이 비활성.
+        private String worksheetObjectsUrl;
         private Long worksheetPdfSize;
         private LocalDateTime evidenceLastUploadedAt;
         private LocalDateTime worksheetUpdatedAt;
@@ -134,6 +136,7 @@ public class OrderDto {
                 .worksheetPdfUrl(order.getWorksheetPdfUrl())
                 .worksheetOriginalPdfUrl(order.getWorksheetOriginalPdfUrl())
                 .worksheetThumbnailUrl(order.getWorksheetThumbnailUrl())
+                .worksheetObjectsUrl(order.getWorksheetObjectsUrl())
                 .worksheetPdfSize(order.getWorksheetPdfSize())
                 .evidenceLastUploadedAt(order.getEvidenceLastUploadedAt())
                 .worksheetUpdatedAt(order.getWorksheetUpdatedAt())

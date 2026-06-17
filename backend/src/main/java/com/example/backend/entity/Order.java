@@ -124,6 +124,12 @@ public class Order {
     @Column(length = 64)
     private String originalFsUid;
 
+    // 워처가 인쇄 시 .fs 를 DXF('외부 파일로 저장')로 내보내 추출한 '오브젝트별 가로세로(mm)'
+    // 지오메트리 JSON 의 R2 URL. 명세서 작성 화면에서 지시서 사진 위 클릭 시 치수 오버레이로 사용.
+    // PDF 와 별개로(겹치기) 업로드되며, DXF 추출 실패 시 비어 있을 수 있다(부차 기능).
+    @Column(length = 500)
+    private String worksheetObjectsUrl;
+
     // 워처 인쇄 다이얼로그 "지시서 내용 변경" 선택 시 작업자가 입력한 변경 메모.
     // 모바일 뷰어에서 PDF 한 번 터치하면 노출되어 작업자가 무엇이 바뀌었는지 즉시 본다.
     // 신규작성/단순 납기변경 업로드가 들어오면 다시 비워서 "최신 변경분만" 떠 있게 한다.

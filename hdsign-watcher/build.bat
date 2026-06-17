@@ -95,7 +95,7 @@ REM launch (5-15s). Onedir keeps everything extracted, only the small EXE runs (
 REM UPX compression off too - EXE is bigger but OS cache handles it after first load.
 REM --collect-all cv2 : opencv 는 native .pyd + DLL 묶음이라 collect-all 이 안전. 미설치면
 REM PyInstaller 가 조용히 건너뛰므로 빌드 실패하지 않는다(런타임 cv2=None).
-"%PYTHON%" -m PyInstaller --clean -y --onedir --windowed --noupx --name hdsign_worksheet --icon "%SCRIPT_DIR%hdsign_worksheet.ico" --collect-all pymupdf --collect-all pyzbar --collect-all cv2 --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import cv2 --hidden-import numpy --hidden-import encodings.idna --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" --add-data "%SCRIPT_DIR%hdsign_worksheet.ico;." "%SCRIPT_DIR%hdsign_watcher.py"
+"%PYTHON%" -m PyInstaller --clean -y --onedir --windowed --noupx --name hdsign_worksheet --icon "%SCRIPT_DIR%hdsign_worksheet.ico" --collect-all pymupdf --collect-all pyzbar --collect-all cv2 --hidden-import fitz --hidden-import pyzbar --hidden-import pyzbar.pyzbar --hidden-import cv2 --hidden-import numpy --hidden-import encodings.idna --hidden-import dxf_export --hidden-import dxf_dims --paths "%SCRIPT_DIR%." --add-data "%SCRIPT_DIR%assets\distribution.jpg;assets" --add-data "%SCRIPT_DIR%hdsign_worksheet.ico;." "%SCRIPT_DIR%hdsign_watcher.py"
 if errorlevel 1 (
     echo.
     echo [ERROR] PyInstaller build failed. See output above.

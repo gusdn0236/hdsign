@@ -33,11 +33,13 @@ import {
   type OrderContext,
   type VisionQuota,
   type Prediction,
+  BASE_URL,
 } from './annot/api';
 import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal, { type PickedRow } from './LookupResultModal';
 import MiniCalc from './MiniCalc';
+import DimensionOverlay, { type DimGeom } from './components/DimensionOverlay';
 import './AutoQuote.css';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -411,6 +413,29 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
+  // 치수 오버레이 — '📐 치수' 토글 시 지시서 위에 오브젝트별 가로세로(mm) 표시. geom 은 토글 시 1회 로드.
+  const [dimMode, setDimMode] = useState(false);
+  const [dimGeom, setDimGeom] = useState<DimGeom | null>(null);
+  // 치수 모드를 처음 켤 때 서버에서 지오메트리(mm) 1회 로드(공개 프록시). 부차 기능 — 실패 시 조용히.
+  useEffect(() => {
+    if (!dimMode || dimGeom || !order?.worksheetObjectsUrl || !order?.orderNumber) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${BASE_URL}/api/public/worksheets/${encodeURIComponent(order.orderNumber)}/objects`,
+        );
+        if (!res.ok) return;
+        const g = (await res.json()) as DimGeom;
+        if (alive) setDimGeom(g);
+      } catch {
+        /* 부차 기능 — 무시 */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [dimMode, dimGeom, order]);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
 
@@ -529,6 +554,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
           return;
         }
         setOrder(o);
+        setDimMode(false);   // 새 주문 — 치수 오버레이 초기화(다음 토글 시 새로 로드).
+        setDimGeom(null);
         const label = `${o.clientCompanyName || ''} · ${o.title || o.orderNumber}`;
         if (o.worksheetPdfUrl) {
           // 화질 우선: 업로드 PDF 1페이지를 고해상 렌더. 실패(CORS 등) 시 썸네일 폴백.
@@ -2638,6 +2665,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
         <span className="aq-hint">{status}</span>
         <span className="aq-sp" />
         {imgSrc && <span className="aq-hint" style={{ marginRight: 4 }}>휠로 확대 · {Math.round(zoom * 100)}%</span>}
+        {imgSrc && order?.worksheetObjectsUrl && (
+          <button
+            className="aq-x"
+            title="치수 보기 — 지시서 오브젝트 클릭 시 가로세로(mm)"
+            onClick={() => setDimMode((v) => !v)}
+            style={dimMode ? { background: '#0a9396', color: '#fff' } : undefined}
+          >
+            📐 치수
+          </button>
+        )}
         {zoom !== 1 && (
           <button
             className="aq-x"
@@ -2850,6 +2887,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 <>
               {/* 글자수 마스크 — 읽을 영역 색칠(알파=keep-mask). 콘텐츠 해상도, stage 스케일을 함께 탄다. */}
               <canvas ref={maskRef} className="aq-ocrmask" style={{ width: stageW, height: stageH }} />
+              {/* 치수 오버레이 — '📐 치수' 토글 시에만 활성(active). 평소엔 null 이라 핀/OCR 조작 방해 X. */}
+              <DimensionOverlay geom={dimGeom} stageW={stageW} stageH={stageH} zoom={zoom} active={dimMode} />
               {/* SVG stroke 은 sub-pixel 허용(CSS border 의 1px 클램프 없음)이라 strokeWidth=폭/zoom 으로
                   확대해도 화면상 일정한 얇은 선이 된다. (vector-effect 는 조상 CSS transform 엔 안 먹어서 미사용.) */}
               <svg className="aq-lines">

@@ -5956,12 +5956,32 @@ def _process_printed_pdf(pdf_path: Path):
     # 거래처 폴더에서 이 지시서의 .fs 를 단일 확정하고 그 파일에 UID(ADS)를 박는다 — 현장
     # [FS에서 열기] 가 그 UID(없으면 경로)로 직행. 확정 못 하면 ("","") → 현장은 이름 매칭 폴백.
     fs_path, fs_uid = _resolve_and_stamp_printed_fs(order_number, doc_stem=printed_stem)
-    upload_ok = upload_worksheet_pdf(order_number, pdf_path,
-                                     content_changed=bool(sel.get("content_changed", False)),
-                                     change_note=sel.get("change_note") or "",
-                                     preserve_note=bool(sel.get("preserve_note", False)),
-                                     original_fs_path=fs_path,
-                                     original_fs_uid=fs_uid)
+    # ── 겹치기: PDF 업로드(네트워크/백엔드)를 백그라운드로 시작하고, 그 대기시간 동안 치수 추출
+    #    (FlexiSIGN GUI + 입력가드)을 동시에 돌린다. 자원이 달라(네트워크 vs GUI) 병렬 → 체감 추가시간
+    #    ~0. 치수는 부차 기능이라 어떤 실패든 PDF 업로드/인쇄 본류엔 영향 없음.
+    _upload_box: dict = {}
+
+    def _upload_pdf_bg():
+        try:
+            _upload_box["ok"] = upload_worksheet_pdf(
+                order_number, pdf_path,
+                content_changed=bool(sel.get("content_changed", False)),
+                change_note=sel.get("change_note") or "",
+                preserve_note=bool(sel.get("preserve_note", False)),
+                original_fs_path=fs_path,
+                original_fs_uid=fs_uid)
+        except Exception as e:
+            ui_log(f"PDF 업로드 스레드 예외: {e}")
+            _upload_box["ok"] = False
+
+    _up_thread = threading.Thread(target=_upload_pdf_bg, daemon=True)
+    _up_thread.start()
+    try:
+        _extract_and_upload_dimensions(order_number, fs_path, _busy)
+    except Exception as e:
+        ui_log(f"치수 추출 예외(무시): {e}")
+    _up_thread.join(timeout=180)
+    upload_ok = _upload_box.get("ok", False)
     # "웹에만 적용하고 인쇄 안 함" 선택 또는 확정 매수 0 인 경우 종이 인쇄 생략.
     print_done = False
     if sel.get("skip_print"):
@@ -7110,6 +7130,88 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
             except Exception:
                 pass
     return ok
+
+
+def upload_worksheet_objects(order_number: str, geom: dict) -> bool:
+    """지시서 오브젝트별 가로세로(mm) 지오메트리 JSON 을 백엔드에 업로드(PDF 와 별도 호출).
+    부차 기능 — 실패해도 인쇄/PDF업로드 본류엔 영향 없음."""
+    if not order_number or not geom:
+        return False
+    try:
+        body = json.dumps(geom, ensure_ascii=False).encode("utf-8")
+    except Exception as e:
+        ui_log(f"[치수] JSON 직렬화 실패: {e}")
+        return False
+    url = f"{API_BASE}/api/public/orders/{quote(order_number, safe='')}/worksheet-objects"
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Content-Length", str(len(body)))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
+        ui_log(f"[치수] {order_number} 지오메트리 업로드 완료 ({len(geom.get('objects', []))}개)")
+        return True
+    except urllib.error.HTTPError as e:
+        ui_log(f"[치수] 지오메트리 업로드 실패 ({e.code}): {order_number}")
+    except Exception as e:
+        ui_log(f"[치수] 지오메트리 업로드 호출 실패: {e}")
+    return False
+
+
+def _busy_set_topmost(busy, val) -> None:
+    """'웹 반영 중' 모달의 topmost 토글 — 치수 추출 중엔 비-topmost 로 내려 좌표 클릭이
+    모달에 가로채이지 않게 한다. (반드시 _ui_queue 로 메인 UI 스레드에서 호출)"""
+    try:
+        w = busy.get("win") if isinstance(busy, dict) else None
+        if w is not None:
+            w.attributes("-topmost", bool(val))
+    except Exception:
+        pass
+
+
+def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy) -> None:
+    """[겹치기] 현재 활성 FlexiSIGN 문서를 DXF('외부 파일로 저장')로 내보내 오브젝트별 mm 를 추출 후
+    서버 업로드. 입력가드(현장 잠금)로 자동화 중 작업자 물리입력 차단. 부차 기능 — 어떤 실패든
+    조용히 넘어가 인쇄/PDF업로드 본류를 절대 막지 않는다. 문서는 export 만 — Save/Save-As 안 함."""
+    try:
+        import dxf_export
+    except Exception as e:
+        ui_log(f"[치수] dxf_export 로드 실패(스킵): {e}")
+        return
+    hwnd = 0
+    try:
+        _st, _stem, hwnd = _flexisign_window_status()
+    except Exception:
+        hwnd = 0
+    if not hwnd:
+        ui_log("[치수] FlexiSIGN 창 없음 — 추출 스킵")
+        return
+    # DXF 가 저장될 후보 폴더(현재폴더=활성 .fs 폴더 우선) + temp + converted.
+    dirs = []
+    if fs_path:
+        try:
+            dirs.append(str(Path(fs_path).parent))
+        except Exception:
+            pass
+    dirs.append(tempfile.gettempdir())
+    try:
+        dirs.append(str(WATCH_DIR / "converted"))
+    except Exception:
+        pass
+    # 좌표 클릭이 '웹 반영 중' 모달(topmost)에 가로채이지 않게 잠깐 비-topmost.
+    _ui_queue.put(("run", lambda: _busy_set_topmost(busy, False)))
+    time.sleep(0.15)
+    geom = None
+    try:
+        geom = dxf_export.extract_dimensions(hwnd, dirs, log=ui_log)
+    except Exception as e:
+        ui_log(f"[치수] extract_dimensions 예외(무시): {e}")
+    finally:
+        _ui_queue.put(("run", lambda: _busy_set_topmost(busy, True)))
+    if geom and geom.get("objects"):
+        upload_worksheet_objects(order_number, geom)
+    else:
+        ui_log("[치수] 추출 결과 없음 — 업로드 스킵")
 
 
 def _dismiss_flexsign_alerts(main_hwnd: int) -> int:

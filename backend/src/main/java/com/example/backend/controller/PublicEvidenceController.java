@@ -722,6 +722,64 @@ public class PublicEvidenceController {
         return ResponseEntity.ok(body);
     }
 
+    /**
+     * 워처가 인쇄 시 .fs→DXF('외부 파일로 저장')로 추출한 '오브젝트별 가로세로(mm)' 지오메트리
+     * JSON 을 업로드한다. PDF 업로드와 별개의 작은 호출(겹치기 설계 — PDF 업로드/백엔드 처리와
+     * 동시에 워처가 DXF 추출 후 전송). 본문 = 지오메트리 JSON 바이트(application/json).
+     * R2 에 저장하고 worksheetObjectsUrl 갱신. 부차 기능이라 실패해도 본류(PDF) 영향 없음.
+     */
+    @PostMapping("/{orderNumber}/worksheet-objects")
+    public ResponseEntity<?> uploadWorksheetObjects(
+            @PathVariable String orderNumber,
+            // AWS SDK 의 RequestBody 가 import 돼 있어 @RequestBody 가 충돌 → Spring 애너테이션을 풀네임으로.
+            @org.springframework.web.bind.annotation.RequestBody byte[] objectsJson
+    ) {
+        Order order = orderRepository.findByOrderNumber(orderNumber).orElse(null);
+        if (order == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "해당 작업지시서를 찾을 수 없습니다."));
+        }
+        if (objectsJson == null || objectsJson.length == 0) {
+            return ResponseEntity.badRequest().body(Map.of("message", "지오메트리 JSON 이 비어 있습니다."));
+        }
+        // 정상 지오메트리 JSON 은 수십~수백 KB. 비정상 대용량 방어(8MB).
+        if (objectsJson.length > 8_000_000) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                    .body(Map.of("message", "지오메트리 JSON 이 너무 큽니다."));
+        }
+        String oldKey = extractKeyFromPublicUrl(order.getWorksheetObjectsUrl());
+        String normalizedPublicUrl = publicUrl == null || publicUrl.isBlank()
+                ? ""
+                : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
+        String key = "orders/" + order.getOrderNumber() + "/worksheet/objects-" + UUID.randomUUID() + ".json";
+        try {
+            s3Client.putObject(
+                    PutObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(key)
+                            .contentType("application/json")
+                            .build(),
+                    RequestBody.fromBytes(objectsJson)
+            );
+        } catch (Exception e) {
+            log.warn("지시서 지오메트리 업로드 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body(Map.of("message", "지오메트리 업로드에 실패했습니다."));
+        }
+        String url = normalizedPublicUrl + key;
+        order.setWorksheetObjectsUrl(url);
+        orderRepository.save(order);
+        log.info("지시서 지오메트리 업로드 [{}]: {} bytes", order.getOrderNumber(), objectsJson.length);
+        // 이전 지오메트리 R2 객체 정리(best-effort).
+        if (oldKey != null && !oldKey.equals(key)) {
+            deleteR2BestEffort(oldKey);
+        }
+        return ResponseEntity.ok(Map.of(
+                "orderNumber", order.getOrderNumber(),
+                "worksheetObjectsUrl", url
+        ));
+    }
+
     private void deleteR2BestEffort(String key) {
         if (key == null || key.isBlank()) return;
         try {
