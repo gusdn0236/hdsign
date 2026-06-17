@@ -312,9 +312,11 @@ def find_flexisign_window(exe_hint="app.exe") -> int:
 
 
 # ════════════════════════ 핵심 내보내기 레시피 ════════════════════════
-def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0):
+def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_for_file=True):
     """대화상자 열기→옵션무시 해제→형식(fmt_row 행)→파일명(fname)→저장→옵션창/덮어쓰기 Enter.
-    target_dirs 에서 fname 파일 생성 확인 후 그 Path 반환(없으면 None)."""
+    wait_for_file=True: target_dirs 에서 fname 파일 생성 확인 후 그 Path 반환(없으면 None).
+    wait_for_file=False: 파일 생성을 기다리지 않고, 짧게 모달만 닫아준 뒤 None 반환(형식 복원용 —
+       AI 내보내기가 느려도 형식은 저장 클릭 시점에 이미 바뀌므로 파일 완성 대기 불필요)."""
     _force_fg(main_hwnd)
     u.PostMessageW(ctypes.c_void_p(main_hwnd), WM_COMMAND, ctypes.c_void_p(EXPORT_MENU_ID), None)
     dlg = _wait_export_dialog(main_hwnd, timeout=5.0)
@@ -395,21 +397,22 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0):
     _press(VK_RETURN)
     time.sleep(0.3)
 
-    # 4) 옵션창('DXF 선택 사항')/덮어쓰기 등 전면 모달 Enter + 파일 생성 대기.
+    # 4) 옵션창('DXF/AI 선택 사항')/덮어쓰기 등 전면 모달 Enter + (옵션) 파일 생성 대기.
     import os
     end = time.time() + timeout
     last_enter = 0.0
     while time.time() < end:
-        for d in target_dirs:
-            try:
-                for f in os.listdir(d):
-                    if f.lower() == base.lower():
-                        p = Path(d) / f
-                        if p.stat().st_size > 0:
-                            time.sleep(0.3)
-                            return p
-            except Exception:
-                pass
+        if wait_for_file:
+            for d in target_dirs:
+                try:
+                    for f in os.listdir(d):
+                        if f.lower() == base.lower():
+                            p = Path(d) / f
+                            if p.stat().st_size > 0:
+                                time.sleep(0.3)
+                                return p
+                except Exception:
+                    pass
         fg = u.GetForegroundWindow()
         if fg and int(fg) != main_hwnd and int(fg) != dlg:
             cls = _class_name(fg)
@@ -426,25 +429,35 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0):
                 _press(VK_RETURN)
                 last_enter = time.time()
         time.sleep(0.2)
-    log("[치수] 시간 내 파일이 안 생김")
+    if wait_for_file:
+        log("[치수] 시간 내 파일이 안 생김")
     return None
 
 
 def restore_format_ai(main_hwnd, search_dirs, log) -> None:
-    """더미 AI 저장 후 삭제 → 다음 수동 내보내기 기본 형식을 AI 로 되돌림(세션 내 복원)."""
+    """형식 복원: AI 로 더미 저장 → 다음 수동 내보내기 기본 형식을 AI 로 되돌림(세션 내 복원).
+    - 더미 이름은 매번 '고유'(덮어쓰기 확인창 자체를 없앤다 — 이게 멈춤의 원인이었음).
+    - 파일 완성은 안 기다림(AI 내보내기가 느려도 형식은 저장 클릭 시점에 이미 AI 로 바뀜).
+    - 이전 잔여 더미는 매번 청소."""
+    import os
+    import glob
     import tempfile
-    # 전체 로컬 경로 → 네트워크 폴더 우회. 복원은 형식만 AI 로 바꾸면 되고 파일은 곧 삭제.
-    dummy = str(Path(tempfile.gettempdir()) / "_hd_fmtreset.ai")
+    import time as _t
+    tmp = tempfile.gettempdir()
+    # 이전 잔여 더미 정리(쓰기 중 lock 이면 다음 회차에 정리됨).
+    for old in glob.glob(os.path.join(tmp, "_hd_fmtreset_*.ai")) + [os.path.join(tmp, "_hd_fmtreset.ai")]:
+        try:
+            os.remove(old)
+        except Exception:
+            pass
+    dummy = os.path.join(tmp, f"_hd_fmtreset_{os.getpid()}_{int(_t.time())}.ai")
     try:
-        Path(dummy).unlink()
-    except Exception:
-        pass
-    try:
-        _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=12.0)
+        # 고유 이름이라 덮어쓰기창 없음. 파일 대기 X → 모달만 짧게 닫고 복귀(형식은 이미 AI).
+        _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=6.0, wait_for_file=False)
     except Exception as e:
         log(f"[치수] AI 복원 실패: {e}")
     try:
-        Path(dummy).unlink()
+        os.remove(dummy)
     except Exception:
         pass
 

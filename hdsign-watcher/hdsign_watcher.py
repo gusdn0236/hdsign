@@ -7162,39 +7162,66 @@ _dim_lock_banner: dict = {"win": None}
 
 
 def _show_lock_banner() -> None:
-    """치수 추출(입력가드) 동안 '마우스/키보드 잠김' 안내 배너. 반드시 메인 UI 스레드(_ui_queue)에서 호출.
-    화면 '상단 중앙'에 띄워 — 내보내기 대화상자(중앙)의 클릭 영역을 가리지 않게(좌표 클릭 방해 X)."""
+    """치수 추출(입력가드) 동안 '마우스/키보드 잠김' 안내 카드. 반드시 메인 UI 스레드(_ui_queue)에서 호출.
+    현장 에이전트와 같은 다크 카드 + 🔒. WS_EX_TRANSPARENT 로 '클릭 통과'라 좌표 클릭도 방해 안 함.
+    한 번만 만들어 재사용(withdraw/deiconify) — 교차스레드 재생성 크래시 회피."""
     try:
-        if _dim_lock_banner.get("win") is not None:
-            return
-        w = tk.Toplevel()
-        w.overrideredirect(True)
-        w.configure(bg="#18181b")
+        CARD, ACCENT, FG, SUB = "#111a2e", "#38bdf8", "#f8fafc", "#94a3b8"
+        w = _dim_lock_banner.get("win")
+        if w is None:
+            ww, wh = 460, 188
+            w = tk.Toplevel()
+            w.withdraw()
+            w.overrideredirect(True)
+            try:
+                w.attributes("-topmost", True)
+                w.attributes("-alpha", 0.97)
+            except Exception:
+                pass
+            sw = w.winfo_screenwidth()
+            sh = w.winfo_screenheight()
+            x = max(0, (sw - ww) // 2)
+            y = max(0, int(sh * 0.28) - wh // 2)  # 상단 28% — 중앙 대화상자와 안 겹침
+            w.geometry(f"{ww}x{wh}+{x}+{y}")
+            w.configure(bg=ACCENT)  # 1px accent 테두리
+            card = tk.Frame(w, bg=CARD)
+            card.pack(fill="both", expand=True, padx=2, pady=2)
+            tk.Frame(card, bg=ACCENT, height=4).pack(fill="x")
+            body = tk.Frame(card, bg=CARD)
+            body.pack(fill="both", expand=True, padx=26, pady=18)
+            tk.Label(body, text="🔒", bg=CARD, fg=ACCENT, font=("Segoe UI Emoji", 34)).pack()
+            tk.Label(body, text="치수 데이터 추출 중", bg=CARD, fg=FG,
+                     font=("맑은 고딕", 15, "bold")).pack(pady=(8, 2))
+            tk.Label(body, text="잠시만 기다려 주세요  ·  ESC 키로 취소", bg=CARD, fg=SUB,
+                     font=("맑은 고딕", 10)).pack()
+            w.update_idletasks()
+            # WS_EX: 포커스 안 뺏김(NOACTIVATE) + 작업표시줄 숨김(TOOLWINDOW) + 클릭 통과(TRANSPARENT).
+            try:
+                GWL_EXSTYLE = -20
+                WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x20, 0x80, 0x08000000
+                hwnd = ctypes.windll.user32.GetParent(w.winfo_id()) or w.winfo_id()
+                cur = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                ctypes.windll.user32.SetWindowLongW(
+                    hwnd, GWL_EXSTYLE, cur | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT)
+                ctypes.windll.user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40)
+            except Exception:
+                pass
+            _dim_lock_banner["win"] = w
         try:
+            w.deiconify()
+            w.lift()
             w.attributes("-topmost", True)
         except Exception:
             pass
-        tk.Label(
-            w,
-            text="🔒  치수 데이터 추출 중입니다  ·  마우스·키보드가 잠깐 잠깁니다  (ESC 취소)",
-            bg="#18181b", fg="#ffffff", font=("맑은 고딕", 12, "bold"),
-            padx=26, pady=14,
-        ).pack()
-        w.update_idletasks()
-        ww = w.winfo_reqwidth()
-        sw = w.winfo_screenwidth()
-        w.geometry(f"+{(sw - ww) // 2}+14")  # 상단 중앙(대화상자 클릭영역 회피)
-        _dim_lock_banner["win"] = w
     except Exception as e:
         ui_log(f"치수 잠금 배너 표시 오류: {e}")
 
 
 def _hide_lock_banner() -> None:
     w = _dim_lock_banner.get("win")
-    _dim_lock_banner["win"] = None
     if w is not None:
         try:
-            w.destroy()
+            w.withdraw()  # destroy 아님(재사용) — 교차스레드 GC 크래시 회피
         except Exception:
             pass
 
