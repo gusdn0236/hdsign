@@ -154,19 +154,23 @@
   z-index: 20;
   transform: translateZ(0);
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 5px;
   background: rgba(15, 22, 32, 0.7);
-  border-radius: 8px;
-  padding: 3px;
+  border-radius: 9px;
+  padding: 4px;
 }
 .aq-toolbtn {
-  width: 30px;
-  height: 30px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 11px;            /* 텍스트 버튼(글자AI·치수)이 안 잘리게 좌우 여백 */
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: #fff;
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;        /* 줄바꿈/잘림 방지 */
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -179,11 +183,12 @@
 .aq-stagewrap.aq-hand .aq-stage img {
   cursor: grab;
 }
-/* 글자수 버튼 — 30px 칸에 '글자수' 3글자가 들어가게 더 작게. */
-.aq-ocrbtn {
-  font-size: 9.5px;
+/* 텍스트 버튼(글자AI·치수) — 패딩으로 폭을 잡으므로 살짝만 작게 + 글자 안 잘리게. */
+.aq-ocrbtn,
+.aq-dimbtn {
+  font-size: 12px;
   font-weight: 800;
-  letter-spacing: -1px;
+  letter-spacing: -0.5px;
 }
 /* 글자수 모드 — 영역 선택 커서(십자). */
 .aq-stagewrap.aq-ocr .aq-stage img {

@@ -1134,13 +1134,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
       e.preventDefault();
       if (e.key === '1') {
         setMode('hand'); // 1 = 지시서 이동
-      } else if (e.key === '3') {
-        setMode('dim'); // 3 = 치수(오브젝트 측정)
+      } else if (e.key === '2') {
+        setMode((m) => (m === 'dim' ? 'hand' : 'dim')); // 2 = 치수(토글)
       } else if (modeRef.current === 'ocr') {
-        // 2 = 글자AI. 이미 글자AI 모드면 재입력 = 박스→연필→지우개 순환.
+        // 3 = 글자AI. 이미 글자AI 모드면 재입력 = 박스→연필→지우개 순환.
         setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'));
       } else {
-        setMode('ocr'); // 2 = 글자AI
+        setMode('ocr'); // 3 = 글자AI
       }
     };
     window.addEventListener('keydown', onNum);
@@ -2797,13 +2797,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                   <path d="M352.2 425.8l-79.2 79.2c-9.4 9.4-24.6 9.4-33.9 0l-79.2-79.2c-15.1-15.1-4.4-41 17-41h51.2V284H127.2v51.2c0 21.4-25.9 32.1-41 17L7 272.9c-9.4-9.4-9.4-24.6 0-33.9L86.2 159.8c15.1-15.1 41-4.4 41 17V228H228V127.2h-51.2c-21.4 0-32.1-25.9-17-41L239 7c9.4-9.4 24.6-9.4 33.9 0l79.2 79.2c15.1 15.1 4.4 41-17 41h-51.2V228h100.8v-51.2c0-21.4 25.9-32.1 41-17l79.2 79.2c9.4 9.4 9.4 24.6 0 33.9l-79.2 79.2c-15.1 15.1-41 4.4-41-17V284H284v100.8h51.2c21.4 0 32.1 25.9 17 41z" />
                 </svg>
               </button>
+              {order?.worksheetObjectsUrl && (
+                <button
+                  type="button"
+                  className={'aq-toolbtn aq-dimbtn' + (mode === 'dim' ? ' on' : '')}
+                  title="치수 — 오브젝트에 올리면 가로세로(mm), 클릭=고정, 드래그=구간 합산 측정 (단축키 2)"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => setMode((m) => (m === 'dim' ? 'hand' : 'dim'))}
+                >
+                  📐 치수
+                </button>
+              )}
               <button
                 type="button"
                 className={'aq-toolbtn aq-ocrbtn' + (mode === 'ocr' ? ' on' : '')}
-                title="글자AI — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 2). 글자AI 모드에서 또 누르면 박스→연필→지우개 순환"
+                title="글자AI — 박스/연필로 읽을 글자만 칠한 뒤 AI가 읽어 글자수를 세요 (단축키 3). 글자AI 모드에서 또 누르면 박스→연필→지우개 순환"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() =>
-                  // 키 3 과 동일: 글자수 모드가 아니면 진입, 이미면 박스→연필→지우개 순환.
                   modeRef.current === 'ocr'
                     ? setOcrTool((t) => (t === 'box' ? 'pencil' : t === 'pencil' ? 'eraser' : 'box'))
                     : setMode('ocr')
@@ -2824,17 +2834,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
                 >
                   오늘 남은 횟수: {visionQuota.remaining}/{visionQuota.limit}
                 </span>
-              )}
-              {order?.worksheetObjectsUrl && (
-                <button
-                  type="button"
-                  className={'aq-toolbtn' + (mode === 'dim' ? ' on' : '')}
-                  title="치수 — 오브젝트에 올리면 가로세로(mm), 클릭=고정, 드래그=구간 합산 측정 (단축키 3)"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => setMode((m) => (m === 'dim' ? 'hand' : 'dim'))}
-                >
-                  📐 치수
-                </button>
               )}
             </div>
           )}
