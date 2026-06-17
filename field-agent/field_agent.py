@@ -664,6 +664,53 @@ def input_guard_aborted() -> bool:
     return _guard_abort.is_set()
 
 
+# ─── 한글 IME 자동 전환 ───────────────────────────────────────────────────────
+# 현장 사이드바(Chrome --app)가 검색창에 포커스할 때마다 전면 창의 IME 를 '한글' 로 맞춘다.
+# 작업자가 한/영 키를 따로 누르지 않아도 늘 한글이 먼저 쳐지도록. 웹페이지(JS)로는 OS IME 를
+# 못 바꾸므로 로컬 에이전트가 IMM32(WM_IME_CONTROL) 로 처리한다 — Chrome(TSF)도 이 메시지를
+# 반영함을 확인(set 후 IMC_GETCONVERSIONMODE 에 NATIVE 비트가 켜짐).
+_IME_AVAILABLE = False
+try:
+    import ctypes as _ime_ct
+    from ctypes import wintypes as _ime_wt
+    _ime_u = _ime_ct.windll.user32
+    _ime_imm = _ime_ct.windll.imm32
+    _ime_u.GetForegroundWindow.restype = _ime_wt.HWND
+    _ime_imm.ImmGetDefaultIMEWnd.restype = _ime_wt.HWND
+    _ime_imm.ImmGetDefaultIMEWnd.argtypes = [_ime_wt.HWND]
+    _ime_u.SendMessageW.restype = _ime_ct.c_ssize_t
+    _ime_u.SendMessageW.argtypes = [_ime_wt.HWND, _ime_wt.UINT, _ime_ct.c_ssize_t, _ime_ct.c_ssize_t]
+    _IME_AVAILABLE = True
+except Exception as _ie:  # noqa: BLE001 — 실패 시 IME 전환만 비활성(나머지는 그대로)
+    logging.warning("한글 IME 전환 비활성(Win32 초기화 실패): %s", _ie)
+    _IME_AVAILABLE = False
+
+_WM_IME_CONTROL = 0x0283
+_IMC_SETOPENSTATUS = 0x0006
+_IMC_SETCONVERSIONMODE = 0x0002
+_IME_CMODE_NATIVE = 0x0001   # 한글(영문=0). 절대값 set 이라 토글 아님 — 여러 번 불러도 안전.
+
+
+def set_ime_korean() -> bool:
+    """전면 창(보통 현장 사이드바 Chrome)의 IME 를 한글 입력 상태로 맞춘다. 성공 추정 True.
+    open 상태 ON + 변환모드 NATIVE(한글) 를 절대값으로 설정 — 이미 한글이면 그대로 둔다."""
+    if not _IME_AVAILABLE:
+        return False
+    try:
+        hwnd = _ime_u.GetForegroundWindow()
+        if not hwnd:
+            return False
+        ime = _ime_imm.ImmGetDefaultIMEWnd(hwnd)
+        if not ime:
+            return False
+        _ime_u.SendMessageW(ime, _WM_IME_CONTROL, _IMC_SETOPENSTATUS, 1)
+        _ime_u.SendMessageW(ime, _WM_IME_CONTROL, _IMC_SETCONVERSIONMODE, _IME_CMODE_NATIVE)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logging.debug("IME 한글 전환 실패: %s", e)
+        return False
+
+
 # ─── "여는 중" 안내 배너 ──────────────────────────────────────────────────────
 # 입력이 잠긴 동안 작업자가 "멈췄나?" 오해하지 않게 상단 중앙에 작은 띠를 띄운다. 포커스를 절대
 # 안 가져가야(WS_EX_NOACTIVATE) FlexiSIGN 열기 자동화를 안 깬다 — 게다가 배너 표시 직후 PS 가
@@ -1248,7 +1295,11 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
 
     # access log 줄이기 — 기본 BaseHTTPRequestHandler 가 매 요청 stderr 에 라인 찍음.
     def log_message(self, format, *args):
-        logging.info("%s - %s", self.address_string(), format % args)
+        # /health·/ime-korean 은 너무 자주 와서(창 포커스마다) 로그를 막는다 — 진단 가독성 유지.
+        msg = format % args
+        if "/ime-korean" in msg or "/health" in msg:
+            return
+        logging.info("%s - %s", self.address_string(), msg)
 
     def _origin_allowed(self) -> str | None:
         """요청 origin 이 화이트리스트에 있으면 그 값 반환, 아니면 None."""
@@ -1305,7 +1356,7 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             self.send_response(403)
             self.end_headers()
             return
-        if parsed.path not in ("/open", "/open-folder"):
+        if parsed.path not in ("/open", "/open-folder", "/ime-korean"):
             self.send_response(404)
             self._send_cors(origin)
             self.end_headers()
@@ -1316,6 +1367,12 @@ class FieldAgentHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"message": "X-HDSign-Field 헤더 필요"}, origin)
             return
 
+        # /ime-korean — 검색창 포커스 시 전면 창 IME 를 한글로. orderNumber 불필요, 즉시 처리.
+        if parsed.path == "/ime-korean":
+            self._send_json(200, {"ok": set_ime_korean()}, origin)
+            return
+
+        # 본문 비우기 — 위에서 즉시 응답한 경로가 아닌 /open·/open-folder 만 여기로 온다.
         order_number = ""
         try:
             length = int(self.headers.get("Content-Length") or "0")

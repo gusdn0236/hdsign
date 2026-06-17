@@ -165,6 +165,14 @@ export default function FieldViewer() {
                 setSelectedIndex(-1);
                 el.focus();
                 el.select?.();
+                // 검색창에 포커스가 갈 때마다 로컬 에이전트에 "전면 창 IME 를 한글로" 요청 —
+                // 작업자가 한/영 키를 안 눌러도 늘 한글이 먼저 쳐지게. 웹 JS 로는 OS IME 를 못
+                // 바꾸므로 에이전트(IMM32)가 처리. 에이전트 없거나 실패해도 무해(조용히 무시).
+                fetch(`${AGENT_URL}/ime-korean`, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: { 'X-HDSign-Field': '1' },
+                }).catch(() => {});
             }, 50);
         };
         const onVisible = () => {
