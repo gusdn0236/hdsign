@@ -161,6 +161,7 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, c
     if (!p) return;
     drag.current = { x0: p.x, y0: p.y, moved: false };
     setSel(null);
+    setHover(null); // 드래그 시작 — 호버 라벨 끔(드래그 결과만 보이게).
     setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
   };
 
@@ -213,6 +214,8 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, c
     const myy = Math.min(...inside.map((m) => m.my));
     const mxe = Math.max(...inside.map((m) => m.mx + m.mw));
     const mye = Math.max(...inside.map((m) => m.my + m.mh));
+    // 드래그(구간) 선택이 클릭(핀)을 대체 — 같은 객체가 둘 다 당했으면 드래그한 합산 결과만 보인다.
+    setPinned([]);
     setSel({ sx, sy, sw: sxe - sx, sh: sye - sy, mw: mxe - mxx, mh: mye - myy });
   };
 

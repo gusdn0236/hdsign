@@ -120,6 +120,9 @@
 .aq-stage {
   position: relative;
   margin: 10px 5px;
+  /* 지시서를 더블클릭/드래그해도 파랗게 선택(텍스트·이미지 selection)되지 않게. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .aq-stage img {
   max-width: 100%;
@@ -129,6 +132,14 @@
   border-radius: 4px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+}
+.aq-dimsvg {
+  user-select: none;
+  -webkit-user-select: none;
 }
 /* 참고사진 — 지시서 박스 안에 contain 으로 겹쳐 표시(보기 전용). 선택자 특이도를 .aq-stage img 보다 높여 채운다. */
 .aq-stage img.aq-refimg {
