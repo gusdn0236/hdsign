@@ -70,10 +70,26 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, c
     let ox: number;
     let oy: number;
     if (contentBox && contentBox.w > 0 && contentBox.h > 0) {
-      ox = contentBox.x * stageW;
-      oy = contentBox.y * stageH;
-      cw = contentBox.w * stageW;
-      ch = contentBox.h * stageH;
+      // contentBox(흰 여백 뺀 잉크 영역) 안에 DXF 본래 비율을 유지해 'contain' 배치.
+      // 늘려 채우면 인쇄 이미지에 섞인 여분 잉크(텍스트 디센더·인쇄 추가요소)만큼 세로가 밀리므로,
+      // 비율 보존 + 짧은 축은 가운데 정렬해 어긋남을 없앤다. (가로가 이미 맞던 경우 가로는 그대로.)
+      const bx = contentBox.x * stageW;
+      const by = contentBox.y * stageH;
+      const bw = contentBox.w * stageW;
+      const bh = contentBox.h * stageH;
+      const ea = ext.w / ext.h;
+      const ba = bw / bh;
+      if (ea >= ba) {
+        cw = bw;
+        ch = bw / ea;
+        ox = bx;
+        oy = by + (bh - ch) / 2;
+      } else {
+        ch = bh;
+        cw = bh * ea;
+        oy = by;
+        ox = bx + (bw - cw) / 2;
+      }
     } else {
       const ea = ext.w / ext.h;
       const ia = stageW / stageH;
