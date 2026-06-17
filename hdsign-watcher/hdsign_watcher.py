@@ -7279,7 +7279,12 @@ def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy) -> Non
         _ui_queue.put(("run", _hide_lock_banner))
         _ui_queue.put(("run", lambda: _busy_set_topmost(busy, True)))
     if geom and geom.get("objects"):
-        upload_worksheet_objects(order_number, geom)
+        # 지오메트리 JSON 업로드는 백그라운드로 — 매크로(입력가드)는 이미 끝났으니, 이 네트워크 전송이
+        # 결과 모달/인쇄 임계경로에 얹혀 매크로 직후 잠깐 멈춰 보이던 것을 없앤다.
+        threading.Thread(
+            target=lambda g=geom: upload_worksheet_objects(order_number, g),
+            daemon=True,
+        ).start()
     else:
         ui_log("[치수] 추출 결과 없음 — 업로드 스킵")
 

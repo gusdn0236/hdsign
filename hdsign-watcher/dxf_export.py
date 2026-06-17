@@ -401,6 +401,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     import os
     end = time.time() + timeout
     last_enter = 0.0
+    clear_streak = 0  # 전면 모달이 없는 연속 횟수 — 형식복원(wait_for_file=False)은 모달이 닫히면 즉시 복귀.
     while time.time() < end:
         if wait_for_file:
             for d in target_dirs:
@@ -415,6 +416,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
                     pass
         fg = u.GetForegroundWindow()
         if fg and int(fg) != main_hwnd and int(fg) != dlg:
+            clear_streak = 0
             cls = _class_name(fg)
             ttl = _win_text(fg)
             low = ttl.lower()
@@ -428,6 +430,12 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
                     and (time.time() - last_enter) > 0.8):
                 _press(VK_RETURN)
                 last_enter = time.time()
+        else:
+            # 전면 모달 없음(옵션창까지 닫힘). 형식복원은 저장 Enter 시점에 이미 AI 로 바뀌었으니
+            # 더는 기다릴 필요 없이 즉시 복귀 → 매크로 직후 '몇 초 헛대기' 제거.
+            clear_streak += 1
+            if not wait_for_file and clear_streak >= 2:
+                return None
         time.sleep(0.2)
     if wait_for_file:
         log("[치수] 시간 내 파일이 안 생김")
@@ -442,24 +450,27 @@ def restore_format_ai(main_hwnd, search_dirs, log) -> None:
     import os
     import glob
     import tempfile
+    import threading
     import time as _t
     tmp = tempfile.gettempdir()
-    # 이전 잔여 더미 정리(쓰기 중 lock 이면 다음 회차에 정리됨).
-    for old in glob.glob(os.path.join(tmp, "_hd_fmtreset_*.ai")) + [os.path.join(tmp, "_hd_fmtreset.ai")]:
-        try:
-            os.remove(old)
-        except Exception:
-            pass
     dummy = os.path.join(tmp, f"_hd_fmtreset_{os.getpid()}_{int(_t.time())}.ai")
     try:
         # 고유 이름이라 덮어쓰기창 없음. 파일 대기 X → 모달만 짧게 닫고 복귀(형식은 이미 AI).
         _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=6.0, wait_for_file=False)
     except Exception as e:
         log(f"[치수] AI 복원 실패: {e}")
-    try:
-        os.remove(dummy)
-    except Exception:
-        pass
+
+    # 더미 .ai 정리(이번 것 + 이전 잔여)는 백그라운드로 — 복원 직후 슬립 없이 바로 웹반영으로 복귀.
+    # FlexiSIGN 이 아직 더미를 쓰는 중일 수 있어 잠깐 뒤 지운다(lock 이면 다음 회차 glob 이 정리).
+    def _cleanup_dummies():
+        _t.sleep(2.0)
+        for old in glob.glob(os.path.join(tmp, "_hd_fmtreset_*.ai")) + [os.path.join(tmp, "_hd_fmtreset.ai")]:
+            try:
+                os.remove(old)
+            except Exception:
+                pass
+
+    threading.Thread(target=_cleanup_dummies, daemon=True).start()
 
 
 def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> dict | None:
