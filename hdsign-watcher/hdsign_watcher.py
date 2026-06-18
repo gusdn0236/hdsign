@@ -4944,7 +4944,7 @@ def _write_fs_uid_ads(fs_file: Path) -> str:
         return ""
 
 
-def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None) -> tuple[str, str]:
+def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None) -> tuple[str, str, str]:
     """인쇄된 지시서에 대응하는 .fs 를 거래처 폴더에서 단일 확정하고, 그 파일에 UID(ADS)를
     박은 뒤 (전체경로, UID) 를 반환. 확정 못 하면 ("", "") — 현장은 originalPdfFilename 폴백.
 
@@ -4968,24 +4968,25 @@ def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None
         fs_stem = (doc_stem or "").strip() or _flexisign_document_stem()
         if not fs_stem:
             _stamp_log(f"인쇄 .fs[{order_number}] — FlexiSIGN 에서 저장된 .fs stem 을 못 읽음(미저장/제목에 .fs 없음) → UID/경로 미전송")
-            return "", ""
+            return "", "", ""
         base_str = (_load_config().get("network_customer_base") or "").strip()
         if not base_str:
             _diag_log(f"인쇄 .fs[{order_number}] — network_customer_base 미설정 → 미전송")
-            return "", ""
+            return "", "", ""
         detail = fetch_public_worksheet_detail(order_number)
         if not detail:
             _diag_log(f"인쇄 .fs[{order_number}] — 주문 detail 조회 실패 → 미전송")
-            return "", ""
+            return "", "", ""
         network_folder = (detail.get("networkFolderName") or "").strip()
         company = (detail.get("companyName") or "").strip()
         if not network_folder and not company:
             _diag_log(f"인쇄 .fs[{order_number}] — networkFolderName·companyName 둘 다 빔 → 미전송")
-            return "", ""
+            return "", "", ""
         customer_folder = resolve_customer_folder(Path(base_str), network_folder, company)
         if not customer_folder.exists():
             _stamp_log(f"인쇄 .fs[{order_number}] — 거래처 폴더 없음({customer_folder}) → UID/경로 미전송")
-            return "", ""
+            return "", "", ""
+        cust = str(customer_folder)  # .fs 미매칭이어도 치수/AI복원이 이 거래처 폴더를 save_dir 로 쓰게 반환.
         target = unicodedata.normalize("NFC", fs_stem).casefold()
         hits = [
             p for p in customer_folder.rglob("*.fs")
@@ -5011,12 +5012,12 @@ def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None
                     str(p) for p in sorted(hits, key=_mtime, reverse=True)[:8]) + (" …" if len(hits) > 8 else ""))
             uid = _write_fs_uid_ads(fs_path)
             _stamp_log(f"인쇄 .fs[{order_number}] 확정: {fs_path} (UID={uid or '미발급'})")
-            return str(fs_path), uid
-        _stamp_log(f"인쇄 .fs[{order_number}] — 거래처 폴더에 '{fs_stem}.fs' 없음 → UID/경로 미전송, 현장 폴백")
-        return "", ""
+            return str(fs_path), uid, cust
+        _stamp_log(f"인쇄 .fs[{order_number}] — 거래처 폴더에 '{fs_stem}.fs' 없음 → UID/경로 미전송, 현장 폴백(거래처 폴더는 치수/AI복원 save_dir 로 사용)")
+        return "", "", cust
     except Exception as e:
         _stamp_log(f"인쇄 .fs[{order_number}] 확정 실패: {e}")
-        return "", ""
+        return "", "", ""
 
 
 def _qr_order_from_payload(data: str) -> str | None:
@@ -6037,7 +6038,7 @@ def _process_printed_pdf(pdf_path: Path):
     pdf_path = _rename_printed_pdf_to_original(pdf_path, order_number, doc_stem=printed_stem)
     # 거래처 폴더에서 이 지시서의 .fs 를 단일 확정하고 그 파일에 UID(ADS)를 박는다 — 현장
     # [FS에서 열기] 가 그 UID(없으면 경로)로 직행. 확정 못 하면 ("","") → 현장은 이름 매칭 폴백.
-    fs_path, fs_uid = _resolve_and_stamp_printed_fs(order_number, doc_stem=printed_stem)
+    fs_path, fs_uid, customer_dir = _resolve_and_stamp_printed_fs(order_number, doc_stem=printed_stem)
     # ── 겹치기: PDF 업로드(네트워크/백엔드)를 백그라운드로 시작하고, 그 대기시간 동안 치수 추출
     #    (FlexiSIGN GUI + 입력가드)을 동시에 돌린다. 자원이 달라(네트워크 vs GUI) 병렬 → 체감 추가시간
     #    ~0. 치수는 부차 기능이라 어떤 실패든 PDF 업로드/인쇄 본류엔 영향 없음.
@@ -6059,7 +6060,7 @@ def _process_printed_pdf(pdf_path: Path):
     _up_thread = threading.Thread(target=_upload_pdf_bg, daemon=True)
     _up_thread.start()
     try:
-        _extract_and_upload_dimensions(order_number, fs_path, _busy, pdf_path=pdf_path)
+        _extract_and_upload_dimensions(order_number, fs_path, _busy, pdf_path=pdf_path, customer_dir=customer_dir)
     except Exception as e:
         ui_log(f"치수 추출 예외(무시): {e}")
     _up_thread.join(timeout=180)
@@ -7355,7 +7356,7 @@ def _compute_page_box(pdf_path: str):
         return None
 
 
-def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy, pdf_path: str = "") -> None:
+def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy, pdf_path: str = "", customer_dir: str = "") -> None:
     """[겹치기] 현재 활성 FlexiSIGN 문서를 DXF('외부 파일로 저장')로 내보내 오브젝트별 mm 를 추출 후
     서버 업로드. 입력가드(현장 잠금)로 자동화 중 작업자 물리입력 차단. 부차 기능 — 어떤 실패든
     조용히 넘어가 인쇄/PDF업로드 본류를 절대 막지 않는다. 문서는 export 만 — Save/Save-As 안 함.
@@ -7373,13 +7374,19 @@ def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy, pdf_pa
     if not hwnd:
         ui_log("[치수] FlexiSIGN 창 없음 — 추출 스킵")
         return
-    # DXF 가 저장될 후보 폴더(현재폴더=활성 .fs 폴더 우선) + temp + converted.
+    # DXF/더미AI 가 저장될 후보 폴더(현재폴더=활성 .fs 폴더 우선) + temp + converted.
+    # 우선순위: ① .fs 가 매칭된 경우 그 .fs 폴더(거래처 하위 작업폴더) → ② .fs 미매칭이어도 해석된
+    # 거래처 폴더(customer_dir) → ③ temp. 이렇게 해야 AI복원 더미가 temp 대신 거래처 폴더에 떨어져
+    # FlexiSIGN '외부 파일로 열기/저장'의 last-folder 가 그 거래처로 남는다('내보내기테스트'처럼 .fs
+    # 이름이 폴더에 없어도 거래처 폴더는 살린다).
     dirs = []
     if fs_path:
         try:
             dirs.append(str(Path(fs_path).parent))
         except Exception:
             pass
+    if customer_dir:
+        dirs.append(customer_dir)
     dirs.append(tempfile.gettempdir())
     try:
         dirs.append(str(WATCH_DIR / "converted"))
