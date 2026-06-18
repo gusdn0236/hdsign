@@ -422,6 +422,32 @@ def find_flexisign_window(exe_hint="app.exe") -> int:
 
 
 # ════════════════════════ 핵심 내보내기 레시피 ════════════════════════
+def _wait_file_stable(p, poll=0.1, stable_needed=3, max_wait=8.0) -> bool:
+    """파일 크기가 더 안 커질 때까지(=FlexiSIGN 쓰기 완료) 대기. 큰 DXF 를 쓰는 도중에 읽어
+    헤더/엔티티가 잘린 부분 파일을 파싱(0개)하던 레이스를 막는다. 같은 크기가 stable_needed 회
+    연속이면 완료로 보고 True. 상한(max_wait) 초과면 False(호출측은 그래도 진행). 마지막에 잠깐
+    더 쉬어 FlexiSIGN 이 파일 핸들을 놓을 시간을 준다(읽기 잠금 회피)."""
+    last = -1
+    stable = 0
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        try:
+            cur = p.stat().st_size
+        except Exception:
+            cur = -1
+        if cur > 0 and cur == last:
+            stable += 1
+            if stable >= stable_needed:
+                time.sleep(0.15)
+                return True
+        else:
+            stable = 0
+        last = cur
+        time.sleep(poll)
+    time.sleep(0.15)
+    return False
+
+
 def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_for_file=True, fmt_labels=None):
     """대화상자 열기→옵션무시 해제→형식 선택→파일명(fname)→저장→옵션창/덮어쓰기 Enter.
     형식 선택: fmt_labels(라벨 키워드)가 있으면 콤보 항목 텍스트로 그 형식의 행을 찾아 고른다
@@ -541,7 +567,10 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
                         if f.lower() == base.lower():
                             p = Path(d) / f
                             if p.stat().st_size > 0:
-                                time.sleep(0.2)
+                                # ★ 크기>0 즉시 반환하면 안 됨 — 큰 도면(수천 객체)은 FlexiSIGN 이
+                                #   점진적으로 쓰는 중이라, 헤더/엔티티가 잘린 부분 파일을 읽어 파싱
+                                #   0개($INSUNITS 못 읽어 unit=25.4)가 된다. 크기가 안정될 때까지 기다린다.
+                                _wait_file_stable(p)
                                 return p
                 except Exception:
                     pass
@@ -711,6 +740,13 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
             except Exception:
                 _dxf_size = -1
             geom = dxf_dims.parse_dxf_objects(saved)
+            # 0개면(부분 파일/읽기락 레이스) 잠깐 뒤 재파싱 — 안정대기로 대부분 막지만 최후 보강.
+            # 진짜 빈 문서는 재시도해도 0개라 비용만 잠깐(드묾).
+            for _ in range(2):
+                if geom and geom.get("objects"):
+                    break
+                time.sleep(0.4)
+                geom = dxf_dims.parse_dxf_objects(saved)
             # 파싱 직후 즉시 삭제(지시서 폴더에 임시 DXF 잔재 안 남게). 네트워크 파일이 잠깐 잠겨
             # 실패하면 백그라운드로 재시도 — 작업자 폴더를 깨끗하게 유지.
             try:
