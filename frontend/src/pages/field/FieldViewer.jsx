@@ -46,6 +46,24 @@ function getDueBadge(dateStr) {
     return null;
 }
 
+// PDF24 자동저장 시각값 파일명(예: 260617_101021, 2026-06-17 10-10-21) 판별 —
+// 현장 에이전트 _PDF24_TIMESTAMP_RE 와 동일 패턴. 시각값이면 이름으로 .fs 를 특정
+// 못 하므로(재인쇄 필요) 주황으로 친다. 실제 이름(예: 'GATE2간판')으로 시작만 하고
+// 뒤에 글자가 더 붙은 건 매치 안 돼 초록 유지(예: '260610 디아이엔에이크림(주)…').
+const PDF24_TIMESTAMP_RE = /^(?:(\d{4})-(\d{2})-(\d{2})[ _-](\d{2})-(\d{2})-(\d{2})|(?:\d{2}|\d{4})(\d{2})(\d{2})[ _-]?(\d{2})(\d{2})(\d{2}))(?:[ _-]\w+|\s*\(\d+\))?$/;
+
+// 썸네일 우상단 상태 점 판정. 초록=[FS에서 열기]가 열림 — UID 도장(originalFsUid)이
+// 있으면 이름 바뀌어도 ADS UID로 정확 매칭, 없어도 PDF 파일명이 실제 이름이면 에이전트가
+// 이름매칭으로 그 .fs 를 찾아 연다(오디 사례). 주황=재인쇄 필요 — UID 없고 PDF명이
+// 시각값이거나 아예 없어 이름으로 .fs 를 특정 못 함(한국컷팅·원디자인 사례).
+function fsThumbOpenable(it) {
+    if (it.originalFsUid && String(it.originalFsUid).trim()) return true;
+    const pdf = (it.originalPdfFilename || '').trim();
+    if (!pdf) return false;
+    const stem = pdf.replace(/\.[^.\\/]+$/, '');
+    return !PDF24_TIMESTAMP_RE.test(stem);
+}
+
 export default function FieldViewer() {
     const [items, setItems] = useState([]);
     // 발주관리 '작업완료' 탭(=deletedAt != null) 의 주문들. 30일 후 스케줄러가 완전삭제.
@@ -769,11 +787,9 @@ export default function FieldViewer() {
                         const opening = openingFs === it.orderNumber;
                         const openingDir = openingFolder === it.orderNumber;
                         const closing = completing === it.orderNumber;
-                        // 썸네일 우상단 상태 점. UID 도장(originalFsUid)이 박힌 지시서는 파일명이 바뀌어도
-                        // 에이전트가 ADS UID 로 정확히 그 .fs 를 찾아 [FS에서 열기]가 제대로 열린다(초록).
-                        // UID 가 없으면 옛(도장 도입 전) 지시서이거나 시각값으로 저장된 건 → FlexiSIGN 에서
-                        // 저장 후 다시 인쇄(웹반영)해야 도장이 박힌다(주황).
-                        const fsOpenable = !!(it.originalFsUid && String(it.originalFsUid).trim());
+                        // 썸네일 우상단 상태 점(fsThumbOpenable 참고). 초록=열림(UID 도장 OR 실제
+                        // PDF명→이름매칭), 주황=재인쇄 필요(UID 없고 시각값/단서없음).
+                        const fsOpenable = fsThumbOpenable(it);
                         return (
                             <article
                                 key={it.orderNumber}
@@ -785,8 +801,8 @@ export default function FieldViewer() {
                                     <span
                                         className={`fv-fs-dot ${fsOpenable ? 'ok' : 'warn'}`}
                                         title={fsOpenable
-                                            ? '정상 — 인쇄(웹반영) 때 도장이 박혀 [FS에서 열기]가 정확히 이 지시서의 .fs 를 엽니다.'
-                                            : '주의 — 아직 도장(UID)이 없는 지시서입니다(옛 건 또는 시각값으로 저장됨). FlexiSIGN 에서 저장 후 다시 인쇄(웹반영)하면 정확히 열립니다.'}
+                                            ? '[FS에서 열기]로 열립니다.'
+                                            : '주의 — 시각값으로 저장돼 자동으로 못 엽니다. FlexiSIGN 에서 저장 후 다시 인쇄(웹반영)하면 정확히 열립니다.'}
                                         aria-label={fsOpenable ? '정상적으로 열리는 파일' : '재인쇄(웹반영) 필요'}
                                     />
                                     <WorksheetThumbnail
