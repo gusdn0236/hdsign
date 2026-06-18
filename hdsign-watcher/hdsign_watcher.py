@@ -4944,7 +4944,18 @@ def _write_fs_uid_ads(fs_file: Path) -> str:
         return ""
 
 
-def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None) -> tuple[str, str, str]:
+def _hwnd_pid(hwnd) -> int:
+    """창 hwnd → 소유 프로세스 PID(실패 0)."""
+    try:
+        pid = ctypes.c_ulong(0)
+        ctypes.windll.user32.GetWindowThreadProcessId(ctypes.c_void_p(int(hwnd)), ctypes.byref(pid))
+        return int(pid.value)
+    except Exception:
+        return 0
+
+
+def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None,
+                                  flex_hwnd: int = 0) -> tuple[str, str, str]:
     """인쇄된 지시서에 대응하는 .fs 를 거래처 폴더에서 단일 확정하고, 그 파일에 UID(ADS)를
     박은 뒤 (전체경로, UID) 를 반환. 확정 못 하면 ("", "") — 현장은 originalPdfFilename 폴백.
 
@@ -4969,6 +4980,28 @@ def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None
         if not fs_stem:
             _stamp_log(f"인쇄 .fs[{order_number}] — FlexiSIGN 에서 저장된 .fs stem 을 못 읽음(미저장/제목에 .fs 없음) → UID/경로 미전송")
             return "", "", ""
+        # ★ 1순위 = '열린 파일 정확 경로'. FlexiSIGN 창 제목엔 파일명만 있어 폴더 추정·이름검색이
+        #   필요했지만, FlexiSIGN 이 '열어 둔' .fs 의 실제 전체 경로를 OS 핸들에서 직접 읽으면 같은
+        #   이름 중복('시트커팅' 수십 개)·거래처 폴더 분열·이름 불일치와 무관하게 '바로 그 파일'에
+        #   도장한다. 현장 [FS에서 열기] 도 이 정확 경로(originalFsPath)로 직행해 그간 못 열던 것도 열림.
+        #   어떤 실패든 조용히 이름검색 폴백으로 내려간다.
+        if flex_hwnd:
+            try:
+                import fs_handle
+                pid = _hwnd_pid(flex_hwnd)
+                exact = fs_handle.open_fs_path(pid, fs_stem) if pid else None
+                if exact:
+                    ep = Path(exact)
+                    if ep.is_file():
+                        uid = _write_fs_uid_ads(ep)
+                        _stamp_log(f"인쇄 .fs[{order_number}] 확정(열린파일 정확경로): {ep} (UID={uid or '미발급'})")
+                        return str(ep), uid, str(ep.parent)
+                    else:
+                        _diag_log(f"인쇄 .fs[{order_number}] — 정확경로 후보 비파일({exact}) → 이름검색")
+                else:
+                    _diag_log(f"인쇄 .fs[{order_number}] — 열린 .fs 핸들서 '{fs_stem}' 못 찾음(pid={pid}) → 이름검색")
+            except Exception as e:
+                _diag_log(f"인쇄 .fs[{order_number}] — 정확경로 조회 예외(무시→이름검색): {e}")
         base_str = (_load_config().get("network_customer_base") or "").strip()
         if not base_str:
             _diag_log(f"인쇄 .fs[{order_number}] — network_customer_base 미설정 → 미전송")
@@ -5586,7 +5619,8 @@ def _process_printed_pdf(pdf_path: Path):
     # 라디오로 최종 의도 결정.
     # (FlexiSIGN 창 상태는 자동저장 시 prior_status 보완용으로만 기억.)
     # 인쇄 직후 타이밍 실패(다이얼로그 최상단/제목 갱신중)를 줄이려 짧게 재시도(상한 ~0.24s).
-    _intent_status, _intent_stem, _ = _flexisign_window_status_quick()
+    # hwnd 는 '열린 .fs 정확경로'(_resolve_and_stamp_printed_fs)용으로 PID 를 얻는 데 쓴다.
+    _intent_status, _intent_stem, _intent_hwnd = _flexisign_window_status_quick()
 
     filter_choice, paper_copies = _ask_print_intent_modal(_intent_stem, _close_busy)
     ui_log(f"인쇄 필터 — '{filter_choice}' (stem={_intent_stem or '(unsaved)'}, copies={paper_copies})")
@@ -6026,10 +6060,13 @@ def _process_printed_pdf(pdf_path: Path):
     # 이 stem 을 PDF 리네임(썸네일 이름)과 .fs UID 스탬프 양쪽에 같이 넘겨, 썸네일과 못 박는
     # .fs 가 같은 도큐먼트를 가리키게 한다('썸네일 ≠ 열리는 파일' 어긋남 원천 차단).
     printed_stem = _intent_stem
+    _flex_hwnd = _intent_hwnd
     if not printed_stem:
         try:
-            _ps_status, _ps_stem, _ = _flexisign_window_status_quick()
+            _ps_status, _ps_stem, _ps_hwnd = _flexisign_window_status_quick()
             printed_stem = _ps_stem
+            if _ps_hwnd:
+                _flex_hwnd = _ps_hwnd
         except Exception:
             printed_stem = None
 
@@ -6038,7 +6075,7 @@ def _process_printed_pdf(pdf_path: Path):
     pdf_path = _rename_printed_pdf_to_original(pdf_path, order_number, doc_stem=printed_stem)
     # 거래처 폴더에서 이 지시서의 .fs 를 단일 확정하고 그 파일에 UID(ADS)를 박는다 — 현장
     # [FS에서 열기] 가 그 UID(없으면 경로)로 직행. 확정 못 하면 ("","") → 현장은 이름 매칭 폴백.
-    fs_path, fs_uid, customer_dir = _resolve_and_stamp_printed_fs(order_number, doc_stem=printed_stem)
+    fs_path, fs_uid, customer_dir = _resolve_and_stamp_printed_fs(order_number, doc_stem=printed_stem, flex_hwnd=_flex_hwnd)
     # ── 겹치기: PDF 업로드(네트워크/백엔드)를 백그라운드로 시작하고, 그 대기시간 동안 치수 추출
     #    (FlexiSIGN GUI + 입력가드)을 동시에 돌린다. 자원이 달라(네트워크 vs GUI) 병렬 → 체감 추가시간
     #    ~0. 치수는 부차 기능이라 어떤 실패든 PDF 업로드/인쇄 본류엔 영향 없음.

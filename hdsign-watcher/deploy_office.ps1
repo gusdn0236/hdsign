@@ -60,6 +60,7 @@ if (-not $DeployOnly) {
         '--collect-all','pymupdf','--collect-all','pyzbar','--collect-all','cv2','--collect-all','certifi',
         '--hidden-import','fitz','--hidden-import','pyzbar','--hidden-import','pyzbar.pyzbar',
         '--hidden-import','cv2','--hidden-import','numpy','--hidden-import','encodings.idna','--hidden-import','certifi',
+        '--hidden-import','dxf_export','--hidden-import','dxf_dims','--hidden-import','fs_handle',
         '--add-data',"$assetsJpg;assets",'--add-data',"$icoPath;.",
         $script
     )
