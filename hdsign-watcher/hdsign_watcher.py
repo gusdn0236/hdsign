@@ -4280,18 +4280,31 @@ def _fs_stem_from_title(title: str) -> str:
 
     그래서 ① 제목 끝의 [...] 래퍼를 먼저 벗겨 그 안의 '<...>.fs' 를 잡고(대괄호 포함 허용),
     ② 래퍼가 없는 다른 표기('<파일명>.fs - FlexiSIGN')는 대괄호 없는 기존 패턴으로 폴백한다.
+    ③ 일부 PC(메인컴퓨터 확인)는 Windows '알려진 확장명 숨기기'가 켜져 FlexiSIGN 제목이 '.fs' 없이
+       'App - [<파일명>]' 으로 뜬다 → 끝의 [<...>] 통째를 파일명으로 잡는다(이 stem 의 <이름>.fs 가
+       거래처 폴더에 실재할 때만 도장되므로, 새 빈 문서 '[제목 없음]' 등 오검출은 무해한 폴백).
     """
     t = (title or "").strip()
     if not t:
         return ""
     # ① 'App - [ ... .fs ]' 래퍼: 끝의 ']' 까지 통째로 잡아 안쪽 '<...>.fs' 추출(브래킷 허용).
     m = re.search(r'\[(.+\.fs)\]\s*$', t, re.IGNORECASE)
-    if not m:
-        # ② 래퍼 없는 제목 — 경로/금지문자·대괄호 없는 통상 파일명(옛 동작 유지).
-        m = re.search(r'([^\\/:*?"<>|\r\n\[\]]+\.fs)', t, re.IGNORECASE)
-    if not m:
-        return ""
-    return Path(m.group(1).strip()).stem.strip()
+    if m:
+        return Path(m.group(1).strip()).stem.strip()
+    # ② 래퍼 없는 제목 — 경로/금지문자·대괄호 없는 통상 파일명(옛 동작 유지).
+    m = re.search(r'([^\\/:*?"<>|\r\n\[\]]+\.fs)', t, re.IGNORECASE)
+    if m:
+        return Path(m.group(1).strip()).stem.strip()
+    # ③ 확장자 숨김 표기 — 끝의 [<파일명>] 통째(.fs 없음). 도구패널(DesignCentral/Fill·Stroke Editor)은
+    #    대괄호가 없어 안 걸린다. 끝에 .fs 가 붙어 있으면만 떼고, 없으면 그대로 둔다(점이 든 이름이
+    #    Path.stem 으로 잘리는 것 방지 — 예 '2026.06.12_추가요청').
+    m = re.search(r'\[(.+)\]\s*$', t)
+    if m:
+        inner = m.group(1).strip()
+        if inner.lower().endswith(".fs"):
+            inner = inner[:-3].strip()
+        return inner
+    return ""
 
 
 def _flexisign_window_status() -> tuple[str, str | None, int]:
