@@ -25,6 +25,7 @@ import {
   getOrder,
   getEstimate,
   putEstimate,
+  deleteEstimate,
   markEasyformUploaded,
   readText,
   getVisionQuota,
@@ -361,11 +362,13 @@ interface AutoQuoteProps {
   onClose?: () => void;
   /** 저장 성공 시 호출 — 부모가 주문 목록의 명세서 배지를 즉시 갱신. */
   onSaved?: () => void;
+  /** 명세서를 비워 임시저장을 해제했을 때 호출 — 부모가 '임시저장' 배지를 즉시 제거. */
+  onCleared?: () => void;
   /** 이지폼 입력(확정) 시 호출 — 부모가 목록 카드의 '명세서작성완료' 배지를 즉시 점등(작업중·작업완료 양쪽). */
   onEasyformUploaded?: () => void;
 }
 
-export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEasyformUploaded }: AutoQuoteProps = {}) {
+export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCleared, onEasyformUploaded }: AutoQuoteProps = {}) {
   const { token } = useAuth();
   const [searchParams] = useSearchParams();
 
@@ -416,18 +419,28 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
   // 치수 오버레이 — 3번 모드(mode==='dim')일 때 지시서 위에 오브젝트별/구간 가로세로(mm) 표시.
   const dimMode = mode === 'dim';
   const [dimGeom, setDimGeom] = useState<DimGeom | null>(null);
-  // 치수 모드를 처음 켤 때 서버에서 지오메트리(mm) 1회 로드(공개 프록시). 부차 기능 — 실패 시 조용히.
+  // dimGeom 이 '어떤 worksheetObjectsUrl 로' 로드됐는지 기억 — 워처가 재업로드하면 이 URL(R2 키, UUID)이
+  // 바뀌므로, 같은 URL 이면 재요청 안 하고 바뀌면 다시 로드한다(임시저장 상태여도 재업로드 반영).
+  const dimGeomUrlRef = useRef<string | null>(null);
+  // 치수 모드를 켤 때 서버에서 지오메트리(mm) 로드(공개 프록시). 부차 기능 — 실패 시 조용히.
   useEffect(() => {
-    if (!dimMode || dimGeom || !order?.worksheetObjectsUrl || !order?.orderNumber) return;
+    const objUrl = order?.worksheetObjectsUrl || null;
+    if (!dimMode || !objUrl || !order?.orderNumber) return;
+    if (dimGeom && dimGeomUrlRef.current === objUrl) return; // 같은 버전 이미 로드됨 — 재요청 X
     let alive = true;
     (async () => {
       try {
+        // ?v=objUrl 캐시버스터 — /objects 경로는 늘 같아 브라우저가 60s 캐시하므로, 재업로드 후에도
+        // 옛 치수를 주던 것을 막는다(R2 키가 버전마다 달라 v 가 바뀌면 새로 받음).
         const res = await fetch(
-          `${BASE_URL}/api/public/worksheets/${encodeURIComponent(order.orderNumber)}/objects`,
+          `${BASE_URL}/api/public/worksheets/${encodeURIComponent(order.orderNumber)}/objects?v=${encodeURIComponent(objUrl)}`,
         );
         if (!res.ok) return;
         const g = (await res.json()) as DimGeom;
-        if (alive) setDimGeom(g);
+        if (alive) {
+          setDimGeom(g);
+          dimGeomUrlRef.current = objUrl;
+        }
       } catch {
         /* 부차 기능 — 무시 */
       }
@@ -2030,7 +2043,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onEa
     }
     setSaving(true);
     try {
-      await putEstimate(token, order.id, { grid: buildGrid(), total, savedFrom: 'autoquote' });
+      const grid = buildGrid();
+      if (grid.length === 0) {
+        // 행을 전부 지운 채 임시저장 → 임시저장 자체를 해제(원래 빈 상태로). 기존 임시저장이 있으면
+        // 서버에서 지우고 '임시저장' 라벨을 뗀다. 없으면 deleteEstimate 가 404 를 조용히 흡수.
+        await deleteEstimate(token, order.id);
+        setOrder((o) => (o ? { ...o, hasEstimate: false } : o));
+        onCleared?.();
+        cdlg('명세서가 비어 있어 임시저장을 해제했어요. 주문 카드의 “임시저장” 라벨이 사라집니다.', [{ label: '확인' }]);
+        return;
+      }
+      await putEstimate(token, order.id, { grid, total, savedFrom: 'autoquote' });
       setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
       onSaved?.();
       cdlg('임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.', [{ label: '확인' }]);

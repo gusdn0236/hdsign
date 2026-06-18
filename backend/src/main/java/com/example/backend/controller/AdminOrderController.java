@@ -291,6 +291,15 @@ public class AdminOrderController {
         return t.length() > 30 ? t.substring(0, 30) : t;
     }
 
+    // 명세서 임시저장 삭제 — 행을 전부 비운 채 임시저장하면 프론트가 호출해 '임시저장' 라벨을 뗀다
+    // (원래 아무것도 없는 상태로 복귀). estimate 행을 지우면 목록 enrich 에서 hasEstimate=false 가 된다.
+    // 없으면 멱등하게 ok(이미 비어 있음).
+    @DeleteMapping("/{id}/estimate")
+    public ResponseEntity<?> deleteEstimate(@PathVariable Long id) {
+        estimateRepository.findByOrderId(id).ifPresent(estimateRepository::delete);
+        return ResponseEntity.ok(Map.of("orderId", id, "hasEstimate", false));
+    }
+
     // 명세서 조회 — 없으면 404(프론트는 "신규 작성"으로 처리).
     @GetMapping("/{id}/estimate")
     public ResponseEntity<?> getEstimate(@PathVariable Long id) {

@@ -359,6 +359,18 @@ export async function putEstimate(
   return res.json();
 }
 
+/** 명세서 임시저장 삭제 — 행을 전부 비운 채 저장 시 '임시저장' 라벨 제거용. 없으면(404) 무시. */
+export async function deleteEstimate(
+  token: string | null | undefined,
+  orderId: number | string,
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+  if (!res.ok && res.status !== 404) throw new Error(`명세서 삭제 실패 (${res.status})`);
+}
+
 export async function markEasyformUploaded(
   token: string | null | undefined,
   orderId: number | string,

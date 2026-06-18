@@ -247,6 +247,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setOrders((prev) => prev.map(patch));
     setTrashOrders((prev) => prev.map(patch));
   }, [editorName]);
+  // 명세서를 비워 임시저장을 해제했을 때 — '임시저장' 배지를 즉시 제거(원래 빈 상태로).
+  const markEstimateCleared = useCallback((id) => {
+    const patch = (o) =>
+      o.id === id ? { ...o, hasEstimate: false, estimateEditorName: null } : o;
+    setOrders((prev) => prev.map(patch));
+    setTrashOrders((prev) => prev.map(patch));
+  }, []);
   // 이지폼 입력(확정) 시 — '명세서작성완료' 배지를 작업중·작업완료 목록 카드에 즉시 점등(재요청 없이).
   // 이지폼으로 옮겨적은 사람(=이 PC) 이름이 최종 작성자로 뜬다.
   const markEasyformDone = useCallback((id) => {
@@ -2867,6 +2874,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               orderId={estimateOrderId}
               onClose={() => setEstimateOrderId(null)}
               onSaved={() => markEstimateSaved(estimateOrderId)}
+              onCleared={() => markEstimateCleared(estimateOrderId)}
               onEasyformUploaded={() => markEasyformDone(estimateOrderId)}
             />
           </Suspense>
