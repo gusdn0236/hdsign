@@ -52,6 +52,7 @@ public class OrderArchiveService {
         addKey(keys, order.getWorksheetPdfUrl());
         addKey(keys, order.getWorksheetOriginalPdfUrl());
         addKey(keys, order.getWorksheetThumbnailUrl());
+        addKey(keys, order.getWorksheetObjectsUrl()); // 치수 오버레이 지오메트리 JSON(R2) — 누락 시 고아로 남던 것
         for (String key : keys) {
             try {
                 s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
