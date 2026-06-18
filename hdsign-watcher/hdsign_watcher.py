@@ -4418,6 +4418,25 @@ def _flexisign_window_status() -> tuple[str, str | None, int]:
         return ("no_window", None, 0)
 
 
+def _flexisign_window_status_quick(tries: int = 3, gap: float = 0.12) -> tuple[str, str | None, int]:
+    """_flexisign_window_status 를 짧게 몇 번 재시도해 stem 을 잡는다.
+
+    인쇄 직후엔 인쇄 다이얼로그가 잠깐 최상단이거나 FlexiSIGN 창 제목이 갱신 중이라 첫 읽기가
+    빗나갈 수 있다 → stem 을 못 잡으면 아주 짧게 재시도. stem 을 잡는 즉시 반환하고, 전체 대기
+    상한이 작아(기본 3회×0.12s ≈ 최대 0.24s) 인쇄 흐름을 느리게 하지 않는다. 끝까지 못 잡으면
+    예전과 똑같이 (unsaved/no_window) 를 돌려준다 — 차단 없이 조용히 폴백(시각값 그대로 진행).
+    """
+    status, stem, hwnd = _flexisign_window_status()
+    attempt = 1
+    while stem is None and attempt < tries:
+        time.sleep(gap)
+        status, stem, hwnd = _flexisign_window_status()
+        attempt += 1
+    if attempt > 1:
+        _diag_log(f"창 제목 재시도 {attempt}회 → status={status} stem={stem!r}")
+    return status, stem, hwnd
+
+
 def _flexisign_document_stem() -> str | None:
     """저장된 FlexiSIGN 도큐먼트의 stem 을 창 제목에서 읽어 반환. 저장 안 됐거나 창이 없으면 None.
 
@@ -4939,8 +4958,8 @@ def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None
     아래를 모두 만족할 때만 확정:
       - 인쇄한 도큐먼트의 .fs stem 을 알 수 있음
       - config 의 network_customer_base 가 설정돼 있고 거래처 폴더가 실재
-      - 그 거래처 폴더(하위 포함)에 <stem>.fs 가 유일하게 존재
-    후보가 0개거나 2개 이상이면 모호 → ("", "") (잘못된 .fs 를 못 박느니 폴백이 낫다).
+      - 그 거래처 폴더(하위 포함)에 <stem>.fs 가 존재 (여럿이면 가장 최근 수정본 채택)
+    후보가 0개면 ("", "") (이름 불일치/미저장 → 현장 이름매칭 폴백).
 
     어떤 경우에도 예외를 밖으로 던지지 않는다 — 실패 시 ("", "") 반환, 인쇄/업로드 흐름은 진행.
     """
@@ -4972,19 +4991,28 @@ def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None
             p for p in customer_folder.rglob("*.fs")
             if p.is_file() and unicodedata.normalize("NFC", p.stem).casefold() == target
         ]
-        if len(hits) == 1:
-            fs_path = hits[0]
+        if hits:
+            if len(hits) == 1:
+                fs_path = hits[0]
+            else:
+                # 같은 이름 .fs 가 거래처 폴더(하위 포함)에 여럿 — '시트커팅'·'종이도안' 같은 범용
+                # 파일명이나 차수별 폴더에 같은 발주명을 재사용한 경우. 예전엔 '모호'라 포기했지만,
+                # 인쇄한 그 문서가 보통 '방금 작업/저장한' 것이므로 **가장 최근 수정본을 채택**한다
+                # (현장 find_fs_file 의 중복 stem 처리와 동일 규칙 → 사무실·현장 일관). 한 파일에만
+                # UID 가 박히고 현장 [FS에서 열기] 는 그 UID 로 정확히 그 파일을 여니 결과는 명확하다.
+                def _mtime(p: Path) -> float:
+                    try:
+                        return p.stat().st_mtime
+                    except Exception:
+                        return 0.0
+                fs_path = max(hits, key=_mtime)
+                _stamp_log(f"인쇄 .fs[{order_number}] — '{fs_stem}.fs' {len(hits)}개 중 최신 수정본 채택: {fs_path}")
+                _diag_log("   후보(최신순): " + " | ".join(
+                    str(p) for p in sorted(hits, key=_mtime, reverse=True)[:8]) + (" …" if len(hits) > 8 else ""))
             uid = _write_fs_uid_ads(fs_path)
             _stamp_log(f"인쇄 .fs[{order_number}] 확정: {fs_path} (UID={uid or '미발급'})")
             return str(fs_path), uid
-        if len(hits) >= 2:
-            # 같은 이름 .fs 가 거래처 폴더(하위 포함)에 여럿 — '시트커팅'·'종이도안' 같은 범용
-            # 파일명이 여러 작업폴더에 흩어진 경우. 잘못 박느니 미전송(현장 이름매칭 폴백). 후보
-            # 경로를 로그에 남겨 어떤 충돌인지 즉시 보이게 한다.
-            _stamp_log(f"인쇄 .fs[{order_number}] — '{fs_stem}.fs' 후보 {len(hits)}건(모호) → UID/경로 미전송, 현장 폴백")
-            _diag_log("   후보: " + " | ".join(str(p) for p in hits[:8]) + (" …" if len(hits) > 8 else ""))
-        else:
-            _stamp_log(f"인쇄 .fs[{order_number}] — 거래처 폴더에 '{fs_stem}.fs' 없음 → UID/경로 미전송, 현장 폴백")
+        _stamp_log(f"인쇄 .fs[{order_number}] — 거래처 폴더에 '{fs_stem}.fs' 없음 → UID/경로 미전송, 현장 폴백")
         return "", ""
     except Exception as e:
         _stamp_log(f"인쇄 .fs[{order_number}] 확정 실패: {e}")
@@ -5556,7 +5584,8 @@ def _process_printed_pdf(pdf_path: Path):
     # fast path. 웹 작업이면 QR 감지 + 매칭 다이얼로그에서 [웹반영&인쇄 / 웹반영만 / 종이만]
     # 라디오로 최종 의도 결정.
     # (FlexiSIGN 창 상태는 자동저장 시 prior_status 보완용으로만 기억.)
-    _intent_status, _intent_stem, _ = _flexisign_window_status()
+    # 인쇄 직후 타이밍 실패(다이얼로그 최상단/제목 갱신중)를 줄이려 짧게 재시도(상한 ~0.24s).
+    _intent_status, _intent_stem, _ = _flexisign_window_status_quick()
 
     filter_choice, paper_copies = _ask_print_intent_modal(_intent_stem, _close_busy)
     ui_log(f"인쇄 필터 — '{filter_choice}' (stem={_intent_stem or '(unsaved)'}, copies={paper_copies})")
@@ -5998,7 +6027,7 @@ def _process_printed_pdf(pdf_path: Path):
     printed_stem = _intent_stem
     if not printed_stem:
         try:
-            _ps_status, _ps_stem, _ = _flexisign_window_status()
+            _ps_status, _ps_stem, _ = _flexisign_window_status_quick()
             printed_stem = _ps_stem
         except Exception:
             printed_stem = None
