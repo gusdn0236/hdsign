@@ -8,6 +8,7 @@ import collections
 import ctypes
 import encodings.idna  # PyInstaller onefile: keep HTTPS host-name codec available.
 import json
+import os
 import queue
 import re
 import shutil
@@ -300,6 +301,48 @@ def ui_status(state: str, detail: str = ""):
 
 def ui_alert(title: str, message: str):
     _ui_queue.put(("alert", title, message))
+
+
+# ── 도장/창식별 진단 로그(디스크) ─────────────────────────────────────────────
+# 화면 로그(ui_log)는 Tk Text 7줄만 보여주고 사라져 사후 추적이 안 된다. 인쇄 때 .fs 식별·
+# UID 도장 결과/사유를 %LOCALAPPDATA%\HDSignWorksheet\stamp.log 에 영구 기록해, "어느 PC가
+# 왜 도장을 못 찍었는지"(창 제목에 .fs 없음 / 후보 0건 / 모호 N건 등)를 로그만 보고 판정한다.
+# 현장 에이전트의 agent.log 와 같은 패턴. 어떤 실패도 인쇄 흐름엔 영향 주지 않는다.
+_DIAG_LOG_PATH: Path | None = None
+
+
+def _diag_log_path() -> Path:
+    global _DIAG_LOG_PATH
+    if _DIAG_LOG_PATH is None:
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or tempfile.gettempdir()
+        d = Path(base) / "HDSignWorksheet"
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            d = Path(base)
+        _DIAG_LOG_PATH = d / "stamp.log"
+    return _DIAG_LOG_PATH
+
+
+def _diag_log(msg: str) -> None:
+    """진단 한 줄을 디스크 로그에 append. 1MB 넘으면 비우고 다시 시작. 실패는 조용히 무시."""
+    try:
+        p = _diag_log_path()
+        try:
+            if p.exists() and p.stat().st_size > 1_000_000:
+                p.write_text("", encoding="utf-8")
+        except Exception:
+            pass
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+
+def _stamp_log(msg: str) -> None:
+    """화면(ui_log) + 디스크(_diag_log) 양쪽에 남긴다 — 도장/창식별 진단 전용."""
+    ui_log(msg)
+    _diag_log(msg)
 
 
 # ── System helpers ───────────────────────────────────────────────────────────
@@ -4358,15 +4401,17 @@ def _flexisign_window_status() -> tuple[str, str | None, int]:
             if stem and not any(s == stem for s, _, _ in ordered):
                 ordered.append((stem, h_int, t))
         titles_only = [w[1] for w in windows]
-        ui_log(f"FlexiSIGN 창 제목 {titles_only!r} → .fs 후보 {[s for s, _, _ in ordered]!r}")
+        # 디스크 로그에도 남김 — 도장 실패 시 '제목에 .fs 가 정말 없었는지'를 사후에 본다.
+        _stamp_log(f"FlexiSIGN 창 제목 {titles_only!r} → .fs 후보 {[s for s, _, _ in ordered]!r}")
         if ordered:
             first_stem, first_hwnd, _first_title = ordered[0]
             if len(ordered) > 1:
-                ui_log(f"FlexiSIGN 열린 .fs 여럿 — 최상단 창의 '{first_stem}' 채택")
+                _stamp_log(f"FlexiSIGN 열린 .fs 여럿 — 최상단 창의 '{first_stem}' 채택")
             return ("saved", first_stem, first_hwnd)
         # 창은 있는데 .fs 가 한 군데도 없음 — 진짜 새(저장 안 된) 도큐먼트일 수도 있고,
         # FlexiSIGN 버전이 확장자를 숨기는 설정일 수도 있다. 호출 측은 사용자가 인쇄를
         # 눌렀다는 사실을 신뢰해 그대로 진행한다(stem 만 None — PDF 리네임 폴백).
+        _diag_log(f"→ 미저장 판정(제목에 .fs 없음): {titles_only!r}")
         return ("unsaved", None, windows[0][0])
     except Exception as e:
         ui_log(f"FlexiSIGN 창 상태 읽기 실패: {e}")
@@ -4900,23 +4945,27 @@ def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None
     어떤 경우에도 예외를 밖으로 던지지 않는다 — 실패 시 ("", "") 반환, 인쇄/업로드 흐름은 진행.
     """
     try:
+        _diag_log(f"── 도장 시작 order={order_number} doc_stem={doc_stem!r}")
         fs_stem = (doc_stem or "").strip() or _flexisign_document_stem()
         if not fs_stem:
-            ui_log("인쇄 .fs — FlexiSIGN 에서 저장된 .fs stem 을 못 읽음 → UID/경로 미전송")
+            _stamp_log(f"인쇄 .fs[{order_number}] — FlexiSIGN 에서 저장된 .fs stem 을 못 읽음(미저장/제목에 .fs 없음) → UID/경로 미전송")
             return "", ""
         base_str = (_load_config().get("network_customer_base") or "").strip()
         if not base_str:
+            _diag_log(f"인쇄 .fs[{order_number}] — network_customer_base 미설정 → 미전송")
             return "", ""
         detail = fetch_public_worksheet_detail(order_number)
         if not detail:
+            _diag_log(f"인쇄 .fs[{order_number}] — 주문 detail 조회 실패 → 미전송")
             return "", ""
         network_folder = (detail.get("networkFolderName") or "").strip()
         company = (detail.get("companyName") or "").strip()
         if not network_folder and not company:
+            _diag_log(f"인쇄 .fs[{order_number}] — networkFolderName·companyName 둘 다 빔 → 미전송")
             return "", ""
         customer_folder = resolve_customer_folder(Path(base_str), network_folder, company)
         if not customer_folder.exists():
-            ui_log(f"인쇄 .fs — 거래처 폴더 없음({customer_folder}) → UID/경로 미전송")
+            _stamp_log(f"인쇄 .fs[{order_number}] — 거래처 폴더 없음({customer_folder}) → UID/경로 미전송")
             return "", ""
         target = unicodedata.normalize("NFC", fs_stem).casefold()
         hits = [
@@ -4926,15 +4975,19 @@ def _resolve_and_stamp_printed_fs(order_number: str, doc_stem: str | None = None
         if len(hits) == 1:
             fs_path = hits[0]
             uid = _write_fs_uid_ads(fs_path)
-            ui_log(f"인쇄 .fs 확정: {fs_path} (UID={uid or '미발급'})")
+            _stamp_log(f"인쇄 .fs[{order_number}] 확정: {fs_path} (UID={uid or '미발급'})")
             return str(fs_path), uid
         if len(hits) >= 2:
-            ui_log(f"인쇄 .fs — '{fs_stem}.fs' 후보 {len(hits)}건(모호) → UID/경로 미전송, 현장 폴백")
+            # 같은 이름 .fs 가 거래처 폴더(하위 포함)에 여럿 — '시트커팅'·'종이도안' 같은 범용
+            # 파일명이 여러 작업폴더에 흩어진 경우. 잘못 박느니 미전송(현장 이름매칭 폴백). 후보
+            # 경로를 로그에 남겨 어떤 충돌인지 즉시 보이게 한다.
+            _stamp_log(f"인쇄 .fs[{order_number}] — '{fs_stem}.fs' 후보 {len(hits)}건(모호) → UID/경로 미전송, 현장 폴백")
+            _diag_log("   후보: " + " | ".join(str(p) for p in hits[:8]) + (" …" if len(hits) > 8 else ""))
         else:
-            ui_log(f"인쇄 .fs — 거래처 폴더에 '{fs_stem}.fs' 없음 → UID/경로 미전송, 현장 폴백")
+            _stamp_log(f"인쇄 .fs[{order_number}] — 거래처 폴더에 '{fs_stem}.fs' 없음 → UID/경로 미전송, 현장 폴백")
         return "", ""
     except Exception as e:
-        ui_log(f"인쇄 .fs 확정 실패: {e}")
+        _stamp_log(f"인쇄 .fs[{order_number}] 확정 실패: {e}")
         return "", ""
 
 
