@@ -44,6 +44,8 @@ WM_GETTEXT = 0x000D
 WM_GETTEXTLENGTH = 0x000E
 CB_GETCURSEL = 0x0147
 CB_GETITEMHEIGHT = 0x0154
+CB_GETCOUNT = 0x0146
+CB_GETLBTEXT = 0x0148
 BM_GETCHECK = 0x00F0
 VK_RETURN = 0x0D
 
@@ -53,8 +55,15 @@ DLG_EDIT_FILENAME = 1152
 DLG_BTN_SAVE = 1                # IDOK
 CHK_SUPPRESS_OPTS = 1011        # '옵션 무시'
 CHK_SELECTION_ONLY = 1009       # '선택만'
-DXF_ROW = 2                     # 형식 콤보: 0=AI, 1=PSD, 2=DXF
-AI_ROW = 0                      # ADOBE Illustrator
+# ⚠️ 형식은 '행 번호'가 아니라 '항목 텍스트(라벨)'로 고른다 — 외부파일저장 형식 목록의 순서는
+#    PC/FlexiSIGN 버전·설치 플러그인마다 다를 수 있어(예: 이 PC=[AI,PSD,DXF] 인데 다른 PC=[PSD,AI,DXF])
+#    행 번호를 박으면 다른 PC서 엉뚱한 형식을 고른다(특히 AI 복원이 PSD 등으로 새서 작동 안 함).
+#    아래 _ROW 는 라벨 매칭이 실패할 때만 쓰는 '폴백 인덱스'(이 PC 기준)일 뿐이다.
+DXF_ROW = 2                     # (폴백) 이 PC 형식 콤보: 0=AI, 1=PSD, 2=DXF
+AI_ROW = 0                      # (폴백) ADOBE Illustrator
+# 라벨 매칭 키워드(소문자 부분일치). 형식명은 보통 'Adobe Illustrator (*.ai)' / 'AutoCAD (*.dxf)'.
+DXF_LABELS = ("dxf",)
+AI_LABELS = ("illustrator", ".ai")
 ID_FILE_NEW = 57600             # 표준 MFC ID_FILE_NEW (파일>새로 만들기) — WM_COMMAND 로 결정적 호출
 BM_CLICK = 0x00F5
 
@@ -203,6 +212,33 @@ def _ctrl_text(ctrl) -> str:
 
 def _combo_cursel(combo) -> int:
     return u.SendMessageW(ctypes.c_void_p(combo), CB_GETCURSEL, None, None)
+
+
+def _combo_items(combo) -> list:
+    """콤보(형식 드롭다운)의 모든 항목 텍스트를 순서대로 반환."""
+    out = []
+    try:
+        n = int(u.SendMessageW(ctypes.c_void_p(combo), CB_GETCOUNT, None, None) or 0)
+    except Exception:
+        n = 0
+    for i in range(max(0, n)):
+        try:
+            buf = ctypes.create_unicode_buffer(260)
+            u.SendMessageW(ctypes.c_void_p(combo), CB_GETLBTEXT, ctypes.c_void_p(i), ctypes.cast(buf, ctypes.c_void_p))
+            out.append(buf.value or "")
+        except Exception:
+            out.append("")
+    return out
+
+
+def _combo_find_row(combo, keywords) -> int:
+    """keywords 중 하나라도 (소문자 부분일치로) 포함하는 첫 항목의 행 인덱스. 없으면 -1.
+    형식 목록 순서가 PC마다 달라도 라벨로 정확히 고르기 위함(행 번호 하드코딩 회피)."""
+    for i, t in enumerate(_combo_items(combo)):
+        tl = (t or "").lower()
+        if any(k in tl for k in keywords):
+            return i
+    return -1
 
 
 def _rect(h) -> _RECT:
@@ -386,8 +422,10 @@ def find_flexisign_window(exe_hint="app.exe") -> int:
 
 
 # ════════════════════════ 핵심 내보내기 레시피 ════════════════════════
-def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_for_file=True):
-    """대화상자 열기→옵션무시 해제→형식(fmt_row 행)→파일명(fname)→저장→옵션창/덮어쓰기 Enter.
+def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_for_file=True, fmt_labels=None):
+    """대화상자 열기→옵션무시 해제→형식 선택→파일명(fname)→저장→옵션창/덮어쓰기 Enter.
+    형식 선택: fmt_labels(라벨 키워드)가 있으면 콤보 항목 텍스트로 그 형식의 행을 찾아 고른다
+       (형식 목록 순서가 PC마다 달라도 정확). 라벨 매칭 실패 시에만 fmt_row(폴백 인덱스) 사용.
     wait_for_file=True: target_dirs 에서 fname 파일 생성 확인 후 그 Path 반환(없으면 None).
     wait_for_file=False: 파일 생성을 기다리지 않고, 짧게 모달만 닫아준 뒤 None 반환(형식 복원용 —
        AI 내보내기가 느려도 형식은 저장 클릭 시점에 이미 바뀌므로 파일 완성 대기 불필요)."""
@@ -403,6 +441,18 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     if not combo or not edit:
         log("[치수] 대화상자 컨트롤(콤보/입력칸) 못 찾음")
         return None
+
+    # 형식 행 결정 — 라벨(항목 텍스트)로 찾는 게 1순위. 형식 목록 순서가 PC/버전마다 달라도 정확.
+    # 못 찾으면 fmt_row(이 PC 기준 폴백 인덱스) 사용. 목록 전체를 로그로 남겨 PC별 순서를 확인한다.
+    target_row = fmt_row
+    if fmt_labels:
+        items = _combo_items(combo)
+        found = _combo_find_row(combo, fmt_labels)
+        if found >= 0:
+            target_row = found
+            log(f"[치수] 형식 라벨매칭 → {found}행 ('{items[found]}') / 목록={items}")
+        else:
+            log(f"[치수] 형식 라벨매칭 실패({fmt_labels}) — 폴백 {fmt_row}행 / 목록={items}")
 
     # fname 이 전체경로면 그 폴더에 저장되므로(WM_SETTEXT 가 경로 포함을 처리), 그 폴더를 탐색 1순위로.
     # 추가로 대화상자 현재 폴더(CDM_GETFOLDERPATH)도 가능하면 보탠다(옛 대화상자에선 0 반환할 수 있음).
@@ -459,9 +509,9 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     ih = u.SendMessageW(ctypes.c_void_p(combo), CB_GETITEMHEIGHT, None, None) or 16
     if lb[0]:
         lr = _rect(lb[0])
-        _click((lr.left + lr.right) // 2, lr.top + ih * fmt_row + ih // 2)
+        _click((lr.left + lr.right) // 2, lr.top + ih * target_row + ih // 2)
     time.sleep(0.1)
-    log(f"[치수] 형식 콤보 cur={_combo_cursel(combo)} (기대={fmt_row})")
+    log(f"[치수] 형식 콤보 cur={_combo_cursel(combo)} (기대={target_row})")
 
     # 2) 파일명 = 이름만 통째교체(WM_SETTEXT)
     nbuf = ctypes.create_unicode_buffer(fname)
@@ -578,7 +628,7 @@ def restore_format_ai(main_hwnd, search_dirs, log) -> None:
     # 2) 빈 문서를 AI 로 export → save_dir(지시서폴더). 고유이름이라 덮어쓰기창 없음. 파일 대기 X.
     dummy = os.path.join(save_dir, f"_hd_fmtreset_{os.getpid()}_{int(_t.time())}.ai")
     try:
-        _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=8.0, wait_for_file=False)
+        _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=8.0, wait_for_file=False, fmt_labels=AI_LABELS)
     except Exception as e:
         log(f"[치수] AI 복원 export 실패: {e}")
 
@@ -654,7 +704,7 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
     geom = None
     guarded = input_guard_start()
     try:
-        saved = _do_export(main_hwnd, DXF_ROW, fname, search_dirs, log, timeout=14.0)
+        saved = _do_export(main_hwnd, DXF_ROW, fname, search_dirs, log, timeout=14.0, fmt_labels=DXF_LABELS)
         if saved:
             geom = dxf_dims.parse_dxf_objects(saved)
             # 파싱 직후 즉시 삭제(지시서 폴더에 임시 DXF 잔재 안 남게). 네트워크 파일이 잠깐 잠겨

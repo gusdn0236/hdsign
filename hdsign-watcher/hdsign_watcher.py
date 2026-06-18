@@ -7391,7 +7391,8 @@ def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy, pdf_pa
     time.sleep(0.2)
     geom = None
     try:
-        geom = dxf_export.extract_dimensions(hwnd, dirs, log=ui_log)
+        # log=_stamp_log → 형식 목록·라벨매칭 결과까지 stamp.log 에 남겨 PC별 형식순서를 확인한다.
+        geom = dxf_export.extract_dimensions(hwnd, dirs, log=_stamp_log)
     except Exception as e:
         ui_log(f"[치수] extract_dimensions 예외(무시): {e}")
     finally:
