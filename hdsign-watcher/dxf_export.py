@@ -706,6 +706,10 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
     try:
         saved = _do_export(main_hwnd, DXF_ROW, fname, search_dirs, log, timeout=14.0, fmt_labels=DXF_LABELS)
         if saved:
+            try:
+                _dxf_size = saved.stat().st_size
+            except Exception:
+                _dxf_size = -1
             geom = dxf_dims.parse_dxf_objects(saved)
             # 파싱 직후 즉시 삭제(지시서 폴더에 임시 DXF 잔재 안 남게). 네트워크 파일이 잠깐 잠겨
             # 실패하면 백그라운드로 재시도 — 작업자 폴더를 깨끗하게 유지.
@@ -723,6 +727,10 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
                 threading.Thread(target=_retry_rm, daemon=True).start()
             n = len(geom.get("objects", [])) if geom else 0
             log(f"[치수] 추출 완료 — 오브젝트 {n}개, unit_mm={geom.get('unit_mm') if geom else '?'}")
+            # 0개 진단 — DXF 파일크기 + 엔티티 타입 분포를 남긴다. 작으면 선택만/빈export, INSERT 면
+            # 도형이 블록참조라 스킵된 것(블록 해석 확장 필요), SPLINE 등이면 bbox 계산 점검.
+            if n == 0 and geom is not None:
+                log(f"[치수] ⚠️0개 진단 — DXF {_dxf_size}B, 엔티티타입={geom.get('types')}, skipped={geom.get('skipped')}")
         if restore_ai:
             restore_format_ai(main_hwnd, search_dirs, log)
     except Exception as e:

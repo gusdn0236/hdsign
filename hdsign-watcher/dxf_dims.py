@@ -177,11 +177,13 @@ def parse_dxf_objects(path) -> dict:
 
     objs: list[dict] = []
     skipped: dict[str, int] = {}
+    types: dict[str, int] = {}  # 진단용 — 모든 최상위 엔티티 타입 카운트(0개일 때 원인 파악).
     i = 0
     # ENTITIES 섹션만 대상으로. (간단히 전체를 훑되 SECTION/HEADER 등 비-도형은 bbox 가 안 나와 무시됨)
     while i < len(ents):
         ent = ents[i]
         etype = ent[0][1]
+        types[etype] = types.get(etype, 0) + 1
         if etype == "POLYLINE":
             verts = []
             j = i + 1
@@ -224,7 +226,7 @@ def parse_dxf_objects(path) -> dict:
         y1 = max(o["y"] + o["h"] for o in objs)
         extent = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
 
-    return {"unit_mm": unit, "extent": extent, "objects": objs, "skipped": skipped}
+    return {"unit_mm": unit, "extent": extent, "objects": objs, "skipped": skipped, "types": types}
 
 
 def _mk(bb, unit, etype) -> dict:
