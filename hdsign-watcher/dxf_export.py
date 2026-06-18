@@ -55,6 +55,8 @@ CHK_SUPPRESS_OPTS = 1011        # '옵션 무시'
 CHK_SELECTION_ONLY = 1009       # '선택만'
 DXF_ROW = 2                     # 형식 콤보: 0=AI, 1=PSD, 2=DXF
 AI_ROW = 0                      # ADOBE Illustrator
+ID_FILE_NEW = 57600             # 표준 MFC ID_FILE_NEW (파일>새로 만들기) — WM_COMMAND 로 결정적 호출
+BM_CLICK = 0x00F5
 
 u.GetWindowTextLengthW.restype = ctypes.c_int
 u.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
@@ -68,6 +70,8 @@ u.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctyp
 u.GetDlgItem.restype = ctypes.c_void_p
 u.GetDlgItem.argtypes = [ctypes.c_void_p, ctypes.c_int]
 u.GetDlgCtrlID.argtypes = [ctypes.c_void_p]
+u.GetParent.restype = ctypes.c_void_p
+u.GetParent.argtypes = [ctypes.c_void_p]
 
 
 # ════════════════════════ 입력 잠금 가드 (field_agent 와 동일 방식) ════════════════════════
@@ -264,6 +268,76 @@ def _find_child_by_id(parent, ctrlid) -> int:
     return found[0]
 
 
+def _find_mdiclient(main_hwnd) -> int:
+    """FlexiSIGN 메인 프레임의 MDIClient 창 hwnd(문서창들의 부모). 못 찾으면 0."""
+    res = [0]
+    ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def cb(h, _l):
+        try:
+            if _class_name(h) == "MDIClient":
+                res[0] = int(h)
+        except Exception:
+            pass
+        return True
+
+    u.EnumChildWindows(ctypes.c_void_p(main_hwnd), ENUM(cb), 0)
+    return res[0]
+
+
+def _mdi_children(mdiclient) -> list:
+    """MDIClient 직계 자식(열린 문서창) hwnd 목록."""
+    out = []
+    if not mdiclient:
+        return out
+    ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def cb(h, _l):
+        try:
+            if u.GetParent(ctypes.c_void_p(h)) == mdiclient:
+                out.append(int(h))
+        except Exception:
+            pass
+        return True
+
+    u.EnumChildWindows(ctypes.c_void_p(mdiclient), ENUM(cb), 0)
+    return out
+
+
+def _discard_save_prompt() -> bool:
+    """떠 있는 '변경 내용 저장?' 프롬프트(#32770, 도구패널 제외)의 '저장 안 함' 버튼 클릭. 처리 시 True.
+    (Enter 는 기본=저장이라 위험 → '저장 안 함'(저장+안) 버튼을 직접 클릭해 버리고 닫는다.)"""
+    done = [False]
+    ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def find_prompt(h, _l):
+        try:
+            if u.IsWindowVisible(h) and _class_name(h) == "#32770":
+                low = _win_text(h).lower()
+                if not any(p in low for p in ("designcentral", "fill/stroke", "stroke editor")):
+                    BENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+                    def bcb(bh, _bl):
+                        try:
+                            if _class_name(bh) == "Button":
+                                t = _win_text(bh)
+                                if ("저장" in t) and ("안" in t):
+                                    u.SendMessageW(ctypes.c_void_p(bh), BM_CLICK, None, None)
+                                    done[0] = True
+                                    return False
+                        except Exception:
+                            pass
+                        return True
+
+                    u.EnumChildWindows(ctypes.c_void_p(h), BENUM(bcb), 0)
+        except Exception:
+            pass
+        return True
+
+    u.EnumWindows(ENUM(find_prompt), 0)
+    return done[0]
+
+
 def find_flexisign_window(exe_hint="app.exe") -> int:
     """최상단 FlexiSIGN 메인 창(표준 메뉴 보유) hwnd. 못 찾으면 0."""
     found = []
@@ -323,7 +397,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     if not dlg:
         log("[치수] 외부파일로저장 대화상자가 안 떴음")
         return None
-    time.sleep(0.15)
+    time.sleep(0.08)
     combo = u.GetDlgItem(ctypes.c_void_p(dlg), DLG_COMBO_FORMAT)
     edit = u.GetDlgItem(ctypes.c_void_p(dlg), DLG_EDIT_FILENAME)
     if not combo or not edit:
@@ -334,6 +408,13 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     # 추가로 대화상자 현재 폴더(CDM_GETFOLDERPATH)도 가능하면 보탠다(옛 대화상자에선 0 반환할 수 있음).
     CDM_GETFOLDERPATH = 0x0402  # WM_USER+2
     base = Path(fname).name
+    # 방어: wait_for_file(=DXF) 인데 정확히 같은 경로의 잔여 파일이 있으면 '덮어쓰기 확인창'이 뜨고,
+    # 대기루프가 저장 완료 전에 그 옛 파일을 새 파일로 오인·반환해 모달이 남는다. 미리 지워 둔다.
+    if wait_for_file:
+        try:
+            Path(fname).unlink()
+        except Exception:
+            pass
     dirs = list(target_dirs)
     pdir = str(Path(fname).parent)
     if pdir and pdir not in ('.', ''):
@@ -349,7 +430,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     target_dirs = dirs
 
     _force_fg(dlg)
-    time.sleep(0.1)
+    time.sleep(0.06)
 
     # 0) '옵션 무시'/'선택만' 체크 해제(켜져 있으면 물리 클릭으로 토글). 옵션무시 켜지면 사이즈 틀림.
     for cid in (CHK_SUPPRESS_OPTS, CHK_SELECTION_ONLY):
@@ -362,7 +443,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     # 1) 형식 = 드롭다운 실제 클릭 → ComboLBox 의 fmt_row 행 클릭
     rc = _rect(combo)
     _click((rc.left + rc.right) // 2, (rc.top + rc.bottom) // 2)
-    time.sleep(0.2)
+    time.sleep(0.15)
     lb = [0]
     ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
@@ -379,13 +460,13 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     if lb[0]:
         lr = _rect(lb[0])
         _click((lr.left + lr.right) // 2, lr.top + ih * fmt_row + ih // 2)
-    time.sleep(0.15)
+    time.sleep(0.1)
     log(f"[치수] 형식 콤보 cur={_combo_cursel(combo)} (기대={fmt_row})")
 
     # 2) 파일명 = 이름만 통째교체(WM_SETTEXT)
     nbuf = ctypes.create_unicode_buffer(fname)
     u.SendMessageW(ctypes.c_void_p(edit), WM_SETTEXT, None, ctypes.cast(nbuf, ctypes.c_void_p))
-    time.sleep(0.1)
+    time.sleep(0.06)
     er = _rect(edit)
     _click((er.left + er.right) // 2, (er.top + er.bottom) // 2)
     time.sleep(0.06)
@@ -395,7 +476,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
 
     # 3) 저장 = 물리 Enter
     _press(VK_RETURN)
-    time.sleep(0.3)
+    time.sleep(0.12)
 
     # 4) 옵션창('DXF/AI 선택 사항')/덮어쓰기 등 전면 모달 Enter + (옵션) 파일 생성 대기.
     import os
@@ -410,7 +491,7 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
                         if f.lower() == base.lower():
                             p = Path(d) / f
                             if p.stat().st_size > 0:
-                                time.sleep(0.3)
+                                time.sleep(0.2)
                                 return p
                 except Exception:
                     pass
@@ -436,39 +517,94 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
             clear_streak += 1
             if not wait_for_file and clear_streak >= 2:
                 return None
-        time.sleep(0.2)
+        time.sleep(0.1)
     if wait_for_file:
         log("[치수] 시간 내 파일이 안 생김")
     return None
 
 
 def restore_format_ai(main_hwnd, search_dirs, log) -> None:
-    """형식 복원: AI 로 더미 저장 → 다음 수동 내보내기 기본 형식을 AI 로 되돌림(세션 내 복원).
-    - 더미 이름은 매번 '고유'(덮어쓰기 확인창 자체를 없앤다 — 이게 멈춤의 원인이었음).
-    - 파일 완성은 안 기다림(AI 내보내기가 느려도 형식은 저장 클릭 시점에 이미 AI 로 바뀜).
-    - 이전 잔여 더미는 매번 청소."""
+    """형식 복원: '새 빈 문서'를 만들어 그걸 AI 로 export → '외부 파일로 저장'의 기본 형식=AI +
+    마지막 폴더=지시서폴더 로 되돌린다(세션 내 메모리 상태). 빈 문서라 export 파일이 ~0.7KB 로,
+    현재 작업 문서를 그대로 AI export 할 때의 50MB+(사진 임베드)가 네트워크에 써졌다 지워지는 걸 회피한다.
+    작업자 문서는 안 건드린다(우리가 만든 새 문서창만 hwnd 로 WM_CLOSE).
+
+    ※ 레지스트리(HKCU\\...\\AExportTool)로는 불가 — FlexiSIGN 은 세션 중 레지스트리를 다시 읽지 않고
+      메모리 상태만 쓰며(콤보가 메모리값 표시), 레지스트리는 종료 시에만 기록한다(2026-06-18 실측 확인).
+      그래서 '실제 export'만이 형식/폴더를 바꾼다.
+    ※ New=WM_COMMAND(ID_FILE_NEW) / Close=WM_CLOSE(자식 hwnd) — 둘 다 메시지라 포커스 무관(키 입력은
+      export 직후 포커스 미정착으로 불안정). 호출 시점엔 이미 입력가드가 걸려 있다(extract_dimensions)."""
     import os
     import glob
     import tempfile
     import threading
     import time as _t
     tmp = tempfile.gettempdir()
-    dummy = os.path.join(tmp, f"_hd_fmtreset_{os.getpid()}_{int(_t.time())}.ai")
-    try:
-        # 고유 이름이라 덮어쓰기창 없음. 파일 대기 X → 모달만 짧게 닫고 복귀(형식은 이미 AI).
-        _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=6.0, wait_for_file=False)
-    except Exception as e:
-        log(f"[치수] AI 복원 실패: {e}")
+    save_dir = None
+    for d in (search_dirs or []):
+        try:
+            if d and os.path.isdir(d):
+                save_dir = d
+                break
+        except Exception:
+            pass
+    if not save_dir:
+        save_dir = tmp
 
-    # 더미 .ai 정리(이번 것 + 이전 잔여)는 백그라운드로 — 복원 직후 슬립 없이 바로 웹반영으로 복귀.
-    # FlexiSIGN 이 아직 더미를 쓰는 중일 수 있어 잠깐 뒤 지운다(lock 이면 다음 회차 glob 이 정리).
+    mc = _find_mdiclient(main_hwnd)
+    if not mc:
+        log("[치수] MDIClient 못 찾음 — AI 복원 스킵")
+        return
+    before = set(_mdi_children(mc))
+
+    # 1) 새 빈 문서(메시지, 포커스 무관) + 새 자식창 hwnd 폴링 포착(고정 sleep 없이 등장 즉시).
+    new_hwnd = 0
+    for _attempt in range(3):
+        _force_fg(main_hwnd)
+        u.PostMessageW(ctypes.c_void_p(main_hwnd), WM_COMMAND, ctypes.c_void_p(ID_FILE_NEW), None)
+        end = time.time() + 1.2
+        while time.time() < end:
+            fresh = [h for h in _mdi_children(mc) if h not in before]
+            if fresh:
+                new_hwnd = fresh[0]
+                break
+            time.sleep(0.05)
+        if new_hwnd:
+            break
+    if not new_hwnd:
+        log("[치수] 새 문서 생성 실패 — AI 복원 스킵")
+        return
+
+    # 2) 빈 문서를 AI 로 export → save_dir(지시서폴더). 고유이름이라 덮어쓰기창 없음. 파일 대기 X.
+    dummy = os.path.join(save_dir, f"_hd_fmtreset_{os.getpid()}_{int(_t.time())}.ai")
+    try:
+        _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=8.0, wait_for_file=False)
+    except Exception as e:
+        log(f"[치수] AI 복원 export 실패: {e}")
+
+    # 3) 우리가 만든 새 문서창만 닫기(WM_CLOSE, 포커스 무관). 빈 문서라 보통 프롬프트 없음 — 떠도 '저장 안 함'.
+    #    자식이 사라질 때까지 폴링(고정 sleep 없이).
+    u.PostMessageW(ctypes.c_void_p(new_hwnd), WM_CLOSE, None, None)
+    cend = time.time() + 1.5
+    while time.time() < cend:
+        if new_hwnd not in _mdi_children(mc):
+            break
+        _discard_save_prompt()
+        time.sleep(0.06)
+
+    # 4) 더미 .ai 백그라운드 정리(재시도) — 풀릴 때까지. '내 pid' 것만(타 PC 동시작업 보호).
     def _cleanup_dummies():
-        _t.sleep(2.0)
-        for old in glob.glob(os.path.join(tmp, "_hd_fmtreset_*.ai")) + [os.path.join(tmp, "_hd_fmtreset.ai")]:
-            try:
-                os.remove(old)
-            except Exception:
-                pass
+        for _ in range(15):
+            _t.sleep(1.0)
+            remaining = False
+            for d in {save_dir, tmp}:
+                for old in glob.glob(os.path.join(d, f"_hd_fmtreset_{os.getpid()}_*.ai")):
+                    try:
+                        os.remove(old)
+                    except Exception:
+                        remaining = True
+            if not remaining:
+                return
 
     threading.Thread(target=_cleanup_dummies, daemon=True).start()
 
@@ -486,19 +622,55 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
         log("[치수] FlexiSIGN 창 없음 — 스킵")
         return None
     import os
+    import glob
     import tempfile
-    # 전체 로컬 경로로 저장 → 대화상자 현재폴더(네트워크일 수 있음)를 무시하고 항상 temp 에 생성·발견.
-    fname = str(Path(tempfile.gettempdir()) / f"_hdsigndim_{os.getpid()}.dxf")
+    # ★ 저장 위치 = 활성 .fs 가 있는 폴더(search_dirs[0]). Temp 에 저장하면 FlexiSIGN '외부 파일로 저장'의
+    #   '마지막 폴더'가 Temp 로 바뀌어, 작업자가 나중에 수동으로 외부파일저장 할 때 Temp 가 열려 불편하다.
+    #   지시서 폴더에 저장하면 마지막 폴더가 그대로 그 폴더로 유지된다(작업자 자연 위치). 25KB 소형 DXF 라
+    #   네트워크여도 빠르고 파싱 직후 삭제한다. .fs 폴더를 못 받으면 temp 폴백.
+    # ★ 파일명은 매번 '고유'(pid+시각). 같은 이름이면 '덮어쓰기 확인창'이 떠 대기루프가 (덮어쓰기 확정 전에)
+    #   옛 파일을 먼저 반환→그 모달이 남아 이어지는 AI복원이 외부파일저장 메뉴를 못 열던 멈춤이 났다
+    #   (restore_format_ai 더미 .ai 를 고유로 둔 것과 같은 이유).
+    tmp = tempfile.gettempdir()
+    save_dir = None
+    for d in (search_dirs or []):
+        try:
+            if d and os.path.isdir(d):
+                save_dir = d
+                break
+        except Exception:
+            pass
+    if not save_dir:
+        save_dir = tmp
+    # 이전 잔여 추출 DXF 청소(unlink 가 FlexiSIGN 파일잠금으로 조용히 실패해 남았을 수 있음). 내 pid 것만
+    #   지운다(다른 사무실 PC 가 같은 네트워크 폴더에 동시 추출 중일 수 있어 전체삭제는 위험).
+    for d in {save_dir, tmp}:
+        for old in glob.glob(os.path.join(d, f"_hdsigndim_{os.getpid()}_*.dxf")):
+            try:
+                os.remove(old)
+            except Exception:
+                pass
+    fname = str(Path(save_dir) / f"_hdsigndim_{os.getpid()}_{int(time.time())}.dxf")
     geom = None
     guarded = input_guard_start()
     try:
         saved = _do_export(main_hwnd, DXF_ROW, fname, search_dirs, log, timeout=14.0)
         if saved:
             geom = dxf_dims.parse_dxf_objects(saved)
+            # 파싱 직후 즉시 삭제(지시서 폴더에 임시 DXF 잔재 안 남게). 네트워크 파일이 잠깐 잠겨
+            # 실패하면 백그라운드로 재시도 — 작업자 폴더를 깨끗하게 유지.
             try:
                 saved.unlink()
             except Exception:
-                pass
+                def _retry_rm(p=saved):
+                    for _ in range(10):
+                        time.sleep(1.0)
+                        try:
+                            p.unlink()
+                            return
+                        except Exception:
+                            pass
+                threading.Thread(target=_retry_rm, daemon=True).start()
             n = len(geom.get("objects", [])) if geom else 0
             log(f"[치수] 추출 완료 — 오브젝트 {n}개, unit_mm={geom.get('unit_mm') if geom else '?'}")
         if restore_ai:
@@ -509,6 +681,25 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
     finally:
         if guarded:
             input_guard_stop()
+    # 잔재 정리(백그라운드 재시도) — FlexiSIGN 이 '전체경로' 파일명을 받으면 실제 DXF 는 현재폴더에 쓰고
+    # 지정폴더엔 0바이트를 만들 수 있다(대화상자 현재폴더 ≠ 지정폴더일 때). saved.unlink 는 '찾은' 파일만
+    # 지우므로 그 0바이트 디코이가 거래처 폴더에 남을 수 있어, 내 pid DXF 를 모두 청소한다(타 PC 보호 위해 pid 한정).
+    def _final_dxf_cleanup():
+        import os as _o
+        import glob as _g
+        for _ in range(8):
+            time.sleep(1.0)
+            remaining = False
+            for d in {save_dir, tmp}:
+                for old in _g.glob(_o.path.join(d, f"_hdsigndim_{_o.getpid()}_*.dxf")):
+                    try:
+                        _o.remove(old)
+                    except Exception:
+                        remaining = True
+            if not remaining:
+                return
+
+    threading.Thread(target=_final_dxf_cleanup, daemon=True).start()
     if geom and not geom.get("objects"):
         return None
     return geom

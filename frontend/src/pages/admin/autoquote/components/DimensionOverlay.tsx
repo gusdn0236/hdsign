@@ -26,6 +26,8 @@ export interface DimGeom {
   unit_mm: number;
   extent: { x: number; y: number; w: number; h: number } | null;
   objects: DimObject[];
+  // 워처가 인쇄 PDF 에서 계산한 '실제 벡터(아트워크) 영역'(0..1, 회전 반영). 있으면 정렬 기준 1순위.
+  page_box?: { x: number; y: number; w: number; h: number } | null;
 }
 
 interface Props {
@@ -69,7 +71,15 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, c
     let ch: number;
     let ox: number;
     let oy: number;
-    if (contentBox && contentBox.w > 0 && contentBox.h > 0) {
+    const pb = geom.page_box;
+    if (pb && pb.w > 0 && pb.h > 0) {
+      // ★ 워처가 인쇄 PDF 에서 계산한 '실제 벡터(아트워크) 영역'. DXF extent(=벡터 bbox)가 여기에 정확히
+      //   들어맞는다(종횡비 일치 확인). 전체 잉크 bbox 휴리스틱/anchor 불필요 — page_box 에 직접 채운다.
+      cw = pb.w * stageW;
+      ch = pb.h * stageH;
+      ox = pb.x * stageW;
+      oy = pb.y * stageH;
+    } else if (contentBox && contentBox.w > 0 && contentBox.h > 0) {
       // contentBox(흰 여백 뺀 잉크 영역) 안에 DXF 본래 비율을 유지해 'contain' 배치.
       // 늘려 채우면 인쇄 이미지에 섞인 여분 잉크(텍스트 디센더·인쇄 추가요소)만큼 세로가 밀리므로,
       // 비율 보존 + 짧은 축은 가운데 정렬해 어긋남을 없앤다. (가로가 이미 맞던 경우 가로는 그대로.)
@@ -140,12 +150,33 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, c
     return { x: p.x, y: p.y };
   };
 
-  // 점을 포함하는 가장 작은(구체적인) 오브젝트 인덱스.
+  // 오브젝트 '테두리(외곽선)'까지의 거리. 안쪽이면 가장 가까운 변까지, 바깥이면 사각형 경계까지.
+  const distToOutline = (m: Mapped, x: number, y: number): number => {
+    const l = m.sx;
+    const t = m.sy;
+    const r = m.sx + m.sw;
+    const b = m.sy + m.sh;
+    if (x >= l && x <= r && y >= t && y <= b) {
+      return Math.min(x - l, r - x, y - t, b - y); // 안쪽: 가장 가까운 변까지
+    }
+    const cx = Math.max(l, Math.min(x, r));
+    const cy = Math.max(t, Math.min(y, b));
+    return Math.hypot(x - cx, y - cy); // 바깥: 사각형 경계까지
+  };
+
+  // 클릭/호버 = '테두리가 닿은' 오브젝트(점을 품는 큰 박스가 아님). tol 이내에서 테두리가 가장 가까운 것,
+  // 동률이면 작은 것. → 큰 네모박스 안 빈 곳을 클릭하면(테두리 멀어) 안 잡히고, 안쪽 항목 테두리 근처를
+  // 클릭하면 그 항목이 잡힌다. (사용자 요구: 벡터 테두리가 클릭된 것을 선택)
   const hitTest = (x: number, y: number): number | null => {
+    const tol = 8 / zoom; // 화면 8px 상당(줌 보정)
     let best: Mapped | null = null;
+    let bestD = Infinity;
     for (const m of mapped) {
-      if (x >= m.sx && x <= m.sx + m.sw && y >= m.sy && y <= m.sy + m.sh) {
-        if (!best || m.sw * m.sh < best.sw * best.sh) best = m;
+      const d = distToOutline(m, x, y);
+      if (d > tol) continue;
+      if (d < bestD - 1e-6 || (Math.abs(d - bestD) <= 1e-6 && best && m.sw * m.sh < best.sw * best.sh)) {
+        best = m;
+        bestD = d;
       }
     }
     return best ? best.i : null;
@@ -196,9 +227,15 @@ export default function DimensionOverlay({ geom, stageW, stageH, zoom, active, c
     const ry0 = Math.min(d.y0, p.y);
     const rx1 = Math.max(d.x0, p.x);
     const ry1 = Math.max(d.y0, p.y);
-    const inside = mapped.filter(
-      (m) => m.sx < rx1 && m.sx + m.sw > rx0 && m.sy < ry1 && m.sy + m.sh > ry0,
-    );
+    // 마퀴(드래그)에 '테두리가 닿은' 오브젝트만. 단, 마퀴를 통째로 감싸는 컨테이너 박스(테두리가 마퀴
+    // 바깥)는 제외 → 큰 네모박스 안에서 작업내용들을 드래그하면 안쪽 항목들만 잡히고 바깥 박스는 빠진다.
+    // (박스를 잡고 싶으면 박스 바깥까지 크게 드래그하면 마퀴가 박스를 감싸지 않게 돼 포함된다.)
+    const inside = mapped.filter((m) => {
+      const overlaps = m.sx < rx1 && m.sx + m.sw > rx0 && m.sy < ry1 && m.sy + m.sh > ry0;
+      if (!overlaps) return false;
+      const wrapsMarquee = m.sx < rx0 && m.sy < ry0 && m.sx + m.sw > rx1 && m.sy + m.sh > ry1;
+      return !wrapsMarquee;
+    });
     if (inside.length === 0) {
       setSel(null);
       return;

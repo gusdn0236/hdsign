@@ -5977,7 +5977,7 @@ def _process_printed_pdf(pdf_path: Path):
     _up_thread = threading.Thread(target=_upload_pdf_bg, daemon=True)
     _up_thread.start()
     try:
-        _extract_and_upload_dimensions(order_number, fs_path, _busy)
+        _extract_and_upload_dimensions(order_number, fs_path, _busy, pdf_path=pdf_path)
     except Exception as e:
         ui_log(f"치수 추출 예외(무시): {e}")
     _up_thread.join(timeout=180)
@@ -7237,10 +7237,47 @@ def _busy_set_topmost(busy, val) -> None:
         pass
 
 
-def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy) -> None:
+def _compute_page_box(pdf_path: str):
+    """워크시트 PDF 1페이지의 '벡터 drawings' bbox 를 '화면 표시(회전 반영) 좌표'로 정규화(0..1)해 반환.
+    프론트 오버레이가 DXF extent 를 '전체 잉크 영역'(텍스트/사진 포함)이 아니라 '실제 벡터(아트워크) 영역'에
+    매핑하도록 하는 기준 박스. DXF 는 벡터만(텍스트 제외)이라 PDF 의 get_drawings(=벡터 경로) bbox 와 대응한다.
+    페이지 /Rotate 가 걸려 있으면(가로 지시서는 보통 rot=90) rotation_matrix 로 표시 좌표로 변환해야
+    프론트가 렌더하는 (회전 적용된) 이미지와 정합한다. 실패하면 None — 프론트는 기존 휴리스틱으로 폴백."""
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(pdf_path)
+        try:
+            pg = doc[0]
+            dr = pg.get_drawings()
+            if not dr:
+                return None
+            x0 = min(d["rect"].x0 for d in dr)
+            y0 = min(d["rect"].y0 for d in dr)
+            x1 = max(d["rect"].x1 for d in dr)
+            y1 = max(d["rect"].y1 for d in dr)
+            r = fitz.Rect(x0, y0, x1, y1) * pg.rotation_matrix  # 미회전 -> 표시(회전) 좌표
+            r.normalize()
+            R = pg.rect  # 표시(회전 적용) 페이지 rect
+            if R.width <= 0 or R.height <= 0:
+                return None
+            bx = (r.x0 - R.x0) / R.width
+            by = (r.y0 - R.y0) / R.height
+            bw = r.width / R.width
+            bh = r.height / R.height
+            bx = min(max(bx, 0.0), 1.0)
+            by = min(max(by, 0.0), 1.0)
+            return {"x": bx, "y": by, "w": min(bw, 1.0 - bx), "h": min(bh, 1.0 - by)}
+        finally:
+            doc.close()
+    except Exception:
+        return None
+
+
+def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy, pdf_path: str = "") -> None:
     """[겹치기] 현재 활성 FlexiSIGN 문서를 DXF('외부 파일로 저장')로 내보내 오브젝트별 mm 를 추출 후
     서버 업로드. 입력가드(현장 잠금)로 자동화 중 작업자 물리입력 차단. 부차 기능 — 어떤 실패든
-    조용히 넘어가 인쇄/PDF업로드 본류를 절대 막지 않는다. 문서는 export 만 — Save/Save-As 안 함."""
+    조용히 넘어가 인쇄/PDF업로드 본류를 절대 막지 않는다. 문서는 export 만 — Save/Save-As 안 함.
+    pdf_path: 인쇄 PDF — 거기서 벡터영역(page_box)을 계산해 geom 에 실어 보내(프론트 정렬 기준)."""
     try:
         import dxf_export
     except Exception as e:
@@ -7279,6 +7316,15 @@ def _extract_and_upload_dimensions(order_number: str, fs_path: str, busy) -> Non
         _ui_queue.put(("run", _hide_lock_banner))
         _ui_queue.put(("run", lambda: _busy_set_topmost(busy, True)))
     if geom and geom.get("objects"):
+        # 프론트 정렬 기준 = '실제 벡터영역'(page_box). 인쇄 PDF 에서 회전 반영해 계산해 geom 에 싣는다.
+        # (전체 잉크 bbox 휴리스틱은 지시서마다 텍스트/사진 배치가 달라 어긋났음 — page_box 로 정확히.)
+        try:
+            pb = _compute_page_box(pdf_path) if pdf_path else None
+            if pb:
+                geom["page_box"] = pb
+                ui_log(f"[치수] page_box={pb}")
+        except Exception as e:
+            ui_log(f"[치수] page_box 계산 예외(무시): {e}")
         # 지오메트리 JSON 업로드는 백그라운드로 — 매크로(입력가드)는 이미 끝났으니, 이 네트워크 전송이
         # 결과 모달/인쇄 임계경로에 얹혀 매크로 직후 잠깐 멈춰 보이던 것을 없앤다.
         threading.Thread(
