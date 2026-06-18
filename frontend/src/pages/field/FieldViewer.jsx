@@ -769,6 +769,11 @@ export default function FieldViewer() {
                         const opening = openingFs === it.orderNumber;
                         const openingDir = openingFolder === it.orderNumber;
                         const closing = completing === it.orderNumber;
+                        // 썸네일 우상단 상태 점. UID 도장(originalFsUid)이 박힌 지시서는 파일명이 바뀌어도
+                        // 에이전트가 ADS UID 로 정확히 그 .fs 를 찾아 [FS에서 열기]가 제대로 열린다(초록).
+                        // UID 가 없으면 옛(도장 도입 전) 지시서이거나 시각값으로 저장된 건 → FlexiSIGN 에서
+                        // 저장 후 다시 인쇄(웹반영)해야 도장이 박힌다(주황).
+                        const fsOpenable = !!(it.originalFsUid && String(it.originalFsUid).trim());
                         return (
                             <article
                                 key={it.orderNumber}
@@ -777,6 +782,13 @@ export default function FieldViewer() {
                                 onClick={() => setSelectedIndex(idx)}
                             >
                                 <div className="fv-card-thumb">
+                                    <span
+                                        className={`fv-fs-dot ${fsOpenable ? 'ok' : 'warn'}`}
+                                        title={fsOpenable
+                                            ? '정상 — 인쇄(웹반영) 때 도장이 박혀 [FS에서 열기]가 정확히 이 지시서의 .fs 를 엽니다.'
+                                            : '주의 — 아직 도장(UID)이 없는 지시서입니다(옛 건 또는 시각값으로 저장됨). FlexiSIGN 에서 저장 후 다시 인쇄(웹반영)하면 정확히 열립니다.'}
+                                        aria-label={fsOpenable ? '정상적으로 열리는 파일' : '재인쇄(웹반영) 필요'}
+                                    />
                                     <WorksheetThumbnail
                                         pdfUrl={it.worksheetPdfUrl}
                                         thumbnailUrl={it.worksheetThumbnailUrl}
