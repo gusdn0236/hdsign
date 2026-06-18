@@ -304,21 +304,86 @@ def _find_child_by_id(parent, ctrlid) -> int:
     return found[0]
 
 
-def _find_mdiclient(main_hwnd) -> int:
-    """FlexiSIGN 메인 프레임의 MDIClient 창 hwnd(문서창들의 부모). 못 찾으면 0."""
+def _scan_for_class(parent, target_cls) -> int:
+    """parent 자손 중 target_cls 클래스 창 hwnd(첫 매치). 없으면 0."""
     res = [0]
     ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
     def cb(h, _l):
         try:
-            if _class_name(h) == "MDIClient":
+            if _class_name(h) == target_cls:
                 res[0] = int(h)
+                return False
         except Exception:
             pass
         return True
 
-    u.EnumChildWindows(ctypes.c_void_p(main_hwnd), ENUM(cb), 0)
+    try:
+        u.EnumChildWindows(ctypes.c_void_p(parent), ENUM(cb), 0)
+    except Exception:
+        pass
     return res[0]
+
+
+def _classes_under(parent) -> dict:
+    """parent 자손 윈도우 클래스 히스토그램 — MDIClient 못 찾을 때 진단용."""
+    hist: dict[str, int] = {}
+    ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def cb(h, _l):
+        try:
+            c = _class_name(h)
+            hist[c] = hist.get(c, 0) + 1
+        except Exception:
+            pass
+        return True
+
+    try:
+        u.EnumChildWindows(ctypes.c_void_p(parent), ENUM(cb), 0)
+    except Exception:
+        pass
+    return hist
+
+
+def _find_mdiclient(main_hwnd, log=None) -> int:
+    """FlexiSIGN 메인 프레임의 MDIClient 창 hwnd(문서창들의 부모). 못 찾으면 0.
+
+    main_hwnd 밑에서 못 찾으면 같은 프로세스의 '모든 최상위 창' 밑에서 다시 찾는다 — PC/버전에
+    따라 .fs 제목을 가진 창과 MDIClient 를 품은 프레임이 다른 창일 수 있어(메인 PC 사례) 견고화.
+    전부 실패하면 진단용으로 자손 클래스 히스토그램을 로그에 남긴다(읽기 전용, 안전)."""
+    r = _scan_for_class(main_hwnd, "MDIClient")
+    if r:
+        return r
+    # 프로세스 전역 폴백 — FlexiSIGN PID 의 모든 최상위 창 밑에서 MDIClient 탐색.
+    try:
+        pid0 = ctypes.c_ulong(0)
+        u.GetWindowThreadProcessId(ctypes.c_void_p(main_hwnd), ctypes.byref(pid0))
+        target_pid = pid0.value
+        tops: list[int] = []
+        ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def topcb(h, _l):
+            try:
+                p = ctypes.c_ulong(0)
+                u.GetWindowThreadProcessId(ctypes.c_void_p(h), ctypes.byref(p))
+                if p.value == target_pid:
+                    tops.append(int(h))
+            except Exception:
+                pass
+            return True
+
+        u.EnumWindows(ENUM(topcb), 0)
+        for t in tops:
+            r = _scan_for_class(t, "MDIClient")
+            if r:
+                if log:
+                    log(f"[치수] MDIClient 프로세스전역 폴백서 발견 (top={t})")
+                return r
+    except Exception:
+        pass
+    if log:
+        log(f"[치수] MDIClient 못 찾음 — main_hwnd 자손 클래스={_classes_under(main_hwnd)}")
+    return 0
 
 
 def _mdi_children(mdiclient) -> list:
@@ -629,8 +694,11 @@ def restore_format_ai(main_hwnd, search_dirs, log) -> None:
             pass
     if not save_dir:
         save_dir = tmp
+    # 진단 — 더미 AI 가 '거래처 폴더'에 떨어져야 다음 외부파일열기 last-folder 가 거래처로 남는다.
+    # temp 면 search_dirs[0](=.fs 폴더)이 없었거나 .fs 미해결(fs_path 빈값)이란 뜻.
+    log(f"[치수] AI복원 save_dir={save_dir!r} (search_dirs[0]={(search_dirs or ['?'])[0]!r})")
 
-    mc = _find_mdiclient(main_hwnd)
+    mc = _find_mdiclient(main_hwnd, log)
     if not mc:
         log("[치수] MDIClient 못 찾음 — AI 복원 스킵")
         return
@@ -660,6 +728,15 @@ def restore_format_ai(main_hwnd, search_dirs, log) -> None:
         _do_export(main_hwnd, AI_ROW, dummy, search_dirs, log, timeout=8.0, wait_for_file=False, fmt_labels=AI_LABELS)
     except Exception as e:
         log(f"[치수] AI 복원 export 실패: {e}")
+    # 진단 — 더미가 실제로 어디 떨어졌나(거래처 vs temp). FlexiSIGN 이 전체경로를 무시하고 현재폴더에
+    # 쓰면 거래처가 아닌 temp 에 생긴다(그 경우 last-folder 가 거래처로 안 남음 → 추후 navigate 보강).
+    try:
+        pat = f"_hd_fmtreset_{os.getpid()}_*.ai"
+        here = glob.glob(os.path.join(save_dir, pat))
+        there = glob.glob(os.path.join(tmp, pat)) if tmp != save_dir else []
+        log(f"[치수] AI복원 더미 위치 — 거래처({save_dir})={len(here)}개, temp={len(there)}개")
+    except Exception:
+        pass
 
     # 3) 우리가 만든 새 문서창만 닫기(WM_CLOSE, 포커스 무관). 빈 문서라 보통 프롬프트 없음 — 떠도 '저장 안 함'.
     #    자식이 사라질 때까지 폴링(고정 sleep 없이).
