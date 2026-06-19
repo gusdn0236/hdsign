@@ -15,10 +15,46 @@ const COMPRESS_QUALITY = 0.82;
 // OOM 시 단계적으로 낮춰 재시도할 긴 변(px) 상한들. 첫 단계가 종전과 동일한 화질.
 const DIM_STEPS = [COMPRESS_MAX_DIM, 1200, 900];
 
-// 파일 헤더(앞부분)만 슬라이스해 원본 픽셀 치수를 읽는다 — 전체 디코드 없이.
-// resize 옵션의 resizeWidth/Height 는 "EXIF 회전 적용 전(raw)" 좌표계라, 헤더가 주는 raw
-// 치수를 그대로 쓰면 된다(스펙: resize → 그 다음 orientation 순서).
-async function readRawSize(file) {
+// APP1(0xFFE1) 의 EXIF IFD0 에서 Orientation(0x0112, 1~8)을 읽는다. 없으면 1.
+// segStart=APP1 페이로드 시작(길이 필드 다음), segEnd=페이로드 끝(둘 다 buf 인덱스).
+function parseExifOrientation(buf, segStart, segEnd) {
+    let p = segStart;
+    // "Exif\0\0"
+    if (p + 6 > segEnd
+        || buf[p] !== 0x45 || buf[p + 1] !== 0x78 || buf[p + 2] !== 0x69
+        || buf[p + 3] !== 0x66 || buf[p + 4] !== 0x00 || buf[p + 5] !== 0x00) {
+        return 1;
+    }
+    const tiff = p + 6; // TIFF 헤더 시작(모든 오프셋의 기준점)
+    if (tiff + 8 > segEnd) return 1;
+    const little = buf[tiff] === 0x49 && buf[tiff + 1] === 0x49; // 'II'
+    const big = buf[tiff] === 0x4d && buf[tiff + 1] === 0x4d;    // 'MM'
+    if (!little && !big) return 1;
+    const u16 = (o) => (little ? (buf[o] | (buf[o + 1] << 8)) : ((buf[o] << 8) | buf[o + 1]));
+    const u32 = (o) => (little
+        ? ((buf[o] | (buf[o + 1] << 8) | (buf[o + 2] << 16) | (buf[o + 3] << 24)) >>> 0)
+        : (((buf[o] << 24) | (buf[o + 1] << 16) | (buf[o + 2] << 8) | buf[o + 3]) >>> 0));
+    const ifd0 = tiff + u32(tiff + 4);
+    if (ifd0 + 2 > segEnd) return 1;
+    const count = u16(ifd0);
+    for (let k = 0; k < count; k++) {
+        const entry = ifd0 + 2 + k * 12;
+        if (entry + 12 > segEnd) break;
+        if (u16(entry) === 0x0112) { // Orientation 태그(값=SHORT, value 필드에 인라인)
+            const val = u16(entry + 8);
+            return (val >= 1 && val <= 8) ? val : 1;
+        }
+    }
+    return 1;
+}
+
+// 파일 헤더(앞부분)만 슬라이스해 원본 픽셀 치수 + EXIF orientation 을 읽는다 — 전체 디코드 없이.
+// 치수는 raw(회전 전) 좌표계. orientation 5~8 이면 화면에 보이는 가로·세로가 raw 와 뒤바뀐다.
+// ⚠️ resizeWidth/Height 는 안드로이드 크롬/삼성인터넷(Blink)에서 "EXIF 회전이 적용된(화면)"
+//    좌표계로 해석된다(orientation 먼저, resize 나중). 그래서 raw 치수를 그대로 넘기면 세로
+//    사진(orientation 6/8)이 가로 박스로 찌그러진다. 호출부는 반드시 orientation 으로 화면
+//    치수를 구해 넘겨야 한다.
+async function readRawMeta(file) {
     let buf;
     try {
         buf = new Uint8Array(await file.slice(0, 512 * 1024).arrayBuffer());
@@ -28,6 +64,7 @@ async function readRawSize(file) {
     // JPEG: SOF0~SOF15 마커(0xC0~0xCF, 단 C4/C8/CC 제외)에 높이·너비가 담긴다.
     if (buf[0] === 0xff && buf[1] === 0xd8) {
         let i = 2;
+        let orientation = 1; // EXIF APP1 은 표준상 SOI 직후·SOF 이전 → SOF 도달 전에 잡힌다.
         while (i + 9 < buf.length) {
             if (buf[i] !== 0xff) { i++; continue; }
             const marker = buf[i + 1];
@@ -36,12 +73,15 @@ async function readRawSize(file) {
                 continue;
             }
             const len = (buf[i + 2] << 8) | buf[i + 3];
+            if (marker === 0xe1) { // APP1 — EXIF orientation 추출
+                orientation = parseExifOrientation(buf, i + 4, Math.min(buf.length, i + 2 + len));
+            }
             const isSOF = marker >= 0xc0 && marker <= 0xcf
                 && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
             if (isSOF) {
                 const height = (buf[i + 5] << 8) | buf[i + 6];
                 const width = (buf[i + 7] << 8) | buf[i + 8];
-                if (width > 0 && height > 0) return { width, height };
+                if (width > 0 && height > 0) return { width, height, orientation };
                 return null;
             }
             if (len < 2) return null;
@@ -49,11 +89,11 @@ async function readRawSize(file) {
         }
         return null;
     }
-    // PNG: IHDR(고정 오프셋 16~23)에 너비·높이.
+    // PNG: IHDR(고정 오프셋 16~23)에 너비·높이. PNG 는 EXIF 회전 없음(orientation=1).
     if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
         const width = (buf[16] << 24) | (buf[17] << 16) | (buf[18] << 8) | buf[19];
         const height = (buf[20] << 24) | (buf[21] << 16) | (buf[22] << 8) | buf[23];
-        if (width > 0 && height > 0) return { width, height };
+        if (width > 0 && height > 0) return { width, height, orientation: 1 };
     }
     return null;
 }
@@ -88,12 +128,17 @@ async function encode(bitmap, file) {
 export async function compressImage(file) {
     if (!file || !file.type || !file.type.startsWith('image/')) return file;
 
-    const raw = await readRawSize(file);
+    const raw = await readRawMeta(file);
 
     if (raw) {
+        // orientation 5~8 은 화면에서 가로·세로가 raw 와 뒤바뀐다. Blink 는 resize 를 화면
+        // 좌표계로 적용하므로, raw 가 아니라 "화면(회전 후)" 치수로 목표를 잡아야 비율이 보존된다.
+        const swap = raw.orientation >= 5 && raw.orientation <= 8;
+        const dispW = swap ? raw.height : raw.width;
+        const dispH = swap ? raw.width : raw.height;
         // 빠른 경로: 헤더로 치수를 알았으니 디코드와 동시에 축소. OOM 시 더 작게 재시도.
         for (const cap of DIM_STEPS) {
-            const { w, h } = targetDims(raw.width, raw.height, cap);
+            const { w, h } = targetDims(dispW, dispH, cap);
             let bitmap;
             try {
                 bitmap = await createImageBitmap(file, {
