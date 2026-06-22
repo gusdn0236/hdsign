@@ -6,10 +6,11 @@
   "homepage": "https://hdsigncraft.com",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy": "vite build && gh-pages -d dist",
+    "deploy": "tsc --noEmit && vite build && gh-pages -d dist",
     "generate-og": "node scripts/generate-og.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -45,6 +46,7 @@
     "gh-pages": "^6.3.0",
     "globals": "^16.3.0",
     "jsdom": "^29.1.1",
+    "typescript": "^5.6.3",
     "vite": "^7.0.4",
     "vitest": "^3.2.4"
   }

@@ -104,54 +104,88 @@ def _floats(entity: list[tuple[str, str]], code: str) -> list[float]:
     return out
 
 
-def _bbox_of_entity(etype: str, ent: list[tuple[str, str]],
-                    follow_vertices: list[list[tuple[str, str]]]):
-    """엔티티 하나의 (minx,miny,maxx,maxy) 를 원좌표(환산 전)로 계산. 못 구하면 None.
+_ARC_SEGS = 72  # 원 한 바퀴를 몇 점으로 쪼갤지(호는 비율만큼). 곡선을 점으로 근사. 48→72(곡선 더 매끄럽게).
 
+
+def _points_of_entity(etype: str, ent: list[tuple[str, str]],
+                      follow_vertices: list[list[tuple[str, str]]]) -> list[tuple[float, float]]:
+    """엔티티 하나의 실제 윤곽 꼭짓점(x,y) 리스트를 원좌표(환산 전)로 반환. 없으면 [].
+
+    LED 계산은 bbox 가 아닌 '실제 모양'이 필요하므로 점들을 보존한다(원/호/타원은 곡선을 점으로 변환).
     follow_vertices: POLYLINE 뒤에 따라오는 VERTEX 엔티티들(SEQEND 전까지).
     """
-    xs: list[float] = []
-    ys: list[float] = []
+    pts: list[tuple[float, float]] = []
 
     if etype == "POLYLINE":
         for ve in follow_vertices:
             vx = _floats(ve, "10")
             vy = _floats(ve, "20")
-            if vx:
-                xs.append(vx[0])
-            if vy:
-                ys.append(vy[0])
+            if vx and vy:
+                pts.append((vx[0], vy[0]))
     elif etype == "LWPOLYLINE":
-        xs += _floats(ent, "10")
-        ys += _floats(ent, "20")
+        xs = _floats(ent, "10")
+        ys = _floats(ent, "20")
+        pts = list(zip(xs, ys))
     elif etype == "LINE":
-        xs += _floats(ent, "10") + _floats(ent, "11")
-        ys += _floats(ent, "20") + _floats(ent, "21")
+        xs = _floats(ent, "10") + _floats(ent, "11")
+        ys = _floats(ent, "20") + _floats(ent, "21")
+        pts = list(zip(xs, ys))
     elif etype in ("CIRCLE", "ARC"):
         cx = _floats(ent, "10")
         cy = _floats(ent, "20")
         r = _floats(ent, "40")
         if cx and cy and r:
-            # ARC 는 시작/끝 각만큼만 차지하지만, 안전하게 전체 원 bbox 로 근사(보수적).
-            xs += [cx[0] - r[0], cx[0] + r[0]]
-            ys += [cy[0] - r[0], cy[0] + r[0]]
+            a0, a1 = 0.0, 2 * math.pi
+            if etype == "ARC":
+                s = _floats(ent, "50")
+                e = _floats(ent, "51")
+                if s and e:
+                    a0 = math.radians(s[0])
+                    a1 = math.radians(e[0])
+                    if a1 <= a0:
+                        a1 += 2 * math.pi
+            n = max(8, int(round((a1 - a0) / (2 * math.pi) * _ARC_SEGS)))
+            for k in range(n + 1):
+                a = a0 + (a1 - a0) * k / n
+                pts.append((cx[0] + r[0] * math.cos(a), cy[0] + r[0] * math.sin(a)))
     elif etype == "ELLIPSE":
         cx = _floats(ent, "10")
         cy = _floats(ent, "20")
-        mx = _floats(ent, "11")  # major axis endpoint(상대)
+        mx = _floats(ent, "11")  # major axis endpoint(중심 상대)
         my = _floats(ent, "21")
         if cx and cy and mx and my:
             a = math.hypot(mx[0], my[0])
             ratio = (_floats(ent, "40") or [1.0])[0]
             b = a * ratio
-            xs += [cx[0] - a, cx[0] + a]
-            ys += [cy[0] - b, cy[0] + b]
+            rot = math.atan2(my[0], mx[0])  # 장축 회전각
+            s = _floats(ent, "41")
+            e = _floats(ent, "42")
+            a0 = s[0] if s else 0.0
+            a1 = e[0] if e else 2 * math.pi
+            if a1 <= a0:
+                a1 += 2 * math.pi
+            n = max(8, int(round((a1 - a0) / (2 * math.pi) * _ARC_SEGS)))
+            ca, sa = math.cos(rot), math.sin(rot)
+            for k in range(n + 1):
+                t = a0 + (a1 - a0) * k / n
+                ex = a * math.cos(t)
+                ey = b * math.sin(t)
+                pts.append((cx[0] + ex * ca - ey * sa, cy[0] + ex * sa + ey * ca))
     elif etype in ("SPLINE", "POINT", "3DFACE", "SOLID"):
-        xs += _floats(ent, "10")
-        ys += _floats(ent, "20")
+        # SPLINE 은 fit/control 점만 — 곡선 근사는 거칠지만 윤곽 표시엔 충분.
+        xs = _floats(ent, "10")
+        ys = _floats(ent, "20")
+        pts = list(zip(xs, ys))
 
-    if not xs or not ys:
+    return pts
+
+
+def _bbox_from_points(pts: list[tuple[float, float]]):
+    """점 리스트 → (minx,miny,maxx,maxy). 비면 None."""
+    if not pts:
         return None
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
     return (min(xs), min(ys), max(xs), max(ys))
 
 
@@ -162,7 +196,8 @@ def parse_dxf_objects(path) -> dict:
       {
         "unit_mm": <환산계수>,
         "extent": {"x": minx, "y": miny, "w": W, "h": H}  # 전체(mm),
-        "objects": [ {"x":..,"y":..,"w":..,"h":..,"type":"POLYLINE"} , ... ]  # mm, Y=위쪽 원좌표
+        "objects": [ {"x":..,"y":..,"w":..,"h":..,"type":"POLYLINE",
+                      "points": [[x,y], ...]} , ... ]  # mm, Y=위쪽 원좌표. points=실제 윤곽(LED용)
       }
     좌표는 DXF 원좌표(원점 좌하단). 화면 정렬은 호출측(프론트)에서 extent 기준 정규화.
     실패해도 예외를 던지지 않고 objects=[] 로 반환(부차 기능 보호).
@@ -193,16 +228,18 @@ def parse_dxf_objects(path) -> dict:
             # SEQEND 스킵
             if j < len(ents) and ents[j][0][1] == "SEQEND":
                 j += 1
-            bb = _bbox_of_entity("POLYLINE", ent, verts)
+            pts = _points_of_entity("POLYLINE", ent, verts)
+            bb = _bbox_from_points(pts)
             if bb:
-                objs.append(_mk(bb, unit, "POLYLINE"))
+                objs.append(_mk(bb, pts, unit, "POLYLINE"))
             i = j
             continue
         elif etype in ("LWPOLYLINE", "LINE", "CIRCLE", "ARC", "ELLIPSE",
                        "SPLINE", "SOLID", "3DFACE"):
-            bb = _bbox_of_entity(etype, ent, [])
+            pts = _points_of_entity(etype, ent, [])
+            bb = _bbox_from_points(pts)
             if bb:
-                objs.append(_mk(bb, unit, etype))
+                objs.append(_mk(bb, pts, unit, etype))
         elif etype in ("SECTION", "ENDSEC", "TABLE", "ENDTAB", "LAYER",
                        "VPORT", "STYLE", "LTYPE", "APPID", "BLOCK_RECORD",
                        "DIMSTYLE", "CLASS", "EOF", "SEQEND", "VERTEX",
@@ -229,14 +266,36 @@ def parse_dxf_objects(path) -> dict:
     return {"unit_mm": unit, "extent": extent, "objects": objs, "skipped": skipped, "types": types}
 
 
-def _mk(bb, unit, etype) -> dict:
+_SIMPLIFY_TOL_MM = 0.3  # 이 거리 미만으로 붙은 연속 꼭짓점은 제거(살짝 단순화). 0.5→0.3(더 자세히).
+_MAX_POINTS = 900       # 객체당 점 상한(안전장치) — 넘으면 균등 솎아냄. 600→900(정밀도↑ 반영).
+
+
+def _simplify_mm(pts_mm: list[tuple[float, float]], tol: float = _SIMPLIFY_TOL_MM) -> list[list[float]]:
+    """연속 꼭짓점 중 tol(mm) 미만으로 붙은 것 제거 + mm 소수1자리 반올림. 마지막 점은 보존."""
+    out: list[list[float]] = []
+    for x, y in pts_mm:
+        if not out or math.hypot(x - out[-1][0], y - out[-1][1]) >= tol:
+            out.append([round(x, 1), round(y, 1)])
+    if pts_mm:
+        last = [round(pts_mm[-1][0], 1), round(pts_mm[-1][1], 1)]
+        if not out or out[-1] != last:
+            out.append(last)
+    if len(out) > _MAX_POINTS:
+        step = len(out) / _MAX_POINTS
+        out = [out[int(k * step)] for k in range(_MAX_POINTS)]
+    return out
+
+
+def _mk(bb, pts, unit, etype) -> dict:
     minx, miny, maxx, maxy = bb
+    pts_mm = [(px * unit, py * unit) for px, py in pts]
     return {
         "x": round(minx * unit, 2),
         "y": round(miny * unit, 2),
         "w": round((maxx - minx) * unit, 2),
         "h": round((maxy - miny) * unit, 2),
         "type": etype,
+        "points": _simplify_mm(pts_mm),  # 실제 윤곽(mm, DXF Y=위쪽 원좌표). LED 모드에서 테두리/채움에 사용.
     }
 
 
@@ -253,9 +312,11 @@ if __name__ == "__main__":
     if res["extent"]:
         e = res["extent"]
         print(f"extent: {e['w']:.1f} x {e['h']:.1f} mm  @({e['x']:.1f},{e['y']:.1f})")
+    total_pts = sum(len(o.get("points", [])) for o in objs)
+    print(f"points: 총 {total_pts}개 (객체당 평균 {total_pts / max(1, len(objs)):.1f})")
     print("biggest objects (mm):")
     for o in objs[:6]:
-        print(f"  {o['w']:7.1f} x {o['h']:7.1f}   {o['type']}  @({o['x']:.1f},{o['y']:.1f})")
+        print(f"  {o['w']:7.1f} x {o['h']:7.1f}   {o['type']}  pts={len(o.get('points', []))}  @({o['x']:.1f},{o['y']:.1f})")
     # 자체검증: 가장 큰 박스가 189.4 x 111.5 (±0.5) 인가
     if objs:
         b = objs[0]

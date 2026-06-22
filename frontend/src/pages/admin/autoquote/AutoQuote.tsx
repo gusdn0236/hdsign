@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
-// @ts-expect-error - Vite ?url 자산 임포트(타입 선언 없음). 앱 다른 곳(PdfViewer)과 동일 패턴.
+// @ts-ignore - Vite ?url 자산 임포트. 앱 다른 곳(PdfViewer)과 동일 패턴.
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 // AuthContext 는 .jsx — 확장자 명시로 vite/vitest 모두 해석되게.
 import { useAuth } from '../../../context/AuthContext.jsx';
@@ -41,6 +41,7 @@ import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal, { type PickedRow } from './LookupResultModal';
 import MiniCalc from './MiniCalc';
 import DimensionOverlay, { type DimGeom } from './components/DimensionOverlay';
+import LedOverlay from './components/LedOverlay';
 import './AutoQuote.css';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -65,7 +66,7 @@ async function renderPdfFirstPage(url: string): Promise<string> {
     canvas.height = Math.round(viewport.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('no 2d context');
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    await page.render({ canvasContext: ctx, viewport, canvas }).promise;
     return canvas.toDataURL('image/jpeg', 0.95);
   } finally {
     pdf.cleanup?.();
@@ -395,7 +396,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [stageH, setStageH] = useState(0);
   const [zoom, setZoom] = useState(1); // 휠 확대 배율(1~10). 핀 좌표는 zoom 으로 나눠 변환.
   const [pan, setPan] = useState({ x: 0, y: 0 }); // 포커스 줌 시 이동(px, 화면좌표).
-  const [mode, setMode] = useState<'hand' | 'ocr' | 'dim'>('hand'); // 진입 기본=이동(1). 글자AI=영역 OCR(2). 치수=오브젝트 측정(3). 지시서 위 말풍선 작성(옛 cursor)은 비활성화 — 우측 명세서로만 작성.
+  const [mode, setMode] = useState<'hand' | 'ocr' | 'dim' | 'led'>('hand'); // 진입 기본=이동(1). 글자AI=영역 OCR(2). 치수=오브젝트 측정(3). led=LED 개수 계산. 지시서 위 말풍선 작성(옛 cursor)은 비활성화 — 우측 명세서로만 작성.
   const [ocrSel, setOcrSel] = useState<{ x: number; y: number; w: number; h: number } | null>(null); // 글자읽기 선택 박스(콘텐츠 좌표)
   const [confirmAt, setConfirmAt] = useState<{ x: number; y: number } | null>(null); // ✓/✕ 위치 — 마지막으로 그린 지점(콘텐츠 좌표). 우측상단에 띄움.
   const [ocrBusy, setOcrBusy] = useState(false); // 글자읽기 호출 진행 중
@@ -418,6 +419,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [order, setOrder] = useState<OrderContext | null>(null);
   // 치수 오버레이 — 3번 모드(mode==='dim')일 때 지시서 위에 오브젝트별/구간 가로세로(mm) 표시.
   const dimMode = mode === 'dim';
+  // LED 계산 오버레이 — 'LED계산' 버튼으로 켜는 모드. 치수와 같은 지오메트리(points)를 쓴다.
+  const ledMode = mode === 'led';
+  // LED 2단계(채우기) — true 면 지시서 사진을 숨기고 선택한 벡터 테두리만 보여준다(LedOverlay 가 알림).
+  const [ledPlacing, setLedPlacing] = useState(false);
+  const ledPlacingRef = useRef(false);
+  ledPlacingRef.current = ledPlacing;
+  // 둘 다 같은 워처 지오메트리(objects+points)를 로드해야 하므로 합쳐서 트리거.
+  const overlayActive = dimMode || ledMode;
   const [dimGeom, setDimGeom] = useState<DimGeom | null>(null);
   // dimGeom 이 '어떤 worksheetObjectsUrl 로' 로드됐는지 기억 — 워처가 재업로드하면 이 URL(R2 키, UUID)이
   // 바뀌므로, 같은 URL 이면 재요청 안 하고 바뀌면 다시 로드한다(임시저장 상태여도 재업로드 반영).
@@ -425,7 +434,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 치수 모드를 켤 때 서버에서 지오메트리(mm) 로드(공개 프록시). 부차 기능 — 실패 시 조용히.
   useEffect(() => {
     const objUrl = order?.worksheetObjectsUrl || null;
-    if (!dimMode || !objUrl || !order?.orderNumber) return;
+    if (!overlayActive || !objUrl || !order?.orderNumber) return;
     if (dimGeom && dimGeomUrlRef.current === objUrl) return; // 같은 버전 이미 로드됨 — 재요청 X
     let alive = true;
     (async () => {
@@ -448,12 +457,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     return () => {
       alive = false;
     };
-  }, [dimMode, dimGeom, order]);
+  }, [overlayActive, dimGeom, order]);
   // 정렬용 — 렌더된 지시서 이미지의 '흰 여백 제외 내용 영역'(0..1)을 계산해, 도면 extent 를 이 영역에
   // 매핑(여백만큼 정확). imgSrc 는 pdf.js dataURL 이라 canvas 픽셀 읽기 가능(taint 없음).
   const [dimContentBox, setDimContentBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   useEffect(() => {
-    if (!dimMode || !imgSrc) return;
+    if (!overlayActive || !imgSrc) return;
     let alive = true;
     const im = new Image();
     im.onload = () => {
@@ -502,7 +511,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     return () => {
       alive = false;
     };
-  }, [dimMode, imgSrc]);
+  }, [overlayActive, imgSrc]);
   const [status, setStatus] = useState('작업지시서 사진을 붙여넣으세요 (Ctrl+V)');
   const [saving, setSaving] = useState(false);
 
@@ -523,6 +532,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [lkSpec, setLkSpec] = useState(''); // 둘러보기 검색 — 규격(사이즈) 입력. lkCtxRef.spec 로 검색에 반영
   const [lkAcOpen, setLkAcOpen] = useState(false);
   const [lkAcIdx, setLkAcIdx] = useState(-1);
+  const lkAcRef = useRef<HTMLDivElement>(null); // 단가찾아보기 검색창 드롭다운 — 키보드 탐색 스크롤용
   const [lkView, setLkView] = useState<'search' | 'working'>('search'); // 단가찾아보기 모달: 검색결과↔작성중 토글
   const [calcOpen, setCalcOpen] = useState(false); // 미니 단가계산기 창 토글(드래그 이동 가능, 헤더 🧮 버튼).
 
@@ -621,7 +631,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           return;
         }
         setOrder(o);
-        setMode((m) => (m === 'dim' ? 'hand' : m)); // 새 주문 — 치수 모드면 이동으로.
+        setMode((m) => (m === 'dim' || m === 'led' ? 'hand' : m)); // 새 주문 — 치수/LED 오버레이 모드면 이동으로.
         setDimGeom(null);
         setDimContentBox(null);
         const label = `${o.clientCompanyName || ''} · ${o.title || o.orderNumber}`;
@@ -953,6 +963,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     gridAcRef.current?.querySelector('.aq-acitem.on')?.scrollIntoView({ block: 'nearest' });
   }, [gridAc?.idx]);
 
+  // 단가찾아보기 모달 검색창 드롭다운도 동일 — 품목코드 칸처럼 키보드 ↓↑ 로 5개 너머 탐색 시
+  // 하이라이트(.on)를 따라 리스트가 스크롤되게(예전엔 ref 가 없어 5행 아래로는 못 봤다).
+  useEffect(() => {
+    if (lkAcIdx < 0) return;
+    lkAcRef.current?.querySelector('.aq-acitem.on')?.scrollIntoView({ block: 'nearest' });
+  }, [lkAcIdx]);
+
   // 드롭다운은 입력칸을 밀지 않고 아래로 연다(절대배치). 단, 사진 영역 아래 공간이 부족하면 위로.
   // 입력칸/스테이지의 화면 좌표를 재 비교 — 말풍선 scale(1/zoom) 까지 반영된 실측값을 쓴다.
   useLayoutEffect(() => {
@@ -997,15 +1014,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       const z = zoomRef.current;
       const cux = (e.clientX - rect.left) / z; // 커서 아래 콘텐츠 좌표
       const cuy = (e.clientY - rect.top) / z;
-      const z2 = Math.max(1, Math.min(10, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      // LED 2단계(빈 캔버스)에선 1배 밑으로도 축소 허용 — 여백 흰색으로 더 멀리 볼 수 있게.
+      const minZ = ledPlacingRef.current ? 0.15 : 1;
+      const z2 = Math.max(minZ, Math.min(10, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
       if (z2 === z) return;
-      if (z2 === 1) setPan({ x: 0, y: 0 });
+      if (z2 === 1 && !ledPlacingRef.current) setPan({ x: 0, y: 0 });
       else setPan((prev) => ({ x: prev.x + cux * (z - z2), y: prev.y + cuy * (z - z2) }));
       setZoom(z2);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [imgSrc]);
+
+  // LED 2단계 진입 시 줌/팬 리셋 — 선택 벡터는 LedOverlay 가 빈 캔버스(stageW×stageH) 정중앙에 새로 배치하므로,
+  // 스테이지 변형(확대/이동)을 1/0 으로 되돌려 그 중앙 배치가 화면 중앙에 그대로 보이게 한다.
+  useEffect(() => {
+    if (ledPlacing) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    }
+  }, [ledPlacing]);
 
   // 가장자리 자동 팬 — 확대 상태에서 박스/칠을 그리다 마우스를 지시서(뷰포트) 끝에 대면
   // 그 방향으로 조금씩 화면을 이동(좌클릭 유지한 채). 박스를 화면 밖까지 이어 그릴 수 있게.
@@ -1204,7 +1232,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     // 가운데(휠) 버튼 = 모든 모드(커서·손바닥·글자수)에서 화면 이동(확대 상태에서만).
     // 글자수의 박스/연필/지우개로 작업하면서도 휠버튼 드래그로 패닝할 수 있게 최상단에서 처리.
     if (e.button === 1) {
-      if (zoomRef.current > 1) {
+      // LED 계산 모드는 빈 캔버스를 1배 이하로도 축소해 보므로 줌 상관없이 휠클릭 팬 허용.
+      if (zoomRef.current > 1 || modeRef.current === 'led') {
         e.preventDefault();
         panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y, btn: e.button };
       }
@@ -1700,7 +1729,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       // 잔넬 — 피스 단위. 종류=코드, 사이즈=규격(품목 글자는 한/영 구분에만).
       const r = computeChannel(CALC, code, item, spec);
       if (r.ok) applyResult(r.unit, r.qty, r.desc, '개');
-      else cdlg(r.message, [{ label: '확인', sec: true }]);
+      else cdlg((r as { message: string }).message, [{ label: '확인', sec: true }]);
       return;
     }
     if (!item) {
@@ -1714,7 +1743,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       const doApply = (tt: '한글' | '영문', cmode: 'ko' | 'en' | 'all') => {
         const r = computeAcryl(CALC, tk || '', tt, item, spec, cmode);
         if (r.ok) applyResult(r.unit, r.qty, r.desc);
-        else cdlg(r.message, [{ label: '확인', sec: true }]);
+        else cdlg((r as { message: string }).message, [{ label: '확인', sec: true }]);
       };
       if (hasKo && hasEn) {
         // 한글+영문 혼합 — 기본은 합계(한·영 글자수 각 단가 합)로 한 줄. 원하면 두 줄 분리.
@@ -1736,7 +1765,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       // gomu — 위에서 걸러졌으므로 여기는 고무스카시.
       const r = computeGomu(CALC, pc.tk, item, spec);
       if (r.ok) applyResult(r.unit, r.qty, r.desc);
-      else cdlg(r.message, [{ label: '확인', sec: true }]);
+      else cdlg((r as { message: string }).message, [{ label: '확인', sec: true }]);
     }
   };
 
@@ -2075,7 +2104,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       return;
     }
     const grid = buildGrid();
-    const rows = gridToEasyformRows(grid);
+    const rows = gridToEasyformRows(grid as unknown as Parameters<typeof gridToEasyformRows>[0]);
     if (rows.length === 0) {
       cdlg('기입할 행이 없습니다. 먼저 명세서를 작성하세요.', [{ label: '확인', sec: true }]);
       return;
@@ -2780,6 +2809,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           className={`aq-stagewrap${mode === 'hand' ? ' aq-hand' : ''}${mode === 'ocr' ? ' aq-ocr' : ''}`}
           ref={stagewrapRef}
           onMouseDown={startStageDrag}
+          style={ledPlacing ? { background: '#fff' } : undefined}
         >
           {/* 참고사진이 있으면 사진 좌·우 화살표로 [작업지시서 ↔ 참고사진] 넘김(2장 캐러셀). */}
           {imgSrc && refSrc && (
@@ -2958,7 +2988,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   setStageH(imgRef.current?.clientHeight || 0);
                 }}
                 draggable={false}
-                style={{ ...(ocrCursor ? { cursor: ocrCursor } : {}), visibility: showRef ? 'hidden' : 'visible' }}
+                style={{ ...(ocrCursor ? { cursor: ocrCursor } : {}), visibility: showRef || ledPlacing ? 'hidden' : 'visible' }}
               />
               {/* 참고사진 보기 — 지시서 박스 안에 겹쳐 표시(보기 전용, 말풍선 없음). */}
               {showRef && refSrc && <img className="aq-refimg" src={refSrc} alt="참고사진" draggable={false} />}
@@ -3150,6 +3180,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 })()}
                 {/* 치수 오버레이 — 치수 모드(active)에서만. 맨 위(마지막 자식)라 핀/배지 위에서 클릭·드래그 캡처. */}
                 <DimensionOverlay geom={dimGeom} stageW={stageW} stageH={stageH} zoom={zoom} active={dimMode} contentBox={dimContentBox} />
+                {/* LED 계산 오버레이 — LED 모드에서만. 실제 외곽선 선택 + 종류별 채움 개수. */}
+                <LedOverlay
+                  geom={dimGeom}
+                  stageW={stageW}
+                  stageH={stageH}
+                  zoom={zoom}
+                  active={ledMode}
+                  contentBox={dimContentBox}
+                  onPlacing={setLedPlacing}
+                  statementRowCount={pins.length}
+                  rowColor={pinColor}
+                  onApplyLed={(items) =>
+                    setPins((prev) => {
+                      const base = prev.length;
+                      const added = items.map((it, k) => ({ ax: 30, ay: 30 + (base + k) * 30, lx: 30, ly: 30 + (base + k) * 30, dragged: false, vals: { 품목: it.name, 수량: String(it.qty) }, fi: FIELDS.length }));
+                      return [...prev, ...added];
+                    })
+                  }
+                />
                 </>
               )}
             </div>
@@ -3160,7 +3209,27 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         <div className="aq-side">
           <div className="aq-h">
             <b>견적 (이지폼)</b>
-            {order && <span className="aq-tag">{order.clientCompanyName || order.orderNumber}</span>}
+            {/* 버튼들은 오른쪽 정렬 — 스페이서로 밀고, 버튼끼리 간격은 .aq-h 의 gap(8px)으로 일정하게. */}
+            <div className="aq-sp" />
+            {/* LED계산 — 도장비찾아보기 왼쪽. 지시서 벡터(실제 외곽선)로 모양 안 LED 개수 계산. */}
+            <button
+              type="button"
+              className={'aq-lookupbtn aq-led-find' + (ledMode ? ' on' : '')}
+              style={ledMode ? { background: '#2563eb', color: '#fff', borderColor: '#2563eb' } : undefined}
+              onClick={() => {
+                if (!order?.worksheetObjectsUrl) {
+                  cdlg(
+                    '이 주문엔 지시서 벡터 데이터가 없어요.<br>해당 주문을 한 번 <b>재인쇄(웹반영)</b> 하면 워처가 모양 데이터를 올려 LED 계산을 쓸 수 있어요.',
+                    [{ label: '닫기', sec: true }],
+                  );
+                  return;
+                }
+                setMode((m) => (m === 'led' ? 'hand' : 'led'));
+              }}
+              title="LED계산 — 켜고 지시서 테두리를 클릭(하나씩)/드래그(바깥 테두리)로 선택 → 확인 → LED 종류 고르면 개수 계산"
+            >
+              💡 LED계산
+            </button>
             {/* 도장비찾아보기 — 단가찾아보기 왼쪽. 행을 하나 골라 '도장 포함 명세서'만 추려 과거 단가를 본다. */}
             <button
               type="button"
@@ -3843,7 +3912,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                       const m = matchCodes(lkInput).filter((c) => !lkCodes.includes(c));
                       if (!m.length) return null;
                       return (
-                        <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60 }}>
+                        <div ref={lkAcRef} className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60 }}>
                           <div className="aq-aclist">
                             {m.map((c, k) => (
                               <div
@@ -3858,6 +3927,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                               </div>
                             ))}
                           </div>
+                          {m.length > 5 && <div className="aq-acmore">+{m.length - 5}개 더 · ↓로 탐색</div>}
                         </div>
                       );
                     })()}

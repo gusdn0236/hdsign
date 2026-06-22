@@ -946,10 +946,10 @@
   padding: 3px 9px;
   border-radius: 20px;
 }
-/* 견적 헤더 맨 오른쪽 — 미니 단가계산기 토글(공급가액 열 위). 켜지면 진한 청록. */
-/* 단가찾아보기(둘러보기) 버튼 — 계산기 버튼 왼쪽에 한 쌍으로 오른쪽 정렬. */
+/* 견적 헤더 버튼들(LED계산·도장비·단가찾아보기·계산기) — .aq-sp 스페이서가 그룹을 통째로
+   오른쪽으로 밀고, 버튼끼리 간격은 .aq-h 의 gap(8px)으로 일정하게 둔다.
+   (개별 margin-left 금지 — 예전엔 버튼마다 auto/6px 가 섞여 간격이 들쭉날쭉했다.) */
 .aq-lookupbtn {
-  margin-left: auto;
   border: 1px solid var(--teal, #0a7d8c);
   background: #fff;
   color: var(--teal, #0a7d8c);
@@ -964,12 +964,12 @@
 .aq-lookupbtn:hover {
   background: #ecf8f9;
 }
-/* 한 쌍일 때 계산기 버튼은 auto 대신 작은 간격만(둘이 붙어서 오른쪽 끝에). */
-.aq-lookupbtn + .aq-calcbtn {
-  margin-left: 6px;
+/* LED계산 버튼 — 도장비(앰버)와 구분되게 노랑/골드 톤. 기능은 실측 후 구현 예정. */
+.aq-led-find {
+  border-color: #d4a017 !important;
+  color: #8a6d00 !important;
 }
 .aq-calcbtn {
-  margin-left: auto;
   border: 1px solid var(--teal, #0a7d8c);
   background: #fff;
   color: var(--teal, #0a7d8c);
