@@ -15,7 +15,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { type DimGeom, type Mapped, type Projection, computeMapped, computeProjection, projectPoint, hitTestPolys } from './dimMap';
-import { LED_SPECS, fillLeds, type FillResult, type ExitDir } from './ledLayout';
+import { LED_SPECS, fillLeds, runMetrics, defaultCoeff, type FillResult, type LedSpec } from './ledLayout';
+import { postLedSamples, loadLedCoeffs, type LedSample, type LedCoeff } from '../data/ledTrainingClient';
 
 interface Props {
   geom: DimGeom | null;
@@ -29,6 +30,8 @@ interface Props {
   statementRowCount?: number; // 현재 명세서 행 수 — '몇 번째 행'에 들어갈지 미리보기용.
   onApplyLed?: (items: { name: string; qty: number }[]) => void; // 적용하기 → 명세서에 행 추가.
   rowColor?: (i: number) => string; // 명세서 행 번호 동그라미 색(pinColor, 0-based index).
+  token?: string | null; // 관리자 JWT — Ctrl+F8 실측 학습 POST/계수 GET 용.
+  orderNumber?: string | null; // 실측 표본에 함께 저장(추적용, 선택).
 }
 
 const ROW_FALLBACK = ['#0a7d8c', '#4f8a5b', '#b07d3a', '#8a5a7d', '#c06a52', '#5a73a8', '#6b8e4e', '#4a8c8c'];
@@ -59,15 +62,29 @@ const SEL = '#2563eb'; // 선택 테두리(파랑) — 외경/내경 동일
 const HOV = '#0a9396'; // 호버(청록)
 const FILL_SOFT = 'rgba(37,99,235,0.13)'; // 2단계에서 모양 안쪽 연한 칠
 // LED 실물 색(데모 HTML 기준) — 불은 데모(#ffd23f)보다 조금 더 밝게.
-const WIRE = '#e23b3b'; // 잇는 선(구리, 빨강)
 const BODY = '#2b3240'; // 모듈 본체(어두움)
 const BULB = '#ffe45c'; // 구(LED 알) — 밝은 노랑
 const BULB_EDGE = '#e0a800';
 const BULB_GLOW = 'rgba(255,228,92,0.45)'; // 불빛 헤일로
-const CAP = '#111111'; // 시작 고무캡(검정)
-const DETAIL = 1500; // 이하면 본체+구+배선 풀 렌더 / 초과~MAX_DRAW 는 본체 사각만 / 더 많으면 개수만
+const DETAIL = 1500; // 이하면 본체+구 풀 렌더 / 초과~MAX_DRAW 는 본체 사각만 / 더 많으면 개수만
 const GLOW_MAX = 500; // 이하일 때만 불빛 헤일로(성능)
 const MAX_DRAW = 6000; // 모듈 렌더 상한(넘으면 개수만)
+
+// 학습 계수를 기본값 쪽으로 수축하는 prior 강도 — '기본값 = 표본 약 8개' 가치. (클수록 보수적)
+const PRIOR_WEIGHT = 8;
+// 서버 학습 계수(ov)를 그 종류의 기본계수 쪽으로 표본수 비례 수축해 스펙에 반영.
+// 계수공간(A=1/areaPerLed, B=1/perimPerLed)에서 w=n/(n+K) 가중평균 → 소표본 편향 방지 + 매끄러운 수렴.
+function blendSpec(base: LedSpec, ov: LedCoeff): LedSpec {
+  const d = defaultCoeff(base);
+  const w = ov.n / (ov.n + PRIOR_WEIGHT);
+  const A0 = 1 / d.areaPerLed;
+  const Al = ov.areaPerLed > 0 ? 1 / ov.areaPerLed : A0;
+  const Ae = w * Al + (1 - w) * A0;
+  const B0 = isFinite(d.perimPerLed) ? 1 / d.perimPerLed : 0;
+  const Bl = ov.perimPerLed > 0 && ov.perimPerLed < 1e8 ? 1 / ov.perimPerLed : 0;
+  const Be = w * Bl + (1 - w) * B0;
+  return { ...base, areaPerLed: 1 / Ae, perimPerLed: Be > 1e-9 ? 1 / Be : Infinity };
+}
 
 type Phase = 'select' | 'place';
 
@@ -80,19 +97,31 @@ interface LetterRun {
   fill: FillResult | null;
 }
 
-export default function LedOverlay({ geom, stageW, stageH, zoom, active, contentBox, onPlacing, statementRowCount, onApplyLed, rowColor }: Props) {
+export default function LedOverlay({ geom, stageW, stageH, zoom, active, contentBox, onPlacing, statementRowCount, onApplyLed, rowColor, token, orderNumber }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [sel, setSel] = useState<Set<number>>(new Set());
   const [hover, setHover] = useState<number | null>(null);
   const [ledKey, setLedKey] = useState<string | null>(null); // 전체 기본 LED 종류.
   const [typeMap, setTypeMap] = useState<Record<number, string>>({}); // 글자(root)별 LED 종류 덮어쓰기.
   const [placeSel, setPlaceSel] = useState<Set<number>>(new Set()); // 2단계에서 클릭/드래그로 고른 글자(root).
-  const [exitDir, setExitDir] = useState<ExitDir>('S'); // 배선(끝)을 빼는 방향 — 기본 아래.
   const [phase, setPhase] = useState<Phase>('select');
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [toast, setToast] = useState<string | null>(null); // 개발자 export 등 짧은 알림
   const drag = useRef<{ x0: number; y0: number; moved: boolean } | null>(null);
   const placingRef = useRef(onPlacing);
   placingRef.current = onPlacing;
+  const exportRef = useRef<() => void>(() => {}); // Ctrl+F7 개발자 export — 항상 최신 클로저로 갱신.
+  const inputRef = useRef<() => void>(() => {}); // Ctrl+F8 실측 개수 입력 — 항상 최신 클로저.
+
+  // ── 자동학습(feedback loop) ──────────────────────────────────────────────
+  // 서버가 쌓인 실측으로 피팅한 종류별 계수. ledLayout 기본값을 덮어쓴다(데이터 충분한 종류만).
+  const [coeffs, setCoeffs] = useState<Record<string, LedCoeff>>({});
+  // Ctrl+F8 실측 개수 입력 — 가운데 모달 대신 '글자별 예측 개수 박스'를 그 자리에서 키워 직접 입력.
+  const [inputOpen, setInputOpen] = useState(false); // true=편집(입력) 모드.
+  const [inputVals, setInputVals] = useState<Record<number, string>>({}); // root → 입력한 실제 개수(문자열).
+  const [posting, setPosting] = useState(false);
+  const [confirming, setConfirming] = useState(false); // '실측 저장' 클릭 후 한 번 더 확인 단계.
+  const [prevErrPct, setPrevErrPct] = useState<number | null>(null); // 지난번 입력의 예측대비 오차%(추세 표시용).
 
   const proj = useMemo(() => computeProjection(geom, stageW, stageH, contentBox), [geom, stageW, stageH, contentBox]);
   const mapped = useMemo(() => computeMapped(geom, stageW, stageH, contentBox), [geom, stageW, stageH, contentBox]);
@@ -177,11 +206,17 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
       const o = ob(root);
       const center = { x: o.x + o.w / 2, y: o.y + o.h / 2 }; // 글자 중심(mm) — 개수 라벨 위치.
       const key = typeMap[root] ?? null; // 글자별 종류(전역 기본 없음 — 토글로 채우고 비운다)
-      const spec = key ? LED_SPECS.find((s) => s.key === key) : undefined;
-      const fill = spec ? fillLeds(polys, spec, exitDir, centerHint) : null;
+      const base = key ? LED_SPECS.find((s) => s.key === key) : undefined;
+      // 학습 계수가 있으면 기본값 쪽으로 '표본수 비례 수축(shrinkage)' 블렌드해서 적용.
+      //   덮어쓰기(순수 최소제곱)는 초기 소표본이 편향되면 기본값보다 나빠질 수 있음(검증됨).
+      //   계수공간(A=1/areaPerLed, B=1/perimPerLed)에서 w=n/(n+K) 가중평균 → 소표본=기본값 우세,
+      //   데이터 쌓일수록 학습값 우세. 절대 기본값보다 못해지지 않고 매끄럽게 수렴한다.
+      const ov = key ? coeffs[key] : undefined;
+      const spec = base && ov ? blendSpec(base, ov) : base;
+      const fill = spec ? fillLeds(polys, spec, centerHint) : null;
       return { root, members: memberIdx, polys, center, key, fill };
     });
-  }, [geom, typeMap, sel, exitDir]);
+  }, [geom, typeMap, sel, coeffs]);
 
   const totalCount = runs.reduce((s, r) => s + (r.fill?.count ?? 0), 0);
   const totalChains = runs.reduce((s, r) => s + (r.fill?.chains.length ?? 0), 0); // 시작/끝 쌍 수
@@ -213,6 +248,189 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
     .filter((t) => t.qty > 0)
     .map((t, i) => ({ name: t.spec.name, label: t.spec.name, color: t.spec.color, qty: t.qty, row: baseRow + i + 1 }));
 
+  // ── 개발자 전용 export (Ctrl+F7) ────────────────────────────────────────
+  // 선택한 벡터(실제 외곽선 mm) + 현재 알고리즘이 깐 개수를 JSON 으로 내려받는다.
+  // 이 파일을 클로드코드에 주고 "실제로는 N개 넣었다" 라고 알려주면, 그 N에 맞춰 알고리즘(ledLayout.fillLeds)
+  // 가중치/간격을 튜닝한다. led_lab.py(=동일 알고리즘 파이썬 포팅) 가 바로 읽어 재현·시각화할 수 있는 포맷.
+  const exportSelection = () => {
+    if (!geom || sel.size === 0) {
+      setToast('내보낼 선택 벡터가 없습니다');
+      setTimeout(() => setToast(null), 1800);
+      return;
+    }
+    // led_geom_*.json 호환 — objects[].{x,y,w,h,type,points}. index 보존(런 멤버 추적용).
+    const objects = [...sel].map((i) => {
+      const o = geom.objects[i];
+      return { index: i, x: o.x, y: o.y, w: o.w, h: o.h, type: o.type ?? null, points: o.points ?? [] };
+    });
+    // 런(글자) 그룹 — 프론트가 묶은 외곽+구멍 + 그 글자에 지정된 LED 종류 + 현재 알고리즘 개수.
+    const runOut = runs.map((r) => ({
+      root: r.root,
+      members: r.members,
+      ledKey: r.key,
+      algoCount: r.fill?.count ?? 0,
+      chains: r.fill?.chains.length ?? 0,
+      center: r.center,
+      polys: r.polys,
+    }));
+    const payload = {
+      note: 'HD LED dev export (Ctrl+F7). 선택 벡터 + 현재 알고리즘 결과. led_lab.py 로 재현해 실제 개수와 비교/튜닝.',
+      unit_mm: geom.unit_mm ?? 1.0,
+      ledSpecs: LED_SPECS, // 알고리즘이 쓰는 모듈 스펙(본체 w×h, 선길이 등) 그대로.
+      selection: { count: sel.size, objects },
+      runs: runOut,
+      totals: {
+        algoCount: totalCount, // 알고리즘이 깐 총 개수(이걸 실제 개수와 맞추는 게 목표).
+        chains: totalChains,
+        byType: applyItems.map((it) => ({ name: it.name, qty: it.qty })),
+      },
+      // ↓ 사람이 채워 넣는 칸 — 실제로 넣은 개수(종류별). 클로드코드가 이 값에 알고리즘을 맞춘다.
+      actual: { byType: applyItems.map((it) => ({ name: it.name, qty: it.qty, ACTUAL: null })), note: '' },
+    };
+    const json = JSON.stringify(payload, null, 2);
+    try {
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `led_sel_${sel.size}obj_${runs.length}run.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch {
+      /* 다운로드 실패해도 콘솔엔 남긴다 */
+    }
+    // 클립보드 폴백 + 콘솔(파일 못 받는 환경 대비).
+    try {
+      navigator.clipboard?.writeText(json);
+    } catch {
+      /* noop */
+    }
+    // eslint-disable-next-line no-console
+    console.log('[LED export]', payload);
+    setToast(`벡터 ${sel.size}개(글자 ${runs.length}) 내보냄 ✓ — 알고리즘 ${totalCount}개`);
+    setTimeout(() => setToast(null), 2600);
+  };
+  exportRef.current = exportSelection;
+
+  // ── Ctrl+F8 실측 개수 입력(자동학습) ───────────────────────────────────────
+  // 사장님이 글자별 '실제로 넣은 LED 개수'를 입력 → 서버에 누적 → 서버가 계수 재피팅 → 즉시 반영.
+  const openInput = () => {
+    // 예측 개수가 나온(=LED 종류가 지정된) 글자가 있어야 그 박스에 실측을 적을 수 있다.
+    const editable = runs.filter((r) => r.fill && r.fill.count > 0);
+    if (!geom || editable.length === 0) {
+      setToast('LED 종류를 먼저 골라 예측 개수가 나온 글자가 있어야 합니다');
+      setTimeout(() => setToast(null), 2200);
+      return;
+    }
+    if (inputOpen) {
+      setInputOpen(false); // F8 다시 누르면 편집 종료(토글).
+      return;
+    }
+    const vals: Record<number, string> = {};
+    for (const r of editable) vals[r.root] = '';
+    setInputVals(vals);
+    try {
+      const v = localStorage.getItem('hd_led_last_err_pct'); // 지난번 입력 오차%(추세 비교용).
+      setPrevErrPct(v != null ? parseFloat(v) : null);
+    } catch {
+      setPrevErrPct(null);
+    }
+    setInputOpen(true);
+  };
+  inputRef.current = openInput;
+
+  // 입력된 실측 vs 현재 예측값(LED계산 표시값)의 종합 오차. 모달 표시·저장 토스트 공용.
+  //   sumDiff = Σ|실제-예측|(LED 개수 차이), pct = sumDiff/sumPred×100(예측 대비 몇 %가 수정될지).
+  const errorSummary = () => {
+    let sumPred = 0;
+    let sumAct = 0;
+    let sumDiff = 0;
+    let cmpN = 0;
+    for (const r of runs) {
+      const v = inputVals[r.root];
+      const a = v != null && v.trim() !== '' ? parseInt(v, 10) : NaN;
+      if (!r.fill || !Number.isFinite(a) || a <= 0) continue;
+      sumPred += r.fill.count;
+      sumAct += a;
+      sumDiff += Math.abs(a - r.fill.count);
+      cmpN++;
+    }
+    const pct = sumPred > 0 ? (sumDiff / sumPred) * 100 : 0;
+    return { sumPred, sumAct, sumDiff, pct, cmpN };
+  };
+
+  // 입력 완료 → 표본 POST → 계수 재로드(즉시 반영). 클로드/AI 안 씀(서버 순수 산술).
+  const submitSamples = async () => {
+    const sum = errorSummary(); // 저장 전에 '예측 대비 오차'를 계산해 토스트/추세에 쓴다.
+    const samples: LedSample[] = [];
+    for (const r of runs) {
+      const raw = inputVals[r.root];
+      const n = raw != null && raw.trim() !== '' ? parseInt(raw, 10) : NaN;
+      const ledType = r.key; // 글자에 지정된 LED 종류(예측 박스가 그 종류로 계산됨).
+      if (!ledType || !Number.isFinite(n) || n <= 0) continue;
+      const { area, perim } = runMetrics(r.polys);
+      if (!(area > 0)) continue;
+      samples.push({ ledType, area, perim, actualCount: n, orderNumber: orderNumber ?? null, polysJson: JSON.stringify(r.polys) });
+    }
+    if (samples.length === 0) {
+      setToast('입력된 개수가 없습니다');
+      setTimeout(() => setToast(null), 1800);
+      return;
+    }
+    setPosting(true);
+    try {
+      const saved = await postLedSamples(token, samples);
+      const fresh = await loadLedCoeffs(token); // 방금 저장분 반영해 바로 갱신.
+      setCoeffs(fresh);
+      // 이번 입력의 '예측 대비 오차'를 기록 — 다음 입력 때 '지난번 X% → 이번 Y%' 추세로 보여준다.
+      try {
+        localStorage.setItem('hd_led_last_err_pct', sum.pct.toFixed(2));
+      } catch {
+        /* noop */
+      }
+      setPrevErrPct(sum.pct);
+      setInputOpen(false);
+      setToast(`실측 ${saved}건 저장 ✓ — 예측과 ${sum.sumDiff}개 차이, 총 ${sum.pct.toFixed(2)}% 오차 수정됨`);
+      setTimeout(() => setToast(null), 3400);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : '저장 실패');
+      setTimeout(() => setToast(null), 2800);
+    } finally {
+      setPosting(false);
+      setConfirming(false);
+    }
+  };
+
+  // 모드 활성 시 서버의 학습 계수 1회 로드(실패해도 조용히 기본값 유지).
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    loadLedCoeffs(token).then((c) => {
+      if (alive) setCoeffs(c);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [active, token]);
+
+  // Ctrl+F7 — 개발자 export, Ctrl+F8 — 실측 개수 입력(모드 활성 동안). 브라우저 기본동작 막음.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F7' && e.ctrlKey) {
+        e.preventDefault();
+        exportRef.current?.();
+      } else if (e.key === 'F8' && e.ctrlKey) {
+        e.preventDefault();
+        inputRef.current?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active]);
+
   // 모드가 꺼지면 1단계로 초기화 + 사진 복원.
   useEffect(() => {
     if (!active) {
@@ -223,6 +441,16 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
       placingRef.current?.(false);
     }
   }, [active]);
+
+  // place(2단계 채움)를 벗어나면 실측 입력 편집 모드도 자동 종료 — 모달 닫기·모드 종료 등 모든 경로 커버.
+  useEffect(() => {
+    if (phase !== 'place') setInputOpen(false);
+  }, [phase]);
+
+  // 편집 모드를 닫으면 확인 단계도 리셋.
+  useEffect(() => {
+    if (!inputOpen) setConfirming(false);
+  }, [inputOpen]);
 
   // 새 주문(geom 교체) — 선택/단계 전부 리셋.
   useEffect(() => {
@@ -237,6 +465,7 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
   const toSelect = () => {
     setPhase('select');
     setPlaceSel(new Set());
+    setInputOpen(false); // 종류 모달 닫으면(빨간 X) 실측 입력 편집 모드도 함께 종료.
     onPlacing?.(false);
   };
   const toPlace = () => {
@@ -303,8 +532,6 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
             pairCount={totalChains}
             note={runs.find((r) => r.fill?.note)?.fill?.note}
             capped={false}
-            exitDir={exitDir}
-            setExitDir={setExitDir}
             onConfirm={toPlace}
             onBack={toSelect}
             onClear={() => setSel(new Set())}
@@ -312,6 +539,7 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
             applyItems={applyItems}
             onApply={() => onApplyLed?.(applyItems.map((it) => ({ name: it.name, qty: it.qty })))}
             rowColor={rowColor}
+            toast={toast}
           />,
           document.body,
         )
@@ -470,28 +698,6 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
     const run = lr.fill;
     if (!run) return { body: null, ends: null };
     const spec = run.spec;
-    const wirePath = (P0: { x: number; y: number }, P1: { x: number; y: number }): string => {
-      const dx = P1.x - P0.x;
-      const dy = P1.y - P0.y;
-      const gapPx = Math.hypot(dx, dy) || 0.001;
-      const slackMm = Math.max(0, (spec.wire ?? 0) - gapPx / sxScale);
-      const ux = dx / gapPx;
-      const uy = dy / gapPx;
-      const px = -uy;
-      const py = ux;
-      const mx = (P0.x + P1.x) / 2;
-      const my = (P0.y + P1.y) / 2;
-      if (slackMm < (spec.wire ?? 0) * 0.4) {
-        const bow = Math.min(gapPx * 0.5, slackMm * sxScale * 0.8);
-        return `M${f1(P0.x)},${f1(P0.y)} Q${f1(mx + px * bow)},${f1(my + py * bow)} ${f1(P1.x)},${f1(P1.y)}`;
-      }
-      let r = (slackMm / (2 * Math.PI)) * sxScale;
-      r = Math.max(r, 2 / zoom);
-      r = Math.min(r, gapPx * 0.6 + 5 / zoom);
-      const tx = mx + px * 2 * r;
-      const ty = my + py * 2 * r;
-      return `M${f1(P0.x)},${f1(P0.y)} L${f1(mx)},${f1(my)} A${f1(r)},${f1(r)} 0 1 1 ${f1(tx)},${f1(ty)} A${f1(r)},${f1(r)} 0 1 1 ${f1(mx)},${f1(my)} L${f1(P1.x)},${f1(P1.y)}`;
-    };
     if (spec.family === 'linear') {
       return {
         body: (
@@ -526,11 +732,10 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
     if (!chains.length) return { body: null, ends: null };
     const longMm = spec.w ?? 0;
     const thickMm = spec.h ?? 0;
-    const wireMm = spec.wire ?? 0;
     const bulbN = spec.bulbs ?? 0;
     const bulbR = Math.max(0.6, Math.min(thickMm * 0.32, bulbN ? (longMm / (bulbN + 1)) * 0.4 : thickMm * 0.3) * sxScale);
-    const wireW = Math.max(1.1 / zoom, thickMm * 0.1 * sxScale);
-    const bodyLen = longMm * sxScale; // 본체 긴 변(트레일 진행 방향)
+    const edgeW = Math.max(0.3, thickMm * 0.04 * sxScale); // 본체 테두리선 굵기
+    const bodyLen = longMm * sxScale; // 본체 긴 변
     const bodyThick = thickMm * sxScale; // 본체 두께
     const bodyRx = Math.min(bodyLen, bodyThick) * 0.28;
     // 모듈 k 의 화면 회전각 — 직진 구간은 가로(0)/세로(90)로 스냅해 균일하게, 실제 꺾이는
@@ -555,57 +760,27 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
       const ao = Math.atan2(outD.y, outD.x);
       return (Math.atan2(Math.sin(ai) + Math.sin(ao), Math.cos(ai) + Math.cos(ao)) * 180) / Math.PI;
     };
-    const half = bodyLen / 2;
-    // 모듈(중심 c, 각 deg)의 두 끝 중 목표점(tx,ty)에 가까운 끝.
-    const endToward = (c: { x: number; y: number }, deg: number, tx: number, ty: number) => {
-      const rad = (deg * Math.PI) / 180;
-      const ux = Math.cos(rad) * half;
-      const uy = Math.sin(rad) * half;
-      const d1 = (c.x + ux - tx) ** 2 + (c.y + uy - ty) ** 2;
-      const d2 = (c.x - ux - tx) ** 2 + (c.y - uy - ty) ** 2;
-      return d1 <= d2 ? { x: c.x + ux, y: c.y + uy } : { x: c.x - ux, y: c.y - uy };
-    };
+    // 사잇선·시작캡·혓바닥 전부 제거 — 모듈(본체+구)만 면적에 고르게. 회전각은 알고리즘이 준 국소 획 방향.
     const bodyEls: React.ReactNode[] = [];
-    const endEls: React.ReactNode[] = [];
     chains.forEach((ch, ci) => {
-      const mods = ch.map((p, k) => ({ c: pj(p.cx, p.cy), deg: angleAt(ch, k) }));
-      // 시작 고무캡 = 첫 모듈의 바깥쪽 끝, 끝 = 마지막 모듈의 바깥쪽 끝.
-      const m0 = mods[0];
-      const t0 = mods[1] ?? m0;
-      const in0 = endToward(m0.c, m0.deg, t0.c.x, t0.c.y);
-      const capPt = { x: 2 * m0.c.x - in0.x, y: 2 * m0.c.y - in0.y };
-      const mz = mods[mods.length - 1];
-      const tz = mods[mods.length - 2] ?? mz;
-      const inz = endToward(mz.c, mz.deg, tz.c.x, tz.c.y);
-      const endOut = { x: 2 * mz.c.x - inz.x, y: 2 * mz.c.y - inz.y };
-      let ux = endOut.x - mz.c.x;
-      let uy = endOut.y - mz.c.y;
-      const ol = Math.hypot(ux, uy) || 1;
-      ux /= ol;
-      uy /= ol;
-      const px = -uy;
-      const py = ux; // 수직
-      const L = Math.max(12 / zoom, wireMm * 0.4 * sxScale); // 잔넬 밖으로 빼는 길이
-      // 끝 두 갈래(뱀 혓바닥) — 공통점(endOut)에서 나와 끝에서 살짝 벌어진다.
-      const tipA = { x: endOut.x + ux * L + px * L * 0.42, y: endOut.y + uy * L + py * L * 0.42 };
-      const tipB = { x: endOut.x + ux * L - px * L * 0.42, y: endOut.y + uy * L - py * L * 0.42 };
-      const cA = { x: endOut.x + ux * L * 0.55 + px * L * 0.08, y: endOut.y + uy * L * 0.55 + py * L * 0.08 };
-      const cB = { x: endOut.x + ux * L * 0.55 - px * L * 0.08, y: endOut.y + uy * L * 0.55 - py * L * 0.08 };
-
+      const mods = ch.map((p, k) => {
+        const c = pj(p.cx, p.cy);
+        let deg: number;
+        if (p.deg !== undefined) {
+          // 알고리즘이 준 국소 획 방향(mm) → 화면 각으로 투영(Y 뒤집힘·스케일 보정).
+          const r = (p.deg * Math.PI) / 180;
+          const d = pj(p.cx + Math.cos(r), p.cy + Math.sin(r));
+          deg = (Math.atan2(d.y - c.y, d.x - c.x) * 180) / Math.PI;
+        } else {
+          deg = angleAt(ch, k); // 폴백 — 이웃 방향을 가로(0)/세로(90)로 스냅.
+        }
+        return { c, deg };
+      });
       bodyEls.push(
         <g key={`c${ci}`}>
-          {/* 사잇선 — LED 끝~끝(가까우면 돼지꼬리). 본체 밑에 깔린다. */}
-          {drawFull &&
-            mods.slice(0, -1).map((m, k) => {
-              const b = mods[k + 1];
-              const exit = endToward(m.c, m.deg, b.c.x, b.c.y);
-              const entry = endToward(b.c, b.deg, m.c.x, m.c.y);
-              return <path key={`w${k}`} d={wirePath(exit, entry)} fill="none" stroke={WIRE} strokeWidth={wireW} strokeLinecap="round" opacity={0.9} />;
-            })}
-          {/* 본체 + 구 — 트레일 방향으로 회전(직진=축정렬, 코너만 틀어짐) */}
           {mods.map((m, k) => (
             <g key={`m${k}`} transform={`translate(${f1(m.c.x)},${f1(m.c.y)}) rotate(${m.deg.toFixed(1)})`}>
-              <rect x={-bodyLen / 2} y={-bodyThick / 2} width={bodyLen} height={bodyThick} rx={bodyRx} fill={BODY} stroke="#1b2230" strokeWidth={Math.max(0.3, wireW * 0.4)} />
+              <rect x={-bodyLen / 2} y={-bodyThick / 2} width={bodyLen} height={bodyThick} rx={bodyRx} fill={BODY} stroke="#1b2230" strokeWidth={edgeW} />
               {drawFull &&
                 Array.from({ length: bulbN }, (_, i) => {
                   const bx = ((i + 1) / (bulbN + 1) - 0.5) * bodyLen;
@@ -618,20 +793,10 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
                 })}
             </g>
           ))}
-          {/* 시작 고무캡(잔넬 안) */}
-          {drawFull && <circle cx={capPt.x} cy={capPt.y} r={Math.max(1, thickMm * 0.45 * sxScale)} fill={CAP} />}
         </g>,
       );
-      // 끝 두 갈래 — 잔넬 밖으로(클립 미적용 그룹에 따로 렌더).
-      if (drawFull)
-        endEls.push(
-          <g key={`e${ci}`}>
-            <path d={`M${f1(endOut.x)},${f1(endOut.y)} Q${f1(cA.x)},${f1(cA.y)} ${f1(tipA.x)},${f1(tipA.y)}`} fill="none" stroke={WIRE} strokeWidth={wireW * 1.2} strokeLinecap="round" />
-            <path d={`M${f1(endOut.x)},${f1(endOut.y)} Q${f1(cB.x)},${f1(cB.y)} ${f1(tipB.x)},${f1(tipB.y)}`} fill="none" stroke={WIRE} strokeWidth={wireW * 1.2} strokeLinecap="round" />
-          </g>,
-        );
     });
-    return { body: <g key={'run' + ri} pointerEvents="none">{bodyEls}</g>, ends: endEls.length ? <g key={'rune' + ri} pointerEvents="none">{endEls}</g> : null };
+    return { body: <g key={'run' + ri} pointerEvents="none">{bodyEls}</g>, ends: null };
   };
 
   return (
@@ -717,12 +882,58 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
             );
           })()}
 
-        {/* 2단계: 글자별 LED 개수 라벨(획 가운데) */}
+        {/* 2단계: 글자별 LED 개수 — 평소엔 예측 라벨, Ctrl+F8 편집 모드엔 그 자리에서 키운 입력 박스.
+            예측 박스(스펙 색 테두리·남색) vs 실제 입력 박스(초록)로 색 구분. */}
         {placing &&
           runs.map((r, i) => {
             if (!r.fill || !r.fill.count) return null;
             const c = pj(r.center.x, r.center.y);
-            const txt = String(r.fill.count);
+            const predicted = r.fill.count;
+            // 편집 모드 — 키운 입력 박스(foreignObject 로 HTML input 삽입, 줌에 맞춰 /zoom).
+            if (inputOpen) {
+              const val = inputVals[r.root] ?? '';
+              const edited = val.trim() !== '' && parseInt(val, 10) > 0;
+              const w = 56 / zoom;
+              const h = 30 / zoom;
+              return (
+                <foreignObject key={`ed${i}`} x={c.x - w / 2} y={c.y - h / 2} width={w} height={h} style={{ overflow: 'visible' }}>
+                  <input
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={val}
+                    placeholder={String(predicted)}
+                    onChange={(e) => setInputVals({ ...inputVals, [r.root]: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        e.preventDefault();
+                        if (!posting) setInputOpen(false);
+                      } else if (e.key === 'Enter') {
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    title={`예측 ${predicted}개 — 실제로 넣은 개수를 적으세요`}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      boxSizing: 'border-box',
+                      textAlign: 'center',
+                      fontSize: `${15 / zoom}px`,
+                      fontWeight: 800,
+                      borderRadius: `${6 / zoom}px`,
+                      border: `${2.4 / zoom}px solid ${edited ? '#22c55e' : r.fill.spec.color}`,
+                      background: edited ? '#0f2a1a' : '#111a2e',
+                      color: edited ? '#bbf7d0' : '#e5e7eb',
+                      outline: 'none',
+                      padding: 0,
+                      boxShadow: edited ? `0 0 ${6 / zoom}px rgba(34,197,94,0.6)` : 'none',
+                    }}
+                  />
+                </foreignObject>
+              );
+            }
+            // 평소 — 예측 개수 라벨(읽기 전용).
+            const txt = String(predicted);
             const wpx = (txt.length * 8 + 14) / zoom;
             const hpx = 18 / zoom;
             return (
@@ -763,8 +974,6 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
           pairCount={totalChains}
           note={runs.find((r) => r.fill?.note)?.fill?.note}
           capped={capped}
-          exitDir={exitDir}
-          setExitDir={setExitDir}
           onConfirm={toPlace}
           onBack={toSelect}
           onClear={() => setSel(new Set())}
@@ -772,24 +981,118 @@ export default function LedOverlay({ geom, stageW, stageH, zoom, active, content
           applyItems={applyItems}
           onApply={() => onApplyLed?.(applyItems.map((it) => ({ name: it.name, qty: it.qty })))}
           rowColor={rowColor}
+          toast={toast}
         />,
         document.body,
       )}
+
+      {/* Ctrl+F8 실측 개수 입력 — 가운데 모달 대신 글자별 예측 박스를 직접 편집(아래 SVG). 상단엔 요약+저장 바만. */}
+      {inputOpen &&
+        createPortal(
+          (() => {
+            const sum = errorSummary();
+            return (
+              <div
+                style={{
+                  position: 'fixed',
+                  left: '50%',
+                  top: 16,
+                  transform: 'translateX(-50%)',
+                  zIndex: 9002,
+                  background: '#111a2e',
+                  color: '#f8fafc',
+                  border: '1px solid #334155',
+                  borderRadius: 12,
+                  boxShadow: '0 10px 30px rgba(0,0,0,0.45)',
+                  padding: '9px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  maxWidth: '94vw',
+                  flexWrap: 'wrap',
+                  fontSize: 13,
+                }}
+              >
+                <strong style={{ fontSize: 14 }}>✏️ 실제 LED 개수 입력</strong>
+                <span style={{ color: '#94a3b8', fontSize: 12 }}>
+                  각 글자의 <b style={{ color: '#22c55e' }}>초록 박스</b>에 실제로 넣은 개수를 적으세요
+                </span>
+                {sum.cmpN > 0 && (
+                  <>
+                    <span style={{ width: 1, height: 20, background: '#334155' }} />
+                    <span style={{ fontSize: 12.5 }}>
+                      예측 {sum.sumPred} → 실제 {sum.sumAct} · 예측갯수와 <b style={{ color: '#fca5a5' }}>{sum.sumDiff}개</b> 차이로, 총{' '}
+                      <b style={{ color: '#fca5a5', fontSize: 14 }}>{sum.pct.toFixed(2)}%</b>의 오차가 수정될 예정입니다.
+                      {prevErrPct != null && (
+                        <span style={{ color: '#64748b', marginLeft: 6 }}>
+                          (지난번 {prevErrPct.toFixed(2)}% → 이번 {sum.pct.toFixed(2)}%{' '}
+                          {sum.pct < prevErrPct ? (
+                            <b style={{ color: '#86efac' }}>▼ 줄어듦</b>
+                          ) : sum.pct > prevErrPct ? (
+                            <b style={{ color: '#fcd34d' }}>▲ 늘어남</b>
+                          ) : (
+                            '='
+                          )}
+                          )
+                        </span>
+                      )}
+                    </span>
+                  </>
+                )}
+                <span style={{ width: 1, height: 20, background: '#334155' }} />
+                {confirming ? (
+                  // 한 번 더 확인 — 학습(코드 동작)에 반영되므로.
+                  <>
+                    <span style={{ fontSize: 12.5, color: '#fde68a', fontWeight: 700 }}>
+                      입력한 개수로 오차를 수정(학습에 반영)하시겠습니까?
+                    </span>
+                    <button
+                      onClick={() => setConfirming(false)}
+                      disabled={posting}
+                      style={{ cursor: 'pointer', padding: '6px 12px', borderRadius: 8, fontSize: 12.5, border: '1px solid #475569', background: 'transparent', color: '#cbd5e1', fontWeight: 700 }}
+                    >
+                      아니오
+                    </button>
+                    <button
+                      onClick={submitSamples}
+                      disabled={posting}
+                      style={{ cursor: posting ? 'default' : 'pointer', padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 800, border: 'none', background: posting ? '#1e3a5f' : '#22c55e', color: '#06270f' }}
+                    >
+                      {posting ? '저장 중…' : '예, 수정합니다'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => !posting && setInputOpen(false)}
+                      style={{ cursor: 'pointer', padding: '6px 12px', borderRadius: 8, fontSize: 12.5, border: '1px solid #475569', background: 'transparent', color: '#cbd5e1', fontWeight: 700 }}
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (sum.cmpN === 0) {
+                          setToast('입력된 개수가 없습니다');
+                          setTimeout(() => setToast(null), 1800);
+                          return;
+                        }
+                        setConfirming(true);
+                      }}
+                      style={{ cursor: 'pointer', padding: '6px 16px', borderRadius: 8, fontSize: 13, fontWeight: 800, border: 'none', background: '#22c55e', color: '#06270f' }}
+                    >
+                      실측 저장
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })(),
+          document.body,
+        )}
+
     </>
   );
 }
-
-const DIR_LAYOUT: ({ d: ExitDir; a: string } | null)[] = [
-  { d: 'NW', a: '↖' },
-  { d: 'N', a: '↑' },
-  { d: 'NE', a: '↗' },
-  { d: 'W', a: '←' },
-  null,
-  { d: 'E', a: '→' },
-  { d: 'SW', a: '↙' },
-  { d: 'S', a: '↓' },
-  { d: 'SE', a: '↘' },
-];
 
 function LedToolbar({
   phase,
@@ -802,8 +1105,6 @@ function LedToolbar({
   pairCount,
   note,
   capped,
-  exitDir,
-  setExitDir,
   onConfirm,
   onBack,
   onClear,
@@ -811,6 +1112,7 @@ function LedToolbar({
   applyItems,
   onApply,
   rowColor,
+  toast,
 }: {
   phase: Phase;
   activeKeys: string[];
@@ -822,8 +1124,6 @@ function LedToolbar({
   pairCount: number;
   note?: string;
   capped?: boolean;
-  exitDir: ExitDir;
-  setExitDir: (d: ExitDir) => void;
   onConfirm: () => void;
   onBack: () => void;
   onClear: () => void;
@@ -831,8 +1131,32 @@ function LedToolbar({
   applyItems: { name: string; label: string; color: string; qty: number; row: number }[];
   onApply: () => void;
   rowColor?: (i: number) => string;
+  toast?: string | null;
 }) {
   const rowCol = (i: number) => (rowColor ? rowColor(i) : ROW_FALLBACK[i % ROW_FALLBACK.length]);
+  // 개발자 export(Ctrl+F7) 등 짧은 알림 배지 — 툴바 위에 떠서 1~2초 뒤 사라진다.
+  const toastBadge = toast ? (
+    <div
+      style={{
+        position: 'fixed',
+        left: '50%',
+        bottom: 78,
+        transform: 'translateX(-50%)',
+        zIndex: 9001,
+        background: '#0f2a1a',
+        color: '#bbf7d0',
+        border: '1px solid #22c55e',
+        borderRadius: 8,
+        padding: '7px 14px',
+        fontSize: 12.5,
+        fontWeight: 700,
+        boxShadow: '0 6px 18px rgba(0,0,0,0.4)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {toast}
+    </div>
+  ) : null;
   const wrap: React.CSSProperties = {
     position: 'fixed',
     left: '50%',
@@ -856,6 +1180,8 @@ function LedToolbar({
   // ── 1단계: 테두리 선택 ────────────────────────────────
   if (phase === 'select') {
     return (
+      <>
+      {toastBadge}
       <div style={wrap}>
         <span style={{ fontWeight: 700 }}>💡 LED</span>
         {selCount === 0 ? (
@@ -886,11 +1212,14 @@ function LedToolbar({
           </>
         )}
       </div>
+      </>
     );
   }
 
   // ── 2단계: LED 종류 선택 → 채움 개수 ──────────────────
   return (
+    <>
+    {toastBadge}
     <div style={wrap}>
       {/* 모달(검정 툴바) 우측 상단 끝의 빨간 X — 닫으면 1단계(지시서)로 돌아가 테두리 다시 선택. */}
       <button
@@ -950,41 +1279,6 @@ function LedToolbar({
       </div>
 
       <span style={{ width: 1, height: 22, background: '#334155' }} />
-
-      {/* 배선(끝/고무캡)을 어디로 뺄지 — 키패드식 8방향(가운데 비움). */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ color: '#cbd5e1', fontSize: 12, lineHeight: 1.2, maxWidth: 92 }}>배선은 어디로 뺄까요?</span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 22px)', gridTemplateRows: 'repeat(3, 22px)', gap: 3 }}>
-          {DIR_LAYOUT.map((it, i) =>
-            it === null ? (
-              <span key={i} />
-            ) : (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setExitDir(it.d)}
-                title={`배선을 ${it.a} 방향으로 (시작 고무캡은 반대쪽)`}
-                style={{
-                  cursor: 'pointer',
-                  width: 22,
-                  height: 22,
-                  padding: 0,
-                  borderRadius: 5,
-                  fontSize: 13,
-                  lineHeight: '20px',
-                  border: `1.5px solid ${exitDir === it.d ? '#7dd3fc' : '#475569'}`,
-                  background: exitDir === it.d ? '#1d4ed8' : 'transparent',
-                  color: exitDir === it.d ? '#fff' : '#cbd5e1',
-                }}
-              >
-                {it.a}
-              </button>
-            ),
-          )}
-        </div>
-      </div>
-
-      <span style={{ width: 1, height: 22, background: '#334155' }} />
       {count === 0 ? (
         <span style={{ color: '#94a3b8' }}>선택 {selCount}개 · LED 종류를 고르세요</span>
       ) : (
@@ -1019,9 +1313,12 @@ function LedToolbar({
             >
               명세서에 적용하기
             </button>
+            {/* 개발자 단축키 안내 — 적용하기 옆 아주 작은 회색 글씨 */}
+            <span style={{ fontSize: 10.5, color: '#64748b', whiteSpace: 'nowrap' }}>Ctrl+F7 = 벡터 JSON 내보내기 · Ctrl+F8 = 실제 개수 입력</span>
           </div>
         </>
       )}
     </div>
+    </>
   );
 }

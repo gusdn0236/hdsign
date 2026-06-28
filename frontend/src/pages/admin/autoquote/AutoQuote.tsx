@@ -3191,6 +3191,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   onPlacing={setLedPlacing}
                   statementRowCount={pins.length}
                   rowColor={pinColor}
+                  token={token}
+                  orderNumber={order?.orderNumber ?? null}
                   onApplyLed={(items) =>
                     setPins((prev) => {
                       const base = prev.length;
