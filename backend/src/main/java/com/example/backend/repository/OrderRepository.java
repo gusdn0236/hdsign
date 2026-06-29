@@ -33,6 +33,11 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     // 30일 자동 완전삭제 스케줄러용.
     List<Order> findByDeletedAtBefore(LocalDateTime cutoff);
 
+    // 매일 오전 10시 자동 작업완료 스케줄러용 — 납기 지난 '작업중' 건만 대상.
+    // (접수/이미 완료 건은 제외, 휴지통 안 간 것만. 프론트 '완료 검토(지연)' 목록과 같은 dueDate < 오늘 기준.)
+    List<Order> findByStatusAndDeletedAtIsNullAndDueDateBefore(
+            Order.OrderStatus status, java.time.LocalDate date);
+
     // 발주번호 채번에 사용 — count(11) + 1 = 12 라도 중간에 삭제로 빈 슬롯이 생기면
     // 이미 -12 가 존재해 unique 충돌이 났다(2026-05-06). MAX(suffix) + 1 로 바꾸기 위해
     // 같은 prefix 의 모든 번호를 가져와 Java 에서 max 계산. 하루 최대 ~수십 건이라 비용 미미.
