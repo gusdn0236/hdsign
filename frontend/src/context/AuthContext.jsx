@@ -36,7 +36,7 @@ export function AuthProvider({ children }) {
     }, []);
 
     const login  = (jwt) => { sessionStorage.setItem("adminToken", jwt);  setToken(jwt);        setIsAdmin(true); };
-    const logout = ()    => { sessionStorage.removeItem("adminToken");     setToken(null);       setIsAdmin(false); };
+    const logout = ()    => { sessionStorage.removeItem("adminToken"); sessionStorage.removeItem("sa-unlocked"); setToken(null); setIsAdmin(false); };
 
     const clientLogin  = (jwt, profile = {}) => {
         const normalizedProfile = profile && typeof profile === "object" ? profile : {};
