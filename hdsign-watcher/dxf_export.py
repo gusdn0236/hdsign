@@ -839,7 +839,10 @@ def extract_dimensions(main_hwnd, search_dirs, log=print, restore_ai=True) -> di
                             pass
                 threading.Thread(target=_retry_rm, daemon=True).start()
             n = len(geom.get("objects", [])) if geom else 0
-            log(f"[치수] 추출 완료 — 오브젝트 {n}개, unit_mm={geom.get('unit_mm') if geom else '?'}")
+            _cv = geom.get("curves") if geom else None
+            _tp = geom.get("total_points") if geom else None
+            log(f"[치수] 추출 완료 — 오브젝트 {n}개, unit_mm={geom.get('unit_mm') if geom else '?'}, "
+                f"점 {_tp}개, 곡선={_cv}")
             # 0개 진단 — DXF 파일크기 + 엔티티 타입 분포를 남긴다. 작으면 선택만/빈export, INSERT 면
             # 도형이 블록참조라 스킵된 것(블록 해석 확장 필요), SPLINE 등이면 bbox 계산 점검.
             if n == 0 and geom is not None:

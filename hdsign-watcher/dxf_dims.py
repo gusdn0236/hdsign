@@ -106,26 +106,171 @@ def _floats(entity: list[tuple[str, str]], code: str) -> list[float]:
 
 _ARC_SEGS = 72  # 원 한 바퀴를 몇 점으로 쪼갤지(호는 비율만큼). 곡선을 점으로 근사. 48→72(곡선 더 매끄럽게).
 
+# 곡선 진단 카운터(파일 1개 파싱 동안) — 워처 로그로 'bulge/스플라인이 실제로 곡선을 매끄럽게 했는지'
+# 확인용. parse_dxf_objects 가 시작 때 0으로 리셋한다. (멀티스레드 추출은 없음 — 인쇄 흐름 단일.)
+_curve_stats = {"bulge_verts": 0, "splines": 0, "spline_eval": 0}
+
+
+def _bulge_arc_pts(x0: float, y0: float, x1: float, y1: float,
+                   bulge: float) -> list[tuple[float, float]]:
+    """DXF bulge(=tan(θ/4))로 정의된 (x0,y0)→(x1,y1) 호의 '중간' 점들(양 끝점 제외)을 반환.
+
+    글자 곡선은 FlexiSIGN 이 R12 POLYLINE 의 꼭짓점마다 bulge(그룹 42)로 인코딩한다. 이 값을 무시하면
+    꼭짓점 사이가 직선(현)으로 이어져 원/곡선이 각지게 보인다(=업로드 점이 적고 각진 근본원인).
+    bulge>0=반시계, <0=시계(DXF 규약). bulge=0(직선)이면 [] 반환(기존과 동일 — 회귀 없음)."""
+    if not bulge:
+        return []
+    theta = 4.0 * math.atan(bulge)          # 부호 있는 사잇각
+    dx, dy = x1 - x0, y1 - y0
+    chord = math.hypot(dx, dy)
+    if chord == 0:
+        return []
+    half = theta / 2.0
+    s = math.sin(half)
+    if abs(s) < 1e-12:
+        return []
+    r = chord / (2.0 * s)                    # 부호 있는 반지름
+    mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    ux, uy = -dy / chord, dx / chord         # 현의 왼쪽 법선
+    d = r * math.cos(half)                   # 중점→중심 거리(부호 포함)
+    cx, cy = mx + ux * d, my + uy * d
+    a0 = math.atan2(y0 - cy, x0 - cx)
+    rad = abs(r)
+    n = max(1, int(math.ceil(abs(theta) / (2 * math.pi) * _ARC_SEGS)))
+    return [(cx + rad * math.cos(a0 + theta * k / n),
+             cy + rad * math.sin(a0 + theta * k / n)) for k in range(1, n)]
+
+
+def _expand_bulges(verts: list[tuple[float, float, float]], closed: bool) -> list[tuple[float, float]]:
+    """(x,y,bulge) 꼭짓점 리스트를 실제 윤곽 점들로 펼친다(bulge≠0 구간은 호를 점으로).
+    closed=True 면 마지막→첫 꼭짓점의 닫는 변도 bulge 가 있으면 펼친다(첫 점은 중복추가 안 함 —
+    소비측이 폴리곤을 i→i+1 mod n 으로 닫으므로)."""
+    out: list[tuple[float, float]] = []
+    n = len(verts)
+    if n == 0:
+        return out
+    for i in range(n):
+        x0, y0, b = verts[i]
+        out.append((x0, y0))
+        if b:
+            _curve_stats["bulge_verts"] += 1
+        if i < n - 1:
+            x1, y1, _b1 = verts[i + 1]
+            out.extend(_bulge_arc_pts(x0, y0, x1, y1, b))
+        elif closed and b:
+            x1, y1, _b1 = verts[0]
+            out.extend(_bulge_arc_pts(x0, y0, x1, y1, b))
+    return out
+
+
+def _lwpolyline_verts(ent: list[tuple[str, str]]) -> tuple[list[tuple[float, float, float]], bool]:
+    """LWPOLYLINE 엔티티를 (x,y,bulge) 꼭짓점 리스트 + closed 플래그로 순차 파싱.
+    LWPOLYLINE 은 10,20,[42] 가 꼭짓점마다 순서대로 반복 — _floats(전체수집)로는 bulge↔꼭짓점
+    대응이 깨지므로 순서를 보존해야 한다. 그룹 70 의 bit1 = 닫힘."""
+    verts: list[tuple[float, float, float]] = []
+    closed = False
+    cx = cy = None
+    cb = 0.0
+    have = False
+    for c, v in ent:
+        if c == "70":
+            try:
+                closed = bool(int(float(v)) & 1)
+            except Exception:
+                pass
+        elif c == "10":
+            if have:
+                verts.append((cx, cy, cb))
+            try:
+                cx = float(v)
+            except Exception:
+                cx = 0.0
+            cb = 0.0
+            have = True
+        elif c == "20":
+            try:
+                cy = float(v)
+            except Exception:
+                cy = 0.0
+        elif c == "42":
+            try:
+                cb = float(v)
+            except Exception:
+                cb = 0.0
+    if have:
+        verts.append((cx, cy, cb))
+    return verts, closed
+
+
+def _polyline_closed(ent: list[tuple[str, str]]) -> bool:
+    """구식 POLYLINE 헤더의 그룹 70 bit1 = 닫힘 여부."""
+    for c, v in ent:
+        if c == "70":
+            try:
+                return bool(int(float(v)) & 1)
+            except Exception:
+                return False
+    return False
+
+
+def _deboor(k: int, x: float, t: list[float], c: list[tuple[float, float]], p: int):
+    """de Boor 알고리즘 — knot span k 에서 파라미터 x 의 B-스플라인 점(x,y)."""
+    d = [c[j + k - p] for j in range(0, p + 1)]
+    for r in range(1, p + 1):
+        for j in range(p, r - 1, -1):
+            denom = t[j + k - r + 1] - t[j + k - p]
+            alpha = 0.0 if denom == 0 else (x - t[j + k - p]) / denom
+            d[j] = ((1.0 - alpha) * d[j - 1][0] + alpha * d[j][0],
+                    (1.0 - alpha) * d[j - 1][1] + alpha * d[j][1])
+    return d[p]
+
+
+def _spline_eval(ctrl: list[tuple[float, float]], knots: list[float], degree: int,
+                 n_samples: int) -> list[tuple[float, float]] | None:
+    """clamped/uniform B-스플라인을 제어점+노트+차수로 실제 곡선 점들로 평가(de Boor).
+    데이터가 부족하면 None(호출측이 fit/control 점으로 폴백)."""
+    p = max(1, degree)
+    t = knots
+    nctrl = len(ctrl)
+    if nctrl < p + 1 or len(t) < nctrl + p + 1:
+        return None
+    lo, hi = t[p], t[nctrl]
+    if hi <= lo:
+        return None
+    out: list[tuple[float, float]] = []
+    for s in range(n_samples + 1):
+        x = lo + (hi - lo) * s / n_samples
+        if x >= hi:
+            x = hi - 1e-9
+        kk = p
+        while kk < nctrl - 1 and x >= t[kk + 1]:
+            kk += 1
+        out.append(_deboor(kk, x, t, ctrl, p))
+    return out
+
 
 def _points_of_entity(etype: str, ent: list[tuple[str, str]],
                       follow_vertices: list[list[tuple[str, str]]]) -> list[tuple[float, float]]:
     """엔티티 하나의 실제 윤곽 꼭짓점(x,y) 리스트를 원좌표(환산 전)로 반환. 없으면 [].
 
-    LED 계산은 bbox 가 아닌 '실제 모양'이 필요하므로 점들을 보존한다(원/호/타원은 곡선을 점으로 변환).
+    LED 계산은 bbox 가 아닌 '실제 모양'이 필요하므로 점들을 보존한다. 곡선(원/호/타원/bulge/스플라인)은
+    매끄럽게 점으로 펼친다 — FlexiSIGN 이 bulge/스플라인으로 적게 인코딩한 곡선을 직선으로 잇지 않도록.
     follow_vertices: POLYLINE 뒤에 따라오는 VERTEX 엔티티들(SEQEND 전까지).
     """
     pts: list[tuple[float, float]] = []
 
     if etype == "POLYLINE":
+        verts: list[tuple[float, float, float]] = []
         for ve in follow_vertices:
             vx = _floats(ve, "10")
             vy = _floats(ve, "20")
+            vb = _floats(ve, "42")
             if vx and vy:
-                pts.append((vx[0], vy[0]))
+                verts.append((vx[0], vy[0], vb[0] if vb else 0.0))
+        pts = _expand_bulges(verts, _polyline_closed(ent))
     elif etype == "LWPOLYLINE":
-        xs = _floats(ent, "10")
-        ys = _floats(ent, "20")
-        pts = list(zip(xs, ys))
+        verts, closed = _lwpolyline_verts(ent)
+        pts = _expand_bulges(verts, closed)
     elif etype == "LINE":
         xs = _floats(ent, "10") + _floats(ent, "11")
         ys = _floats(ent, "20") + _floats(ent, "21")
@@ -171,8 +316,31 @@ def _points_of_entity(etype: str, ent: list[tuple[str, str]],
                 ex = a * math.cos(t)
                 ey = b * math.sin(t)
                 pts.append((cx[0] + ex * ca - ey * sa, cy[0] + ex * sa + ey * ca))
-    elif etype in ("SPLINE", "POINT", "3DFACE", "SOLID"):
-        # SPLINE 은 fit/control 점만 — 곡선 근사는 거칠지만 윤곽 표시엔 충분.
+    elif etype == "SPLINE":
+        # SPLINE = 제어점(10/20)+노트(40)+차수(71). 제어점만 이으면 '제어 다각형'이라 실제 곡선보다
+        # 각지다 → de Boor 로 진짜 곡선을 점으로 평가. 평가 불가하면 fit 점(11/21, 곡선 위 점)→제어점 폴백.
+        _curve_stats["splines"] += 1
+        cx = _floats(ent, "10")
+        cy = _floats(ent, "20")
+        ctrl = list(zip(cx, cy))
+        knots = _floats(ent, "40")
+        deg = int((_floats(ent, "71") or [3])[0]) or 3
+        # 곡선길이에 비례한 샘플 수(상한은 _simplify_mm/_MAX_POINTS 가 다시 솎음).
+        n_samp = max(_ARC_SEGS, min(8 * len(ctrl), 600))
+        ev = None
+        try:
+            ev = _spline_eval(ctrl, knots, deg, n_samp)
+        except Exception:
+            ev = None
+        if ev:
+            _curve_stats["spline_eval"] += 1
+            pts = ev
+        else:
+            fx = _floats(ent, "11")
+            fy = _floats(ent, "21")
+            fit = list(zip(fx, fy))
+            pts = fit if len(fit) >= 2 else ctrl
+    elif etype in ("POINT", "3DFACE", "SOLID"):
         xs = _floats(ent, "10")
         ys = _floats(ent, "20")
         pts = list(zip(xs, ys))
@@ -207,6 +375,7 @@ def parse_dxf_objects(path) -> dict:
     except Exception:
         return {"unit_mm": 25.4, "extent": None, "objects": []}
 
+    _curve_stats.update(bulge_verts=0, splines=0, spline_eval=0)
     unit = _header_units_mm(pairs)
     ents = _split_entities(pairs)
 
@@ -263,7 +432,9 @@ def parse_dxf_objects(path) -> dict:
         y1 = max(o["y"] + o["h"] for o in objs)
         extent = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
 
-    return {"unit_mm": unit, "extent": extent, "objects": objs, "skipped": skipped, "types": types}
+    total_pts = sum(len(o.get("points", [])) for o in objs)
+    return {"unit_mm": unit, "extent": extent, "objects": objs, "skipped": skipped,
+            "types": types, "curves": dict(_curve_stats), "total_points": total_pts}
 
 
 _SIMPLIFY_TOL_MM = 0.3  # 이 거리 미만으로 붙은 연속 꼭짓점은 제거(살짝 단순화). 0.5→0.3(더 자세히).
