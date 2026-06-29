@@ -906,6 +906,57 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     if (hasNextOrder) setSelectedOrderId(visibleOrders[currentOrderIndex + 1].id);
   };
 
+  // 모달에 현재 사진이 떠 있는 동안, 곧 볼 사진들을 미리 브라우저 캐시에 받아둔다.
+  // 완료검토(28건 등)처럼 주문을 연속으로 넘길 때, 다음 주문 사진을 그때서야 R2 에서
+  // 받느라 느린 걸 없앤다. files/fileUrl 은 이미 메모리에 있으므로 추가 API 호출 없이
+  // new Image() 로 GET 만 날려 응답을 디스크 캐시에 적재 → 다음 주문은 네트워크 왕복 0.
+  //
+  // 첫 모달 표시를 방해하지 않는 것이 핵심: 현재 주문의 첫 사진은 JSX <img> 가 즉시
+  // 요청하고, 프리페치는 requestIdleCallback(미지원 시 setTimeout) 으로 메인스레드가
+  // 한가해진 뒤에야 시작한다. 한 번 받은 URL 은 ref 에 기록해 폴링·재렌더 때 중복 요청 방지.
+  const prefetchedUrlsRef = useRef(new Set());
+  useEffect(() => {
+    if (!selectedOrderId) return undefined;
+    // 곧 볼 주문 id 순서 — 검토세션 중이면 큐, 아니면 모달 prev/next 가 쓰는 화면 목록.
+    const queue = reviewSession ? reviewSession.queue : visibleOrders.map((o) => o.id);
+    const curIdx = queue.indexOf(selectedOrderId);
+    if (curIdx < 0) return undefined;
+
+    // 현재 + 다음 3건. 현재 주문도 포함해 같은 주문의 둘째 사진 이후도 미리 받아둔다.
+    const lookahead = queue.slice(curIdx, curIdx + 4);
+    const findOrder = (id) =>
+      orders.find((o) => o.id === id) || trashOrders.find((o) => o.id === id);
+
+    const urls = [];
+    lookahead.forEach((id) => {
+      const order = findOrder(id);
+      (order?.files || []).forEach((f) => {
+        if (f.isEvidence && f.fileUrl && !prefetchedUrlsRef.current.has(f.fileUrl)) {
+          urls.push(f.fileUrl);
+        }
+      });
+    });
+    if (urls.length === 0) return undefined;
+
+    let cancelled = false;
+    const start = () => {
+      if (cancelled) return;
+      urls.forEach((url) => {
+        prefetchedUrlsRef.current.add(url);
+        const img = new Image();
+        img.decoding = "async";
+        img.src = url; // 응답이 브라우저 캐시에 적재됨(렌더는 안 함)
+      });
+    };
+    const ric = window.requestIdleCallback;
+    const handle = ric ? ric(start, { timeout: 1500 }) : window.setTimeout(start, 400);
+    return () => {
+      cancelled = true;
+      if (ric && window.cancelIdleCallback) window.cancelIdleCallback(handle);
+      else window.clearTimeout(handle);
+    };
+  }, [selectedOrderId, reviewSession, visibleOrders, orders, trashOrders]);
+
   useEffect(() => {
     if (!selectedOrderId) return;
     const handler = (e) => {
