@@ -185,12 +185,8 @@ export default function WorksheetList() {
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
     const [lastSyncedAt, setLastSyncedAt] = useState(() => worksheetListSnapshot.syncedAt);
-    // 다중 선택 모드 — 카드 탭으로 토글, 하단 sticky 바의 [작업완료] 로 N건 한꺼번에 처리.
-    // 각각 들어가서 처리하는 흐름은 그대로 유지(선택 모드 OFF 일 때 Link 가 동작).
-    const [selectMode, setSelectMode] = useState(false);
-    const [selectedNumbers, setSelectedNumbers] = useState(() => new Set());
-    const [bulkCompleting, setBulkCompleting] = useState(false);
-    const [bulkError, setBulkError] = useState('');
+    // 거래처 검색줄 포커스 여부 — 포커스 링 스타일용.
+    const [searchFocused, setSearchFocused] = useState(false);
     const aliveRef = useRef(true);
 
     const myWorker = worker.trim();
@@ -258,30 +254,6 @@ export default function WorksheetList() {
     const openWorkerModal = () => {
         setWorkerDraft(worker || '');
         setShowWorkerModal(true);
-    };
-
-    // 선택 모드 토글 — ON 진입 시 직원 미설정이면 모달부터 띄움(작업완료 시점에 어차피 필요).
-    const toggleSelectMode = () => {
-        if (!selectMode && !worker) {
-            setWorkerDraft('');
-            setShowWorkerModal(true);
-            return;
-        }
-        setSelectMode((prev) => {
-            const next = !prev;
-            if (!next) setSelectedNumbers(new Set());
-            return next;
-        });
-        setBulkError('');
-    };
-
-    const toggleSelected = (orderNumber) => {
-        setSelectedNumbers((prev) => {
-            const next = new Set(prev);
-            if (next.has(orderNumber)) next.delete(orderNumber);
-            else next.add(orderNumber);
-            return next;
-        });
     };
 
     // 캐시버스터 + cache: no-store — 모바일/CDN 캐시로 인해 옛 데이터가 보이는 문제 방지.
@@ -369,18 +341,6 @@ export default function WorksheetList() {
     // 활성 source — 'due' 는 진행중, 'completed' 는 발주관리 [작업완료] 처리된 마감 건.
     const activeSource = sortMode === 'completed' ? completedItems : items;
 
-    const counts = useMemo(() => {
-        let today = 0;
-        let threeDays = 0;
-        for (const it of items) {
-            if (typeof it.daysUntilDue === 'number') {
-                if (it.daysUntilDue === 0) today += 1;
-                if (it.daysUntilDue >= 0 && it.daysUntilDue <= 2) threeDays += 1;
-            }
-        }
-        return { today, threeDays, all: items.length };
-    }, [items]);
-
     // 날짜 필터까지만 적용한 중간 결과 — 거래처 옵션의 건수도 이걸 기준으로 매김.
     // 완료작업건 모드는 dueDate 대신 deletedAt 기준이라 '오늘/3일내' 필터를 적용하지 않는다(전체).
     const dateFilteredItems = useMemo(() => {
@@ -401,26 +361,6 @@ export default function WorksheetList() {
             (it.companyName || '').toLowerCase().includes(term)
         );
     }, [dateFilteredItems, companySearch]);
-
-    // 거래처 옵션 — 날짜+검색에 걸린 항목만 모아서 카운트. 필터를 좁히면
-    // 해당 거래처 건수도 자연스럽게 줄거나(0건이면 옵션이 사라짐) 그대로 유지.
-    const companyOptions = useMemo(() => {
-        const counts = new Map();
-        searchFilteredItems.forEach((it) => {
-            if (it.companyName) counts.set(it.companyName, (counts.get(it.companyName) || 0) + 1);
-        });
-        return Array.from(counts.entries())
-            .map(([name, count]) => ({ name, count }))
-            .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
-    }, [searchFilteredItems]);
-
-    // 선택해둔 거래처가 날짜/검색 필터 변경으로 옵션에서 사라지면 자동으로 '전체' 로 리셋.
-    useEffect(() => {
-        if (companyFilter === 'ALL') return;
-        if (!companyOptions.some((c) => c.name === companyFilter)) {
-            setCompanyFilter('ALL');
-        }
-    }, [companyFilter, companyOptions]);
 
     const companyFilteredItems = useMemo(() => {
         if (companyFilter === 'ALL') return searchFilteredItems;
@@ -493,82 +433,25 @@ export default function WorksheetList() {
         [groups],
     );
 
-    // 선택 모드에서 사라진(다른 디바이스에서 처리) 항목은 자동으로 선택 해제.
+    // 갱신 시각을 상대 시간('방금 전' / 'n분 전' / 'n시간 n분 전')으로. 30초마다 재렌더해 라벨 갱신.
+    const [, setNowTick] = useState(0);
     useEffect(() => {
-        if (!selectMode) return;
-        const visibleSet = new Set(filtered.map((it) => it.orderNumber));
-        setSelectedNumbers((prev) => {
-            let changed = false;
-            const next = new Set();
-            prev.forEach((n) => {
-                if (visibleSet.has(n)) next.add(n);
-                else changed = true;
-            });
-            return changed ? next : prev;
-        });
-    }, [filtered, selectMode]);
-
-    const visibleAllSelected = filtered.length > 0
-        && filtered.every((it) => selectedNumbers.has(it.orderNumber));
-
-    const toggleAllVisible = () => {
-        if (visibleAllSelected) {
-            setSelectedNumbers(new Set());
-        } else {
-            setSelectedNumbers(new Set(filtered.map((it) => it.orderNumber)));
-        }
-    };
-
-    // 일괄 작업완료 — 선택된 건들에 worker-complete 병렬 호출. 일부 실패해도 성공한 건은 그대로 반영.
-    // 멱등(이미 완료된 건은 200) — 다른 직원이 같은 슬롯 동료로 먼저 완료한 경우에도 안전.
-    const handleBulkComplete = async () => {
-        if (!selectedNumbers.size || bulkCompleting) return;
-        if (!worker) {
-            setWorkerDraft('');
-            setShowWorkerModal(true);
-            return;
-        }
-        if (!window.confirm(`선택한 ${selectedNumbers.size}건을 작업완료 처리하시겠습니까?`)) return;
-        setBulkCompleting(true);
-        setBulkError('');
-        const targets = Array.from(selectedNumbers);
-        try {
-            const results = await Promise.allSettled(
-                targets.map((orderNumber) =>
-                    fetch(
-                        `${BASE_URL}/api/public/worksheets/${encodeURIComponent(orderNumber)}/worker-complete`,
-                        {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ worker }),
-                        },
-                    ).then((r) => {
-                        if (!r.ok) throw new Error(`${orderNumber}`);
-                        return orderNumber;
-                    }),
-                ),
-            );
-            const failed = results.filter((r) => r.status === 'rejected').length;
-            if (failed > 0) {
-                setBulkError(`${failed}건 처리 실패 — 잠시 후 다시 시도해 주세요.`);
-            }
-            setSelectedNumbers(new Set());
-            setSelectMode(false);
-            await fetchList({ manual: true });
-        } catch (err) {
-            setBulkError(err.message || '일괄 처리 중 오류');
-        } finally {
-            setBulkCompleting(false);
-        }
-    };
-
+        const id = setInterval(() => setNowTick((t) => t + 1), 30000);
+        return () => clearInterval(id);
+    }, []);
     const formatSyncedAt = (d) => {
         if (!d) return '';
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mm = String(d.getMinutes()).padStart(2, '0');
-        const ss = String(d.getSeconds()).padStart(2, '0');
-        return `${hh}:${mm}:${ss}`;
+        const totalMin = Math.floor((Date.now() - d.getTime()) / 60000);
+        if (totalMin <= 0) return '방금 전';
+        const h = Math.floor(totalMin / 60);
+        const m = totalMin % 60;
+        if (h > 0) return m > 0 ? `${h}시간 ${m}분 전` : `${h}시간 전`;
+        return `${m}분 전`;
     };
+
+    // 검색 펼침 여부 — 포커스 중이거나 검색어가 있으면 상단 바로 펼침(결과 보는 동안 유지),
+    // 둘 다 아니면 우측 가장자리에 반원 탭으로 접힘.
+    const searchOpen = searchFocused || companySearch.trim().length > 0;
 
     return (
         <div className="ws-list-page">
@@ -596,110 +479,6 @@ export default function WorksheetList() {
                         </span>
                         <span>{refreshing ? '갱신 중…' : '새로고침'}</span>
                     </button>
-                </div>
-                <p className="ws-list-meta">
-                    <span className="ws-list-meta-count">{filtered.length}건</span>
-                    {lastSyncedAt && (
-                        <>
-                            <span className="ws-list-meta-sep">·</span>
-                            <span className="ws-list-meta-sync">갱신 {formatSyncedAt(lastSyncedAt)}</span>
-                        </>
-                    )}
-                </p>
-
-                <div className="ws-sort-toggle" role="tablist" aria-label="목록 모드">
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={sortMode === 'due'}
-                        className={`ws-sort-tab ${sortMode === 'due' ? 'active' : ''}`}
-                        onClick={() => {
-                            setSortMode('due');
-                            // 다른 모드의 선택 모드/선택 항목 잔존 방지.
-                            if (selectMode) setSelectMode(false);
-                            setSelectedNumbers(new Set());
-                            setBulkError('');
-                        }}
-                    >납기 임박순</button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={sortMode === 'completed'}
-                        className={`ws-sort-tab ${sortMode === 'completed' ? 'active' : ''}`}
-                        onClick={() => {
-                            setSortMode('completed');
-                            // 완료작업건 모드는 일괄 작업완료가 의미 없음 — 선택 모드 해제.
-                            if (selectMode) setSelectMode(false);
-                            setSelectedNumbers(new Set());
-                            setBulkError('');
-                        }}
-                    >완료작업건</button>
-                </div>
-
-                <form className="ws-filter-form" onSubmit={(e) => e.preventDefault()}>
-                    {/* 완료작업건 모드는 납기(미래) 필터 의미가 없어 거래처 셀렉트를 1단으로 펼침. */}
-                    {sortMode !== 'completed' && (
-                        <label className="ws-filter-field">
-                            <span className="ws-filter-label">납기일자</span>
-                            <select
-                                className="ws-filter-select"
-                                value={dateFilter}
-                                onChange={(e) => setDateFilter(e.target.value)}
-                            >
-                                <option value="today">오늘 ({counts.today})</option>
-                                <option value="3days">3일내 ({counts.threeDays})</option>
-                                <option value="all">전체 ({counts.all})</option>
-                            </select>
-                        </label>
-                    )}
-                    <label
-                        className="ws-filter-field"
-                        style={sortMode === 'completed' ? { gridColumn: '1 / -1' } : undefined}
-                    >
-                        <span className="ws-filter-label">거래처</span>
-                        <select
-                            className="ws-filter-select"
-                            value={companyFilter}
-                            onChange={(e) => setCompanyFilter(e.target.value)}
-                        >
-                            <option value="ALL">전체 ({searchFilteredItems.length})</option>
-                            {companyOptions.map(({ name, count }) => (
-                                <option key={name} value={name}>{name} ({count})</option>
-                            ))}
-                        </select>
-                    </label>
-                </form>
-
-                <div className="ws-search-row">
-                    <span className="ws-search-icon" aria-hidden="true">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="7" cy="7" r="4.5" />
-                            <path d="M10.5 10.5L13.5 13.5" />
-                        </svg>
-                    </span>
-                    <input
-                        type="search"
-                        className="ws-search-input"
-                        placeholder="거래처 검색"
-                        value={companySearch}
-                        onChange={(e) => setCompanySearch(e.target.value)}
-                        enterKeyHint="search"
-                        onKeyDown={(e) => {
-                            // 모바일 키패드 '검색/확인' 누르면 키패드 닫기.
-                            if (e.key === 'Enter') {
-                                e.preventDefault();
-                                e.currentTarget.blur();
-                            }
-                        }}
-                    />
-                    {companySearch && (
-                        <button
-                            type="button"
-                            className="ws-search-clear"
-                            onClick={() => setCompanySearch('')}
-                            aria-label="검색어 지우기"
-                        >×</button>
-                    )}
                 </div>
 
                 <div className="ws-personal-row">
@@ -736,24 +515,72 @@ export default function WorksheetList() {
                     </div>
                 )}
 
-                {/* 다중 선택 모드 — 카드 탭으로 N건 선택해 한 번에 작업완료. 선택 모드 OFF 시 카드는
-                    그대로 Link 동작(각각 들어가서 처리). 발주관리 selectMode 와 같은 패턴.
-                    완료작업건 모드는 이미 마감된 건들이라 일괄 작업완료 의미 없음 — 토글 숨김. */}
-                {sortMode !== 'completed' && (
-                    <div className="ws-action-row">
+                <p className="ws-list-meta">
+                    <span className="ws-list-meta-count">{filtered.length}건</span>
+                    {lastSyncedAt && (
+                        <>
+                            <span className="ws-list-meta-sep">·</span>
+                            <span className="ws-list-meta-sync">갱신 {formatSyncedAt(lastSyncedAt)}</span>
+                        </>
+                    )}
+                </p>
+
+                <div className="ws-sort-toggle" role="tablist" aria-label="목록 모드">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={sortMode === 'due'}
+                        className={`ws-sort-tab ${sortMode === 'due' ? 'active' : ''}`}
+                        onClick={() => setSortMode('due')}
+                    >작업중</button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={sortMode === 'completed'}
+                        className={`ws-sort-tab ${sortMode === 'completed' ? 'active' : ''}`}
+                        onClick={() => setSortMode('completed')}
+                    >완료작업건</button>
+                </div>
+            </header>
+
+            {/* 거래처 검색 — 평소엔 우측 하단에 접힌 pill 로 걸쳐 있다가, 터치(포커스)하면
+                목록 상단 sticky 바로 펼쳐진다. 검색어가 있으면 결과를 보는 동안 상단에 유지.
+                열린 상태는 네이티브 sticky 라 스크롤 중 덜덜거림이 없다. */}
+            <div className={`ws-search-dock ${searchOpen ? 'open' : ''}`}>
+                <div className={`ws-search-row ${searchFocused ? 'focused' : ''}`}>
+                    <span className="ws-search-icon" aria-hidden="true">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="7" cy="7" r="4.5" />
+                            <path d="M10.5 10.5L13.5 13.5" />
+                        </svg>
+                    </span>
+                    <input
+                        type="search"
+                        className="ws-search-input"
+                        placeholder="거래처 검색"
+                        value={companySearch}
+                        onChange={(e) => setCompanySearch(e.target.value)}
+                        onFocus={() => setSearchFocused(true)}
+                        onBlur={() => setSearchFocused(false)}
+                        enterKeyHint="search"
+                        onKeyDown={(e) => {
+                            // 모바일 키패드 '검색/확인' 누르면 키패드 닫기.
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                            }
+                        }}
+                    />
+                    {companySearch && (
                         <button
                             type="button"
-                            className={`ws-select-toggle ${selectMode ? 'active' : ''}`}
-                            onClick={toggleSelectMode}
-                            disabled={bulkCompleting}
-                        >
-                            {selectMode
-                                ? `선택 모드 끄기${selectedNumbers.size > 0 ? ` · ${selectedNumbers.size}건` : ''}`
-                                : '여러 개 선택해 일괄 완료'}
-                        </button>
-                    </div>
-                )}
-            </header>
+                            className="ws-search-clear"
+                            onClick={() => setCompanySearch('')}
+                            aria-label="검색어 지우기"
+                        >×</button>
+                    )}
+                </div>
+            </div>
 
             {loading && <div className="ws-empty">불러오는 중…</div>}
             {!loading && error && <div className="ws-empty error">{error}</div>}
@@ -791,28 +618,27 @@ export default function WorksheetList() {
                         </h2>
                         <div className="ws-grid">
                             {list.map((it) => {
-                                const isSelected = selectedNumbers.has(it.orderNumber);
                                 const completedByMe = !!myWorker
                                     && Array.isArray(it.workerCompletions)
                                     && it.workerCompletions.some((c) => c.worker === myWorker);
-                                const cardClass = `ws-grid-card${selectMode ? ' select-mode' : ''}${isSelected ? ' selected' : ''}`;
-                                const cardContent = (
-                                    <>
+                                return (
+                                    <Link
+                                        key={it.orderNumber}
+                                        to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
+                                        state={{ siblings: siblingOrderNumbers }}
+                                        className="ws-grid-card"
+                                        onPointerDown={() => {
+                                            rememberWorksheetListView();
+                                            preloadWorksheetViewerChunk(true);
+                                        }}
+                                        onClick={() => rememberWorksheetListView()}
+                                    >
                                         <WorksheetThumbnail
                                             pdfUrl={it.worksheetPdfUrl}
                                             thumbnailUrl={it.worksheetThumbnailUrl}
                                             completed={isCompletedMode || completedByMe}
                                             evidenceCount={it.evidenceCount || 0}
                                         />
-                                        {selectMode && (
-                                            <span className={`ws-grid-check ${isSelected ? 'on' : ''}`} aria-hidden="true">
-                                                {isSelected && (
-                                                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                                                        <path d="M3.5 8.5l3 3 6-7" />
-                                                    </svg>
-                                                )}
-                                            </span>
-                                        )}
                                         <div className="ws-thumb-meta">
                                             <div className="ws-thumb-company">
                                                 {it.companyName || '거래처 미상'}
@@ -825,34 +651,6 @@ export default function WorksheetList() {
                                                 </div>
                                             )}
                                         </div>
-                                    </>
-                                );
-                                if (selectMode) {
-                                    return (
-                                        <button
-                                            type="button"
-                                            key={it.orderNumber}
-                                            className={cardClass}
-                                            onClick={() => toggleSelected(it.orderNumber)}
-                                            aria-pressed={isSelected}
-                                        >
-                                            {cardContent}
-                                        </button>
-                                    );
-                                }
-                                return (
-                                    <Link
-                                        key={it.orderNumber}
-                                        to={`/m/worksheets/${encodeURIComponent(it.orderNumber)}`}
-                                        state={{ siblings: siblingOrderNumbers }}
-                                        className={cardClass}
-                                        onPointerDown={() => {
-                                            rememberWorksheetListView();
-                                            preloadWorksheetViewerChunk(true);
-                                        }}
-                                        onClick={() => rememberWorksheetListView()}
-                                    >
-                                        {cardContent}
                                     </Link>
                                 );
                             })}
@@ -860,33 +658,6 @@ export default function WorksheetList() {
                     </section>
                 );
             })}
-
-            {selectMode && (
-                <div className="ws-select-bar" role="region" aria-label="선택 모드">
-                    {bulkError && <div className="ws-select-bar-error">{bulkError}</div>}
-                    <div className="ws-select-bar-row">
-                        <span className="ws-select-bar-count">
-                            <strong>{selectedNumbers.size}</strong>건 / {filtered.length}
-                        </span>
-                        <button
-                            type="button"
-                            className="ws-select-bar-ghost"
-                            onClick={toggleAllVisible}
-                            disabled={filtered.length === 0 || bulkCompleting}
-                        >
-                            {visibleAllSelected ? '해제' : '전체'}
-                        </button>
-                        <button
-                            type="button"
-                            className="ws-select-bar-complete"
-                            onClick={handleBulkComplete}
-                            disabled={selectedNumbers.size === 0 || bulkCompleting}
-                        >
-                            {bulkCompleting ? '처리 중…' : `${selectedNumbers.size > 0 ? `${selectedNumbers.size}건 ` : ''}작업완료`}
-                        </button>
-                    </div>
-                </div>
-            )}
 
             {showWorkerModal && (
                 <div
