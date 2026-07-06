@@ -21,7 +21,7 @@
 
 // VERSION 은 SW 자체의 캐시 키. 갱신/버그픽스 후 무조건 한 단계 올려야 옛 캐시
 // (옛 index.html, 옛 assets) 가 강제로 폐기되고 클라이언트가 새 버전을 잡는다.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const HTML_CACHE = 'hdsign-html-' + VERSION;
 const ASSET_CACHE = 'hdsign-asset-' + VERSION;
 const WORKSHEET_CACHE = 'hdsign-worksheet-' + VERSION;
