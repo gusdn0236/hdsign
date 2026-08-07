@@ -1,6 +1,6 @@
 {
   "name": "HD사인 작업 지시서",
-  "short_name": "HD지시서",
+  "short_name": "HD사인",
   "description": "HD사인 모바일 작업 지시서 뷰어",
   "start_url": "/m/worksheets",
   "scope": "/m/",
