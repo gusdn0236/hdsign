@@ -54,6 +54,8 @@ dependencies {
     implementation 'com.anthropic:anthropic-java:2.35.0'
     // 지시서 변경 웹푸시 발송(VAPID). BouncyCastle 을 JCE provider 로 내부 사용.
     implementation 'nl.martijndwars:web-push:5.1.2'
+    // 💡 BouncyCastle 의존성 추가 (이 부분이 누락되어 에러가 발생했습니다)
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
 }
 tasks.named('test') {
     useJUnitPlatform()
