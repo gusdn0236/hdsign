@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 // 지시서가 "재업로드로 실제 변경"됐을 때만 호출한다(최초 업로드는 호출하지 않음 — 호출부에서 판단).
 // ALL 구독자는 무조건, MINE 구독자는 이번에 바뀐 지시서의 departmentSlots 와 본인 슬롯이
@@ -59,11 +60,10 @@ public class WorksheetPushNotifier {
 
         String payload = buildPayload(orderNumber, label);
 
-        List<Long> deadIds = new ArrayList<>();
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime refreshCutoff = now.minusHours(LAST_SUCCESS_REFRESH_HOURS);
-        List<PushSubscription> delivered = new ArrayList<>();
-
+        // 대상 구독의 발송을 한꺼번에 띄운다 — 직렬로 돌리면 기기 수 × 왕복시간이 그대로 쌓여서
+        // 기기 20대면 이 스레드가 수 초~수십 초를 잡아먹는다(사진 백업·메일과 공유하는 풀이다).
+        // 동시에 띄우면 전체 소요가 "가장 느린 한 건" 으로 줄고, 그마저 요청 타임아웃으로 묶여 있다.
+        List<InFlight> inFlight = new ArrayList<>();
         for (PushSubscription sub : subs) {
             boolean shouldSend = switch (sub.getMode()) {
                 case ALL -> true;
@@ -71,7 +71,27 @@ public class WorksheetPushNotifier {
             };
             if (!shouldSend) continue;
 
-            WebPushService.SendResult result = webPushService.send(sub, payload);
+            inFlight.add(new InFlight(sub, webPushService.sendAsync(sub, payload)));
+        }
+        if (inFlight.isEmpty()) return;
+
+        List<Long> deadIds = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime refreshCutoff = now.minusHours(LAST_SUCCESS_REFRESH_HOURS);
+        List<PushSubscription> delivered = new ArrayList<>();
+
+        for (InFlight pending : inFlight) {
+            PushSubscription sub = pending.subscription();
+            WebPushService.SendResult result;
+            try {
+                // sendAsync 는 실패도 FAILED 로 접어서 정상 완료시키므로 여기서 터질 일은 없다.
+                // 그래도 여기서 예외가 새면 아래 정리 로직 전체가 날아가므로 방어한다.
+                result = pending.future().join();
+            } catch (Exception e) {
+                log.warn("푸시 발송 결과 수집 실패 [id={}]: {}", sub.getId(), e.getMessage());
+                continue;
+            }
+
             if (result == WebPushService.SendResult.GONE) {
                 deadIds.add(sub.getId());
             } else if (result == WebPushService.SendResult.OK) {
@@ -130,6 +150,11 @@ public class WorksheetPushNotifier {
             log.warn("푸시 상호명 조회 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
         }
         return order.getOrderNumber();
+    }
+
+    // 발송 중인 요청과 그 대상 구독을 짝지어 둔다 — 결과를 받아서 어느 구독을 지울지 판단해야 한다.
+    private record InFlight(PushSubscription subscription,
+                            CompletableFuture<WebPushService.SendResult> future) {
     }
 
     private List<String> splitCsv(String csv) {
