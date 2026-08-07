@@ -3,6 +3,7 @@ package com.example.backend.repository;
 import com.example.backend.entity.PushSubscription;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,4 +16,7 @@ public interface PushSubscriptionRepository extends JpaRepository<PushSubscripti
     List<PushSubscription> findByMode(PushSubscription.Mode mode);
 
     List<PushSubscription> findAll();
+
+    // 정리 배치용 — 구독한 지 오래됐는데 단 한 번도 발송에 성공한 적 없는 구독.
+    List<PushSubscription> findByCreatedAtBeforeAndLastSuccessAtIsNull(LocalDateTime cutoff);
 }

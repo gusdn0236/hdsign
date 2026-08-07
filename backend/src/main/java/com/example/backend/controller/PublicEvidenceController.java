@@ -664,9 +664,10 @@ public class PublicEvidenceController {
             if (fsUid.length() > 64) fsUid = fsUid.substring(0, 64);
             order.setOriginalFsUid(fsUid);
         }
-        if (firstAttachment || userMarkedChanged) {
-            order.setWorksheetUpdatedAt(LocalDateTime.now());
-        }
+        // 갱신 시각 — 첫 업로드는 물론, 모든 재업로드에서 찍는다. 아래 worksheetRevisedAt('변경'
+        // 배지) / 푸시알림과 동일한 기준. 옛 조건(메모 입력 시에만 갱신)은 메모 없이 수정한 경우
+        // 알림은 오는데 목록의 "갱신 상대시간" 은 그대로라 서로 어긋났다.
+        order.setWorksheetUpdatedAt(LocalDateTime.now());
         // 첫 등록이 아닌 모든 재업로드(웹 재반영)를 '변경 이력'으로 못박는다 — 변경 메모
         // 입력 여부와 무관. 즉 지시서가 웹에 두 번째 이상 올라오면 곧 '변경'으로 본다.
         // 한 번 찍히면 이후 재인쇄/열람으로도 비우지 않으므로, 관리자 카드의 '변경' 배지가
@@ -675,9 +676,10 @@ public class PublicEvidenceController {
             order.setWorksheetRevisedAt(LocalDateTime.now());
         }
         // 첫 업로드는 알림 대상 아님(신규 지시서는 아직 아무도 "이전 버전"을 안 봐서 변경이 아님).
-        // 재업로드인데 실제로 내용이 바뀐 경우(사용자가 변경 사유를 입력한 경우)에만 발송.
-        // 납기(dueDate)만 바뀐 경우는 AdminOrderController#updateDueDate 쪽에서 별도로 발송한다.
-        if (!firstAttachment && userMarkedChanged) {
+        // 그 외 모든 재업로드는 무조건 발송 — 지시서를 다시 올렸다는 것 자체가 뭔가 바뀌었다는 뜻.
+        // 위 worksheetRevisedAt('변경' 배지) 과 동일한 기준이라 배지와 알림이 항상 같이 움직인다.
+        // (변경 메모 입력 여부로 가르던 옛 조건은 메모 없이 수정한 경우를 놓쳤다.)
+        if (!firstAttachment) {
             worksheetPushNotifier.notifyWorksheetChanged(order);
         }
         // changeNote 처리 분기:

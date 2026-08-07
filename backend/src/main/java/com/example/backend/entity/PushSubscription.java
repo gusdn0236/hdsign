@@ -51,6 +51,11 @@ public class PushSubscription {
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
+    // 마지막으로 실제 발송에 성공한 시각. null 이면 한 번도 성공한 적 없음.
+    // PushSubscriptionCleanupScheduler 가 이 값으로 "오래 죽어있는 구독"을 판별한다.
+    @Column
+    private LocalDateTime lastSuccessAt;
+
     public enum Mode {
         ALL, MINE
         // OFF 는 별도 상태로 저장하지 않고 구독 row 자체를 삭제한다(= 발송 대상에서 자동 제외).

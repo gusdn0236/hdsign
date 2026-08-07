@@ -5,6 +5,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import nl.martijndwars.webpush.Notification;
 import nl.martijndwars.webpush.PushService;
+import org.apache.http.HttpResponse;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,15 @@ import java.security.Security;
 @Slf4j
 @Service
 public class WebPushService {
+
+    // 발송 결과. GONE 은 "이 구독은 영구히 죽었다" 는 뜻으로, 호출부가 DB 에서 지워야 한다.
+    // FAILED 는 일시적 실패(네트워크/5xx)일 수 있으므로 지우지 않고 다음 기회를 노린다.
+    public enum SendResult {
+        OK,        // 2xx — 정상 전달
+        GONE,      // 404/410 — 구독 만료·해지. 되살아나지 않으므로 삭제 대상
+        FAILED,    // 그 외 오류 — 일시적일 수 있어 보존
+        DISABLED   // VAPID 키 미설정으로 푸시 자체가 꺼짐
+    }
 
     @Value("${vapid.public-key:}")
     private String publicKey;
@@ -50,18 +60,32 @@ public class WebPushService {
     }
 
     // payloadJson 예: {"title":"지시서가 변경되었습니다","body":"...","url":"/m/worksheets/HD-1234","orderNumber":"HD-1234"}
-    // best-effort — 만료/차단된 구독 하나의 발송 실패가 전체 업로드 흐름을 막으면 안 되므로
-    // 여기서 예외를 삼킨다. 410/404 응답(구독 만료)이 반복되는 endpoint 는 추후 정리 배치로 청소 가능.
-    public void send(PushSubscription sub, String payloadJson) {
-        if (!isEnabled()) return;
+    // best-effort — 구독 하나의 발송 실패가 전체 업로드 흐름을 막으면 안 되므로 여기서 예외를 삼킨다.
+    // 대신 결과를 돌려줘서 호출부가 죽은 구독을 정리할 수 있게 한다.
+    public SendResult send(PushSubscription sub, String payloadJson) {
+        if (!isEnabled()) return SendResult.DISABLED;
         try {
             nl.martijndwars.webpush.Subscription subscription = new nl.martijndwars.webpush.Subscription(
                     sub.getEndpoint(),
                     new nl.martijndwars.webpush.Subscription.Keys(sub.getP256dh(), sub.getAuth())
             );
-            pushService.send(new Notification(subscription, payloadJson));
+            HttpResponse res = pushService.send(new Notification(subscription, payloadJson));
+            int status = res.getStatusLine().getStatusCode();
+
+            // 404 Not Found / 410 Gone = 브라우저가 구독을 폐기함(앱 삭제, 데이터 초기화, 알림 차단 등).
+            // RFC 8030 상 이 endpoint 는 다시 살아나지 않으므로 DB 에서 지운다.
+            if (status == 404 || status == 410) {
+                log.info("푸시 구독 만료 [id={}, status={}] — 정리 대상", sub.getId(), status);
+                return SendResult.GONE;
+            }
+            if (status >= 200 && status < 300) {
+                return SendResult.OK;
+            }
+            log.warn("푸시 발송 실패 [id={}, status={}]", sub.getId(), status);
+            return SendResult.FAILED;
         } catch (Exception e) {
-            log.warn("푸시 발송 실패 [id={}]: {}", sub.getId(), e.getMessage());
+            log.warn("푸시 발송 예외 [id={}]: {}", sub.getId(), e.getMessage());
+            return SendResult.FAILED;
         }
     }
 }

@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +18,9 @@ import java.util.Map;
 // 지시서가 "재업로드로 실제 변경"됐을 때만 호출한다(최초 업로드는 호출하지 않음 — 호출부에서 판단).
 // ALL 구독자는 무조건, MINE 구독자는 이번에 바뀐 지시서의 departmentSlots 와 본인 슬롯이
 // 겹칠 때만 발송 대상.
+//
+// 죽은 구독 정리: 푸시 서버가 404/410 을 주면 그 구독은 영구히 죽은 것이라 즉시 삭제한다.
+// (기기 초기화·PWA 재설치·알림 차단 시 발생. 안 지우면 지시서 변경 때마다 헛발송이 누적된다.)
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -35,13 +39,41 @@ public class WorksheetPushNotifier {
         List<String> slots = splitCsv(order.getDepartmentSlots());
         String payload = buildPayload(order);
 
+        List<Long> deadIds = new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+        List<PushSubscription> delivered = new ArrayList<>();
+
         for (PushSubscription sub : subs) {
             boolean shouldSend = switch (sub.getMode()) {
                 case ALL -> true;
                 case MINE -> WorkerSlots.matchesWorker(slots, sub.getWorker());
             };
-            if (shouldSend) {
-                webPushService.send(sub, payload);
+            if (!shouldSend) continue;
+
+            WebPushService.SendResult result = webPushService.send(sub, payload);
+            if (result == WebPushService.SendResult.GONE) {
+                deadIds.add(sub.getId());
+            } else if (result == WebPushService.SendResult.OK) {
+                // 마지막 성공 시각 기록 — 오래도록 한 번도 성공 못 한 구독을 청소 배치가 걸러낸다.
+                sub.setLastSuccessAt(now);
+                delivered.add(sub);
+            }
+        }
+
+        // 발송 루프가 끝난 뒤 일괄 정리 — 순회 중 삭제하면 트랜잭션/컬렉션이 꼬인다.
+        if (!deadIds.isEmpty()) {
+            try {
+                pushSubscriptionRepository.deleteAllById(deadIds);
+                log.info("만료된 푸시 구독 {}건 삭제", deadIds.size());
+            } catch (Exception e) {
+                log.warn("만료 푸시 구독 삭제 실패: {}", e.getMessage());
+            }
+        }
+        if (!delivered.isEmpty()) {
+            try {
+                pushSubscriptionRepository.saveAll(delivered);
+            } catch (Exception e) {
+                log.warn("푸시 구독 lastSuccessAt 갱신 실패: {}", e.getMessage());
             }
         }
     }

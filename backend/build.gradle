@@ -52,11 +52,7 @@ dependencies {
     // 서버 env 에만 두고 절대 응답/로그로 새지 않는다(IRON LAW). 순수 추가 의존성 —
     // 기존 데이터소스/마이그레이션/엔티티/슬라이스-1 의존성(h2 등)은 일절 건드리지 않는다.
     implementation 'com.anthropic:anthropic-java:2.35.0'
-    // 지시서 변경 웹푸시 발송(VAPID). BouncyCastle 을 JCE provider 로 내부 사용.
-    implementation 'nl.martijndwars:web-push:5.1.2'
-    // 💡 BouncyCastle 의존성 추가 (이 부분이 누락되어 에러가 발생했습니다)
-    implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
-   // 웹푸시 관련 의존성 추가
+    // 지시서 변경 웹푸시 발송(VAPID). BouncyCastle 을 JCE provider, jose4j 를 JWT 서명에 내부 사용.
     implementation 'nl.martijndwars:web-push:5.1.2'
     implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
     implementation 'org.bitbucket.b_c:jose4j:0.9.4'
