@@ -81,7 +81,7 @@ public class WorksheetPushNotifier {
     private String buildPayload(Order order) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("title", "지시서가 변경되었습니다");
-        data.put("body", order.getOrderNumber() + " 지시서를 다시 확인해주세요");
+        data.put("body", resolveLabel(order) + " 지시서를 다시 확인해주세요");
         data.put("url", "/m/worksheets/" + order.getOrderNumber());
         data.put("orderNumber", order.getOrderNumber());
         try {
@@ -91,6 +91,21 @@ public class WorksheetPushNotifier {
             log.warn("푸시 payload 직렬화 실패: {}", e.getMessage());
             return "{\"title\":\"지시서가 변경되었습니다\",\"url\":\"/m/worksheets\"}";
         }
+    }
+
+    // 알림에 띄울 이름 — 주문번호보다 상호명이 현장에서 훨씬 알아보기 쉽다.
+    // client 는 LAZY 라 세션이 닫힌 상황이면 접근 시 예외가 날 수 있으므로 감싸고,
+    // 상호명이 없거나 못 읽으면 주문번호로 폴백한다(알림 자체는 반드시 나가야 함).
+    private String resolveLabel(Order order) {
+        try {
+            if (order.getClient() != null) {
+                String company = order.getClient().getCompanyName();
+                if (company != null && !company.isBlank()) return company.trim();
+            }
+        } catch (Exception e) {
+            log.warn("푸시 상호명 조회 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
+        }
+        return order.getOrderNumber();
     }
 
     private List<String> splitCsv(String csv) {
