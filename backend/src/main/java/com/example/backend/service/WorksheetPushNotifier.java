@@ -7,6 +7,8 @@ import com.example.backend.util.WorkerSlots;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -19,6 +21,9 @@ import java.util.Map;
 // ALL 구독자는 무조건, MINE 구독자는 이번에 바뀐 지시서의 departmentSlots 와 본인 슬롯이
 // 겹칠 때만 발송 대상.
 //
+// 발송은 @Async — 구독 기기가 20대면 푸시 서버로 HTTP 왕복을 20번 하는데, 동기로 돌리면
+// 지시서 재업로드 응답이 그걸 전부 기다린다. 실제 발송은 dispatchAsync 로 넘긴다.
+//
 // 죽은 구독 정리: 푸시 서버가 404/410 을 주면 그 구독은 영구히 죽은 것이라 즉시 삭제한다.
 // (기기 초기화·PWA 재설치·알림 차단 시 발생. 안 지우면 지시서 변경 때마다 헛발송이 누적된다.)
 @Slf4j
@@ -26,21 +31,37 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class WorksheetPushNotifier {
 
+    // lastSuccessAt 은 "이 구독이 아직 살아있나"를 보는 청소 배치용 값이라 분 단위 정밀도가 필요 없다.
+    // 매 발송마다 saveAll 하면 기기 수만큼 UPDATE 가 나가므로, 이 시간보다 오래된 것만 갱신한다.
+    private static final int LAST_SUCCESS_REFRESH_HOURS = 24;
+
     private final PushSubscriptionRepository pushSubscriptionRepository;
     private final WebPushService webPushService;
+    // 자기 자신을 프록시로 다시 잡기 위한 참조. this.dispatchAsync(...) 로 직접 부르면
+    // 프록시를 거치지 않아 @Async 가 무시되고 그대로 동기 실행된다.
+    private final ObjectProvider<WorksheetPushNotifier> selfProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public void notifyWorksheetChanged(Order order) {
         if (!webPushService.isEnabled()) return;
 
+        // ⚠️ client 는 LAZY 라 @Async 스레드에서 접근하면 "no session" 이 난다.
+        // 상호명·슬롯은 반드시 트랜잭션이 살아있는 호출 스레드에서 미리 뽑아 값으로 넘긴다
+        // (GoogleDriveBackupService.uploadEvidenceAsync 와 같은 패턴).
+        selfProvider.getObject().dispatchAsync(
+                order.getOrderNumber(), resolveLabel(order), splitCsv(order.getDepartmentSlots()));
+    }
+
+    @Async
+    public void dispatchAsync(String orderNumber, String label, List<String> slots) {
         List<PushSubscription> subs = pushSubscriptionRepository.findAll();
         if (subs.isEmpty()) return;
 
-        List<String> slots = splitCsv(order.getDepartmentSlots());
-        String payload = buildPayload(order);
+        String payload = buildPayload(orderNumber, label);
 
         List<Long> deadIds = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
+        LocalDateTime refreshCutoff = now.minusHours(LAST_SUCCESS_REFRESH_HOURS);
         List<PushSubscription> delivered = new ArrayList<>();
 
         for (PushSubscription sub : subs) {
@@ -55,8 +76,11 @@ public class WorksheetPushNotifier {
                 deadIds.add(sub.getId());
             } else if (result == WebPushService.SendResult.OK) {
                 // 마지막 성공 시각 기록 — 오래도록 한 번도 성공 못 한 구독을 청소 배치가 걸러낸다.
-                sub.setLastSuccessAt(now);
-                delivered.add(sub);
+                LocalDateTime last = sub.getLastSuccessAt();
+                if (last == null || last.isBefore(refreshCutoff)) {
+                    sub.setLastSuccessAt(now);
+                    delivered.add(sub);
+                }
             }
         }
 
@@ -78,12 +102,12 @@ public class WorksheetPushNotifier {
         }
     }
 
-    private String buildPayload(Order order) {
+    private String buildPayload(String orderNumber, String label) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("title", "지시서가 변경되었습니다");
-        data.put("body", resolveLabel(order) + " 지시서를 다시 확인해주세요");
-        data.put("url", "/m/worksheets/" + order.getOrderNumber());
-        data.put("orderNumber", order.getOrderNumber());
+        data.put("body", label + " 지시서를 다시 확인해주세요");
+        data.put("url", "/m/worksheets/" + orderNumber);
+        data.put("orderNumber", orderNumber);
         try {
             return objectMapper.writeValueAsString(data);
         } catch (Exception e) {

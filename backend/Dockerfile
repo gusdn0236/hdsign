@@ -1,12 +1,18 @@
-FROM eclipse-temurin:17-jdk-alpine AS build
+# Gradle 이 미리 설치된 이미지를 쓴다(베이스는 기존과 같은 eclipse-temurin:17-jdk-alpine).
+#
+# ⚠️ 왜 gradlew 가 아닌가 (2026-08 결정):
+# gradle wrapper 는 빌드할 때마다 services.gradle.org 에서 배포판 zip 을 새로 받는데, 업스트림이
+# 불안정해서 Railway 빌드가 "Server returned HTTP response code: 500" 으로 통째로 실패했다.
+# 배포판이 이미 들어있는 이미지를 쓰면 그 다운로드 자체가 사라져 빌드가 네트워크에 의존하지 않는다.
+#
+# 태그의 Gradle 버전은 gradle/wrapper/gradle-wrapper.properties 의 distributionUrl 과 반드시
+# 일치시킬 것 — 로컬(gradlew)과 배포 빌드가 서로 다른 Gradle 로 돌면 재현이 안 된다.
+FROM gradle:8.14.3-jdk17-alpine AS build
 WORKDIR /app
-COPY gradlew .
-COPY gradle gradle
 COPY build.gradle .
 COPY settings.gradle .
 COPY src src
-RUN chmod +x ./gradlew
-RUN ./gradlew bootJar -x test
+RUN gradle bootJar -x test --no-daemon
 
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
