@@ -126,7 +126,12 @@ public class WebPushService {
     // join() 을 마음 놓고 쓸 수 있게 하기 위한 계약이다. 요청 타임아웃이 걸려 있으므로
     // join() 이 REQUEST_TIMEOUT 보다 오래 매달리는 일도 없다.
     public CompletableFuture<SendResult> sendAsync(PushSubscription sub, String payloadJson) {
-        if (!isEnabled()) return CompletableFuture.completedFuture(SendResult.DISABLED);
+        // 지역 변수로 한 번만 읽는다 — 종료 중에 shutdown() 이 필드를 비우면 검사와 사용 사이에서
+        // NPE 가 나고, 그건 future 가 아니라 이 메서드 밖으로 튀어 호출부의 정리 로직을 통째로 날린다.
+        HttpClient client = this.httpClient;
+        if (requestFactory == null || client == null) {
+            return CompletableFuture.completedFuture(SendResult.DISABLED);
+        }
 
         Long id = sub.getId();
         HttpRequest request;
@@ -138,7 +143,7 @@ public class WebPushService {
             return CompletableFuture.completedFuture(SendResult.FAILED);
         }
 
-        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .handle((res, err) -> {
                     if (err != null) {
                         log.warn("푸시 발송 예외 [id={}]: {}", id, rootMessage(err));
