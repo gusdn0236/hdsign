@@ -118,7 +118,8 @@ public class WebPushService {
         return requestFactory != null && httpClient != null;
     }
 
-    // payloadJson 예: {"title":"지시서가 변경되었습니다","body":"...","url":"/m/worksheets/HD-1234","orderNumber":"HD-1234"}
+    // payloadJson 예: {"title":"○○기획 지시서 내용이 변경되었습니다","body":"간판 규격 3000x600 으로 수정",
+    //                  "url":"/m/worksheets/HD-1234","orderNumber":"HD-1234"}
     // best-effort — 구독 하나의 발송 실패가 전체 업로드 흐름을 막으면 안 되므로 여기서 예외를 삼킨다.
     // 대신 결과를 돌려줘서 호출부가 죽은 구독을 정리할 수 있게 한다.
     //

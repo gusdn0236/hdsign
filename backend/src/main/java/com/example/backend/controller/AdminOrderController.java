@@ -386,7 +386,10 @@ public class AdminOrderController {
             order.setWorksheetUpdatedAt(LocalDateTime.now());
             // 이 엔드포인트는 이미 존재하는 주문의 납기만 바꾸는 것이라 "첫 업로드" 케이스가 없음 —
             // 값이 실제로 바뀐 경우 항상 발송 대상.
-            worksheetPushNotifier.notifyWorksheetChanged(order);
+            //
+            // 알림 본문은 이번 변경 내용을 직접 써서 넘긴다. order.worksheetChangeNote 는 지난번
+            // 지시서 재업로드 때의 메모라, 납기 변경 알림에 실으면 엉뚱한 내용이 나간다.
+            worksheetPushNotifier.notifyWorksheetChanged(order, "납기가 " + parsed + " 로 변경되었습니다");
         }
         return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
     }

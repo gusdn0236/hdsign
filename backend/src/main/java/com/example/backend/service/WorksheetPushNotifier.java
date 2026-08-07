@@ -36,6 +36,9 @@ public class WorksheetPushNotifier {
     // 매 발송마다 saveAll 하면 기기 수만큼 UPDATE 가 나가므로, 이 시간보다 오래된 것만 갱신한다.
     private static final int LAST_SUCCESS_REFRESH_HOURS = 24;
 
+    // 알림 본문에 실을 변경 메모 최대 길이.
+    private static final int CHANGE_NOTE_BODY_LIMIT = 200;
+
     private final PushSubscriptionRepository pushSubscriptionRepository;
     private final WebPushService webPushService;
     // 자기 자신을 프록시로 다시 잡기 위한 참조. this.dispatchAsync(...) 로 직접 부르면
@@ -43,22 +46,30 @@ public class WorksheetPushNotifier {
     private final ObjectProvider<WorksheetPushNotifier> selfProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public void notifyWorksheetChanged(Order order) {
+    /**
+     * @param changeNote 이번 변경의 메모. 알림 본문이 된다. 호출부는 <b>메모를 확정한 뒤</b> 불러야
+     *                   한다 — order 에서 직접 읽지 않고 인자로 받는 이유가 이것이다. 예전에는
+     *                   PublicEvidenceController 가 메모를 setter 로 반영하기 <i>전에</i> 알림을
+     *                   보내서, 여기서 order 를 읽었다면 직전 메모가 나갔다. 납기 변경처럼 이번
+     *                   변경과 무관한 메모밖에 없는 호출부는 null 을 넘긴다.
+     */
+    public void notifyWorksheetChanged(Order order, String changeNote) {
         if (!webPushService.isEnabled()) return;
 
         // ⚠️ client 는 LAZY 라 @Async 스레드에서 접근하면 "no session" 이 난다.
         // 상호명·슬롯은 반드시 트랜잭션이 살아있는 호출 스레드에서 미리 뽑아 값으로 넘긴다
         // (GoogleDriveBackupService.uploadEvidenceAsync 와 같은 패턴).
         selfProvider.getObject().dispatchAsync(
-                order.getOrderNumber(), resolveLabel(order), splitCsv(order.getDepartmentSlots()));
+                order.getOrderNumber(), resolveLabel(order), changeNote,
+                splitCsv(order.getDepartmentSlots()));
     }
 
     @Async
-    public void dispatchAsync(String orderNumber, String label, List<String> slots) {
+    public void dispatchAsync(String orderNumber, String label, String changeNote, List<String> slots) {
         List<PushSubscription> subs = pushSubscriptionRepository.findAll();
         if (subs.isEmpty()) return;
 
-        String payload = buildPayload(orderNumber, label);
+        String payload = buildPayload(orderNumber, label, changeNote);
 
         // 대상 구독의 발송을 한꺼번에 띄운다 — 직렬로 돌리면 기기 수 × 왕복시간이 그대로 쌓여서
         // 기기 20대면 이 스레드가 수 초~수십 초를 잡아먹는다(사진 백업·메일과 공유하는 풀이다).
@@ -122,10 +133,13 @@ public class WorksheetPushNotifier {
         }
     }
 
-    private String buildPayload(String orderNumber, String label) {
+    // 제목은 "어느 거래처 지시서가 바뀌었나", 본문은 "무엇이 바뀌었나(변경 메모)".
+    // 알림 창에는 브라우저가 붙이는 앱 이름 줄이 이미 하나 들어가므로 제목/본문에서 같은 말을
+    // 반복하지 않는다.
+    private String buildPayload(String orderNumber, String label, String changeNote) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("title", "지시서가 변경되었습니다");
-        data.put("body", label + " 지시서를 다시 확인해주세요");
+        data.put("title", label + " 지시서 내용이 변경되었습니다");
+        data.put("body", buildBody(changeNote));
         data.put("url", "/m/worksheets/" + orderNumber);
         data.put("orderNumber", orderNumber);
         try {
@@ -133,8 +147,19 @@ public class WorksheetPushNotifier {
         } catch (Exception e) {
             // 직렬화가 실패할 일은 거의 없지만, 실패해도 발송 자체를 막지 않도록 최소 payload 로 폴백.
             log.warn("푸시 payload 직렬화 실패: {}", e.getMessage());
-            return "{\"title\":\"지시서가 변경되었습니다\",\"url\":\"/m/worksheets\"}";
+            return "{\"title\":\"지시서 내용이 변경되었습니다\",\"url\":\"/m/worksheets\"}";
         }
+    }
+
+    // 변경 메모를 그대로 본문에 싣는다 — 현장에서 "뭐가 바뀌었는지" 를 알림만 보고 알 수 있어야 한다.
+    // 메모는 최대 2000자까지 저장되지만 알림 창은 몇 줄만 보여주고 푸시 페이로드도 4KB 제한이 있어
+    // 앞부분만 자른다. 메모 없이 재업로드한 경우(그래도 알림은 나간다)는 안내 문구로 폴백.
+    private String buildBody(String changeNote) {
+        if (changeNote == null || changeNote.isBlank()) return "지시서를 다시 확인해주세요";
+        String flat = changeNote.strip().replaceAll("\\s+", " ");
+        return flat.length() <= CHANGE_NOTE_BODY_LIMIT
+                ? flat
+                : flat.substring(0, CHANGE_NOTE_BODY_LIMIT) + "…";
     }
 
     // 알림에 띄울 이름 — 주문번호보다 상호명이 현장에서 훨씬 알아보기 쉽다.

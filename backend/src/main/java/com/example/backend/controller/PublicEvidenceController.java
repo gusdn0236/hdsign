@@ -675,13 +675,6 @@ public class PublicEvidenceController {
         if (!firstAttachment) {
             order.setWorksheetRevisedAt(LocalDateTime.now());
         }
-        // 첫 업로드는 알림 대상 아님(신규 지시서는 아직 아무도 "이전 버전"을 안 봐서 변경이 아님).
-        // 그 외 모든 재업로드는 무조건 발송 — 지시서를 다시 올렸다는 것 자체가 뭔가 바뀌었다는 뜻.
-        // 위 worksheetRevisedAt('변경' 배지) 과 동일한 기준이라 배지와 알림이 항상 같이 움직인다.
-        // (변경 메모 입력 여부로 가르던 옛 조건은 메모 없이 수정한 경우를 놓쳤다.)
-        if (!firstAttachment) {
-            worksheetPushNotifier.notifyWorksheetChanged(order);
-        }
         // changeNote 처리 분기:
         //   - userMarkedChanged: 새 메모로 갱신 (빈 값이면 null 로 클리어)
         //   - preserveNote: 기존 DB 메모 그대로 유지 — 다음 다이얼로그에서 또 prefill 되도록 영속
@@ -692,6 +685,16 @@ public class PublicEvidenceController {
             order.setWorksheetChangeNote(trimmed.isEmpty() ? null : trimmed);
         } else if (!preserveNote) {
             order.setWorksheetChangeNote(null);
+        }
+        // 첫 업로드는 알림 대상 아님(신규 지시서는 아직 아무도 "이전 버전"을 안 봐서 변경이 아님).
+        // 그 외 모든 재업로드는 무조건 발송 — 지시서를 다시 올렸다는 것 자체가 뭔가 바뀌었다는 뜻.
+        // 위 worksheetRevisedAt('변경' 배지) 과 동일한 기준이라 배지와 알림이 항상 같이 움직인다.
+        // (변경 메모 입력 여부로 가르던 옛 조건은 메모 없이 수정한 경우를 놓쳤다.)
+        //
+        // ⚠️ 반드시 위 changeNote 확정 뒤에 호출한다 — 알림 본문이 이번 변경 메모라서,
+        // 순서가 뒤바뀌면 직전 메모가 나간다.
+        if (!firstAttachment) {
+            worksheetPushNotifier.notifyWorksheetChanged(order, order.getWorksheetChangeNote());
         }
         orderRepository.save(order);
 
