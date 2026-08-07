@@ -56,12 +56,23 @@ public class WebPushService {
         DISABLED   // VAPID 키 미설정으로 푸시 자체가 꺼짐
     }
 
-    // 페이로드 암호화 방식. AESGCM 은 구 draft-04 방식으로, 라이브러리의 PushService.send() 가
-    // 쓰던 기본값이라 기존 동작을 그대로 유지하려고 명시해 둔다.
-    // 표준(RFC 8291)은 AES128GCM 이고 Safari/iOS 는 그쪽만 받는 것으로 알려져 있으니,
-    // iOS PWA 발송이 4xx 로 실패하면 여기를 AES128GCM 으로 바꿔서 확인할 것
-    // (아래 발송 실패 로그에 푸시 서버가 준 응답 본문이 함께 찍힌다).
-    private static final Encoding ENCODING = Encoding.AESGCM;
+    // 페이로드 암호화 방식 (2026-08 결정).
+    //
+    // 표준(RFC 8291)이 요구하는 건 aes128gcm 하나뿐이고, 구 draft-04 방식인 aesgcm 은
+    // 브라우저가 지원해도 되고 안 해도 되는 선택 사항이다. Chrome/Firefox 는 표준 확정 전부터
+    // 웹푸시가 있었어서 둘 다 받지만, Safari/iOS 는 2023년(iOS 16.4)에 웹푸시를 넣었기 때문에
+    // 구 방식을 지원할 이유가 없다 — 아이폰에만 알림이 안 가는 원인이 될 수 있다.
+    //
+    // 라이브러리 PushService.send() 의 기본값이 AESGCM 이라 여태 그걸 쓰고 있었을 뿐,
+    // 의도한 선택이 아니었다. 표준으로 맞춘다.
+    //
+    // ⚠️ 이 값을 바꾸면 요청 형태가 통째로 달라진다(prepareRequest 참고):
+    //   - Content-Encoding: aesgcm → aes128gcm
+    //   - salt/dh 가 Encryption·Crypto-Key 헤더에서 빠지고 본문 안으로 들어간다
+    //   - Authorization: "WebPush {jwt}" → "vapid t={jwt}, k={공개키}"
+    //   - FCM 주소의 fcm/send 가 wp 로 재작성된다
+    // 즉 안드로이드 요청까지 전부 형태가 바뀐다. 되돌릴 때는 이 상수만 AESGCM 으로.
+    private static final Encoding ENCODING = Encoding.AES128GCM;
 
     // 커넥션 수립 5초, 요청 전체 10초. 옛 구현의 "무한정 대기" 를 없애는 게 이 상수의 목적이다.
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);

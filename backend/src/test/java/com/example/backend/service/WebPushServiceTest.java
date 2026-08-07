@@ -27,7 +27,9 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -111,21 +113,42 @@ class WebPushServiceTest {
         assertEquals("/push/device-1", request.path());
 
         // 라이브러리가 만든 헤더가 JDK HttpClient 요청으로 온전히 옮겨졌는지 — 이 이관이 이 클래스의 핵심.
-        assertEquals("aesgcm", request.headers().get("content-encoding"));
+        assertEquals("aes128gcm", request.headers().get("content-encoding"), "표준(RFC 8291) 인코딩이 아님");
         assertEquals("application/octet-stream", request.headers().get("content-type"));
         assertNotNull(request.headers().get("ttl"), "TTL 헤더 누락");
 
         String authorization = request.headers().get("authorization");
         assertNotNull(authorization, "Authorization(VAPID JWT) 헤더 누락");
-        assertTrue(authorization.startsWith("WebPush "), "AESGCM 인코딩의 VAPID 형식이 아님: " + authorization);
+        assertTrue(authorization.startsWith("vapid t="), "aes128gcm 의 VAPID 형식이 아님: " + authorization);
+        assertTrue(authorization.contains(", k="), "VAPID 공개키(k=) 누락: " + authorization);
 
+        // aes128gcm 은 salt/dh 를 헤더가 아니라 본문(RFC 8188 헤더 블록) 안에 담는다.
+        assertNull(request.headers().get("encryption"), "aes128gcm 에는 Encryption 헤더가 없어야 한다");
         String cryptoKey = request.headers().get("crypto-key");
-        assertNotNull(cryptoKey, "Crypto-Key 헤더 누락");
-        assertTrue(cryptoKey.contains("dh="), "Crypto-Key 에 dh= 없음: " + cryptoKey);
+        assertNotNull(cryptoKey, "Crypto-Key(p256ecdsa) 헤더 누락");
         assertTrue(cryptoKey.contains("p256ecdsa="), "Crypto-Key 에 p256ecdsa= 없음: " + cryptoKey);
+        assertFalse(cryptoKey.contains("dh="), "aes128gcm 에는 dh= 가 없어야 한다: " + cryptoKey);
 
-        assertNotNull(request.headers().get("encryption"), "Encryption(salt) 헤더 누락");
         assertTrue(request.bodyLength() > 0, "암호화된 페이로드가 비어 있음");
+    }
+
+    @Test
+    @DisplayName("FCM 구독은 aes128gcm 규격에 맞춰 fcm/send 가 wp 주소로 재작성된다")
+    void rewritesFcmEndpointForStandardEncoding() {
+        // 실제로 FCM 에 쏘지 않고 요청 조립 결과만 확인한다 — 안드로이드 기기 대부분이 이 경로를 탄다.
+        PushSubscription fcm = PushSubscription.builder()
+                .id(2L)
+                .endpoint("https://fcm.googleapis.com/fcm/send/TOKEN-123")
+                .p256dh(subscriberP256dh)
+                .auth(subscriberAuth)
+                .mode(PushSubscription.Mode.ALL)
+                .build();
+
+        java.net.http.HttpRequest request =
+                ReflectionTestUtils.invokeMethod(service, "toHttpRequest", fcm, "{\"title\":\"안녕\"}");
+
+        assertNotNull(request);
+        assertEquals("https://fcm.googleapis.com/wp/TOKEN-123", request.uri().toString());
     }
 
     @Test
