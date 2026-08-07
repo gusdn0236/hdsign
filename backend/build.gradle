@@ -56,6 +56,10 @@ dependencies {
     implementation 'nl.martijndwars:web-push:5.1.2'
     // 💡 BouncyCastle 의존성 추가 (이 부분이 누락되어 에러가 발생했습니다)
     implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
+   // 웹푸시 관련 의존성 추가
+    implementation 'nl.martijndwars:web-push:5.1.2'
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.77'
+    implementation 'org.bitbucket.b_c:jose4j:0.9.4'
 }
 tasks.named('test') {
     useJUnitPlatform()
