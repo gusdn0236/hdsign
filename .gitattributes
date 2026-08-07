@@ -1,0 +1,37 @@
+# 줄바꿈 규칙 — 저장소에 박아두는 이유 (2026-08)
+#
+# 이게 없으면 Windows 에서 편집한 파일이 통째로 CRLF 로 뒤집혀서, 몇 줄 고친 커밋이
+# 파일 전체 변경으로 기록된다. 실제로 AdminOrderController 를 3줄 고친 커밋이
+# 1741줄 변경으로 잡힌 적이 있다(리뷰도 blame 도 무의미해짐).
+#
+# core.autocrlf 는 사람마다 다른 로컬 설정이라 믿을 수 없다. .gitattributes 는
+# 저장소에 함께 커밋되므로 누가 어떤 OS 에서 클론해도 같은 규칙이 적용된다.
+
+# 기본: 텍스트로 판별된 파일은 저장소에도, 작업트리에도 LF.
+* text=auto eol=lf
+
+# Windows 배치 파일만 CRLF 유지. cmd.exe 는 CRLF 가 native 이고, 여러 줄 블록이나
+# 라벨이 있는 스크립트에서 LF 가 문제를 일으키는 사례가 알려져 있다. 현장 설치·실행
+# 스크립트라 깨지면 안 되므로 안전한 쪽으로 고정한다.
+# (기존에 LF/CRLF 가 섞여 있던 것을 이 규칙으로 통일)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 바이너리 — 줄바꿈 변환 절대 금지. text=auto 의 자동 판별에 맡기지 않고 명시한다.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.mp4  binary
+*.pdf  binary
+*.zip  binary
+*.jar  binary
+*.xlsx binary
+*.xls  binary
+*.pyc  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
