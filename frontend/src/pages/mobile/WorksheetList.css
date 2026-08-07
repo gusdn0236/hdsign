@@ -582,6 +582,12 @@
     outline: none;
     border-color: #18181b;
 }
+.ws-push-options {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 4px 0 16px;
+}
 .ws-dept-modal-actions {
     display: flex;
     gap: 8px;

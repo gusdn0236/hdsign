@@ -61,6 +61,7 @@ public class AdminOrderController {
     private final OrderArchiveService orderArchiveService;
     private final StorageUsageService storageUsageService;
     private final JdbcTemplate jdbcTemplate;
+    private final com.example.backend.service.WorksheetPushNotifier worksheetPushNotifier;
 
     // 명세서 작성 잠금 TTL — 마지막 하트비트로부터 이 시간이 지나면 stale(자동 만료)로 본다.
     // 프론트 하트비트 주기(25초)보다 충분히 길게 잡아 비트 한두 번 빠져도 잠금이 안 끊기게.
@@ -383,6 +384,9 @@ public class AdminOrderController {
         if (!parsed.equals(order.getDueDate())) {
             order.setDueDate(parsed);
             order.setWorksheetUpdatedAt(LocalDateTime.now());
+            // 이 엔드포인트는 이미 존재하는 주문의 납기만 바꾸는 것이라 "첫 업로드" 케이스가 없음 —
+            // 값이 실제로 바뀐 경우 항상 발송 대상.
+            worksheetPushNotifier.notifyWorksheetChanged(order);
         }
         return ResponseEntity.ok(OrderDto.toResponse(orderRepository.save(order)));
     }

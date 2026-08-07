@@ -7,6 +7,7 @@ import com.example.backend.repository.OrderFileRepository;
 import com.example.backend.repository.OrderRepository;
 import com.example.backend.service.GoogleDriveBackupService;
 import com.example.backend.service.WorksheetFlattenService;
+import com.example.backend.service.WorksheetPushNotifier;
 import com.example.backend.service.WorksheetThumbnailService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -68,6 +69,7 @@ public class PublicEvidenceController {
     private final WorksheetThumbnailService thumbnailService;
     private final WorksheetFlattenService flattenService;
     private final GoogleDriveBackupService driveBackupService;
+    private final WorksheetPushNotifier worksheetPushNotifier;
 
     @Value("${r2.bucket}")
     private String bucket;
@@ -671,6 +673,12 @@ public class PublicEvidenceController {
         // 사진 배지처럼 영구 유지된다.
         if (!firstAttachment) {
             order.setWorksheetRevisedAt(LocalDateTime.now());
+        }
+        // 첫 업로드는 알림 대상 아님(신규 지시서는 아직 아무도 "이전 버전"을 안 봐서 변경이 아님).
+        // 재업로드인데 실제로 내용이 바뀐 경우(사용자가 변경 사유를 입력한 경우)에만 발송.
+        // 납기(dueDate)만 바뀐 경우는 AdminOrderController#updateDueDate 쪽에서 별도로 발송한다.
+        if (!firstAttachment && userMarkedChanged) {
+            worksheetPushNotifier.notifyWorksheetChanged(order);
         }
         // changeNote 처리 분기:
         //   - userMarkedChanged: 새 메모로 갱신 (빈 값이면 null 로 클리어)

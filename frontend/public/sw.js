@@ -21,7 +21,7 @@
 
 // VERSION 은 SW 자체의 캐시 키. 갱신/버그픽스 후 무조건 한 단계 올려야 옛 캐시
 // (옛 index.html, 옛 assets) 가 강제로 폐기되고 클라이언트가 새 버전을 잡는다.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const HTML_CACHE = 'hdsign-html-' + VERSION;
 const ASSET_CACHE = 'hdsign-asset-' + VERSION;
 const WORKSHEET_CACHE = 'hdsign-worksheet-' + VERSION;
@@ -42,6 +42,51 @@ self.addEventListener('activate', (event) => {
         );
         // 이미 열려있는 탭들도 즉시 이 SW 가 컨트롤.
         await self.clients.claim();
+    })());
+});
+
+// 지시서 변경 웹푸시 — 서버(PushSubscriptionController 발송)가 보낸 JSON payload 를
+// 그대로 표시. payload: { title, body, url, orderNumber }.
+self.addEventListener('push', (event) => {
+    let data = {};
+    try {
+        data = event.data ? event.data.json() : {};
+    } catch (e) {
+        data = { title: '지시서 알림', body: event.data ? event.data.text() : '' };
+    }
+
+    const url = data.url || '/m/worksheets';
+
+    event.waitUntil(
+        self.registration.showNotification(data.title || '지시서 변경', {
+            body: data.body || '',
+            icon: '/favicon-192x192.png',
+            badge: '/favicon-192x192.png',
+            data: { url },
+            // 같은 지시서로 알림이 여러 번 오면 tag 로 묶여 최신 것만 남는다(알림 쌓임 방지).
+            tag: data.orderNumber ? `worksheet-${data.orderNumber}` : undefined,
+        })
+    );
+});
+
+// 알림 탭 → 해당 지시서 상세 페이지로. 이미 열린 탭이 있으면 그 탭을 포커스+이동,
+// 없으면(PWA 백그라운드 상태) 새 창으로 오픈.
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const targetUrl = event.notification.data && event.notification.data.url
+        ? event.notification.data.url
+        : '/m/worksheets';
+
+    event.waitUntil((async () => {
+        const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const client of clientsList) {
+            if (new URL(client.url).origin === self.location.origin) {
+                await client.focus();
+                if ('navigate' in client) return client.navigate(targetUrl);
+                return;
+            }
+        }
+        return self.clients.openWindow(targetUrl);
     })());
 });
 

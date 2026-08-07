@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
 import { getStoredWorker, setStoredWorker } from '../../data/workerStorage.js';
+import { applyPushMode, getStoredPushMode, isPushSupported } from '../../utils/push.js';
 import { rememberAllListItems } from './pdfPrefetch.js';
 import './WorksheetList.css';
 
@@ -184,6 +185,11 @@ export default function WorksheetList() {
     const [showCompleted, setShowCompleted] = useState(() => getStoredShowCompleted());
     const [showWorkerModal, setShowWorkerModal] = useState(false);
     const [workerDraft, setWorkerDraft] = useState('');
+    // 지시서 변경 알림 설정 — 'all' | 'mine' | 'off'.
+    const [showPushModal, setShowPushModal] = useState(false);
+    const [pushMode, setPushMode] = useState(() => getStoredPushMode());
+    const [pushBusy, setPushBusy] = useState(false);
+    const [pushMsg, setPushMsg] = useState('');
     const [lastSyncedAt, setLastSyncedAt] = useState(() => worksheetListSnapshot.syncedAt);
     // 거래처 검색줄 포커스 여부 — 포커스 링 스타일용.
     const [searchFocused, setSearchFocused] = useState(false);
@@ -233,6 +239,15 @@ export default function WorksheetList() {
         setStoredMineOffWorker('');
         setMineOnly(true);
         setShowWorkerModal(false);
+    };
+
+    const handlePushModeChange = async (mode) => {
+        setPushBusy(true);
+        setPushMsg('');
+        const result = await applyPushMode(mode, myWorker);
+        setPushMode(result.mode);
+        if (!result.ok && result.message) setPushMsg(result.message);
+        setPushBusy(false);
     };
 
     // mineOnly 사용자 토글 — 풀면 MINE_OFF_KEY 에 현재 worker 저장, 켜면 키 제거.
@@ -498,6 +513,18 @@ export default function WorksheetList() {
                         <span className="ws-dept-chip-prefix">담당</span>
                         <span className="ws-dept-chip-text">{worker || '미설정'}</span>
                     </button>
+                    {isPushSupported() && (
+                        <button
+                            type="button"
+                            className="ws-dept-chip-btn"
+                            onClick={() => { setPushMsg(''); setShowPushModal(true); }}
+                        >
+                            <span className="ws-dept-chip-prefix">알림</span>
+                            <span className="ws-dept-chip-text">
+                                {pushMode === 'all' ? '전체' : pushMode === 'mine' ? '내 지시서만' : '꺼짐'}
+                            </span>
+                        </button>
+                    )}
                 </div>
 
                 {/* 내 지시서만 보기 체크 시에만 노출 — 본인 완료건도 함께 보기. 완료건은 리본이 떠 시각 구분. */}
@@ -699,6 +726,61 @@ export default function WorksheetList() {
                                 onClick={submitWorker}
                                 disabled={!workerDraft.trim()}
                             >저장</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showPushModal && (
+                <div className="ws-dept-modal-backdrop" onClick={() => setShowPushModal(false)}>
+                    <div className="ws-dept-modal" onClick={(e) => e.stopPropagation()}>
+                        <h2>지시서 변경 알림</h2>
+                        <p className="ws-dept-modal-desc">
+                            지시서가 재업로드로 변경(납기 변경 포함)되면 이 기기로 알림을 보냅니다.
+                            처음 올라온 지시서(신규)는 알림이 오지 않습니다.
+                        </p>
+                        <div className="ws-push-options">
+                            <label className="ws-mine-toggle">
+                                <input
+                                    type="radio"
+                                    name="pushMode"
+                                    checked={pushMode === 'all'}
+                                    disabled={pushBusy}
+                                    onChange={() => handlePushModeChange('all')}
+                                />
+                                <span className="ws-mine-text">전체 알림 받기</span>
+                            </label>
+                            <label className="ws-mine-toggle">
+                                <input
+                                    type="radio"
+                                    name="pushMode"
+                                    checked={pushMode === 'mine'}
+                                    disabled={pushBusy || !myWorker}
+                                    onChange={() => handlePushModeChange('mine')}
+                                />
+                                <span className="ws-mine-text">
+                                    내 지시서만 알림받기
+                                    {!myWorker && <span className="ws-mine-count"> (담당자 먼저 설정)</span>}
+                                </span>
+                            </label>
+                            <label className="ws-mine-toggle">
+                                <input
+                                    type="radio"
+                                    name="pushMode"
+                                    checked={pushMode === 'off'}
+                                    disabled={pushBusy}
+                                    onChange={() => handlePushModeChange('off')}
+                                />
+                                <span className="ws-mine-text">알림 끄기</span>
+                            </label>
+                        </div>
+                        {pushMsg && <p className="ws-dept-modal-desc">{pushMsg}</p>}
+                        <div className="ws-dept-modal-actions">
+                            <button
+                                type="button"
+                                className="ws-dept-modal-confirm"
+                                onClick={() => setShowPushModal(false)}
+                            >닫기</button>
                         </div>
                     </div>
                 </div>
