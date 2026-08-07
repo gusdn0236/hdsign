@@ -344,6 +344,14 @@
     font-weight: 600;
     color: #d4d4d8;
 }
+/* 담당 / 푸시알림 칩을 오른쪽에 세로로 쌓는다. stretch 라 둘 폭이 같아져 정렬이 맞는다. */
+.ws-chip-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-width: 0;
+}
 .ws-dept-chip-btn {
     flex-shrink: 0;
     display: inline-flex;
@@ -582,11 +590,74 @@
     outline: none;
     border-color: #18181b;
 }
+/* 푸시알림 선택지 — 흰 모달 위에 올라가므로 목록용 .ws-mine-* 를 재사용하지 않는다.
+   (그 클래스는 어두운 배경 기준이라 글씨가 거의 흰색이었다.) */
 .ws-push-options {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     margin: 4px 0 16px;
+}
+.ws-push-option {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 13px 14px;
+    border: 1px solid #e4e4e7;
+    border-radius: 10px;
+    background: #fafafa;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: border-color 0.12s ease, background 0.12s ease;
+}
+.ws-push-option:active {
+    background: #f4f4f5;
+}
+.ws-push-option.active {
+    border-color: #18181b;
+    background: #f4f4f5;
+}
+.ws-push-option.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.ws-push-radio {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    border: 1.5px solid #a1a1aa;
+    border-radius: 50%;
+    background: #fff;
+    position: relative;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: border-color 0.12s ease;
+}
+.ws-push-radio:checked {
+    border-color: #18181b;
+}
+.ws-push-radio:checked::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    margin: -5px 0 0 -5px;
+    border-radius: 50%;
+    background: #18181b;
+}
+.ws-push-option-text {
+    font-size: 14px;
+    font-weight: 700;
+    color: #18181b;
+    line-height: 1.35;
+}
+.ws-push-option-note {
+    font-weight: 500;
+    color: #71717a;
 }
 .ws-dept-modal-actions {
     display: flex;

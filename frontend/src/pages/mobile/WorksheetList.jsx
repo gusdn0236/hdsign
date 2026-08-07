@@ -509,22 +509,26 @@ export default function WorksheetList() {
                             {myWorker && <span className="ws-mine-count"> · {myCount}건</span>}
                         </span>
                     </label>
-                    <button type="button" className="ws-dept-chip-btn" onClick={openWorkerModal}>
-                        <span className="ws-dept-chip-prefix">담당</span>
-                        <span className="ws-dept-chip-text">{worker || '미설정'}</span>
-                    </button>
-                    {isPushSupported() && (
-                        <button
-                            type="button"
-                            className="ws-dept-chip-btn"
-                            onClick={() => { setPushMsg(''); setShowPushModal(true); }}
-                        >
-                            <span className="ws-dept-chip-prefix">알림</span>
-                            <span className="ws-dept-chip-text">
-                                {pushMode === 'all' ? '전체' : pushMode === 'mine' ? '내 지시서만' : '꺼짐'}
-                            </span>
+                    {/* 담당 칩 + 푸시알림 칩을 오른쪽에 세로로 쌓는다. 이전엔 형제로 두어
+                        그리드 2열을 넘겨 알림 칩이 왼쪽 아래로 흘렀다. */}
+                    <div className="ws-chip-stack">
+                        <button type="button" className="ws-dept-chip-btn" onClick={openWorkerModal}>
+                            <span className="ws-dept-chip-prefix">담당</span>
+                            <span className="ws-dept-chip-text">{worker || '미설정'}</span>
                         </button>
-                    )}
+                        {isPushSupported() && (
+                            <button
+                                type="button"
+                                className="ws-dept-chip-btn"
+                                onClick={() => { setPushMsg(''); setShowPushModal(true); }}
+                            >
+                                <span className="ws-dept-chip-prefix">푸시알림</span>
+                                <span className="ws-dept-chip-text">
+                                    {pushMode === 'all' ? '전체' : pushMode === 'mine' ? '내 지시서만' : '꺼짐'}
+                                </span>
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* 내 지시서만 보기 체크 시에만 노출 — 본인 완료건도 함께 보기. 완료건은 리본이 떠 시각 구분. */}
@@ -734,44 +738,51 @@ export default function WorksheetList() {
             {showPushModal && (
                 <div className="ws-dept-modal-backdrop" onClick={() => setShowPushModal(false)}>
                     <div className="ws-dept-modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>지시서 변경 알림</h2>
+                        <h2>지시서 변경 푸시알림</h2>
                         <p className="ws-dept-modal-desc">
                             지시서가 재업로드로 변경(납기 변경 포함)되면 이 기기로 알림을 보냅니다.
                             처음 올라온 지시서(신규)는 알림이 오지 않습니다.
                         </p>
+                        {/* 모달 배경이 흰색이라 목록용 .ws-mine-text(거의 흰색)를 쓰면 글씨가 안 보인다.
+                            전용 클래스로 어두운 글씨 + 선택 카드 형태로 분리. */}
                         <div className="ws-push-options">
-                            <label className="ws-mine-toggle">
+                            <label className={`ws-push-option${pushMode === 'all' ? ' active' : ''}`}>
                                 <input
                                     type="radio"
                                     name="pushMode"
+                                    className="ws-push-radio"
                                     checked={pushMode === 'all'}
                                     disabled={pushBusy}
                                     onChange={() => handlePushModeChange('all')}
                                 />
-                                <span className="ws-mine-text">전체 알림 받기</span>
+                                <span className="ws-push-option-text">전체 알림 받기</span>
                             </label>
-                            <label className="ws-mine-toggle">
+                            <label
+                                className={`ws-push-option${pushMode === 'mine' ? ' active' : ''}${!myWorker ? ' disabled' : ''}`}
+                            >
                                 <input
                                     type="radio"
                                     name="pushMode"
+                                    className="ws-push-radio"
                                     checked={pushMode === 'mine'}
                                     disabled={pushBusy || !myWorker}
                                     onChange={() => handlePushModeChange('mine')}
                                 />
-                                <span className="ws-mine-text">
+                                <span className="ws-push-option-text">
                                     내 지시서만 알림받기
-                                    {!myWorker && <span className="ws-mine-count"> (담당자 먼저 설정)</span>}
+                                    {!myWorker && <span className="ws-push-option-note"> (담당자 먼저 설정)</span>}
                                 </span>
                             </label>
-                            <label className="ws-mine-toggle">
+                            <label className={`ws-push-option${pushMode === 'off' ? ' active' : ''}`}>
                                 <input
                                     type="radio"
                                     name="pushMode"
+                                    className="ws-push-radio"
                                     checked={pushMode === 'off'}
                                     disabled={pushBusy}
                                     onChange={() => handlePushModeChange('off')}
                                 />
-                                <span className="ws-mine-text">알림 끄기</span>
+                                <span className="ws-push-option-text">알림 끄기</span>
                             </label>
                         </div>
                         {pushMsg && <p className="ws-dept-modal-desc">{pushMsg}</p>}
