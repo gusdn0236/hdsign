@@ -37,6 +37,13 @@ public class WorksheetThumbnailService {
     // 카드 표시 폭(보통 240–320px) 의 약 2배 해상도. JPEG 품질 0.7 이면 일반 지시서 1페이지가 50–120KB.
     private static final int THUMBNAIL_WIDTH_PX = 720;
     private static final float THUMBNAIL_JPEG_QUALITY = 0.7f;
+    // 흰 배경 판정 — RGB 모두 이 값 이상이면 "여백"으로 본다.
+    private static final int WHITE_THRESHOLD = 245;
+    // 크롭해도 가로/세로 둘 다 이 비율 미만으로 줄면(=원래 여백이 적던 지시서) 그대로 둔다.
+    // 과한 리크롭/왜곡을 막는 안전장치.
+    private static final double MIN_MARGIN_RATIO_TO_CROP = 0.08;
+    // 크롭 경계에 도면 테두리가 바로 걸리면 잘려 보일 수 있어, 콘텐츠 짧은 변 기준으로 여유를 둔다.
+    private static final double CROP_PADDING_RATIO = 0.03;
 
     private final S3Client s3Client;
     private final String bucket;
@@ -70,6 +77,11 @@ public class WorksheetThumbnailService {
             log.warn("지시서 썸네일 렌더 실패 [{}]: {}", orderNumber, e.getMessage());
             return null;
         }
+
+        // 지시서 PDF 페이지 자체에 실제 도면보다 넓은 흰 여백이 있는 경우가 많아, 카드에
+        // 전체 페이지를 넣으면 도면이 작게 보인다. 렌더된 래스터에서 잉크(비-흰색) bbox 를
+        // 찾아 그만큼만 남기고 잘라낸다 — 방향(회전)과는 무관한 문제라 /Rotate 는 그대로 둔다.
+        rendered = cropToContent(rendered);
 
         // 렌더 결과가 목표 폭을 넘으면 한 번 더 리샘플 (품질 보존하며 파일 크기 절감).
         BufferedImage finalImage = rendered;
@@ -124,6 +136,52 @@ public class WorksheetThumbnailService {
                 ? ""
                 : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
         return normalizedPublicUrl + thumbKey;
+    }
+
+    // 렌더된 페이지 래스터에서 흰 여백을 뺀 실제 도면(잉크) bbox 만 크롭.
+    // 전부 흰 페이지거나 여백이 적어 크롭 효과가 미미하면 원본을 그대로 반환.
+    private BufferedImage cropToContent(BufferedImage src) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        if (w <= 0 || h <= 0) return src;
+
+        int minX = w;
+        int minY = h;
+        int maxX = -1;
+        int maxY = -1;
+        int[] row = new int[w];
+        for (int y = 0; y < h; y++) {
+            src.getRGB(0, y, w, 1, row, 0, w);
+            for (int x = 0; x < w; x++) {
+                int rgb = row[x];
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = rgb & 0xFF;
+                if (r < WHITE_THRESHOLD || g < WHITE_THRESHOLD || b < WHITE_THRESHOLD) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+        if (maxX < minX || maxY < minY) return src; // 완전히 빈 페이지
+
+        int contentW = maxX - minX + 1;
+        int contentH = maxY - minY + 1;
+        int pad = (int) Math.round(Math.min(contentW, contentH) * CROP_PADDING_RATIO);
+        minX = Math.max(0, minX - pad);
+        minY = Math.max(0, minY - pad);
+        maxX = Math.min(w - 1, maxX + pad);
+        maxY = Math.min(h - 1, maxY + pad);
+
+        int cropW = maxX - minX + 1;
+        int cropH = maxY - minY + 1;
+        double shrinkW = 1.0 - (cropW / (double) w);
+        double shrinkH = 1.0 - (cropH / (double) h);
+        if (shrinkW < MIN_MARGIN_RATIO_TO_CROP && shrinkH < MIN_MARGIN_RATIO_TO_CROP) return src;
+
+        return src.getSubimage(minX, minY, cropW, cropH);
     }
 
     // R2 의 PDF public URL → key. publicUrl prefix 안 붙은 외부 URL 은 null.
