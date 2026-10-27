@@ -610,13 +610,19 @@ export default function WorksheetViewer() {
         const t = setTimeout(() => {
             const api = transformRef.current;
             if (!api) return;
-            const currentScale = api.instance?.transformState?.scale ?? 1;
-            if (currentScale > 1.05) return;
+            // getCurrentScale() 사용 — api.instance?.transformState?.scale 직접 읽기는
+            // 라이브러리 버전에 따라 path 가 안 잡혀 undefined → 1 로 떨어질 수 있다(위 getCurrentScale
+            // 주석 참고). 그 버그 때문에 사용자가 확대+패닝해둔 상태에서 모바일 주소창 표시/숨김 등으로
+            // stageSize 가 미세하게 바뀔 때마다(터치 제스처 도중에도 발생) 이 effect 가 재실행되며
+            // "확대 안 한 상태"로 오판 → resetTransform+centerView 로 화면 중앙까지 스냅되어 버리고,
+            // 사용자는 그 상태에서 패닝이 다시 시작되는 것처럼 보였다. currentScaleRef 도 함께 보는
+            // getCurrentScale() 로 바꿔 실제 확대 상태를 안정적으로 판정한다.
+            if (getCurrentScale() > 1.05) return;
             api.resetTransform?.(0);
             api.centerView?.(1, 0);
         }, 60);
         return () => clearTimeout(t);
-    }, [pdfReady, pageWidth, stageSize.width, stageSize.height]);
+    }, [pdfReady, pageWidth, stageSize.width, stageSize.height, getCurrentScale]);
 
     const pdfDevicePixelRatio = useMemo(() => {
         const deviceDpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
