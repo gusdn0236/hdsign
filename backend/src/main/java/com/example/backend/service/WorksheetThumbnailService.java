@@ -39,11 +39,13 @@ public class WorksheetThumbnailService {
     private static final float THUMBNAIL_JPEG_QUALITY = 0.7f;
     // 흰 배경 판정 — RGB 모두 이 값 이상이면 "여백"으로 본다.
     private static final int WHITE_THRESHOLD = 245;
-    // 크롭해도 가로/세로 둘 다 이 비율 미만으로 줄면(=원래 여백이 적던 지시서) 그대로 둔다.
-    // 과한 리크롭/왜곡을 막는 안전장치.
-    private static final double MIN_MARGIN_RATIO_TO_CROP = 0.08;
     // 크롭 경계에 도면 테두리가 바로 걸리면 잘려 보일 수 있어, 콘텐츠 짧은 변 기준으로 여유를 둔다.
     private static final double CROP_PADDING_RATIO = 0.03;
+    // 모바일/관리자 카드(.ws-thumb-frame)의 고정 종횡비(1 / 1.414, A4 세로)와 정확히 맞춰야
+    // 프론트 object-fit:contain 이 레터박스(위아래/좌우 여백) 없이 프레임을 꽉 채운다.
+    // 잉크 bbox 를 이 비율로 '패딩해 확장'한 뒤 크롭하므로, 과한 원본 여백만 걷어내면서도
+    // 결과물 종횡비는 항상 카드 프레임과 일치한다.
+    private static final double TARGET_ASPECT_W_OVER_H = 1.0 / Math.sqrt(2);
 
     private final S3Client s3Client;
     private final String bucket;
@@ -138,8 +140,10 @@ public class WorksheetThumbnailService {
         return normalizedPublicUrl + thumbKey;
     }
 
-    // 렌더된 페이지 래스터에서 흰 여백을 뺀 실제 도면(잉크) bbox 만 크롭.
-    // 전부 흰 페이지거나 여백이 적어 크롭 효과가 미미하면 원본을 그대로 반환.
+    // 렌더된 페이지 래스터에서 흰 여백을 뺀 실제 도면(잉크) bbox 를 찾고, 카드 프레임과 같은
+    // 종횡비(TARGET_ASPECT_W_OVER_H)가 되도록 중앙 기준으로 패딩해 확장한 뒤 크롭한다.
+    // 그래야 프론트 object-fit:contain 이 레터박스 없이 프레임을 꽉 채우면서도, 원본 페이지에
+    // 있던 과한 흰 여백만 제거된 상태로 보인다. 완전히 빈 페이지면 원본을 그대로 반환.
     private BufferedImage cropToContent(BufferedImage src) {
         int w = src.getWidth();
         int h = src.getHeight();
@@ -167,21 +171,49 @@ public class WorksheetThumbnailService {
         }
         if (maxX < minX || maxY < minY) return src; // 완전히 빈 페이지
 
-        int contentW = maxX - minX + 1;
-        int contentH = maxY - minY + 1;
-        int pad = (int) Math.round(Math.min(contentW, contentH) * CROP_PADDING_RATIO);
-        minX = Math.max(0, minX - pad);
-        minY = Math.max(0, minY - pad);
-        maxX = Math.min(w - 1, maxX + pad);
-        maxY = Math.min(h - 1, maxY + pad);
+        double contentW = maxX - minX + 1;
+        double contentH = maxY - minY + 1;
+        double pad = Math.min(contentW, contentH) * CROP_PADDING_RATIO;
+        double fMinX = Math.max(0, minX - pad);
+        double fMinY = Math.max(0, minY - pad);
+        double fMaxX = Math.min(w - 1, maxX + pad);
+        double fMaxY = Math.min(h - 1, maxY + pad);
 
-        int cropW = maxX - minX + 1;
-        int cropH = maxY - minY + 1;
-        double shrinkW = 1.0 - (cropW / (double) w);
-        double shrinkH = 1.0 - (cropH / (double) h);
-        if (shrinkW < MIN_MARGIN_RATIO_TO_CROP && shrinkH < MIN_MARGIN_RATIO_TO_CROP) return src;
+        double boxW = fMaxX - fMinX + 1;
+        double boxH = fMaxY - fMinY + 1;
+        double aspect = boxW / boxH;
+        if (aspect > TARGET_ASPECT_W_OVER_H) {
+            // 내용이 목표보다 옆으로 넓다 — 세로 패딩을 더해 키를 맞춘다.
+            double targetH = boxW / TARGET_ASPECT_W_OVER_H;
+            double addEach = (targetH - boxH) / 2;
+            fMinY -= addEach;
+            fMaxY += addEach;
+        } else {
+            // 내용이 목표보다 세로로 길다 — 가로 패딩을 더해 폭을 맞춘다.
+            double targetW = boxH * TARGET_ASPECT_W_OVER_H;
+            double addEach = (targetW - boxW) / 2;
+            fMinX -= addEach;
+            fMaxX += addEach;
+        }
 
-        return src.getSubimage(minX, minY, cropW, cropH);
+        // 확장이 이미지 경계를 벗어나면 반대쪽으로 밀어 넣어 크기를 최대한 보존한다
+        // (한쪽이 페이지 끝에 막히면 다른 쪽에서라도 더 가져와 목표 종횡비에 최대한 가깝게).
+        if (fMinX < 0) { fMaxX -= fMinX; fMinX = 0; }
+        if (fMaxX > w - 1) { fMinX -= (fMaxX - (w - 1)); fMaxX = w - 1; }
+        if (fMinY < 0) { fMaxY -= fMinY; fMinY = 0; }
+        if (fMaxY > h - 1) { fMinY -= (fMaxY - (h - 1)); fMaxY = h - 1; }
+        fMinX = Math.max(0, fMinX);
+        fMinY = Math.max(0, fMinY);
+        fMaxX = Math.min(w - 1, fMaxX);
+        fMaxY = Math.min(h - 1, fMaxY);
+
+        int cropX = (int) Math.floor(fMinX);
+        int cropY = (int) Math.floor(fMinY);
+        int cropW = (int) Math.floor(fMaxX) - cropX + 1;
+        int cropH = (int) Math.floor(fMaxY) - cropY + 1;
+        if (cropW <= 0 || cropH <= 0) return src;
+
+        return src.getSubimage(cropX, cropY, cropW, cropH);
     }
 
     // R2 의 PDF public URL → key. publicUrl prefix 안 붙은 외부 URL 은 null.
