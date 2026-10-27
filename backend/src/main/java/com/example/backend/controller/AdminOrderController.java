@@ -484,19 +484,33 @@ public class AdminOrderController {
      * 한 번에 너무 많이 처리하면 HTTP 타임아웃 / R2 throttling 우려가 있어 limit (기본 50) 으로
      * 페이지 단위 처리. 호출 결과의 remaining 이 0 이 될 때까지 반복 호출하면 끝.
      * 각 주문은 best-effort — 실패하면 worksheetThumbnailUrl 을 NULL 로 두고 다음 호출에서 재시도.
+     *
+     * force=true 면 이미 썸네일이 있는 주문도 전부 다시 렌더한다(WorksheetThumbnailService 의
+     * 크롭 로직처럼 렌더 결과 자체를 바꾼 뒤 기존 썸네일을 교체할 때 사용). 이 경로는 NULL 필터가
+     * 없어 처리해도 대상 집합이 줄지 않으므로 page 로 직접 넘겨가며 호출해야 전체를 순회할 수 있다
+     * (backfill-worksheet-flatten 과 동일한 패턴). hasMore 가 false 가 될 때까지 page 를 올려 반복 호출.
      */
     @PostMapping("/backfill-worksheet-thumbnails")
     public ResponseEntity<?> backfillWorksheetThumbnails(
-            @RequestParam(defaultValue = "50") int limit
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(defaultValue = "false") boolean force,
+            @RequestParam(defaultValue = "0") int page
     ) {
         if (limit < 1) limit = 1;
         if (limit > 200) limit = 200;
+        if (page < 0) page = 0;
 
-        long totalRemainingBefore = orderRepository
-                .countByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNull();
-        List<Order> batch = orderRepository
-                .findByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNullOrderByCreatedAtDesc(
-                        PageRequest.of(0, limit));
+        long total;
+        List<Order> batch;
+        if (force) {
+            total = orderRepository.countByWorksheetPdfUrlIsNotNullAndDeletedAtIsNull();
+            batch = orderRepository.findByWorksheetPdfUrlIsNotNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+                    PageRequest.of(page, limit));
+        } else {
+            total = orderRepository.countByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNull();
+            batch = orderRepository.findByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNullOrderByCreatedAtDesc(
+                    PageRequest.of(0, limit));
+        }
 
         int processed = 0;
         int succeeded = 0;
@@ -525,16 +539,24 @@ public class AdminOrderController {
             succeeded += 1;
         }
 
-        long remainingAfter = Math.max(0L, totalRemainingBefore - succeeded);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("totalRemainingBefore", totalRemainingBefore);
+        body.put("total", total);
         body.put("processed", processed);
         body.put("succeeded", succeeded);
         body.put("failed", failed);
-        body.put("remaining", remainingAfter);
+        body.put("force", force);
+        if (force) {
+            body.put("page", page);
+            boolean hasMore = (long) (page + 1) * limit < total;
+            body.put("hasMore", hasMore);
+            body.put("nextPage", hasMore ? page + 1 : null);
+        } else {
+            long remainingAfter = Math.max(0L, total - succeeded);
+            body.put("remaining", remainingAfter);
+        }
         body.put("limit", limit);
-        log.info("지시서 썸네일 백필 — 처리 {}, 성공 {}, 실패 {}, 남은 {}",
-                processed, succeeded, failed, remainingAfter);
+        log.info("지시서 썸네일 백필(force={}, page={}) — 처리 {}, 성공 {}, 실패 {}",
+                force, page, processed, succeeded, failed);
         return ResponseEntity.ok(body);
     }
 
