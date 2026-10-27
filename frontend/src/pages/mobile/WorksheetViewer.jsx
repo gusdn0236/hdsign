@@ -1044,6 +1044,11 @@ export default function WorksheetViewer() {
                         // 그래도 minScale=1 + centerZoomedOut=true 라 손을 떼고 1x 로 돌아가면
                         // 라이브러리가 자동으로 가운데로 스냅 — 축소했을 땐 기존대로 PDF 만큼만 표시.
                         limitToBounds={false}
+                        // limitToBounds 는 드래그 "도중"의 클램프만 끈다 — 라이브러리는 그와 별개로
+                        // panning 종료 시 autoAlignment(기본 sizeX/sizeY=100) 로 지시서 쪽으로 다시
+                        // 스냅시킨다. 그래서 확대 후 지시서 밖으로 드래그하면 손을 뗄 때 "툭" 튕겨
+                        // 돌아갔음. 자유 패닝이 의도이므로 이 스냅도 꺼야 한다.
+                        autoAlignment={{ disabled: true }}
                         doubleClick={{ mode: 'toggle', step: 1.4 }}
                         onTransform={(_, state) => {
                             // v4 콜백명은 onTransform (onTransformed 아님). 매 변환마다 ref 갱신.
