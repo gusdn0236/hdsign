@@ -304,6 +304,55 @@ def _find_child_by_id(parent, ctrlid) -> int:
     return found[0]
 
 
+def _find_button_by_text(parent, keywords) -> int:
+    """parent 자손 중 클래스 Button + 텍스트에 keywords 하나라도 포함(소문자 부분일치)하는 첫 창. 없으면 0.
+    컨트롤 ID 가 PC/버전마다 다를 때의 폴백."""
+    found = [0]
+    ENUM = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def cb(h, _l):
+        try:
+            if _class_name(h) == "Button":
+                t = _win_text(h).replace("&", "").lower()
+                if any(k in t for k in keywords):
+                    found[0] = int(h)
+                    return False
+        except Exception:
+            pass
+        return True
+
+    u.EnumChildWindows(ctypes.c_void_p(parent), ENUM(cb), 0)
+    return found[0]
+
+
+def _ensure_unchecked(dlg, ctrlid, keywords, log, attempts=4) -> bool:
+    """체크박스를 해제하고 BM_GETCHECK 로 해제됐는지 확인. 해제 상태(또는 원래 꺼짐)면 True.
+    못 찾거나 재시도 끝에도 체크돼 있으면 False. 1·2회차=물리 클릭(검증된 방식), 이후=BM_CLICK 폴백."""
+    ch = _find_child_by_id(dlg, ctrlid) or _find_button_by_text(dlg, keywords)
+    if not ch:
+        log(f"[치수] 체크박스 id={ctrlid} 못 찾음")
+        return False
+    state = u.SendMessageW(ctypes.c_void_p(ch), BM_GETCHECK, None, None)
+    if state == 0:
+        log(f"[치수] 체크박스 '{_win_text(ch)}' 이미 해제됨")
+        return True
+    for i in range(attempts):
+        if i < 2:
+            if u.GetForegroundWindow() != dlg:
+                _force_fg(dlg)
+            r = _rect(ch)
+            _click((r.left + r.right) // 2, (r.top + r.bottom) // 2)
+        else:
+            u.SendMessageW(ctypes.c_void_p(ch), BM_CLICK, None, None)
+        time.sleep(0.1)
+        state = u.SendMessageW(ctypes.c_void_p(ch), BM_GETCHECK, None, None)
+        if state == 0:
+            log(f"[치수] 체크박스 '{_win_text(ch)}' 해제 완료({i + 1}회차)")
+            return True
+    log(f"[치수] 체크박스 '{_win_text(ch)}' 해제 실패(state={state})")
+    return False
+
+
 def _scan_for_class(parent, target_cls) -> int:
     """parent 자손 중 target_cls 클래스 창 hwnd(첫 매치). 없으면 0."""
     res = [0]
@@ -573,13 +622,16 @@ def _do_export(main_hwnd, fmt_row, fname, target_dirs, log, timeout=14.0, wait_f
     _force_fg(dlg)
     time.sleep(0.06)
 
-    # 0) '옵션 무시'/'선택만' 체크 해제(켜져 있으면 물리 클릭으로 토글). 옵션무시 켜지면 사이즈 틀림.
-    for cid in (CHK_SUPPRESS_OPTS, CHK_SELECTION_ONLY):
-        ch = _find_child_by_id(dlg, cid)
-        if ch and u.SendMessageW(ctypes.c_void_p(ch), BM_GETCHECK, None, None) == 1:
-            r = _rect(ch)
-            _click((r.left + r.right) // 2, (r.top + r.bottom) // 2)
-            time.sleep(0.08)
+    # 0) '옵션 무시'/'선택만' 체크 해제 + 실제로 풀렸는지 검증. 옵션무시 켜지면 사이즈 틀림(인치 raw →
+    #    mm 로 읽혀 25.4배 작게 찍힘). PC마다 기본 체크된 곳이 있어, 클릭이 빗나가도 재시도하고
+    #    끝내 못 풀면 DXF 는 저장하지 않는다(틀린 치수보다 치수 없음이 낫다).
+    sup_ok = _ensure_unchecked(dlg, CHK_SUPPRESS_OPTS, ("옵션 무시", "옵션무시", "suppress", "ignore"), log)
+    _ensure_unchecked(dlg, CHK_SELECTION_ONLY, ("선택만", "selected only", "selection only"), log)
+    if not sup_ok and wait_for_file:
+        log("[치수] '옵션 무시' 해제 실패 — 사이즈가 틀리게 저장되므로 이번 건 치수 생략")
+        u.PostMessageW(ctypes.c_void_p(dlg), WM_COMMAND, ctypes.c_void_p(2), None)  # IDCANCEL
+        time.sleep(0.2)
+        return None
 
     # 1) 형식 = 드롭다운 실제 클릭 → ComboLBox 의 fmt_row 행 클릭
     rc = _rect(combo)
