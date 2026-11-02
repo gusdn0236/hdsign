@@ -393,8 +393,8 @@ public class AdminClientController {
     }
 
     /** 폴더명 ↔ 거래처명 매칭용 정규화: NFC + 공백 제거 + 소문자.
-     *  워처의 _normalize_company_key 와 동일 규칙. */
-    private static String normalizeKey(String s) {
+     *  워처의 _normalize_company_key 와 동일 규칙. NetworkFolderController 자동 등록도 같이 쓴다. */
+    static String normalizeKey(String s) {
         if (s == null) return "";
         String n = Normalizer.normalize(s, Normalizer.Form.NFC);
         StringBuilder sb = new StringBuilder(n.length());

@@ -72,6 +72,8 @@ public class NetworkFolderController {
 
         // 캐시 갱신 전에 rename 감지 — prev 기준으로 비교해야 의미 있음.
         Map<String, Object> renameInfo = detectAndApplyRename(prev.folders, next.folders);
+        // rename 처리 뒤에 새 폴더 자동 등록 — rename 으로 흡수된 폴더는 이미 거래처가 있어 건너뛴다.
+        List<String> autoCreated = autoRegisterNewFolders(prev.folders, next.folders);
 
         CACHE.set(next);
 
@@ -79,7 +81,68 @@ public class NetworkFolderController {
         body.put("count", cleaned.size());
         body.put("syncedAt", next.syncedAt.toString());
         if (renameInfo != null) body.put("rename", renameInfo);
+        if (!autoCreated.isEmpty()) body.put("autoCreated", autoCreated);
         return ResponseEntity.ok(body);
+    }
+
+    /** 일괄 등록 화면과 동일한 임시폴더 패턴 — '새 폴더', '새 폴더 (N)', '(N)'. 이름 짓기 전 상태라 등록 안 함. */
+    private static boolean isTempFolder(String name) {
+        return name.matches("^\\(\\d+\\)$|^새 폴더( \\(\\d+\\))?$");
+    }
+
+    /**
+     * 직전 sync 이후 새로 생긴 폴더를 가입대기(PENDING_SIGNUP) 거래처로 자동 등록.
+     * 업체명=폴더명. 아이디/비번은 거래처가 가입신청 → 관리자 승인 때 채워진다(기존 가입대기 흐름 그대로).
+     *  - 첫 sync(prev 비어있음 — 서버 재시작 직후)는 비교 기준이 없어 건너뜀. 예전부터 일부러 등록 안 한
+     *    폴더들이 한꺼번에 등록되는 걸 막기 위함. 그 사이 생긴 폴더는 기존처럼 안내 모달에서 수동 등록.
+     *  - 임시폴더('새 폴더' 등)는 건너뜀 — 이름을 바꾸면 다음 sync 에서 새 이름으로 등록된다.
+     *  - 이미 폴더명/업체명이 같은 거래처가 있으면 건너뜀(folder-diff 와 같은 정규화 규칙).
+     *  - 같은 sync 에서 사라진 폴더와 이름이 서로 포함관계면 이름변경일 수 있어 건너뜀 — 중복 거래처 방지,
+     *    안내 모달의 "이름이 바뀐 듯한 폴더"로 관리자가 정리.
+     */
+    private List<String> autoRegisterNewFolders(List<String> prev, List<String> next) {
+        List<String> created = new ArrayList<>();
+        if (prev == null || prev.isEmpty()) return created;
+        Set<String> prevSet = new HashSet<>(prev);
+        Set<String> nextSet = new HashSet<>(next);
+        List<String> added = new ArrayList<>();
+        for (String n : next) if (!prevSet.contains(n) && !isTempFolder(n)) added.add(n);
+        if (added.isEmpty()) return created;
+        List<String> removedKeys = new ArrayList<>();
+        for (String p : prev) if (!nextSet.contains(p)) removedKeys.add(AdminClientController.normalizeKey(p));
+
+        Set<String> taken = new HashSet<>();
+        for (ClientUser c : clientUserRepository.findAll()) {
+            if (c.getNetworkFolderName() != null && !c.getNetworkFolderName().isBlank())
+                taken.add(AdminClientController.normalizeKey(c.getNetworkFolderName()));
+            if (c.getCompanyName() != null && !c.getCompanyName().isBlank())
+                taken.add(AdminClientController.normalizeKey(c.getCompanyName()));
+        }
+
+        for (String folder : added) {
+            String key = AdminClientController.normalizeKey(folder);
+            if (key.isEmpty() || taken.contains(key)) continue;
+            boolean maybeRename = removedKeys.stream()
+                    .anyMatch(rk -> !rk.isEmpty() && (rk.contains(key) || key.contains(rk)));
+            if (maybeRename) {
+                log.info("새 폴더 '{}' 는 사라진 폴더와 이름이 비슷해 자동 등록 생략(이름변경 가능성)", folder);
+                continue;
+            }
+            clientUserRepository.save(ClientUser.builder()
+                    .companyName(folder)
+                    .networkFolderName(folder)
+                    .contactName("")
+                    .phone("")
+                    .username(null)
+                    .password("")
+                    .isActive(false)
+                    .status("PENDING_SIGNUP")
+                    .build());
+            taken.add(key);
+            created.add(folder);
+        }
+        if (!created.isEmpty()) log.info("새 거래처 폴더 자동 등록(가입대기): {}", created);
+        return created;
     }
 
     /**
@@ -123,6 +186,9 @@ public class NetworkFolderController {
         for (ClientUser c : all) {
             if (oldName.equals(c.getNetworkFolderName())) {
                 c.setNetworkFolderName(newName);
+                // 자동 등록된 가입대기 거래처(업체명=폴더명 그대로)는 업체명도 따라간다 — 오타 폴더명 정정 케이스.
+                if ("PENDING_SIGNUP".equals(c.getStatus()) && oldName.equals(c.getCompanyName()))
+                    c.setCompanyName(newName);
                 clientUserRepository.save(c);
                 updated++;
             }
