@@ -2405,6 +2405,156 @@ def resolve_paper_printer() -> str | None:
     return None
 
 
+def stamp_slot_grid_for_paper(pdf_path: Path, slot_labels: list[str]) -> Path | None:
+    """종이 인쇄용 사본에 '분배함 4×4 미니맵'을 1페이지 오른쪽 위에 작게 찍는다.
+    SLOT_BOXES 순서(사진 기준 4칸×4줄)대로 네모 16개를 그리고, 직원이 다이얼로그에서 고른
+    슬롯만 검정으로 채운다 → 출력물만 보고 바로 그 지시서함에 꽂을 수 있게.
+
+    웹 업로드 원본 PDF 는 건드리지 않는다(사본은 감시 폴더 밖 temp 에 생성 — 워처 재감지 방지).
+    선택 슬롯이 없거나 실패하면 None → 호출자는 원본 그대로 인쇄."""
+    if fitz is None:
+        return None
+    labels = [s for s in (slot_labels or []) if s]
+    if not labels:
+        return None
+    pick = set(labels)
+    try:
+        out_dir = Path(tempfile.gettempdir()) / "hdsign_paper"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / f"{safe_filename_stem(pdf_path.stem)}.slots.pdf"
+        doc = fitz.open(str(pdf_path))
+        try:
+            page = doc[0]
+            vis = page.rect  # 회전 적용된 '보이는' 페이지 크기
+            mm = 72.0 / 25.4
+            # 칸 0.95mm + 간격 0.45mm(칸끼리 떨어져 구별되게) → 전체 약 5.2mm.
+            cell, gap = 0.95 * mm, 0.45 * mm
+            pad = 0.2 * mm                    # 흰 바탕 여백
+            above = 0.6 * mm                  # 지시서 내용 윗변과의 간격
+            size = 4 * cell + 3 * gap
+            # 지시서 '내용'(흰 여백 제외) 경계 — 보이는 방향 그대로 저해상 렌더해 흰색 아닌 영역을 잡는다.
+            # 미니맵은 내용 오른쪽 끝에 맞춰 내용 윗변 바로 위에 붙인다(종이 여백을 크게 먹지 않게).
+            cx1, cy0 = vis.x1 - 7.0 * mm, vis.y0 + 7.0 * mm + size  # 폴백: 종이 우상단
+            try:
+                pix = page.get_pixmap(dpi=50, alpha=False)
+                gray = Image.frombytes("RGB", [pix.width, pix.height], pix.samples).convert("L")
+                bb = gray.point(lambda v: 255 if v < 235 else 0).getbbox()
+                if bb:
+                    sx, sy = vis.width / pix.width, vis.height / pix.height
+                    cx1 = vis.x0 + bb[2] * sx
+                    cy0 = vis.y0 + bb[1] * sy
+            except Exception as e:
+                ui_log(f"분배함 미니맵 — 내용 경계 계산 실패(우상단 폴백): {e}")
+            x0 = cx1 - size
+            y0 = max(vis.y0 + 2.0 * mm, cy0 - above - size)  # 위 공간이 모자라면 종이 끝 2mm 안쪽까지만
+            # 보이는 좌표 → 페이지 원래(회전 0) 좌표. 가로 지시서(rot=90 등)에서도 '보이는' 우상단에 찍힘.
+            dm = page.derotation_matrix
+            bg = fitz.Rect(x0 - pad, y0 - pad, x0 + size + pad, y0 + size + pad) * dm
+            page.draw_rect(bg, color=None, fill=(1, 1, 1), overlay=True)
+            for idx, (label, _dept, _box) in enumerate(SLOT_BOXES[:16]):
+                r, c = divmod(idx, 4)
+                cx = x0 + c * (cell + gap)
+                cy = y0 + r * (cell + gap)
+                rect = fitz.Rect(cx, cy, cx + cell, cy + cell) * dm
+                on = label in pick
+                page.draw_rect(rect, color=(0, 0, 0), fill=(0, 0, 0) if on else None,
+                               width=0.25, overlay=True)
+            doc.save(str(out), garbage=1, deflate=True)
+        finally:
+            doc.close()
+        ui_log(f"분배함 미니맵 인쇄본 생성: {', '.join(labels)}")
+        return out
+    except Exception as e:
+        ui_log(f"분배함 미니맵 생성 실패(원본 그대로 인쇄): {e}")
+        return None
+
+
+# ── 분배함 칸 선택 이력 ───────────────────────────────────────────────────────
+# 매칭 창에서 칸을 고른 적이 있으면(웹반영이든 종이만이든) 주문번호·지시서 이름별로 기억해 두고,
+# 칸을 고르는 단계가 없는 인쇄(첫 화면 [종이만 인쇄])에서도 그 칸을 종이 미니맵에 찍는다.
+# 이 PC 로컬 기록 + (웹반영된 주문이면) 서버 departmentSlots 를 함께 본다.
+_SLOT_HISTORY_FILE = WATCH_DIR / "state" / "slot_history.json"
+_slot_history_lock = threading.Lock()
+_SLOT_HISTORY_MAX = 2000
+
+
+def _slot_history_load() -> dict:
+    try:
+        d = json.loads(_SLOT_HISTORY_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def remember_slot_selection(slots, order_number: str | None = None, stem: str | None = None) -> None:
+    labels = [s for s in (slots or []) if s]
+    if not labels:
+        return
+    keys = []
+    if order_number:
+        keys.append(f"order:{order_number}")
+    if stem:
+        keys.append(f"stem:{stem}")
+    if not keys:
+        return
+    try:
+        with _slot_history_lock:
+            d = _slot_history_load()
+            for k in keys:
+                d.pop(k, None)  # 최근 것이 뒤로 가게(오래된 것부터 잘라냄)
+                d[k] = labels
+            if len(d) > _SLOT_HISTORY_MAX:
+                for k in list(d.keys())[: len(d) - _SLOT_HISTORY_MAX]:
+                    d.pop(k, None)
+            _SLOT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _SLOT_HISTORY_FILE.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        ui_log(f"분배함 칸 이력 저장 실패(무시): {e}")
+
+
+def fetch_order_slots(order_number: str) -> list[str] | None:
+    """주문 1건의 저장된 분배함 칸만 가볍게 조회 — 주문 목록 전체(/api/admin/orders)를 받지 않고
+    단건 엔드포인트 하나만 짧은 타임아웃으로 호출(서버·네트워크 부담 최소). 실패 시 None."""
+    url = f"{API_BASE}/api/public/worksheets/{quote(order_number, safe='')}"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        v = data.get("departmentSlots") if isinstance(data, dict) else None
+        return [x for x in (v or []) if x]
+    except Exception as e:
+        ui_log(f"분배함 칸 서버 조회 실패(이 PC 기록으로): {e}")
+        return None
+
+
+def recall_slot_selection(order_number: str | None = None, stem: str | None = None) -> list[str]:
+    """이전에 고른 칸 — 주문번호면 서버(모든 PC 공유) 우선 → 이 PC 기록, 없으면 지시서 이름(이 PC 기록)."""
+    with _slot_history_lock:
+        d = _slot_history_load()
+    if order_number:
+        srv = fetch_order_slots(order_number)
+        if srv:
+            return srv
+        v = d.get(f"order:{order_number}")
+        if v:
+            return list(v)
+    if stem:
+        v = d.get(f"stem:{stem}")
+        if v:
+            return list(v)
+    return []
+
+
+def print_paper_with_slots(pdf_path: Path, copies: int, slot_labels: list[str] | None) -> bool:
+    """종이 인쇄 — 고른 분배함 칸이 있으면 우상단 미니맵을 찍은 사본으로, 없으면 원본 그대로.
+    웹반영+인쇄 / 종이만 인쇄 / 매칭 안 함+인쇄 모든 종이 경로가 이걸 쓴다(웹 원본 PDF 는 불변)."""
+    paper_pdf = stamp_slot_grid_for_paper(pdf_path, list(slot_labels or [])) if copies > 0 else None
+    ok = print_pdf_to_paper(paper_pdf or pdf_path, copies=copies)
+    if paper_pdf:
+        # printto 폴백은 비동기라 바로 지우면 인쇄가 깨질 수 있다 — 1분 뒤 정리.
+        threading.Timer(60, lambda p=paper_pdf: p.unlink(missing_ok=True)).start()
+    return ok
+
+
 def print_pdf_to_paper(pdf_path: Path, copies: int = 1) -> bool:
     """현재 PC 에 설치된 삼성 프린터로 직접 PDF 인쇄. 시스템 기본 프린터를 건드리지 않으므로
     노트북처럼 기본이 PDF24 로 잡혀 있어도 종이는 항상 삼성으로 간다.
@@ -3928,8 +4078,10 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 "intent": "paper_only",
                 "copies": paper_copies,
                 "skip_print": False,
-                "department_tags": [],
-                "department_slots": [],
+                # 웹 반영(PDF 업로드)은 안 하지만, 고른 칸은 서버에 저장(다른 PC 의 종이만 인쇄에서도
+                # 미니맵에 쓰이게) + 종이 우상단 분배함 미니맵에 찍기 위해 넘긴다.
+                "department_tags": collect_dept_tags(),
+                "department_slots": collect_dept_slots(),
             }
             dlg.destroy()
             return
@@ -5615,7 +5767,14 @@ def _process_printed_pdf(pdf_path: Path):
         _ui_queue.put(("run", _close_busy))
         if paper_copies > 0:
             try:
-                print_pdf_to_paper(pdf_path, copies=paper_copies)
+                # 칸을 고르는 단계가 없으니 이전에 고른 칸 이력(QR 주문번호 → 지시서 이름)을 찾아 찍는다.
+                try:
+                    _po_order = decode_pdf_qr(pdf_path)
+                except Exception:
+                    _po_order = None
+                _po_slots = recall_slot_selection(_po_order, _intent_stem)
+                ui_log(f"종이만 인쇄 — 이전 분배함 칸: {', '.join(_po_slots) or '(없음)'}")
+                print_paper_with_slots(pdf_path, paper_copies, _po_slots)
             except Exception as e:
                 ui_log(f"종이 인쇄 실패: {e}")
         _schedule_printed_pdf_cleanup(pdf_path)
@@ -5924,6 +6083,20 @@ def _process_printed_pdf(pdf_path: Path):
 
     # 매칭 다이얼로그에서 최종 의도 결정 — 라디오 값을 받아 intent 로 반영한다.
     intent = sel.get("intent") or intent
+    # 고른 분배함 칸 기억(웹반영/종이만 무관) — 나중에 칸 선택 없이 종이만 뽑을 때 미니맵에 쓴다.
+    # 이번에 고른 칸이 없으면 이전 이력으로 채워 종이 미니맵에만 사용(서버로는 안 보냄).
+    _hist_order = sel.get("order_number") or qr_order_number
+    remember_slot_selection(sel.get("department_slots"), _hist_order, _intent_stem)
+    # 매칭 창 [종이만 인쇄]로 칸을 골랐으면 — PDF 업로드는 안 해도 칸은 서버 주문에 저장한다.
+    # (다른 사람이 다른 PC 에서 종이만 뽑을 때도 그 칸이 미니맵에 나오게.) 웹반영 흐름은 아래
+    # patch_due_date 가 이미 함께 보낸다.
+    if intent == "paper_only" and qr_order_number and sel.get("department_slots"):
+        try:
+            patch_due_date(qr_order_number, None, None,
+                           list(sel.get("department_tags") or []), list(sel.get("department_slots") or []))
+        except Exception as e:
+            ui_log(f"종이만 인쇄 — 분배함 칸 서버 저장 실패(무시): {e}")
+    _paper_slots = list(sel.get("department_slots") or []) or recall_slot_selection(_hist_order, _intent_stem)
     ui_log(f"인쇄 의도 — 매칭 다이얼로그 최종 결정 '{_INTENT_LABEL.get(intent, intent)}' ({pdf_path.name})")
 
     # 라디오에서 [종이만 인쇄] 를 골랐다면 FlexiSIGN 저장/매칭/업로드 모두 건너뛰고 종이만.
@@ -5937,7 +6110,7 @@ def _process_printed_pdf(pdf_path: Path):
                 f"{c}장 출력 중 — 잠시만 기다려 주세요.",
             )))
             try:
-                print_pdf_to_paper(pdf_path, copies=copies)
+                print_paper_with_slots(pdf_path, copies, _paper_slots)
             except Exception as e:
                 ui_log(f"종이 인쇄 실패: {e}")
             _ui_queue.put(("run", _close_busy))
@@ -6001,7 +6174,7 @@ def _process_printed_pdf(pdf_path: Path):
             ui_log(f"인쇄 — 매칭 안 함 선택 + 매수 0, 종이 인쇄 생략 ({pdf_path.name})")
         else:
             ui_log(f"인쇄 — 매칭 안 함 선택, 종이 인쇄만 진행 ({pdf_path.name}, {copies}장)")
-            print_pdf_to_paper(pdf_path, copies=copies)
+            print_paper_with_slots(pdf_path, copies, _paper_slots)
             _show_combined_done_modal(
                 alert_kind,
                 f"종이 인쇄 완료 ({copies}장).\n웹 반영은 진행하지 않았습니다.",
@@ -6085,7 +6258,8 @@ def _process_printed_pdf(pdf_path: Path):
     elif copies < 1:
         ui_log(f"인쇄 — 매수 0(적용 안 함), 종이 인쇄 생략 ({pdf_path.name})")
     else:
-        print_pdf_to_paper(pdf_path, copies=copies)
+        # 종이엔 분배함 4×4 미니맵(고른 칸 = 검정 네모)을 우상단에 찍은 사본을 보낸다. 웹 원본은 그대로.
+        print_paper_with_slots(pdf_path, copies, dept_slots or _paper_slots)
         print_done = True
 
     # 처리 결과 알림 직전 — '웹에 반영 중' 창 닫고 결과 모달로 교체.
