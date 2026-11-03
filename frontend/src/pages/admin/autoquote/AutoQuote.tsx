@@ -1431,8 +1431,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     if (key === '단가') value = formatWon(value); // 단가 셀도 천 단위 콤마.
     setPins((prev) => {
       const next = [...prev];
-      if (!next[i]) {
-        next[i] = { ax: 30, ay: 30 + i * 30, lx: 30, ly: 30 + i * 30, dragged: false, vals: {}, fi: FIELDS.length };
+      // 중간 빈 행(예: 2행까지 있는데 5행에 입력)도 빈 핀으로 채운다 — 구멍(undefined)이 남으면
+      // pins.find/map 에서 p.vals 접근이 터져 화면 전체가 하얗게 죽는다.
+      for (let j = 0; j <= i; j++) {
+        if (!next[j]) {
+          next[j] = { ax: 30, ay: 30 + j * 30, lx: 30, ly: 30 + j * 30, dragged: false, vals: {}, fi: FIELDS.length };
+        }
       }
       next[i] =
         key === '품목'
