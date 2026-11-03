@@ -1955,3 +1955,27 @@
   background: #c4ced4;
   cursor: default;
 }
+
+/* 행 합치기로 만든 행 — 품목칸 오른쪽 끝 [↶ 되돌리기](합치기 전 원본 행들로 다시 펼침) */
+.aq-tbl td.it .aq-unmerge {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 16px;
+  border: 1px solid #0f766e;
+  border-radius: 9px;
+  background: #f0fdfa;
+  color: #0f766e;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aq-tbl td.it .aq-unmerge:hover {
+  background: #0f766e;
+  color: #fff;
+}
+.aq-tbl td.it:has(.aq-unmerge) input {
+  padding-right: 74px;
+}

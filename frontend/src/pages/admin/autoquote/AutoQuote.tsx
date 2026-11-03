@@ -101,6 +101,10 @@ interface Pin {
   // '도장비 합치기' 요약핀이 비파괴로 보관하는 개별 도장비 행들(한글 키 vals). 펼치기로 복원.
   // _ 접두사라 이지폼 매핑(7키)이 무시 — 이지폼엔 요약 한 줄만 나가고, 웹 저장본엔 원자가 남는다.
   _dojangParts?: Record<string, string>[];
+  // '행 합치기'로 만든 행이 보관하는 합치기 전 원본 행들(핀 위치 포함). 되돌리기로 그 자리에 다시 펼친다.
+  _mergeParts?: Pin[];
+  // 미니계산기로 채운 행 — 품목 글씨를 고쳐도 수량(글자수)을 자동으로 따라 바꾸지 않는다. _qtyFixed 로 저장.
+  qtyFixed?: boolean;
 }
 
 interface DialogButton {
@@ -694,6 +698,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               // 도장비 합치기 요약핀이면 보관된 개별 원자 복원(있을 때만).
               ...(Array.isArray(g._dojangParts)
                 ? { _dojangParts: g._dojangParts as Record<string, string>[] }
+                : {}),
+              // 행 합치기로 만든 행이면 합치기 전 원본 행 복원(되돌리기용).
+              ...(g._qtyFixed ? { qtyFixed: true } : {}),
+              ...(Array.isArray(g._mergeParts) && g._mergeParts.length
+                ? { _mergeParts: g._mergeParts as Pin[] }
                 : {}),
             };
           });
@@ -1339,7 +1348,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       const next = prev.map((p, i) => {
         if (i !== active) return p;
         // 품목 단계면 수량(글자수)도 동기(비전 자동입력 후 손 안 댄 경우만).
-        const nv = FIELDS[p.fi] === '품목' ? syncQty(p.vals, val) : { ...p.vals, [FIELDS[p.fi]]: val };
+        const nv = FIELDS[p.fi] === '품목' && !p.qtyFixed ? syncQty(p.vals, val) : { ...p.vals, [FIELDS[p.fi]]: val };
         const np = { ...p, vals: nv, fi: p.fi + 1 };
         if (np.splitPending && FIELDS[np.fi - 1] === '품목') {
           np.fi = FIELDS.indexOf('단가');
@@ -1453,6 +1462,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       vals: { ...first.vals, 품목: item, 수량: '1', 단가: formatWon(String(sum)) },
       sumParts: undefined,
       _dojangParts: undefined,
+      _mergeParts: rows.map((i) => ps[i]), // 되돌리기용 원본(핀 위치·내역 그대로)
     };
     const drop = new Set(rows.slice(1));
     const apply = () => {
@@ -1488,6 +1498,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         { label: '합치기', fn: apply },
       ],
     );
+  };
+
+  // 합치기 되돌리기 — 합친 행 자리에 원본 행들을 다시 펼친다(아래 행들은 그만큼 밀림).
+  const unmergeRow = (i: number) => {
+    const parts = pinsRef.current[i]?._mergeParts;
+    if (!parts?.length) return;
+    setPins((prev) => [...prev.slice(0, i), ...parts.map((p) => ({ ...p, vals: { ...p.vals } })), ...prev.slice(i + 1)]);
+    setMergeSel([]);
+    setMergeBtn(null);
+    setActive(null);
+    setSelPin(null);
+    setGridDel(null);
   };
 
   const deletePin = (i: number) => {
@@ -1535,7 +1557,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         }
       }
       next[i] =
-        key === '품목'
+        key === '품목' && !next[i].qtyFixed
           ? { ...next[i], vals: syncQty(next[i].vals, value) } // 품목 수정 시 수량(글자수) 자동 동기
           : {
               ...next[i],
@@ -1630,6 +1652,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     if (itemQty > 0) setCell(row, '수량', String(itemQty));
     else if (r.qty != null && Number.isFinite(r.qty)) setCell(row, '수량', String(r.qty));
     if (r.unit != null && Number.isFinite(r.unit)) setCell(row, '단가', String(r.unit));
+    // 이후 품목 글씨를 고쳐도 수량은 그대로(계산기로 정한 수량 유지).
+    setPins((prev) => prev.map((p, i) => (i === row && p ? { ...p, qtyFixed: true } : p)));
     // 채운 뒤 안내 모달은 띄우지 않는다 — 행에 값이 바로 보이므로 불필요.
   };
 
@@ -2165,6 +2189,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         ...(p.sumParts ? { _sumParts: p.sumParts } : {}),
         // 도장비 합치기 요약핀이면 개별 도장비 원자를 함께 저장(비파괴) — 재오픈 시 펼치기 가능.
         ...(p._dojangParts ? { _dojangParts: p._dojangParts } : {}),
+        // 행 합치기 원본 — 재오픈 후에도 되돌리기 가능. _ 접두사라 이지폼엔 안 나간다.
+        ...(p._mergeParts ? { _mergeParts: p._mergeParts } : {}),
+        ...(p.qtyFixed ? { _qtyFixed: true } : {}),
       };
     });
   };
@@ -3507,8 +3534,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           data-gc={0}
                         />
                       </td>
-                      <td className="it">
+                      <td className="it" style={p?._mergeParts ? { position: 'relative' } : undefined}>
                         <input value={v['품목'] || ''} onChange={(e) => setCell(i, '품목', e.target.value)} data-gr={i} data-gc={1} onKeyDown={(e) => onGridKey(e, i, 1)} />
+                        {p?._mergeParts && (
+                          <button
+                            type="button"
+                            className="aq-unmerge"
+                            title={`합치기 되돌리기 — 원래 ${p._mergeParts.length}개 행으로 펼침`}
+                            onClick={() => unmergeRow(i)}
+                          >
+                            ↶ 되돌리기
+                          </button>
+                        )}
                       </td>
                       <td>
                         <input value={v['규격'] || ''} onChange={(e) => setCell(i, '규격', e.target.value)} data-gr={i} data-gc={2} onKeyDown={(e) => onGridKey(e, i, 2)} />
@@ -3782,6 +3819,23 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             }}
           >
             🗑 삭제
+          </button>,
+          document.body,
+        )}
+      {gridDel &&
+        pins[gridDel.row]?._mergeParts &&
+        createPortal(
+          <button
+            type="button"
+            className="rnum-del aq-mergebtn"
+            style={{ position: 'fixed', left: gridDel.left + 70, top: gridDel.top, transform: 'translateY(-50%)', zIndex: 3200 }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              unmergeRow(gridDel.row);
+            }}
+          >
+            ↶ 합치기 되돌리기
           </button>,
           document.body,
         )}
