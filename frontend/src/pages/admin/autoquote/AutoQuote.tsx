@@ -1413,8 +1413,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     if (!pinsRef.current[i]) return;
     const r = e.currentTarget.getBoundingClientRect();
     setMergeSel((sel) => (sel.includes(i) ? sel.filter((x) => x !== i) : [...sel, i]));
-    // 칸 바로 아래·오른쪽 끝 맞춤(왼쪽으로 자람) — 표가 화면 오른쪽 끝이라 옆에 띄우면 잘린다.
-    setMergeBtn({ right: Math.max(6, window.innerWidth - r.right), top: r.bottom + 4 });
+    // 공급가액 칸 왼쪽에 세로 가운데 맞춤(왼쪽으로 자람) — 아래에 두면 다음 행 공급가액을 가려 연속 선택이 막힌다.
+    setMergeBtn({ right: Math.max(6, window.innerWidth - r.left + 6), top: r.top + r.height / 2 });
   };
   /** 앞에서 n글자(공백 제외해 셈) — '지킴이의 안전한하루' → '지킴이의 안'. */
   const headChars = (s: string, n: number) => {
@@ -1461,32 +1461,28 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       setSelPin(null);
       setGridDel(null);
     };
-    // 확인창 — 합친 뒤 표에 실제로 들어갈 한 행(동그라미 번호·품목코드·품목·규격·수량·단가·공급가액)만 보여준다.
+    // 확인창 — 합친 뒤 표에 실제로 들어갈 한 행을 명세서 표(.aq-tbl)와 같은 마크업·클래스로 그대로 보여준다.
     const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] || c);
     const n = rows[0];
     const mv = merged.vals;
-    const circle =
-      `<span style="display:inline-flex;width:20px;height:20px;border-radius:50%;background:${pinColor(n)};` +
-      `color:#fff;font-weight:800;font-size:11px;align-items:center;justify-content:center">${n + 1}</span>`;
-    const th = 'padding:3px 5px;font-size:11px;font-weight:700;color:#6b7785;text-align:left;white-space:nowrap';
-    const cell = (s: string, right = false) =>
-      `<td style="padding:2px"><div style="border:1px solid #c9d2dc;border-radius:5px;padding:5px 6px;background:#fff;` +
-      `font-size:12.5px;min-height:16px;text-align:${right ? 'right' : 'left'};word-break:keep-all">${esc(s)}</div></td>`;
     const sumU = num(mv['단가']);
+    const ro = (v: string) => `<input value="${esc(v)}" readonly tabindex="-1" />`;
     cdlg(
-      `<b>${rows.length}개 행을 한 행으로 합치시겠습니까?</b>` +
-        `<div style="margin-top:6px;font-size:12px;color:#52606d">${n + 1}번 행에 이렇게 들어갑니다</div>` +
-        `<table style="border-collapse:collapse;margin:8px 0 4px;width:100%;background:rgba(10,125,140,.08);border-radius:6px">` +
-        `<tr><th style="${th}"></th><th style="${th}">품목코드</th><th style="${th}">품목</th><th style="${th}">규격</th>` +
-        `<th style="${th}">수량</th><th style="${th};text-align:right">단가</th><th style="${th};text-align:right">공급가액</th></tr>` +
-        `<tr><td style="padding:2px 4px">${circle}</td>` +
-        cell(mv['품목코드'] || '') +
-        cell(mv['품목'] || '') +
-        cell(mv['규격'] || '') +
-        cell(mv['수량'] || '', true) +
-        cell(mv['단가'] || '', true) +
-        cell(sumU != null ? sumU.toLocaleString() : '', true) +
-        `</tr></table>`,
+      `<b>${rows.length}개 행을 합치시겠습니까?</b>` +
+        `<table class="aq-tbl" style="margin-top:12px;text-align:left;width:500px;max-width:100%">` +
+        `<colgroup><col style="width:24px"/><col style="width:58px"/><col/><col style="width:56px"/>` +
+        `<col style="width:34px"/><col style="width:78px"/><col style="width:86px"/></colgroup>` +
+        `<thead><tr><th></th><th>품목코드</th><th>품목</th><th>규격</th><th>수량</th>` +
+        `<th class="p">단가</th><th class="p">공급가액</th></tr></thead>` +
+        `<tbody><tr>` +
+        `<td class="rn"><span class="rnum" style="background:${pinColor(n)};cursor:default">${n + 1}</span></td>` +
+        `<td>${ro(mv['품목코드'] || '')}</td>` +
+        `<td class="it">${ro(mv['품목'] || '')}</td>` +
+        `<td>${ro(mv['규격'] || '')}</td>` +
+        `<td>${ro(mv['수량'] || '')}</td>` +
+        `<td class="p">${ro(mv['단가'] || '')}</td>` +
+        `<td class="p"><input class="ro" value="${sumU != null ? sumU.toLocaleString() : ''}" readonly tabindex="-1" /></td>` +
+        `</tr></tbody></table>`,
       [
         { label: '취소', sec: true },
         { label: '합치기', fn: apply },
@@ -3797,7 +3793,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           <button
             type="button"
             className="rnum-del aq-mergebtn"
-            style={{ position: 'fixed', right: mergeBtn.right, top: mergeBtn.top, zIndex: 3200 }}
+            style={{ position: 'fixed', right: mergeBtn.right, top: mergeBtn.top, transform: 'translateY(-50%)', zIndex: 3200 }}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();

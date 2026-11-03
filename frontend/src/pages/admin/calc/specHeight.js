@@ -26,3 +26,21 @@ export function enterToNextInput(e) {
   const next = ins[ins.indexOf(e.currentTarget) + 1]
   if (next) next.focus()
 }
+
+/** 수량칸 Enter → 같은 카드의 품목(텍스트) 입력칸으로 포커스(미니계산기에서만 존재, 없으면 무시). */
+export function enterToFillText(e) {
+  if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return
+  const card = e.currentTarget.closest('.calc-card')
+  const t = card && card.querySelector('.minicalc-text input')
+  if (!t) return
+  e.preventDefault()
+  t.focus()
+  t.select()
+}
+
+/** 단가표 사이즈 목록에서 높이 h 이상인 가장 작은 사이즈(표에 없는 높이는 한 단계 위 단가). 넘치면 null. */
+export function bandUp(sizes, h) {
+  if (!Number.isFinite(h) || h <= 0) return null
+  const s = [...sizes].map(Number).filter(Number.isFinite).sort((a, b) => a - b)
+  return s.find(x => x >= h) ?? null
+}

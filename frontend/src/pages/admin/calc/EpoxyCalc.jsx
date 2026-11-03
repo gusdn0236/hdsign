@@ -2,13 +2,17 @@ import { useState } from 'react'
 import { formatPrice, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 import FillTextSlot from './FillTextSlot'
+import { enterToFillText, enterToNextInput, specHeight, bandUp } from './specHeight'
 
 export default function EpoxyCalc({ prices }) {
     const calc = prices.calculators.epoxy
     const { material, textType, sizes, strokes } = calc.axes
     const [matKey, setMatKey] = useState(material[0].key)
     const [ttKey, setTtKey] = useState(textType[0].key)
-    const [size, setSize] = useState(sizes[0])
+    // 높이·규격은 텍스트(h:88 · 100*120 그대로 규격칸에). 단가는 표 사이즈 중 그 높이 이상 가장 작은 것.
+    const [sizeText, setSizeText] = useState(String(sizes[0]))
+    const heightMm = specHeight(sizeText)
+    const size = bandUp(sizes, heightMm)
     const [strokeVal, setStrokeVal] = useState(strokes[0].value)
     const [qty, setQty] = useState('1')
 
@@ -41,10 +45,12 @@ export default function EpoxyCalc({ prices }) {
                 </label>
 
                 <label className="calc-field">
-                    <span>높이 (mm)</span>
-                    <select value={size} onChange={e => setSize(Number(e.target.value))}>
-                        {sizes.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                    <span>높이·규격</span>
+                    <input
+                        type="text" value={sizeText}
+                        onChange={e => setSizeText(e.target.value)}
+                        onKeyDown={enterToNextInput}
+                    />
                 </label>
 
                 <label className="calc-field">
@@ -58,6 +64,7 @@ export default function EpoxyCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
+                        onKeyDown={enterToFillText}
                         onChange={e => setQty(e.target.value)}
                         onFocus={() => setQty('')}
                     />
@@ -68,12 +75,12 @@ export default function EpoxyCalc({ prices }) {
             <div className="calc-result">
                 <CalcAction
                     copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                    payload={{ code: `${matLabel || ''}에폭시`, spec: size ? String(size) : '', qty: qtyN, unit: unitPrice }}
+                    payload={{ code: `${matLabel || ''}에폭시`, spec: sizeText.trim(), qty: qtyN, unit: unitPrice }}
                 />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
                     {unitPrice !== null && total !== null
-                        ? `${matLabel} 에폭시 ${size}mm ${ttLabel} ${strokeLabel} (${formatPrice(unitPrice)}) × ${qtyN}개`
+                        ? `${matLabel} 에폭시 ${size}mm${size !== heightMm ? ` (${heightMm}mm→${size}mm 단가)` : ''} ${ttLabel} ${strokeLabel} (${formatPrice(unitPrice)}) × ${qtyN}개`
                         : (unitPrice !== null
                             ? '수량을 입력하세요'
                             : '해당 조합에 등록된 단가가 없습니다')}

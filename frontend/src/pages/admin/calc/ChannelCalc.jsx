@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { formatPrice, channelSizes, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 import FillTextSlot from './FillTextSlot'
+import { enterToFillText, enterToNextInput, specHeight, bandUp } from './specHeight'
 
 // 품목코드 — 대부분 종류 라벨 그대로. 단 후광 영문/한글은 이지폼에서 '갈바후광' 한 코드로 많이 쓰임.
 const CH_CODE_OVERRIDE = { galvaBackEng: '갈바후광', galvaBackKor: '갈바후광' }
@@ -10,7 +11,10 @@ export default function ChannelCalc({ prices }) {
     const calc = prices.calculators.channel
     const sizes = useMemo(() => channelSizes(calc.sizeAxis), [calc.sizeAxis])
     const [typeKey, setTypeKey] = useState(calc.types[0]?.key || '')
-    const [size, setSize] = useState(sizes[0] || 200)
+    // 높이·규격은 텍스트(h:88 · 100*120 그대로 규격칸에). 단가는 표 사이즈 중 그 높이 이상 가장 작은 것.
+    const [sizeText, setSizeText] = useState(String(sizes[0] || 200))
+    const heightMm = specHeight(sizeText)
+    const size = bandUp(sizes, heightMm)
     const [lang, setLang] = useState('eng')
     const [qty, setQty] = useState('1')
 
@@ -37,10 +41,12 @@ export default function ChannelCalc({ prices }) {
                 </label>
 
                 <label className="calc-field">
-                    <span>규격 (mm)</span>
-                    <select value={size} onChange={e => setSize(Number(e.target.value))}>
-                        {sizes.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                    <span>높이·규격</span>
+                    <input
+                        type="text" value={sizeText}
+                        onChange={e => setSizeText(e.target.value)}
+                        onKeyDown={enterToNextInput}
+                    />
                 </label>
 
                 {type?.needsLang && (
@@ -65,6 +71,7 @@ export default function ChannelCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
+                        onKeyDown={enterToFillText}
                         onChange={e => setQty(e.target.value)}
                         onFocus={() => setQty('')}
                     />
@@ -75,10 +82,10 @@ export default function ChannelCalc({ prices }) {
             <ResultBox
                 primary={total}
                 copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                payload={{ code, spec: size ? String(size) : '', qty: qtyN, unit: unitPrice }}
+                payload={{ code, spec: sizeText.trim(), qty: qtyN, unit: unitPrice }}
                 breakdown={
                     unitPrice !== null && total !== null
-                        ? `${type.label} ${size}mm (${formatPrice(unitPrice)}) × ${qtyN}개`
+                        ? `${type.label} ${size}mm${size !== heightMm ? ` (${heightMm}mm→${size}mm 단가)` : ''} (${formatPrice(unitPrice)}) × ${qtyN}개`
                         : (unitPrice !== null
                             ? '수량을 입력하세요'
                             : '해당 사이즈에 가격이 등록되어 있지 않습니다')

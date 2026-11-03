@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { formatPrice, gomuBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 import FillTextSlot from './FillTextSlot'
-import { specHeight, enterToNextInput } from './specHeight'
+import { specHeight, enterToNextInput, enterToFillText } from './specHeight'
 
 /**
  * 가격표의 '20,30T' 처럼 한 가격키가 여러 두께를 묶는 경우, 드롭다운에선 20T/30T 로 쪼갠다
@@ -68,6 +68,7 @@ export default function GomuCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
+                        onKeyDown={enterToFillText}
                         onChange={e => setQty(e.target.value)}
                         onFocus={() => setQty('')}
                     />

@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { formatPrice, goldSilverBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 import FillTextSlot from './FillTextSlot'
-import { specHeight, enterToNextInput } from './specHeight'
+import { specHeight, enterToNextInput, enterToFillText } from './specHeight'
 
 function isMissingCombo(missingTextTypes, mat, thickness, tt) {
     return (missingTextTypes || []).some(
@@ -93,6 +93,7 @@ export default function GoldSilverCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
+                        onKeyDown={enterToFillText}
                         onChange={e => setQty(e.target.value)}
                         onFocus={() => setQty('')}
                     />

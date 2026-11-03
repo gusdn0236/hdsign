@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { formatPrice, acrylBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 import FillTextSlot from './FillTextSlot'
-import { specHeight, enterToNextInput } from './specHeight'
+import { specHeight, enterToNextInput, enterToFillText } from './specHeight'
 
 // 아크릴/포맥스는 가격표는 같지만 품목코드는 구분(아크릴5T / 포맥스5T). 재질 선택으로 코드만 달라진다.
 const ACRYL_MATERIALS = ['아크릴', '포맥스']
@@ -61,6 +61,7 @@ export default function AcrylCalc({ prices }) {
                     <span>수량</span>
                     <input
                         type="number" min="1" value={qty}
+                        onKeyDown={enterToFillText}
                         onChange={e => setQty(e.target.value)}
                         onFocus={() => setQty('')}
                     />
