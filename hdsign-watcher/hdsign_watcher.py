@@ -2427,8 +2427,8 @@ def stamp_slot_grid_for_paper(pdf_path: Path, slot_labels: list[str]) -> Path | 
             page = doc[0]
             vis = page.rect  # 회전 적용된 '보이는' 페이지 크기
             mm = 72.0 / 25.4
-            # 칸 0.95mm + 간격 0.45mm(칸끼리 떨어져 구별되게) → 전체 약 5.2mm.
-            cell, gap = 0.95 * mm, 0.45 * mm
+            # 칸 1.2mm + 간격 0.5mm(칸끼리 떨어져 구별되게) → 전체 약 6.3mm.
+            cell, gap = 1.2 * mm, 0.5 * mm
             pad = 0.2 * mm                    # 흰 바탕 여백
             above = 0.6 * mm                  # 지시서 내용 윗변과의 간격
             size = 4 * cell + 3 * gap
