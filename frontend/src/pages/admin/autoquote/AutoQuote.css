@@ -1607,7 +1607,7 @@
   border-radius: 13px;
   padding: 24px 26px;
   min-width: 330px;
-  max-width: 440px;
+  max-width: min(560px, 92vw);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
   text-align: center;
 }
