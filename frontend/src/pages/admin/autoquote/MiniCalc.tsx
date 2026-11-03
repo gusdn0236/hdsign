@@ -16,6 +16,7 @@ export interface FillPayload {
   spec?: string;
   qty?: number;
   unit?: number | null;
+  item?: string; // 미니계산기 품목(텍스트)칸 값 — 있으면 품목 + 수량(글자수)까지 채운다.
 }
 
 /**
@@ -47,11 +48,26 @@ export default function MiniCalc({
   fillColor?: string; // 그 행 동그라미 색(그리드와 일치).
 }) {
   const { prices } = usePrices();
+  // 품목(텍스트) 입력칸 — 계산기 설정(재질·두께·높이 등)은 그대로 두고 텍스트만 바꿔가며 연속 채우기.
+  // 채우면 품목=텍스트, 수량=글자수로 한 행이 통째로 채워지고 칸은 비워져 다음 텍스트를 받는다.
+  const [text, setText] = useState('');
+  const textRef = useRef<HTMLInputElement>(null);
+  // 현재 카드의 채우기 payload(CalcAction 이 등록) — 텍스트칸 Enter 로 바로 채우기용.
+  const latestPayload = useRef<FillPayload | null>(null);
   // 채우기 모드면 카드의 [복사] 버튼이 [(N) 번에 채우기] 로 바뀐다(FillContext). 일반(홈페이지)은 null.
   const canFill = typeof fillRow === 'number' && fillRow >= 0;
+  const doFill = (p: FillPayload) => {
+    if (!onFill) return;
+    onFill({ ...p, item: text.trim() || undefined });
+    setText('');
+    setTimeout(() => textRef.current?.focus(), 0);
+  };
   const fillValue = onFill
     ? {
-        onFill,
+        onFill: doFill,
+        reg: (p: FillPayload | null) => {
+          latestPayload.current = p;
+        },
         canFill,
         num: canFill ? (fillRow as number) + 1 : null, // 동그라미에 표시할 1-based 행 번호
         color: fillColor || '#0a7d8c',
@@ -115,6 +131,23 @@ export default function MiniCalc({
           </button>
         ))}
       </div>
+      {onFill && (
+        <div className="minicalc-text">
+          <span>품목</span>
+          <input
+            ref={textRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              const p = latestPayload.current;
+              if (canFill && p && p.unit != null) doFill(p);
+            }}
+            placeholder="텍스트 입력 후 Enter 또는 [N번에 채우기]"
+          />
+        </div>
+      )}
       <FillContext.Provider value={fillValue}>
         <div className="minicalc-body">
           {prices && Active ? <Active prices={prices} /> : <div className="minicalc-loading">단가표 로드 중…</div>}

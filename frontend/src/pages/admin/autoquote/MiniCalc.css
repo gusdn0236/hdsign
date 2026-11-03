@@ -72,6 +72,35 @@
   color: #fff;
 }
 
+/* 품목(텍스트) 입력칸 — 채우기 시 품목·수량(글자수)까지 한 행을 채운다. */
+.minicalc-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eef1f4;
+}
+.minicalc-text span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #52606d;
+  flex-shrink: 0;
+}
+.minicalc-text input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  font-size: 14px;
+  font-family: inherit;
+  border: 1px solid #c9d2dc;
+  border-radius: 7px;
+}
+.minicalc-text input:focus {
+  outline: none;
+  border-color: #0a7d8c;
+  box-shadow: 0 0 0 2px rgba(10, 125, 140, 0.15);
+}
+
 .minicalc-body {
   padding: 12px;
   overflow: auto;

@@ -1524,11 +1524,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     return ps.length;
   };
   // 미니 계산기 결과를 빈 행에 채운다 — 품목코드/규격/수량/단가. 품목(글자)은 사용자가 직접 입력.
-  const onCalcFill = (r: { code?: string; spec?: string; qty?: number; unit?: number | null }) => {
+  const onCalcFill = (r: { code?: string; spec?: string; qty?: number; unit?: number | null; item?: string }) => {
     const row = firstEmptyGridRow(pinsRef.current);
     if (r.code) setCell(row, '품목코드', r.code);
+    if (r.item) setCell(row, '품목', r.item);
     if (r.spec) setCell(row, '규격', r.spec);
-    if (r.qty != null && Number.isFinite(r.qty)) setCell(row, '수량', String(r.qty));
+    // 품목칸 텍스트가 있으면 수량 = 글자수(공백 제외), 없으면 계산기 수량.
+    const itemQty = r.item ? charCount(r.item, 'all') : 0;
+    if (itemQty > 0) setCell(row, '수량', String(itemQty));
+    else if (r.qty != null && Number.isFinite(r.qty)) setCell(row, '수량', String(r.qty));
     if (r.unit != null && Number.isFinite(r.unit)) setCell(row, '단가', String(r.unit));
     // 채운 뒤 안내 모달은 띄우지 않는다 — 행에 값이 바로 보이므로 불필요.
   };
