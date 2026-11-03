@@ -62,9 +62,28 @@ export default function MiniCalc({
     setText('');
     setTimeout(() => textRef.current?.focus(), 0);
   };
+  // 품목칸 — 각 카드의 가격 박스 바로 위(FillTextSlot)에 그려진다(설정 → 텍스트 → 채우기 순서).
+  const textInput = onFill ? (
+    <div className="minicalc-text">
+      <span>품목</span>
+      <input
+        ref={textRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+          e.preventDefault();
+          const p = latestPayload.current;
+          if (canFill && p && p.unit != null) doFill(p);
+        }}
+        placeholder="텍스트 입력 후 Enter 또는 [N번에 채우기]"
+      />
+    </div>
+  ) : null;
   const fillValue = onFill
     ? {
         onFill: doFill,
+        textInput,
         reg: (p: FillPayload | null) => {
           latestPayload.current = p;
         },
@@ -131,23 +150,6 @@ export default function MiniCalc({
           </button>
         ))}
       </div>
-      {onFill && (
-        <div className="minicalc-text">
-          <span>품목</span>
-          <input
-            ref={textRef}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
-              e.preventDefault();
-              const p = latestPayload.current;
-              if (canFill && p && p.unit != null) doFill(p);
-            }}
-            placeholder="텍스트 입력 후 Enter 또는 [N번에 채우기]"
-          />
-        </div>
-      )}
       <FillContext.Provider value={fillValue}>
         <div className="minicalc-body">
           {prices && Active ? <Active prices={prices} /> : <div className="minicalc-loading">단가표 로드 중…</div>}

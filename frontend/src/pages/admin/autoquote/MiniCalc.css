@@ -77,8 +77,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid #eef1f4;
+  margin-bottom: 12px; /* 카드 안 가격 박스(.calc-result) 바로 위 */
 }
 .minicalc-text span {
   font-size: 12px;

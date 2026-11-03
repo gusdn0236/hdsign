@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { formatPrice, channelSizes, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
+import FillTextSlot from './FillTextSlot'
 
 // 품목코드 — 대부분 종류 라벨 그대로. 단 후광 영문/한글은 이지폼에서 '갈바후광' 한 코드로 많이 쓰임.
 const CH_CODE_OVERRIDE = { galvaBackEng: '갈바후광', galvaBackKor: '갈바후광' }
@@ -70,6 +71,7 @@ export default function ChannelCalc({ prices }) {
                 </label>
             </div>
 
+            <FillTextSlot />
             <ResultBox
                 primary={total}
                 copyText={buildCopyText(unitPrice, qtyN, '개', total)}

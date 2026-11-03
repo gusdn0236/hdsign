@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { formatPrice, gomuBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
+import FillTextSlot from './FillTextSlot'
+import { specHeight } from './specHeight'
 
 /**
  * 가격표의 '20,30T' 처럼 한 가격키가 여러 두께를 묶는 경우, 드롭다운에선 20T/30T 로 쪼갠다
@@ -34,7 +36,7 @@ export default function GomuCalc({ prices }) {
     const [qty, setQty] = useState('1')
 
     const opt = options.find(o => o.value === val) || options[0]
-    const heightMm = parseInt(height, 10)
+    const heightMm = specHeight(height)
     const qtyN = parseInt(qty, 10)
     const band = Number.isFinite(heightMm) && heightMm > 0 ? gomuBandForHeight(heightMm) : null
     const unitPrice = band && opt ? calc.prices?.[opt.priceKey]?.[band] ?? null : null
@@ -54,9 +56,9 @@ export default function GomuCalc({ prices }) {
                 </label>
 
                 <label className="calc-field">
-                    <span>높이 (mm)</span>
+                    <span>높이·규격</span>
                     <input
-                        type="number" min="1" max="2000" value={height}
+                        type="text" value={height} placeholder="h:88 · 100*120"
                         onChange={e => setHeight(e.target.value)}
                         onFocus={() => setHeight('')}
                     />
@@ -72,10 +74,11 @@ export default function GomuCalc({ prices }) {
                 </label>
             </div>
 
+            <FillTextSlot />
             <div className="calc-result">
                 <CalcAction
                     copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                    payload={{ code, spec: heightMm ? String(heightMm) : '', qty: qtyN, unit: unitPrice }}
+                    payload={{ code, spec: height.trim(), qty: qtyN, unit: unitPrice }}
                 />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">

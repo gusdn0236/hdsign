@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { formatPrice, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
+import FillTextSlot from './FillTextSlot'
 
 export default function EpoxyCalc({ prices }) {
     const calc = prices.calculators.epoxy
@@ -63,6 +64,7 @@ export default function EpoxyCalc({ prices }) {
                 </label>
             </div>
 
+            <FillTextSlot />
             <div className="calc-result">
                 <CalcAction
                     copyText={buildCopyText(unitPrice, qtyN, '개', total)}

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { formatPrice, acrylBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
+import FillTextSlot from './FillTextSlot'
+import { specHeight } from './specHeight'
 
 // 아크릴/포맥스는 가격표는 같지만 품목코드는 구분(아크릴5T / 포맥스5T). 재질 선택으로 코드만 달라진다.
 const ACRYL_MATERIALS = ['아크릴', '포맥스']
@@ -14,7 +16,7 @@ export default function AcrylCalc({ prices }) {
     const [height, setHeight] = useState('100')
     const [qty, setQty] = useState('1')
 
-    const heightMm = parseInt(height, 10)
+    const heightMm = specHeight(height)
     const qtyN = parseInt(qty, 10)
     const band = Number.isFinite(heightMm) && heightMm > 0 ? acrylBandForHeight(heightMm) : null
     const unitPrice = band ? calc.prices?.[tk]?.[tt]?.[band] ?? null : null
@@ -47,9 +49,9 @@ export default function AcrylCalc({ prices }) {
                 </label>
 
                 <label className="calc-field">
-                    <span>높이 (mm)</span>
+                    <span>높이·규격</span>
                     <input
-                        type="number" min="1" max="900" value={height}
+                        type="text" value={height} placeholder="h:88 · 100*120"
                         onChange={e => setHeight(e.target.value)}
                         onFocus={() => setHeight('')}
                     />
@@ -65,10 +67,11 @@ export default function AcrylCalc({ prices }) {
                 </label>
             </div>
 
+            <FillTextSlot />
             <div className="calc-result">
                 <CalcAction
                     copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                    payload={{ code: `${mat}${tk}`, spec: heightMm ? String(heightMm) : '', qty: qtyN, unit: unitPrice }}
+                    payload={{ code: `${mat}${tk}`, spec: height.trim(), qty: qtyN, unit: unitPrice }}
                 />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
