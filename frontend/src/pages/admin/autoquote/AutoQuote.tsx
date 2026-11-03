@@ -379,6 +379,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 우측 명세서 표의 동그라미 숫자를 클릭하면 삭제 버튼을 띄운다(행 단위 삭제). 표가 좁아 잘리지 않도록
   // 화면 좌표(fixed) 포털로 동그라미 옆에 띄운다.
   const [gridDel, setGridDel] = useState<{ row: number; left: number; top: number } | null>(null);
+  // 행 합치기 — Ctrl+클릭으로 공급가액 칸을 고른 행들 + [합치기] 버튼 위치(마지막 클릭 칸 옆, fixed).
+  const [mergeSel, setMergeSel] = useState<number[]>([]);
+  const [mergeBtn, setMergeBtn] = useState<{ left: number; top: number } | null>(null);
   // 행 재정렬 드래그 중 시각 피드백 — 출발 행(흐리게)·놓을 대상 행(강조).
   const [dragRow, setDragRow] = useState<number | null>(null);
   const [dragOverRow, setDragOverRow] = useState<number | null>(null);
@@ -1398,8 +1401,108 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     }
   };
 
+  // ---- 행 합치기 ------------------------------------------------------
+  // 공급가액 칸 Ctrl+클릭 = 그 행 선택 토글, 그냥 클릭 = 선택 해제.
+  const onSupplyClick = (e: React.MouseEvent<HTMLInputElement>, i: number) => {
+    if (!(e.ctrlKey || e.metaKey)) {
+      setMergeSel([]);
+      setMergeBtn(null);
+      return;
+    }
+    e.preventDefault();
+    if (!pinsRef.current[i]) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setMergeSel((sel) => (sel.includes(i) ? sel.filter((x) => x !== i) : [...sel, i]));
+    setMergeBtn({ left: r.right + 6, top: r.top + r.height / 2 });
+  };
+  /** 앞에서 n글자(공백 제외해 셈) — '지킴이의 안전한하루' → '지킴이의 안'. */
+  const headChars = (s: string, n: number) => {
+    let c = 0;
+    for (let k = 0; k < s.length; k++) {
+      if (!/\s/.test(s[k]) && ++c === n) return s.slice(0, k + 1);
+    }
+    return s;
+  };
+  /** 뒤에서 n글자(공백 제외해 셈) — '서다,보다,걷다' → '보다,걷다'. */
+  const tailChars = (s: string, n: number) => {
+    let c = 0;
+    for (let k = s.length - 1; k >= 0; k--) {
+      if (!/\s/.test(s[k]) && ++c === n) return s.slice(k);
+    }
+    return s;
+  };
+  // 선택 행들을 첫 행 자리에 한 행으로 합친다: 품목='첫행 앞5글자...끝행 뒤5글자', 수량 1,
+  // 단가=선택 행 공급가액(단가×수량) 합, 품목코드·규격·나머지=첫 행 값. 나머지 행은 제거(아래 행이 위로).
+  const mergeRows = () => {
+    const ps = pinsRef.current;
+    const rows = [...new Set(mergeSel)].filter((i) => ps[i]).sort((a, b) => a - b);
+    setMergeSel([]);
+    setMergeBtn(null);
+    if (rows.length < 2) return;
+    const first = ps[rows[0]];
+    const lastItem = (ps[rows[rows.length - 1]].vals['품목'] || '').trim();
+    const firstItem = (first.vals['품목'] || '').trim();
+    const item = `${headChars(firstItem, 5)}...${tailChars(lastItem, 5)}`;
+    const sum = rows.reduce((s, i) => {
+      const u = num(ps[i].vals['단가']);
+      return s + (u != null ? u * (num(ps[i].vals['수량']) || 1) : 0);
+    }, 0);
+    const merged: Pin = {
+      ...first,
+      vals: { ...first.vals, 품목: item, 수량: '1', 단가: formatWon(String(sum)) },
+      sumParts: undefined,
+      _dojangParts: undefined,
+    };
+    const drop = new Set(rows.slice(1));
+    const apply = () => {
+      setPins((prev) => prev.map((p, i) => (i === rows[0] ? merged : p)).filter((_, i) => !drop.has(i)));
+      setActive(null);
+      setSelPin(null);
+      setGridDel(null);
+    };
+    // 확인창 — 합쳐질 행들과 합친 결과 한 행을 미리 보여준다.
+    const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] || c);
+    const circle = (n: number) =>
+      `<span style="display:inline-flex;width:20px;height:20px;border-radius:50%;background:${pinColor(n)};` +
+      `color:#fff;font-weight:800;font-size:11px;align-items:center;justify-content:center">${n + 1}</span>`;
+    const td = 'padding:4px 6px;border-bottom:1px solid #e5e9ee;white-space:nowrap;text-align:left';
+    const tdR = td + ';text-align:right';
+    const line = (n: number, v: Record<string, string>, bold = false) => {
+      const u = num(v['단가']);
+      const q = num(v['수량']) || 1;
+      const st = bold ? ';font-weight:800' : '';
+      return (
+        `<tr style="${bold ? 'background:rgba(10,125,140,.12)' : ''}">` +
+        `<td style="${td}">${circle(n)}</td>` +
+        `<td style="${td};white-space:normal;max-width:200px${st}">${esc(v['품목'] || '')}</td>` +
+        `<td style="${td}${st}">${esc(v['규격'] || '')}</td>` +
+        `<td style="${tdR}${st}">${esc(v['수량'] || '')}</td>` +
+        `<td style="${tdR}${st}">${u != null ? (u * q).toLocaleString() : ''}</td></tr>`
+      );
+    };
+    const head =
+      `<tr style="color:#6b7785;font-size:11px"><th></th><th style="text-align:left;padding:2px 6px">품목</th>` +
+      `<th style="text-align:left;padding:2px 6px">규격</th><th style="padding:2px 6px">수량</th>` +
+      `<th style="text-align:right;padding:2px 6px">공급가액</th></tr>`;
+    const tbl = (body: string) =>
+      `<table style="border-collapse:collapse;font-size:12.5px;margin:6px 0 10px;width:100%">${head}${body}</table>`;
+    cdlg(
+      `<b>${rows.length}개 행을 한 행으로 합치시겠습니까?</b>` +
+        `<div style="margin-top:10px;font-size:12px;color:#52606d">합쳐질 행</div>` +
+        tbl(rows.map((i) => line(i, ps[i].vals)).join('')) +
+        `<div style="font-size:12px;color:#0a7d8c;font-weight:700">↓ 합친 결과</div>` +
+        tbl(line(rows[0], merged.vals, true)),
+      [
+        { label: '취소', sec: true },
+        { label: '합치기', fn: apply },
+      ],
+    );
+  };
+
   const deletePin = (i: number) => {
     setPins((prev) => prev.filter((_, j) => j !== i)); // 행 제거 + 아래 행이 위로 한 칸씩(빈 행 없이 압축).
+    setMergeSel([]); // 행 번호가 밀리므로 합치기 선택 초기화
+    setMergeBtn(null);
     setActive((a) => (a != null && a > i ? a - 1 : a === i ? null : a));
     setSelPin(null);
     setGridDel(null);
@@ -1416,6 +1519,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       return next;
     });
     setGridDel(null);
+    setMergeSel([]);
+    setMergeBtn(null);
   };
 
   // 말풍선 더블클릭 → 품목코드(fi=0)부터 입력/수정. Enter 로 다음 필드 진행.
@@ -3342,6 +3447,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           isOcrTgt ? 'ocrtgt' : '',
                           dragRow === i ? 'rowdragging' : '',
                           dragOverRow === i ? 'rowswapover' : '',
+                          mergeSel.includes(i) ? 'mergesel' : '',
                         ]
                           .filter(Boolean)
                           .join(' ') || undefined
@@ -3462,7 +3568,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           })()}
                           readOnly
                           tabIndex={-1}
-                          title="공급가액 = 단가 × 수량"
+                          onClick={(e) => onSupplyClick(e, i)}
+                          title="공급가액 = 단가 × 수량 · Ctrl+클릭으로 여러 행 골라 합치기"
                         />
                       </td>
                     </tr>
@@ -3684,6 +3791,25 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             }}
           >
             🗑 삭제
+          </button>,
+          document.body,
+        )}
+
+      {/* 행 합치기 버튼 — 공급가액 칸을 Ctrl+클릭해 2행 이상 고르면 마지막 클릭 칸 옆에 뜬다. */}
+      {mergeBtn &&
+        mergeSel.length >= 2 &&
+        createPortal(
+          <button
+            type="button"
+            className="rnum-del aq-mergebtn"
+            style={{ position: 'fixed', left: mergeBtn.left, top: mergeBtn.top, transform: 'translateY(-50%)', zIndex: 3200 }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              mergeRows();
+            }}
+          >
+            ⧉ {mergeSel.length}행 합치기
           </button>,
           document.body,
         )}

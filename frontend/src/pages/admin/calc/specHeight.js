@@ -15,3 +15,14 @@ export function specHeight(text) {
   const n = s.match(/\d+(?:\.\d+)?/)
   return n ? Math.round(parseFloat(n[0])) : NaN
 }
+
+/** 높이·규격칸 Enter → 같은 폼의 다음 입력칸(수량)으로 포커스 이동. 한글 조합 중 Enter 는 무시. */
+export function enterToNextInput(e) {
+  if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return
+  e.preventDefault()
+  const form = e.currentTarget.closest('.calc-form')
+  if (!form) return
+  const ins = [...form.querySelectorAll('input')]
+  const next = ins[ins.indexOf(e.currentTarget) + 1]
+  if (next) next.focus()
+}

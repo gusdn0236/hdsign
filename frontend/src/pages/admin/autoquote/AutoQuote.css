@@ -1124,6 +1124,20 @@
 .rnum-del:hover {
   background: #b91c1c;
 }
+/* 행 합치기 — Ctrl+클릭으로 고른 행 강조 + [N행 합치기] 버튼(삭제 버튼 모양, 청록). */
+.aq-tbl tr.mergesel td {
+  background: rgba(10, 125, 140, 0.13) !important;
+}
+.aq-tbl tr.mergesel td.p input.ro {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+}
+.rnum-del.aq-mergebtn {
+  background: #0a7d8c;
+}
+.rnum-del.aq-mergebtn:hover {
+  background: #086470;
+}
 .aq-tbl tr.cur td.rn .rnum {
   background: var(--teal2);
 }

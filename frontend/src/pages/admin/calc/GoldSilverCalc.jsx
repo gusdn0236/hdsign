@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { formatPrice, goldSilverBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
 import FillTextSlot from './FillTextSlot'
-import { specHeight } from './specHeight'
+import { specHeight, enterToNextInput } from './specHeight'
 
 function isMissingCombo(missingTextTypes, mat, thickness, tt) {
     return (missingTextTypes || []).some(
@@ -83,9 +83,9 @@ export default function GoldSilverCalc({ prices }) {
                 <label className="calc-field">
                     <span>높이·규격</span>
                     <input
-                        type="text" value={height} placeholder="h:88 · 100*120"
+                        type="text" value={height}
                         onChange={e => setHeight(e.target.value)}
-                        onFocus={() => setHeight('')}
+                        onKeyDown={enterToNextInput}
                     />
                 </label>
 
