@@ -2366,20 +2366,52 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       return;
     }
     const fs = Math.max(13, Math.round(13 * sx));
-    ctx.font = '700 ' + fs + 'px sans-serif';
+    const fs2 = Math.round(fs * (11 / 12)); // 아랫줄(단가·수량·합계)은 화면처럼 살짝 작게.
+    const font1 = '700 ' + fs + 'px sans-serif';
+    const font2 = '600 ' + fs2 + 'px sans-serif';
+    const maxTextW = fs * (380 / 12) - fs * 1.4; // 화면 말풍선 max-width 380px 대응
+    const clip = (s: string): string => {
+      let t = s;
+      if (ctx.measureText(t).width <= maxTextW) return t;
+      while (t.length > 1 && ctx.measureText(t + '…').width > maxTextW) t = t.slice(0, -1);
+      return t + '…';
+    };
     ctx.textBaseline = 'middle';
     pins.forEach((p, i) => {
-      const t = pinLabel(p);
-      if (!t) return;
+      // 화면 말풍선과 같은 2줄: (위) "품목" 규격 (아래) 단가원 ×수량개 = 합계원.
+      if (!pinLabel(p)) return;
+      const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
+      const dp = num(p.vals['단가']);
+      const qty = num(p.vals['수량']) || 1;
+      const priceLine =
+        dp != null
+          ? `${dp.toLocaleString()}원 ×${qty}개 = ${(dp * qty).toLocaleString()}원${p.sumParts ? ' (한·영 합계)' : ''}`
+          : '';
+      const lines: { t: string; font: string; lh: number }[] = [];
+      if (top) {
+        ctx.font = font1;
+        lines.push({ t: clip(top), font: font1, lh: fs * 1.3 });
+      }
+      if (priceLine) {
+        ctx.font = font2;
+        lines.push({ t: clip(priceLine), font: font2, lh: fs2 * 1.3 });
+      }
       const c = pinColor(i);
       const ax = p.ax * sx,
         ay = p.ay * sy,
         lx = p.lx * sx,
         ly = p.ly * sy;
-      const padx = fs * 0.7,
-        h = fs * 1.85,
-        w = ctx.measureText(t).width + padx * 2,
-        r = fs * 0.45;
+      const padx = fs * 0.75,
+        pady = fs * 0.35,
+        lineGap = lines.length > 1 ? fs * 0.17 : 0,
+        r = fs * 0.55;
+      let textW = 0;
+      for (const ln of lines) {
+        ctx.font = ln.font;
+        textW = Math.max(textW, ctx.measureText(ln.t).width);
+      }
+      const w = textW + padx * 2,
+        h = lines.reduce((s, ln) => s + ln.lh, 0) + lineGap + pady * 2;
       let bx: number, by: number;
       if (p.dragged) {
         bx = lx - w / 2; // 리더선이 말풍선 정중앙에 닿도록 박스를 드롭 지점 중앙에.
@@ -2407,7 +2439,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       ctx.closePath();
       ctx.fill();
       ctx.fillStyle = '#fff';
-      ctx.fillText(t, bx + padx, by + h / 2);
+      ctx.textAlign = 'left';
+      {
+        let yy = by + pady;
+        lines.forEach((ln, k) => {
+          ctx.font = ln.font;
+          ctx.fillText(ln.t, bx + padx, yy + ln.lh / 2);
+          yy += ln.lh + (k === 0 ? lineGap : 0);
+        });
+      }
       ctx.fillStyle = c;
       ctx.beginPath();
       ctx.arc(ax, ay, fs * 0.35, 0, 7);
