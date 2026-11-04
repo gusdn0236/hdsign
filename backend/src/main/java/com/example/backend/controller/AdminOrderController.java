@@ -154,11 +154,27 @@ public class AdminOrderController {
                 orderRepository.findByDeletedAtIsNullOrderByCreatedAtDesc()));
     }
 
-    // 작업완료(휴지통) 목록 — 30일 후 자동 완전삭제 대상.
+    // 작업완료(휴지통) 목록 — 보관 6개월(CompletedOrderWindow.RETENTION_DAYS) 후 자동 완전삭제.
+    // 30일 창 단위로 나눠 내려준다(화면 무거움 방지).
+    //  - page 없음: 최근 30일 배열(옛 클라이언트 호환).
+    //  - page=N   : {items, page, hasMore, nextPage, total, windowDays, retentionDays}
     @GetMapping("/trash")
-    public ResponseEntity<List<OrderDto.Response>> getTrash() {
-        return ResponseEntity.ok(toResponsesWithEstimates(
-                orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()));
+    public ResponseEntity<?> getTrash(@RequestParam(required = false) Integer page) {
+        int p = com.example.backend.service.CompletedOrderWindow.clampPage(page);
+        java.time.LocalDateTime[] r = com.example.backend.service.CompletedOrderWindow.range(p);
+        List<OrderDto.Response> items = toResponsesWithEstimates(
+                orderRepository.findByDeletedAtGreaterThanEqualAndDeletedAtLessThanOrderByDeletedAtDesc(r[0], r[1]));
+        if (page == null) return ResponseEntity.ok(items);
+        boolean hasMore = orderRepository.existsByDeletedAtLessThan(r[0]);
+        Map<String, Object> body = new HashMap<>();
+        body.put("items", items);
+        body.put("page", p);
+        body.put("hasMore", hasMore);
+        body.put("nextPage", hasMore ? p + 1 : null);
+        body.put("total", orderRepository.countByDeletedAtIsNotNull());
+        body.put("windowDays", com.example.backend.service.CompletedOrderWindow.WINDOW_DAYS);
+        body.put("retentionDays", com.example.backend.service.CompletedOrderWindow.RETENTION_DAYS);
+        return ResponseEntity.ok(body);
     }
 
     // 주문 목록 → 응답 변환 + 자동견적 명세서(estimate) 배지 플래그 enrich.

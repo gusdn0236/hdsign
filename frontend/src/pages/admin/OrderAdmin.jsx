@@ -6,6 +6,7 @@ import PdfViewer from "../../components/common/PdfViewer.jsx";
 import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import KakaoShareButton from "../../components/common/KakaoShareButton.jsx";
 import { safeFileName } from "../../utils/shareImage.js";
+import { fetchCompletedPages, fetchCompletedPage, appendUnique, oldestLoadedDate } from "../../utils/completedPages.js";
 import "./OrderAdmin.css";
 
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
@@ -45,7 +46,8 @@ const STATUS_META = {
 
 const STATUS_ORDER = ["RECEIVED", "IN_PROGRESS", "COMPLETED"];
 
-const TRASH_RETENTION_DAYS = 30;
+// 작업완료 보관 일수 — 백엔드 CompletedOrderWindow.RETENTION_DAYS 와 같게(2026-11-04 30→180).
+const TRASH_RETENTION_DAYS = 180;
 
 const DELIVERY_LABELS = {
   CARGO: "화물 발송",
@@ -221,6 +223,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const pageTitle = isOrderPage ? "발주 관리" : "견적 관리";
   const [orders, setOrders] = useState([]);
   const [trashOrders, setTrashOrders] = useState([]);
+  // 작업완료는 30일씩 나눠 받음 — 펼친 페이지 수(1 = 최근 30일). 폴링/새로고침도 이 범위만큼 다시 받는다.
+  const [trashPages, setTrashPages] = useState(1);
+  const trashPagesRef = useRef(1);
+  const [trashHasMore, setTrashHasMore] = useState(false);
+  const [trashTotal, setTrashTotal] = useState(null); // 서버 기준 작업완료 전체 건수(안 펼친 것 포함)
+  const [trashLoadingMore, setTrashLoadingMore] = useState(false);
+  const trashLoadingMoreRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState(null);
   // R2 사용량 — 작업완료 탭 상단 프로그레스 바. /api/admin/storage/usage 는 60초 캐시라
@@ -467,22 +476,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const loadOrders = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const [activeRes, trashRes] = await Promise.all([
-        fetch(`${BASE_URL}/api/admin/orders`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`${BASE_URL}/api/admin/orders/trash`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
+      const auth = { headers: { Authorization: `Bearer ${token}` } };
+      const [activeRes, trash] = await Promise.all([
+        fetch(`${BASE_URL}/api/admin/orders`, auth),
+        // 작업완료 — 지금까지 펼친 30일 페이지들만(기본 최근 30일).
+        fetchCompletedPages(`${BASE_URL}/api/admin/orders/trash`, trashPagesRef.current, auth),
       ]);
       if (!activeRes.ok) throw new Error("주문 목록을 불러오지 못했습니다.");
-      if (!trashRes.ok) throw new Error("작업완료 목록을 불러오지 못했습니다.");
       const activeData = await activeRes.json();
-      const trashData = await trashRes.json();
       const filterByType = (arr) =>
         Array.isArray(arr) ? arr.filter((o) => o.requestType === requestType) : [];
       setOrders(filterByType(activeData));
-      setTrashOrders(filterByType(trashData));
+      setTrashOrders(filterByType(trash.items));
+      setTrashHasMore(trash.hasMore);
+      setTrashTotal(trash.total);
     } catch (err) {
       if (!silent) setFeedback({ type: "error", msg: err.message || "주문 목록 조회 중 오류가 발생했습니다." });
     } finally {
@@ -490,8 +497,47 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
   };
 
+  // 작업완료 '이전 30일' 더 받기 — 더보기 버튼 / 목록 끝 스크롤 / 달력을 옛날 달로 넘길 때.
+  const loadMoreTrash = useCallback(async () => {
+    if (!token || trashLoadingMoreRef.current) return;
+    trashLoadingMoreRef.current = true;
+    setTrashLoadingMore(true);
+    try {
+      const page = trashPagesRef.current;
+      const r = await fetchCompletedPage(`${BASE_URL}/api/admin/orders/trash`, page, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const more = r.items.filter((o) => o.requestType === requestType);
+      setTrashOrders((prev) => appendUnique(prev, more));
+      trashPagesRef.current = page + 1;
+      setTrashPages(page + 1);
+      setTrashHasMore(r.hasMore);
+      if (r.total != null) setTrashTotal(r.total);
+    } catch (err) {
+      setFeedback({ type: "error", msg: err.message || "작업완료 목록을 더 불러오지 못했습니다." });
+    } finally {
+      trashLoadingMoreRef.current = false;
+      setTrashLoadingMore(false);
+    }
+  }, [token, requestType]);
+
+  // 목록 끝 감지 — 화면에 닿으면 자동으로 이전 30일 로드(무한 스크롤). 버튼도 같이 둔다.
+  const trashSentinelRef = useRef(null);
+  useEffect(() => {
+    const el = trashSentinelRef.current;
+    if (!el || !trashHasMore) return undefined;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMoreTrash();
+    }, { rootMargin: "300px" });
+    io.observe(el);
+    return () => io.disconnect();
+  });
+
   useEffect(() => {
     if (!token) return;
+    // requestType 전환 시 작업완료 펼침 범위는 최근 30일로 리셋.
+    trashPagesRef.current = 1;
+    setTrashPages(1);
     loadOrders();
     // requestType 이 바뀌면(/admin/orders ↔ /admin/quotes 전환) 다시 가져와서 필터링.
   }, [token, requestType]);
@@ -836,6 +882,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   };
   const calendarShowAll = () => setSelectedCalendarDate(null);
 
+  // 작업완료 달력을 아직 안 받은 옛날 달로 넘기면 그 달까지 30일씩 이어서 받는다.
+  useEffect(() => {
+    if (!isTrashView || !trashHasMore || trashLoadingMore) return;
+    if (calendarMonth < oldestLoadedDate(trashPages)) loadMoreTrash();
+  }, [isTrashView, trashHasMore, trashLoadingMore, calendarMonth, trashPages, loadMoreTrash]);
+
   // 지연·작업완료 필터 진입 시 자동 전체보기 — 과거 날짜 산재라 단일 일자 뷰면 빈 화면이 흔함.
   // 한 번에 모든 카드를 날짜별 그룹으로 보여줘야 즉시 작업 가능.
   useEffect(() => {
@@ -886,6 +938,21 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   // 모달 prev/next 의 "현재 화면" 대상 — 명세서 탭은 최신순 평면 목록, 달력 전체보기면 필터된 모든 주문,
   // 그 외엔 선택 일자 카드. 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과.
+  // 작업완료/명세서 탭 목록 끝 — '이전 30일 더보기' 버튼 + 무한스크롤 감지점(같은 요소).
+  const trashMoreBlock = (isTrashView || isStatementView) && (trashHasMore || trashLoadingMore) ? (
+    <div className="trash-load-more" ref={trashSentinelRef}>
+      <button
+        type="button"
+        className="trash-load-more-btn"
+        onClick={loadMoreTrash}
+        disabled={trashLoadingMore}
+      >
+        {trashLoadingMore ? "불러오는 중..." : "작업완료 이전 30일 더보기"}
+      </button>
+      <span className="trash-load-more-hint">작업완료는 최근 {trashPages * 30}일치 표시 중 (보관 {TRASH_RETENTION_DAYS}일)</span>
+    </div>
+  ) : null;
+
   const visibleOrders = useMemo(() => {
     if (isStatementView) return statementOrders;
     if (isAllView) return calendarOrdersBase;
@@ -1330,7 +1397,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // [전부 영구삭제] — 실수 누름 방지를 위해 모달에서 "전부삭제" 를 정확히 타이핑해야만
   // 백엔드 호출이 통과한다. 백엔드에서도 동일 확인을 검증해 양쪽에서 막는다.
   const openPurgeAllModal = () => {
-    if (trashOrders.length === 0) {
+    if (trashOrders.length === 0 && !trashTotal) {
       setFeedback({ type: "error", msg: "작업완료 목록이 비어 있습니다." });
       return;
     }
@@ -1975,7 +2042,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
       {isTrashView && (
         <p className="trash-hint">
-          작업완료 항목은 이동일로부터 {TRASH_RETENTION_DAYS}일 후 자동으로 완전 삭제됩니다.
+          작업완료 항목은 이동일로부터 {TRASH_RETENTION_DAYS}일(6개월) 후 자동으로 완전 삭제됩니다. 목록은 최근 30일씩 불러옵니다.
           (첨부·도안·미리보기·지시서 PDF 와 모든 기록이 사라지며 되돌릴 수 없습니다.)
         </p>
       )}
@@ -2023,6 +2090,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 {statementOrders.map(renderOrderCard)}
               </div>
             )}
+            {!loading && trashMoreBlock}
           </section>
         ) : (
           <>
@@ -2278,6 +2346,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 )}
               </>
             )}
+            {!loading && isTrashView && trashMoreBlock}
           </section>
           </>
         )}
@@ -2871,7 +2940,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           <div className="purge-all-modal">
             <h3 className="purge-all-title">전부 영구삭제</h3>
             <p className="purge-all-body">
-              작업완료의 <b>{trashOrders.length}건</b>을 모두 완전 삭제합니다.
+              작업완료의 <b>{trashTotal ?? trashOrders.length}건</b>을 모두 완전 삭제합니다.
+              {trashTotal != null && trashTotal > trashOrders.length && (
+                <> (화면에 안 펼친 옛날 건 포함)</>
+              )}
               <br />
               첨부 파일·도안·미리보기·지시서 PDF 까지 즉시 사라지며 되돌릴 수 없습니다.
             </p>

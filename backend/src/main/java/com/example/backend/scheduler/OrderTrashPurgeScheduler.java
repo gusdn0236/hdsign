@@ -18,13 +18,15 @@ import java.util.List;
 @RequiredArgsConstructor
 public class OrderTrashPurgeScheduler {
 
-    private static final int RETENTION_DAYS = 30;
+    // 2026-11-04: 30 → 180일(6개월). R2 무료한도(10GB) 안 — 월 ~0.5GB 기준 ~3GB.
+    // 목록은 CompletedOrderWindow 로 30일씩 나눠 내려줘 화면이 무거워지지 않게 함.
+    private static final int RETENTION_DAYS = com.example.backend.service.CompletedOrderWindow.RETENTION_DAYS;
 
     private final OrderRepository orderRepository;
     private final OrderArchiveService orderArchiveService;
     private final StorageUsageService storageUsageService;
 
-    // 매일 한국시간 새벽 3시: 작업완료(deletedAt) 로 이동된 지 30일 이상 경과한 주문을 완전 삭제.
+    // 매일 한국시간 새벽 3시: 작업완료(deletedAt) 로 이동된 지 RETENTION_DAYS 이상 경과한 주문을 완전 삭제.
     // 완전삭제 = R2 의 도안·미리보기·지시서 PDF·order_files 행 + Order 행까지 모두 하드 삭제.
     // (옛 아카이브 흐름 — 최소 레코드만 남기던 방식은 폐기. 30일 지나면 흔적 없이 사라진다.)
     // zone 미지정 시 Railway 컨테이너 타임존(UTC) → 한국시간 정오에 도는 셈이라 발주 피크에

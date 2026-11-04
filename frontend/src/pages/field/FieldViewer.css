@@ -236,6 +236,28 @@
 }
 .fv-empty.error { color: #b91c1c; }
 
+/* 완료 탭 '이전 30일 더보기' — 목록 끝(무한스크롤 감지점 겸용) */
+.fv-load-more {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    margin: 14px 0 6px;
+}
+.fv-load-more-btn {
+    padding: 8px 18px;
+    border: 1px solid #d4d4d8;
+    border-radius: 999px;
+    background: #fff;
+    color: #3f3f46;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.fv-load-more-btn:hover:not(:disabled) { background: #f4f4f5; }
+.fv-load-more-btn:disabled { opacity: 0.6; cursor: default; }
+.fv-load-more-hint { font-size: 11px; color: #a1a1aa; }
+
 .fv-cards {
     display: flex;
     flex-direction: column;

@@ -508,6 +508,26 @@
     border-color: #fecaca;
 }
 
+/* 완료 탭 '이전 30일 더보기' — 목록 끝(무한스크롤 감지점 겸용) */
+.ws-load-more {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    margin: 16px 0 8px;
+}
+.ws-load-more-btn {
+    padding: 11px 24px;
+    border: 1px solid #d4d4d8;
+    border-radius: 999px;
+    background: #fff;
+    color: #3f3f46;
+    font-size: 14px;
+    font-weight: 600;
+}
+.ws-load-more-btn:disabled { opacity: 0.6; }
+.ws-load-more-hint { font-size: 12px; color: #a1a1aa; }
+
 /* 부서 선택 모달 -------------------------------------------------- */
 .ws-dept-modal-backdrop {
     position: fixed;

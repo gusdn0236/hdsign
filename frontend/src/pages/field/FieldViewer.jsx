@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import WorksheetThumbnail from '../../components/common/WorksheetThumbnail.jsx';
 import KakaoShareButton from '../../components/common/KakaoShareButton.jsx';
 import { safeFileName } from '../../utils/shareImage.js';
+import { fetchCompletedPages, fetchCompletedPage, appendUnique } from '../../utils/completedPages.js';
 import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
 import { getStoredWorker as readWorker, setStoredWorker as writeWorker } from '../../data/workerStorage.js';
 import './FieldViewer.css';
@@ -66,8 +67,14 @@ function fsThumbOpenable(it) {
 
 export default function FieldViewer() {
     const [items, setItems] = useState([]);
-    // 발주관리 '작업완료' 탭(=deletedAt != null) 의 주문들. 30일 후 스케줄러가 완전삭제.
+    // 발주관리 '작업완료' 탭(=deletedAt != null) 의 주문들. 보관 6개월, 목록은 30일씩 받는다.
     const [completedItems, setCompletedItems] = useState([]);
+    const donePagesRef = useRef(1);                       // 펼친 30일 페이지 수(폴링도 이만큼 다시 받음)
+    const [donePages, setDonePages] = useState(1);
+    const [doneHasMore, setDoneHasMore] = useState(false);
+    const [doneLoadingMore, setDoneLoadingMore] = useState(false);
+    const doneLoadingMoreRef = useRef(false);
+    const doneSentinelRef = useRef(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
@@ -104,25 +111,25 @@ export default function FieldViewer() {
         const genAtStart = mutationGenRef.current;
         try {
             // 작업중(IN_PROGRESS) + 작업완료(deletedAt != null) 를 병렬 fetch. 각각 별도 엔드포인트.
-            const [activeRes, doneRes] = await Promise.all([
+            const [activeRes, done] = await Promise.all([
                 fetch(`${BASE_URL}/api/public/worksheets?_=${Date.now()}`, { cache: 'no-store' }),
-                fetch(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`, { cache: 'no-store' }),
+                // 작업완료 — 지금까지 펼친 30일 페이지들만(기본 최근 30일).
+                fetchCompletedPages(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`,
+                    donePagesRef.current, { cache: 'no-store' }),
             ]);
             if (!activeRes.ok) {
                 const body = await activeRes.json().catch(() => ({}));
                 throw new Error(body.message || '목록을 불러오지 못했습니다.');
             }
-            if (!doneRes.ok) {
-                const body = await doneRes.json().catch(() => ({}));
-                throw new Error(body.message || '작업완료 목록을 불러오지 못했습니다.');
-            }
-            const [activeData, doneData] = await Promise.all([activeRes.json(), doneRes.json()]);
+            const activeData = await activeRes.json();
+            const doneData = done.items;
             if (!aliveRef.current) return;
             // 백그라운드 폴링이 도는 사이 사용자가 완료/취소를 눌렀으면, 그 낙관적 갱신을
             // 폴링이 가져온 옛 데이터로 덮어쓰지 않도록 이번 응답은 버린다(다음 폴링이 반영).
             if (silent && mutationGenRef.current !== genAtStart) return;
             setItems(Array.isArray(activeData) ? activeData : []);
             setCompletedItems(Array.isArray(doneData) ? doneData : []);
+            setDoneHasMore(done.hasMore);
             setError('');
         } catch (err) {
             if (!aliveRef.current) return;
@@ -135,6 +142,41 @@ export default function FieldViewer() {
             if (manual) setRefreshing(false);
         }
     }, []);
+
+    // 완료 탭 '이전 30일' 더 받기 — 더보기 버튼 / 목록 끝 스크롤.
+    const loadMoreDone = useCallback(async () => {
+        if (doneLoadingMoreRef.current) return;
+        doneLoadingMoreRef.current = true;
+        setDoneLoadingMore(true);
+        // 도는 중인 폴링 응답(옛 페이지 수 기준)이 방금 붙인 목록을 덮지 않게 — 기존 race 가드 재사용.
+        mutationGenRef.current += 1;
+        try {
+            const page = donePagesRef.current;
+            const r = await fetchCompletedPage(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`,
+                page, { cache: 'no-store' });
+            if (!aliveRef.current) return;
+            setCompletedItems((prev) => appendUnique(prev, r.items));
+            donePagesRef.current = page + 1;
+            setDonePages(page + 1);
+            setDoneHasMore(r.hasMore);
+        } catch (err) {
+            if (aliveRef.current) setToast({ kind: 'error', text: err.message || '이전 작업완료를 불러오지 못했습니다.' });
+        } finally {
+            doneLoadingMoreRef.current = false;
+            if (aliveRef.current) setDoneLoadingMore(false);
+        }
+    }, []);
+
+    // 목록 끝 감지점이 화면에 닿으면 자동으로 이전 30일 로드(무한 스크롤).
+    useEffect(() => {
+        const el = doneSentinelRef.current;
+        if (!el || !doneHasMore || tab !== 'done') return undefined;
+        const io = new IntersectionObserver((entries) => {
+            if (entries.some((e) => e.isIntersecting)) loadMoreDone();
+        }, { rootMargin: '300px' });
+        io.observe(el);
+        return () => io.disconnect();
+    });
 
     // 현장 뷰어 전용 — launcher.vbs 가 띄우는 브라우저 --app 창은 페이지 파비콘을
     // 작업표시줄/제목줄 아이콘으로 쓴다. 사이트 기본 파비콘(검정 HD 로고) 대신
@@ -908,6 +950,22 @@ export default function FieldViewer() {
                         );
                     })}
                 </div>
+
+                {!loading && !error && tab === 'done' && (doneHasMore || doneLoadingMore) && (
+                    <div className="fv-load-more" ref={doneSentinelRef}>
+                        <button
+                            type="button"
+                            className="fv-load-more-btn"
+                            onClick={loadMoreDone}
+                            disabled={doneLoadingMore}
+                        >
+                            {doneLoadingMore
+                                ? '불러오는 중…'
+                                : (searchTerm.trim() ? '이전 30일에서 더 찾기' : '이전 30일 더보기')}
+                        </button>
+                        <span className="fv-load-more-hint">최근 {donePages * 30}일치 표시 중</span>
+                    </div>
+                )}
             </main>
 
             {toast && (

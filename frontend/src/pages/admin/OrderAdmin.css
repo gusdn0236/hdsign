@@ -941,6 +941,28 @@
   color: #6b7280;
 }
 
+/* 작업완료 '이전 30일 더보기' — 목록 끝(무한스크롤 감지점 겸용) */
+.trash-load-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 18px 0 8px;
+}
+.trash-load-more-btn {
+  padding: 9px 22px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.trash-load-more-btn:hover:not(:disabled) { background: #f1f5f9; }
+.trash-load-more-btn:disabled { opacity: 0.6; cursor: default; }
+.trash-load-more-hint { font-size: 11.5px; color: #94a3b8; }
+
 .next-status-btn:disabled {
   opacity: 0.55;
   cursor: default;

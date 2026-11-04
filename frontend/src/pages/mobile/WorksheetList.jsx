@@ -5,12 +5,16 @@ import { ALL_WORKERS, matchesWorker } from '../../data/workers.js';
 import { getStoredWorker, setStoredWorker } from '../../data/workerStorage.js';
 import { applyPushMode, getStoredPushMode, isPushSupported } from '../../utils/push.js';
 import { rememberAllListItems } from './pdfPrefetch.js';
+import { fetchCompletedPages, fetchCompletedPage, appendUnique } from '../../utils/completedPages.js';
 import './WorksheetList.css';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 let worksheetListSnapshot = {
     items: null,
     completedItems: null,
+    // 완료 목록은 30일씩 — 펼친 페이지 수/더 있음 여부도 화면 복귀 시 유지.
+    donePages: 1,
+    doneHasMore: false,
     syncedAt: null,
     scrollY: 0,
     dateFilter: 'all',
@@ -163,6 +167,11 @@ export default function WorksheetList() {
     const [items, setItems] = useState(() => worksheetListSnapshot.items || []);
     // 발주관리 [작업완료] 탭(=deletedAt != null) 의 마감 건들. 30일 후 자동 삭제 전까지 남아 있음.
     const [completedItems, setCompletedItems] = useState(() => worksheetListSnapshot.completedItems || []);
+    const [donePages, setDonePages] = useState(() => worksheetListSnapshot.donePages || 1);
+    const [doneHasMore, setDoneHasMore] = useState(() => !!worksheetListSnapshot.doneHasMore);
+    const [doneLoadingMore, setDoneLoadingMore] = useState(false);
+    const doneLoadingMoreRef = useRef(false);
+    const doneSentinelRef = useRef(null);
     const [loading, setLoading] = useState(() => !worksheetListSnapshot.items);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
@@ -277,27 +286,31 @@ export default function WorksheetList() {
     const fetchList = useCallback(async ({ manual = false } = {}) => {
         if (manual) setRefreshing(true);
         try {
-            const [activeRes, doneRes] = await Promise.all([
+            const [activeRes, done] = await Promise.all([
                 fetch(`${BASE_URL}/api/public/worksheets?_=${Date.now()}`, { cache: 'no-store' }),
-                fetch(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`, { cache: 'no-store' }),
+                // 완료 — 지금까지 펼친 30일 페이지들만(기본 최근 30일). 실패해도 진행중 흐름은 계속.
+                fetchCompletedPages(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`,
+                    worksheetListSnapshot.donePages || 1, { cache: 'no-store' })
+                    .catch(() => ({ items: [], hasMore: false })),
             ]);
             if (!activeRes.ok) {
                 const body = await activeRes.json().catch(() => ({}));
                 throw new Error(body.message || '목록을 불러오지 못했습니다.');
             }
             const data = await activeRes.json();
-            const doneData = doneRes.ok ? await doneRes.json().catch(() => []) : [];
             if (!aliveRef.current) return;
             const nextItems = Array.isArray(data) ? data : [];
-            const nextCompleted = Array.isArray(doneData) ? doneData : [];
+            const nextCompleted = Array.isArray(done.items) ? done.items : [];
             worksheetListSnapshot = {
                 ...worksheetListSnapshot,
                 items: nextItems,
                 completedItems: nextCompleted,
+                doneHasMore: done.hasMore,
                 syncedAt: new Date(),
             };
             setItems(nextItems);
             setCompletedItems(nextCompleted);
+            setDoneHasMore(done.hasMore);
             setError('');
             setLastSyncedAt(worksheetListSnapshot.syncedAt);
         } catch (err) {
@@ -309,6 +322,45 @@ export default function WorksheetList() {
             if (manual) setRefreshing(false);
         }
     }, []);
+
+    // 완료 탭 '이전 30일' 더 받기 — 더보기 버튼 / 목록 끝 스크롤.
+    const loadMoreDone = useCallback(async () => {
+        if (doneLoadingMoreRef.current) return;
+        doneLoadingMoreRef.current = true;
+        setDoneLoadingMore(true);
+        try {
+            const page = worksheetListSnapshot.donePages || 1;
+            const r = await fetchCompletedPage(`${BASE_URL}/api/public/worksheets/completed?_=${Date.now()}`,
+                page, { cache: 'no-store' });
+            if (!aliveRef.current) return;
+            const merged = appendUnique(worksheetListSnapshot.completedItems || [], r.items);
+            worksheetListSnapshot = {
+                ...worksheetListSnapshot,
+                completedItems: merged,
+                donePages: page + 1,
+                doneHasMore: r.hasMore,
+            };
+            setCompletedItems(merged);
+            setDonePages(page + 1);
+            setDoneHasMore(r.hasMore);
+        } catch (err) {
+            if (aliveRef.current) setError(err.message || '이전 완료 작업건을 불러오지 못했습니다.');
+        } finally {
+            doneLoadingMoreRef.current = false;
+            if (aliveRef.current) setDoneLoadingMore(false);
+        }
+    }, []);
+
+    // 목록 끝 감지점이 화면에 닿으면 자동으로 이전 30일 로드(무한 스크롤).
+    useEffect(() => {
+        const el = doneSentinelRef.current;
+        if (!el || !doneHasMore || sortMode !== 'completed') return undefined;
+        const io = new IntersectionObserver((entries) => {
+            if (entries.some((e) => e.isIntersecting)) loadMoreDone();
+        }, { rootMargin: '300px' });
+        io.observe(el);
+        return () => io.disconnect();
+    });
 
     // 캐시버스터(_v) 가 URL 에 남아 있으면 한 번 들어온 뒤 깨끗하게 제거.
     useEffect(() => {
@@ -689,6 +741,20 @@ export default function WorksheetList() {
                     </section>
                 );
             })}
+
+            {!loading && sortMode === 'completed' && (doneHasMore || doneLoadingMore) && (
+                <div className="ws-load-more" ref={doneSentinelRef}>
+                    <button
+                        type="button"
+                        className="ws-load-more-btn"
+                        onClick={loadMoreDone}
+                        disabled={doneLoadingMore}
+                    >
+                        {doneLoadingMore ? '불러오는 중…' : '이전 30일 더보기'}
+                    </button>
+                    <span className="ws-load-more-hint">최근 {donePages * 30}일치 표시 중</span>
+                </div>
+            )}
 
             {showWorkerModal && (
                 <div

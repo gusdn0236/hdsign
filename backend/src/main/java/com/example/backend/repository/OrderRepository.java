@@ -30,7 +30,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByDeletedAtIsNotNullOrderByDeletedAtDesc();
 
-    // 30일 자동 완전삭제 스케줄러용.
+    // 작업완료 목록 30일 창 단위 조회(CompletedOrderWindow) — [from, to).
+    @EntityGraph(attributePaths = {"client", "files"})
+    List<Order> findByDeletedAtGreaterThanEqualAndDeletedAtLessThanOrderByDeletedAtDesc(
+            LocalDateTime from, LocalDateTime to);
+
+    // 창보다 더 옛날 작업완료가 남아 있는지 — '더보기' 표시 여부.
+    boolean existsByDeletedAtLessThan(LocalDateTime t);
+
+    long countByDeletedAtIsNotNull();
+
+    // 자동 완전삭제 스케줄러용 (보관기간 = CompletedOrderWindow.RETENTION_DAYS).
     List<Order> findByDeletedAtBefore(LocalDateTime cutoff);
 
     // 매일 오전 10시 자동 작업완료 스케줄러용 — 납기 지난 '작업중' 건만 대상.

@@ -125,16 +125,29 @@ public class PublicWorksheetController {
      * 무인증(기존 list 와 동일 보안 수준).
      * 응답 필드는 list 와 동일 + 작업완료 처리일(deletedAt) 포함.
      */
+    // 보관 6개월 — 30일 창 단위(CompletedOrderWindow).
+    //  - page 없음: 최근 30일 배열(옛 클라이언트·현장 캐시 호환).
+    //  - page=N   : {items, page, hasMore, nextPage, windowDays}
     @GetMapping("/completed")
-    public ResponseEntity<?> completed() {
+    public ResponseEntity<?> completed(@RequestParam(required = false) Integer page) {
+        int p = com.example.backend.service.CompletedOrderWindow.clampPage(page);
+        java.time.LocalDateTime[] r = com.example.backend.service.CompletedOrderWindow.range(p);
         LocalDate today = LocalDate.now();
-        List<Map<String, Object>> body = new ArrayList<>();
+        List<Map<String, Object>> items = new ArrayList<>();
         Map<Long, Integer> evidenceCounts = loadEvidenceCounts();
-        for (Order o : orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc()) {
+        for (Order o : orderRepository.findByDeletedAtGreaterThanEqualAndDeletedAtLessThanOrderByDeletedAtDesc(r[0], r[1])) {
             Map<String, Object> item = toSummary(o, today, evidenceCounts);
             item.put("deletedAt", o.getDeletedAt() != null ? o.getDeletedAt().toString() : null);
-            body.add(item);
+            items.add(item);
         }
+        if (page == null) return ResponseEntity.ok(items);
+        boolean hasMore = orderRepository.existsByDeletedAtLessThan(r[0]);
+        Map<String, Object> body = new HashMap<>();
+        body.put("items", items);
+        body.put("page", p);
+        body.put("hasMore", hasMore);
+        body.put("nextPage", hasMore ? p + 1 : null);
+        body.put("windowDays", com.example.backend.service.CompletedOrderWindow.WINDOW_DAYS);
         return ResponseEntity.ok(body);
     }
 
