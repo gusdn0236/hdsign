@@ -1521,6 +1521,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     setGridDel(null);
   };
 
+  // 지시서 위 점/말풍선만 떼어낸다 — 명세서 행(값)은 그대로 남김. 다시 번호를 끌어다 놓으면 재배치.
+  const unplacePin = (i: number) => {
+    setPins((prev) => prev.map((p, j) => (j === i ? { ...p, dragged: false } : p)));
+    setSelPin(null);
+    setSelectedPin((s) => (s === i ? null : s));
+  };
+
   // 표의 동그라미 숫자를 다른 숫자 칸으로 끌어다 놓으면 두 행을 맞바꾼다(예: 1번을 3번 칸에 → 3,2,1).
   const swapRows = (a: number, b: number) => {
     setPins((prev) => {
@@ -2379,7 +2386,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     ctx.textBaseline = 'middle';
     pins.forEach((p, i) => {
       // 화면 말풍선과 같은 2줄: (위) "품목" 규격 (아래) 단가원 ×수량개 = 합계원.
-      if (!pinLabel(p)) return;
+      // 지시서에 배치 안 된(빼낸·글자AI 등) 행은 화면처럼 그리지 않는다.
+      if (!p.dragged || !pinLabel(p)) return;
       const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
       const dp = num(p.vals['단가']);
       const qty = num(p.vals['수량']) || 1;
@@ -3251,7 +3259,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                       transform: `scale(${1 / zoom})`,
                       transformOrigin: '0 0',
                     }}
-                    title={`드래그=이동 · 클릭=삭제 (${i + 1}번 행)`}
+                    title={`드래그=이동 · 클릭=지시서에서 빼기 (${i + 1}번 행은 명세서에 남음)`}
                     onMouseDown={(e) => startPinDrag(e, i)}
                   >
                     {i + 1}
@@ -3270,9 +3278,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     transformOrigin: '0 0',
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
+                  title="지시서에서 점·말풍선만 지웁니다 (명세서 행은 그대로)"
                   onClick={(e) => {
                     e.stopPropagation();
-                    deletePin(selPin);
+                    unplacePin(selPin);
                   }}
                 >
                   🗑 삭제
