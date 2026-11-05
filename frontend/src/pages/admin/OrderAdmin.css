@@ -3069,31 +3069,136 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   cursor: not-allowed;
 }
 
-/* 명세서 탭 — 명세서 검색 줄 + 결과 카드 아래 걸린 행 */
-.stmt-search-row {
+/* 명세서 탭 — 명세서 검색 패널 */
+.stmt-search {
+  margin: 0 0 16px;
+  padding: 14px 16px 16px;
+  background: #fff;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.stmt-search-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 14px;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 12px;
 }
-.stmt-search-label {
-  font-weight: 700;
-  font-size: 13px;
-  color: #334155;
+.stmt-search-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #18181b;
+  letter-spacing: -0.01em;
 }
-.stmt-search-input {
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  font-size: 13px;
+.stmt-search-hint {
+  font-size: 12px;
+  color: #a1a1aa;
+}
+.stmt-search-meta {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: #005f73;
+}
+.stmt-search-fields {
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) repeat(3, minmax(110px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+.stmt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
 }
-.stmt-search-code { width: 160px; }
-.stmt-search-spec { width: 130px; }
-.stmt-search-text { width: 180px; }
-.stmt-search-meta { font-size: 12px; color: #64748b; }
+.stmt-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #71717a;
+  letter-spacing: 0.02em;
+}
+.stmt-input {
+  height: 36px;
+  width: 100%;
+  padding: 0 11px;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  background: #fff;
+  color: #18181b;
+  font-size: 13px;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.stmt-input::placeholder { color: #c4c4cc; }
+.stmt-input:focus {
+  outline: none;
+  border-color: #005f73;
+  box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.12);
+}
+/* 거래처 칸 — 기존 칩 입력 + 드롭다운을 같은 높이로 */
+.stmt-field-client {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.stmt-field-client .calendar-chip-box {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+.stmt-field-client .sort-select {
+  height: 36px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+  max-width: 130px;
+}
+.stmt-field-client .sort-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 6px 8px;
+}
+.stmt-search-actions {
+  display: flex;
+  gap: 6px;
+}
+.stmt-btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.stmt-btn--primary {
+  border: 1px solid #005f73;
+  background: #005f73;
+  color: #fff;
+}
+.stmt-btn--primary:hover:not(:disabled) { background: #004b5b; }
+.stmt-btn--ghost {
+  border: 1px solid #d4d4d8;
+  background: #fff;
+  color: #52525b;
+}
+.stmt-btn--ghost:hover:not(:disabled) { border-color: #a1a1aa; color: #18181b; }
+.stmt-btn:disabled { opacity: 0.45; cursor: default; }
+@media (max-width: 1100px) {
+  .stmt-search-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stmt-field--client { grid-column: 1 / -1; }
+  .stmt-search-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}
+@media (max-width: 640px) {
+  .stmt-search { padding: 12px; }
+  .stmt-search-fields { grid-template-columns: 1fr; }
+  .stmt-search-meta { margin-left: 0; }
+  .stmt-search-actions .stmt-btn { flex: 1; }
+}
 .stmt-hit-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .stmt-hit-rows {
   list-style: none;
@@ -3109,6 +3214,3 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
 .stmt-hit-rows span { color: #0a7d8c; }
 .stmt-hit-rows em { font-style: normal; color: #64748b; }
 .stmt-hit-more { color: #64748b; }
-@media (max-width: 640px) {
-  .stmt-search-code, .stmt-search-spec, .stmt-search-text { width: 100%; }
-}

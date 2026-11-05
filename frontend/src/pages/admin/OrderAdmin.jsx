@@ -2004,9 +2004,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               type="search"
               className="calendar-chip-input"
               placeholder={
-                calendarClientChips.length === 0
-                  ? "거래처 검색 — Enter 로 해당 카드 위치로 이동"
-                  : "거래처 검색..."
+                isStatementView
+                  ? (calendarClientChips.length === 0 ? "나라광고" : "")
+                  : calendarClientChips.length === 0
+                    ? "거래처 검색 — Enter 로 해당 카드 위치로 이동"
+                    : "거래처 검색..."
               }
               value={clientSearch}
               onChange={(e) => setClientSearch(e.target.value)}
@@ -2184,51 +2186,81 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </span>
             </h3>
             {/* 명세서 검색 — 같은 행에서 모두 맞는 것만(AND). 규격은 500*100 / 500 100 / 100*500 모두 같은 것. */}
-            <div className="stmt-search-row">
-              <span className="stmt-search-label">명세서 검색</span>
-              {clientFilterControls}
-              <input
-                type="text"
-                className="stmt-search-input stmt-search-code"
-                list="stmt-item-codes"
-                value={stmtCode}
-                onChange={(e) => setStmtCode(e.target.value)}
-                onKeyDown={stmtEnter}
-                placeholder="품목코드 (예: 아크릴5T)"
-              />
-              <datalist id="stmt-item-codes">
-                {ITEM_CODES.map((c) => <option key={c} value={c} />)}
-              </datalist>
-              <input
-                type="text"
-                className="stmt-search-input stmt-search-spec"
-                value={stmtSpec}
-                onChange={(e) => setStmtSpec(e.target.value)}
-                onKeyDown={stmtEnter}
-                placeholder="규격 (예: 500*100)"
-              />
-              <input
-                type="text"
-                className="stmt-search-input stmt-search-text"
-                value={stmtText}
-                onChange={(e) => setStmtText(e.target.value)}
-                onKeyDown={stmtEnter}
-                placeholder="품목 텍스트 (예: 포장전용)"
-              />
-              <button type="button" className="sort-btn" onClick={runStmtSearch} disabled={stmtSearching}>
-                {stmtSearching ? "검색 중..." : "검색"}
-              </button>
-              {(stmtResult || stmtCode || stmtSpec || stmtText) && (
-                <button type="button" className="sort-btn" onClick={clearStmtSearch} title="명세서 검색 해제 — 평소 목록으로">
-                  초기화
-                </button>
-              )}
-              {stmtResult && (
-                <span className="stmt-search-meta">
-                  {stmtResult.truncated ? "결과가 많아 최신 300건까지만 표시 · " : ""}
-                  {stmtResult.tookMs != null ? `${(stmtResult.tookMs / 1000).toFixed(2)}초` : ""}
+            <div className="stmt-search">
+              <div className="stmt-search-head">
+                <span className="stmt-search-title">명세서 검색</span>
+                <span className="stmt-search-hint">
+                  같은 행에 모두 있는 명세서만 · 규격은 가로·세로 순서 무관 · 3년치 전체
                 </span>
-              )}
+                {stmtResult && (
+                  <span className="stmt-search-meta">
+                    {stmtResult.truncated ? "최신 300건까지만 표시 · " : ""}
+                    {stmtResult.tookMs != null ? `${(stmtResult.tookMs / 1000).toFixed(2)}초` : ""}
+                  </span>
+                )}
+              </div>
+              <div className="stmt-search-fields">
+                <div className="stmt-field stmt-field--client">
+                  <span className="stmt-field-label">거래처</span>
+                  <div className="stmt-field-client">{clientFilterControls}</div>
+                </div>
+                <label className="stmt-field">
+                  <span className="stmt-field-label">품목코드</span>
+                  <input
+                    type="text"
+                    className="stmt-input"
+                    list="stmt-item-codes"
+                    value={stmtCode}
+                    onChange={(e) => setStmtCode(e.target.value)}
+                    onKeyDown={stmtEnter}
+                    placeholder="아크릴5T"
+                  />
+                </label>
+                <datalist id="stmt-item-codes">
+                  {ITEM_CODES.map((c) => <option key={c} value={c} />)}
+                </datalist>
+                <label className="stmt-field">
+                  <span className="stmt-field-label">규격</span>
+                  <input
+                    type="text"
+                    className="stmt-input"
+                    value={stmtSpec}
+                    onChange={(e) => setStmtSpec(e.target.value)}
+                    onKeyDown={stmtEnter}
+                    placeholder="500*100"
+                  />
+                </label>
+                <label className="stmt-field">
+                  <span className="stmt-field-label">품목 텍스트</span>
+                  <input
+                    type="text"
+                    className="stmt-input"
+                    value={stmtText}
+                    onChange={(e) => setStmtText(e.target.value)}
+                    onKeyDown={stmtEnter}
+                    placeholder="포장전용"
+                  />
+                </label>
+                <div className="stmt-search-actions">
+                  <button
+                    type="button"
+                    className="stmt-btn stmt-btn--primary"
+                    onClick={runStmtSearch}
+                    disabled={stmtSearching}
+                  >
+                    {stmtSearching ? "검색 중…" : "검색"}
+                  </button>
+                  <button
+                    type="button"
+                    className="stmt-btn stmt-btn--ghost"
+                    onClick={clearStmtSearch}
+                    disabled={!(stmtResult || stmtCode || stmtSpec || stmtText)}
+                    title="명세서 검색 해제 — 평소 목록으로"
+                  >
+                    초기화
+                  </button>
+                </div>
+              </div>
             </div>
             {loading ? (
               <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
