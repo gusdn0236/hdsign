@@ -67,7 +67,7 @@ function fsThumbOpenable(it) {
 
 export default function FieldViewer() {
     const [items, setItems] = useState([]);
-    // 발주관리 '작업완료' 탭(=deletedAt != null) 의 주문들. 보관 6개월, 목록은 30일씩 받는다.
+    // 발주관리 '작업완료' 탭(=deletedAt != null) 의 주문들. 보관 3년, 목록은 30일씩 받는다.
     const [completedItems, setCompletedItems] = useState([]);
     const donePagesRef = useRef(1);                       // 펼친 30일 페이지 수(폴링도 이만큼 다시 받음)
     const [donePages, setDonePages] = useState(1);

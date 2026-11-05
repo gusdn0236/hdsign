@@ -18,7 +18,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class OrderTrashPurgeScheduler {
 
-    // 2026-11-04: 30 → 180일(6개월). R2 무료한도(10GB) 안 — 월 ~0.5GB 기준 ~3GB.
+    // 2026-11-04: 30 → 180일, 2026-11-05: → 1095일(3년). 값은 CompletedOrderWindow 한 곳에서 관리.
     // 목록은 CompletedOrderWindow 로 30일씩 나눠 내려줘 화면이 무거워지지 않게 함.
     private static final int RETENTION_DAYS = com.example.backend.service.CompletedOrderWindow.RETENTION_DAYS;
 

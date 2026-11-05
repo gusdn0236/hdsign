@@ -154,7 +154,7 @@ public class AdminOrderController {
                 orderRepository.findByDeletedAtIsNullOrderByCreatedAtDesc()));
     }
 
-    // 작업완료(휴지통) 목록 — 보관 6개월(CompletedOrderWindow.RETENTION_DAYS) 후 자동 완전삭제.
+    // 작업완료(휴지통) 목록 — 보관 3년(CompletedOrderWindow.RETENTION_DAYS) 후 자동 완전삭제.
     // 30일 창 단위로 나눠 내려준다(화면 무거움 방지).
     //  - page 없음: 최근 30일 배열(옛 클라이언트 호환).
     //  - page=N   : {items, page, hasMore, nextPage, total, windowDays, retentionDays}
@@ -474,7 +474,10 @@ public class AdminOrderController {
                     .body(Map.of("message", "confirmation 값이 일치하지 않습니다. \"전부삭제\" 를 정확히 입력해 주세요."));
         }
 
-        List<Order> targets = orderRepository.findByDeletedAtIsNotNullOrderByDeletedAtDesc();
+        // 작업완료 탭에 보이는 최근 30일 창만 지운다. 그보다 옛날 건은 명세서 탭에서 찾는 3년 보관분이라
+        // '전부 영구삭제' 한 번에 몇 년치 지시서가 날아가지 않게 막는다(옛 건은 보관기간 만료 시 스케줄러가 정리).
+        java.time.LocalDateTime[] win = com.example.backend.service.CompletedOrderWindow.range(0);
+        List<Order> targets = orderRepository.findByDeletedAtGreaterThanEqualAndDeletedAtLessThanOrderByDeletedAtDesc(win[0], win[1]);
         int deleted = 0;
         int failed = 0;
         for (Order order : targets) {

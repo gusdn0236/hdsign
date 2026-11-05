@@ -1528,14 +1528,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     setSelectedPin((s) => (s === i ? null : s));
   };
 
-  // 표의 동그라미 숫자를 다른 숫자 칸으로 끌어다 놓으면 두 행을 맞바꾼다(예: 1번을 3번 칸에 → 3,2,1).
-  const swapRows = (a: number, b: number) => {
+  // 표의 동그라미 숫자를 다른 숫자 칸으로 끌어다 놓으면 그 자리로 옮기고 사이 행들은 한 칸씩 밀린다
+  // (예: 4번을 1번 칸에 → 4,1,2,3 / 1번을 4번 칸에 → 2,3,4,1). 맞바꾸기 아님.
+  const moveRow = (a: number, b: number) => {
     setPins((prev) => {
       if (a === b || a < 0 || b < 0 || a >= prev.length || b >= prev.length || !prev[a] || !prev[b]) return prev;
       const next = [...prev];
-      const t = next[a];
-      next[a] = next[b];
-      next[b] = t;
+      const [moved] = next.splice(a, 1);
+      next.splice(b, 0, moved);
       return next;
     });
     setGridDel(null);
@@ -3523,7 +3523,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     >
                       <td
                         className="rn"
-                        // 다른 행의 동그라미를 이 칸 동그라미로 끌어다 놓으면 두 행을 맞바꾼다(행 재정렬).
+                        // 다른 행의 동그라미를 이 칸 동그라미로 끌어다 놓으면 그 자리로 옮기고 사이 행은 한 칸씩 밀린다(행 재정렬).
                         onDragOver={(e) => {
                           if (p && e.dataTransfer.types.includes('application/x-aq-pin') && dragRow !== i) {
                             e.preventDefault();
@@ -3539,7 +3539,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           e.stopPropagation();
                           const from = parseInt(raw, 10);
                           setDragOverRow(null);
-                          if (!Number.isNaN(from) && from !== i) swapRows(from, i);
+                          if (!Number.isNaN(from) && from !== i) moveRow(from, i);
                         }}
                       >
                         {(p || isOcrTgt) && (
@@ -3563,7 +3563,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                               const r = e.currentTarget.getBoundingClientRect();
                               setGridDel((g) => (g && g.row === i ? null : { row: i, left: r.right + 6, top: r.top + r.height / 2 }));
                             }}
-                            title={p ? '클릭=삭제 · 드래그→지시서=말풍선 · 드래그→다른 번호=행 바꾸기' : undefined}
+                            title={p ? '클릭=삭제 · 드래그→지시서=말풍선 · 드래그→다른 번호=그 자리로 옮기기' : undefined}
                           >
                             {i + 1}
                           </span>

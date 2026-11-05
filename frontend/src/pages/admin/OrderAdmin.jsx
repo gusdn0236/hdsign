@@ -46,8 +46,8 @@ const STATUS_META = {
 
 const STATUS_ORDER = ["RECEIVED", "IN_PROGRESS", "COMPLETED"];
 
-// 작업완료 보관 일수 — 백엔드 CompletedOrderWindow.RETENTION_DAYS 와 같게(2026-11-04 30→180).
-const TRASH_RETENTION_DAYS = 180;
+// 작업완료 보관 일수 — 백엔드 CompletedOrderWindow.RETENTION_DAYS 와 같게(2026-11-04 30→180, 11-05 →1095=3년).
+const TRASH_RETENTION_DAYS = 1095;
 
 const DELIVERY_LABELS = {
   CARGO: "화물 발송",
@@ -477,18 +477,29 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     if (!silent) setLoading(true);
     try {
       const auth = { headers: { Authorization: `Bearer ${token}` } };
+      // 20초 자동 새로고침(silent)은 최근 30일(page 0)만 다시 받고, 스크롤로 펼쳐둔 옛날 페이지는 그대로 둔다.
+      // 명세서 탭에서 1~3년치까지 내려가 있어도 폴링마다 수십 페이지를 재요청하지 않게.
+      const partial = silent && trashPagesRef.current > 1;
       const [activeRes, trash] = await Promise.all([
         fetch(`${BASE_URL}/api/admin/orders`, auth),
-        // 작업완료 — 지금까지 펼친 30일 페이지들만(기본 최근 30일).
-        fetchCompletedPages(`${BASE_URL}/api/admin/orders/trash`, trashPagesRef.current, auth),
+        fetchCompletedPages(`${BASE_URL}/api/admin/orders/trash`, partial ? 1 : trashPagesRef.current, auth),
       ]);
       if (!activeRes.ok) throw new Error("주문 목록을 불러오지 못했습니다.");
       const activeData = await activeRes.json();
       const filterByType = (arr) =>
         Array.isArray(arr) ? arr.filter((o) => o.requestType === requestType) : [];
       setOrders(filterByType(activeData));
-      setTrashOrders(filterByType(trash.items));
-      setTrashHasMore(trash.hasMore);
+      if (partial) {
+        const cutoff = oldestLoadedDate(1).getTime();
+        const fresh = filterByType(trash.items);
+        setTrashOrders((prev) => appendUnique(
+          fresh,
+          prev.filter((o) => o.deletedAt && new Date(o.deletedAt).getTime() < cutoff),
+        ));
+      } else {
+        setTrashOrders(filterByType(trash.items));
+        setTrashHasMore(trash.hasMore);
+      }
       setTrashTotal(trash.total);
     } catch (err) {
       if (!silent) setFeedback({ type: "error", msg: err.message || "주문 목록 조회 중 오류가 발생했습니다." });
@@ -734,8 +745,18 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }, 0);
   }, [filteredOrders, isOrderPage]);
 
+  // 작업완료 탭은 최근 30일만 보여준다(보관 3년은 명세서 탭에서 옛 지시서를 찾기 위한 것).
+  // 명세서 탭에서 '더보기'로 펼친 옛날 건이 trashOrders 에 섞여 있어도 여기선 걸러낸다.
+  const trashRecentOrders = useMemo(() => {
+    const cutoff = oldestLoadedDate(1).getTime();
+    return trashOrders.filter((o) => {
+      const t = o.deletedAt ? new Date(o.deletedAt).getTime() : NaN;
+      return !Number.isFinite(t) || t >= cutoff;
+    });
+  }, [trashOrders]);
+
   const statusFilteredOrders = useMemo(() => {
-    if (activeFilter === "TRASH") return trashOrders;
+    if (activeFilter === "TRASH") return trashRecentOrders;
     // 지연 — 휴지통 가지 않은 모든 활성 주문 중 dueDate 가 오늘 이전. 상태(IN_PROGRESS/COMPLETED/RECEIVED)
     // 무관 — overdueCount 와 같은 기준이라 수치와 보이는 카드 수가 일치.
     if (activeFilter === "OVERDUE") {
@@ -882,12 +903,6 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   };
   const calendarShowAll = () => setSelectedCalendarDate(null);
 
-  // 작업완료 달력을 아직 안 받은 옛날 달로 넘기면 그 달까지 30일씩 이어서 받는다.
-  useEffect(() => {
-    if (!isTrashView || !trashHasMore || trashLoadingMore) return;
-    if (calendarMonth < oldestLoadedDate(trashPages)) loadMoreTrash();
-  }, [isTrashView, trashHasMore, trashLoadingMore, calendarMonth, trashPages, loadMoreTrash]);
-
   // 지연·작업완료 필터 진입 시 자동 전체보기 — 과거 날짜 산재라 단일 일자 뷰면 빈 화면이 흔함.
   // 한 번에 모든 카드를 날짜별 그룹으로 보여줘야 즉시 작업 가능.
   useEffect(() => {
@@ -938,8 +953,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
   // 모달 prev/next 의 "현재 화면" 대상 — 명세서 탭은 최신순 평면 목록, 달력 전체보기면 필터된 모든 주문,
   // 그 외엔 선택 일자 카드. 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과.
-  // 작업완료/명세서 탭 목록 끝 — '이전 30일 더보기' 버튼 + 무한스크롤 감지점(같은 요소).
-  const trashMoreBlock = (isTrashView || isStatementView) && (trashHasMore || trashLoadingMore) ? (
+  // 명세서 탭 목록 끝 — '이전 30일 더보기' 버튼 + 무한스크롤 감지점(같은 요소).
+  // 작업완료 탭은 최근 30일만(더보기 없음).
+  const trashMoreBlock = isStatementView && (trashHasMore || trashLoadingMore) ? (
     <div className="trash-load-more" ref={trashSentinelRef}>
       <button
         type="button"
@@ -949,7 +965,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       >
         {trashLoadingMore ? "불러오는 중..." : "작업완료 이전 30일 더보기"}
       </button>
-      <span className="trash-load-more-hint">작업완료는 최근 {trashPages * 30}일치 표시 중 (보관 {TRASH_RETENTION_DAYS}일)</span>
+      <span className="trash-load-more-hint">최근 {trashPages * 30}일치 표시 중 (보관 3년)</span>
     </div>
   ) : null;
 
@@ -1397,7 +1413,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // [전부 영구삭제] — 실수 누름 방지를 위해 모달에서 "전부삭제" 를 정확히 타이핑해야만
   // 백엔드 호출이 통과한다. 백엔드에서도 동일 확인을 검증해 양쪽에서 막는다.
   const openPurgeAllModal = () => {
-    if (trashOrders.length === 0 && !trashTotal) {
+    if (trashRecentOrders.length === 0) {
       setFeedback({ type: "error", msg: "작업완료 목록이 비어 있습니다." });
       return;
     }
@@ -1424,7 +1440,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       const data = await res.json();
       const deleted = Number(data?.deleted ?? 0);
       const failed = Number(data?.failed ?? 0);
-      setTrashOrders([]);
+      // 지운 건 최근 30일치뿐 — 명세서 탭에 펼쳐둔 옛날 건은 남긴다.
+      const purgeCutoff = oldestLoadedDate(1).getTime();
+      setTrashOrders((prev) => prev.filter((o) => o.deletedAt && new Date(o.deletedAt).getTime() < purgeCutoff));
       if (selectedOrderId) setSelectedOrderId(null);
       setPurgeAllModalOpen(false);
       setPurgeConfirmText("");
@@ -2042,7 +2060,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
 
       {isTrashView && (
         <p className="trash-hint">
-          작업완료 항목은 이동일로부터 {TRASH_RETENTION_DAYS}일(6개월) 후 자동으로 완전 삭제됩니다. 목록은 최근 30일씩 불러옵니다.
+          작업완료 탭에는 최근 30일만 표시됩니다. 지시서는 명세서 탭에서 3년까지 찾을 수 있고, 그 뒤 자동으로 완전 삭제됩니다. [전부 영구삭제]도 이 탭에 보이는 최근 30일치만 지웁니다.
           (첨부·도안·미리보기·지시서 PDF 와 모든 기록이 사라지며 되돌릴 수 없습니다.)
         </p>
       )}
@@ -2203,11 +2221,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           )}
 
           {/* 작업완료 탭 — 달력 아래, 작업카드 위에 다중 선택/전부 영구삭제 툴바. */}
-          {isTrashView && trashOrders.length > 0 && (
+          {isTrashView && trashRecentOrders.length > 0 && (
             <div className={`bulk-select-row bulk-select-row--trash ${bulkSelectMode ? "is-active" : ""}`}>
               {!bulkSelectMode ? (
                 <>
-                  <span className="bulk-action-text">작업완료 {trashOrders.length}건</span>
+                  <span className="bulk-action-text">작업완료 {trashRecentOrders.length}건</span>
                   <button
                     type="button"
                     className="bulk-select-toggle"
@@ -2940,10 +2958,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           <div className="purge-all-modal">
             <h3 className="purge-all-title">전부 영구삭제</h3>
             <p className="purge-all-body">
-              작업완료의 <b>{trashTotal ?? trashOrders.length}건</b>을 모두 완전 삭제합니다.
-              {trashTotal != null && trashTotal > trashOrders.length && (
-                <> (화면에 안 펼친 옛날 건 포함)</>
-              )}
+              작업완료 탭에 보이는 최근 30일치 <b>{trashRecentOrders.length}건</b>을 모두 완전 삭제합니다.
+              (그 이전 건은 명세서 탭용 3년 보관분이라 지우지 않습니다.)
               <br />
               첨부 파일·도안·미리보기·지시서 PDF 까지 즉시 사라지며 되돌릴 수 없습니다.
             </p>

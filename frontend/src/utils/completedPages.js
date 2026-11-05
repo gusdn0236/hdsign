@@ -1,7 +1,7 @@
 // 작업완료 목록 '30일씩' 불러오기 공용 헬퍼.
 // 백엔드(/api/admin/orders/trash, /api/public/worksheets/completed)가 ?page=N 이면
 // {items, hasMore, nextPage, total?} 를 준다. page 0 = 최근 30일, 1 = 그 이전 30일 ...
-// 보관은 6개월이지만 화면이 무거워지지 않게 필요한 만큼만 받는다.
+// 보관은 3년이지만 화면이 무거워지지 않게 필요한 만큼만 받는다.
 
 const withPage = (url, page) => `${url}${url.includes("?") ? "&" : "?"}page=${page}`;
 

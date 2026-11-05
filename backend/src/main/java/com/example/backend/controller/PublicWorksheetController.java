@@ -125,7 +125,7 @@ public class PublicWorksheetController {
      * 무인증(기존 list 와 동일 보안 수준).
      * 응답 필드는 list 와 동일 + 작업완료 처리일(deletedAt) 포함.
      */
-    // 보관 6개월 — 30일 창 단위(CompletedOrderWindow).
+    // 보관 3년 — 30일 창 단위(CompletedOrderWindow).
     //  - page 없음: 최근 30일 배열(옛 클라이언트·현장 캐시 호환).
     //  - page=N   : {items, page, hasMore, nextPage, windowDays}
     @GetMapping("/completed")
