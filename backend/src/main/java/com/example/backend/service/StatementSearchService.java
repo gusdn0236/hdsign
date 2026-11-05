@@ -12,19 +12,22 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * 명세서 검색 — 저장된 명세서(autoquote_estimate.grid_json)의 '행' 단위로 찾는다.
  *
- * 조건(비어 있지 않은 것만) 은 모두 '같은 행' 에서 동시에 맞아야 한다(AND):
- *  - code : 품목코드 일치(공백 제거·대소문자 무시).
- *  - spec : 규격 — '500*100' / '500x100' / '500 100' 같은 표기, 가로·세로 뒤집힌 '100*500' 도 같은 것으로 본다.
- *           숫자 하나만 주면 그 숫자가 규격에 들어간 행.
- *  - text : 품목 텍스트 부분일치(공백 제거·대소문자 무시).
+ * 조건 종류별 규칙(명세서 탭 검색창의 칩 하나 = 값 하나):
+ *  - codes   : 품목코드 — 여러 개면 OR(한 행엔 코드가 하나라서). 공백 제거·대소문자 무시 '일치'.
+ *  - specs   : 규격 — 여러 개면 OR. '500*100' / '500x100' / '500 100' 같은 표기, 가로·세로 뒤집힘도 같은 것.
+ *              숫자 하나만 주면 그 숫자가 규격에 들어간 행.
+ *  - texts   : 품목 텍스트 — 여러 개면 AND(모두 품목칸에 포함). 공백 제거·대소문자 무시 부분일치.
+ *  - clients : 거래처 — 여러 개면 OR, 부분일치.
+ * 종류끼리는 AND 이고, code/spec/text 는 '같은 행'에서 동시에 맞아야 한다.
  *
- * 2단계: ① MySQL 이 LONGTEXT 를 문자열로 1차 추림(REPLACE 공백 + LIKE, 대소문자무시 collation)
+ * 2단계: ① MySQL 이 LONGTEXT 를 문자열로 1차 추림(REPLACE 공백 + UPPER + LIKE)
  *        ② 추린 것만 JSON 파싱해 행 단위로 정확히 확인. 새 테이블/백필 없이 동작.
  * 3년치(수만 건, 수십~백MB)도 ① 은 DB 풀스캔 한 번이라 1초 안팎. 느려지면 행 테이블로 교체.
  */
@@ -47,14 +50,17 @@ public class StatementSearchService {
 
     public record Result(List<Match> matches, boolean truncated) {}
 
-    public Result search(String code, String spec, String text, List<String> clients, String requestType) {
-        String c = norm(code);
-        String t = norm(text);
-        double[] sp = parseSpec(spec);
-        boolean hasSpec = sp != null;
-        if (c.isEmpty() && t.isEmpty() && !hasSpec) return new Result(List.of(), false);
-        List<String> cl = clients == null ? List.of()
-                : clients.stream().map(x -> x == null ? "" : x.trim().toUpperCase(Locale.ROOT)).filter(x -> !x.isEmpty()).toList();
+    public Result search(List<String> codes, List<String> specs, List<String> texts,
+                         List<String> clients, String requestType) {
+        List<String> cs = clean(codes, true);
+        List<String> ts = clean(texts, true);
+        List<double[]> sps = new ArrayList<>();
+        for (String s : clean(specs, false)) {
+            double[] p = parseSpec(s);
+            if (p != null) sps.add(p);
+        }
+        if (cs.isEmpty() && ts.isEmpty() && sps.isEmpty()) return new Result(List.of(), false);
+        List<String> cl = clean(clients, false).stream().map(x -> x.toUpperCase(Locale.ROOT)).toList();
 
         // ① DB 1차 추림 — 전부 '포함' 조건이라 놓치는 건 없고, 정확 판정은 ② 에서.
         // 주문·거래처 조인 — 거래처/요청유형도 DB 에서 걸러야 '최신 300건' 상한이 다른 거래처로 차지 않는다.
@@ -71,7 +77,6 @@ public class StatementSearchService {
             args.add(requestType.trim());
         }
         if (!cl.isEmpty()) {
-            // 거래처 여러 개 = OR, 부분일치(화면 거래처 검색과 같은 규칙).
             sql.append(" AND (");
             for (int i = 0; i < cl.size(); i++) {
                 if (i > 0) sql.append(" OR ");
@@ -80,20 +85,33 @@ public class StatementSearchService {
             }
             sql.append(")");
         }
-        if (!c.isEmpty()) {
-            sql.append(" AND ").append(squeezed).append(" LIKE ? ESCAPE '!'");
-            args.add("%" + like(c) + "%");
+        if (!cs.isEmpty()) {
+            sql.append(" AND (");
+            for (int i = 0; i < cs.size(); i++) {
+                if (i > 0) sql.append(" OR ");
+                sql.append(squeezed).append(" LIKE ? ESCAPE '!'");
+                args.add("%" + like(cs.get(i)) + "%");
+            }
+            sql.append(")");
         }
-        if (!t.isEmpty()) {
+        for (String t : ts) {
             sql.append(" AND ").append(squeezed).append(" LIKE ? ESCAPE '!'");
             args.add("%" + like(t) + "%");
         }
-        if (hasSpec) {
-            for (double v : sp) {
-                if (Double.isNaN(v)) continue;
-                sql.append(" AND e.grid_json LIKE ?");
-                args.add("%" + fmt(v) + "%");
+        if (!sps.isEmpty()) {
+            sql.append(" AND (");
+            for (int i = 0; i < sps.size(); i++) {
+                if (i > 0) sql.append(" OR ");
+                double[] sp = sps.get(i);
+                sql.append("(e.grid_json LIKE ?");
+                args.add("%" + fmt(sp[0]) + "%");
+                if (!Double.isNaN(sp[1])) {
+                    sql.append(" AND e.grid_json LIKE ?");
+                    args.add("%" + fmt(sp[1]) + "%");
+                }
+                sql.append(")");
             }
+            sql.append(")");
         }
         // 1차 추림 상한 — 너무 흔한 조건이 수천 건 JSON 을 메모리에 올리지 않게(MySQL JDBC 는 결과를 통째로 받음).
         sql.append(" ORDER BY e.saved_at DESC LIMIT ").append(PREFILTER_LIMIT);
@@ -108,8 +126,7 @@ public class StatementSearchService {
                 return;
             }
             long orderId = rs.getLong("order_id");
-            String json = rs.getString("grid_json");
-            List<Map<String, String>> rows = matchRows(json, c, t, sp);
+            List<Map<String, String>> rows = matchRows(rs.getString("grid_json"), cs, ts, sps);
             if (!rows.isEmpty()) out.add(new Match(orderId, rows));
         }, args.toArray());
         if (read[0] >= PREFILTER_LIMIT) truncated[0] = true;
@@ -117,7 +134,7 @@ public class StatementSearchService {
     }
 
     // ② 행 단위 정확 판정.
-    private List<Map<String, String>> matchRows(String json, String c, String t, double[] sp) {
+    static List<Map<String, String>> matchRows(String json, List<String> cs, List<String> ts, List<double[]> sps) {
         List<Map<String, String>> hits = new ArrayList<>();
         JsonNode grid;
         try {
@@ -131,9 +148,10 @@ public class StatementSearchService {
             String rc = row.path("품목코드").asText("");
             String ri = row.path("품목").asText("");
             String rs = row.path("규격").asText("");
-            if (!c.isEmpty() && !norm(rc).equals(c)) continue;
-            if (!t.isEmpty() && !norm(ri).contains(t)) continue;
-            if (sp != null && !specMatches(rs, sp)) continue;
+            if (!cs.isEmpty() && !cs.contains(norm(rc))) continue;
+            String ni = norm(ri);
+            if (!ts.stream().allMatch(ni::contains)) continue;
+            if (!sps.isEmpty() && sps.stream().noneMatch(q -> specMatches(rs, q))) continue;
             Map<String, String> m = new LinkedHashMap<>();
             m.put("품목코드", rc);
             m.put("품목", ri);
@@ -143,6 +161,13 @@ public class StatementSearchService {
             hits.add(m);
         }
         return hits;
+    }
+
+    private static List<String> clean(List<String> in, boolean normalize) {
+        if (in == null) return List.of();
+        return in.stream().filter(Objects::nonNull)
+                .map(s -> normalize ? norm(s) : s.trim())
+                .filter(s -> !s.isEmpty()).distinct().toList();
     }
 
     /** 검색 규격 → [a, b] (b=NaN 이면 숫자 하나). 숫자 없으면 null. */

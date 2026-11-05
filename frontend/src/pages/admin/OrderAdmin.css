@@ -3069,136 +3069,6 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   cursor: not-allowed;
 }
 
-/* 명세서 탭 — 명세서 검색 패널 */
-.stmt-search {
-  margin: 0 0 16px;
-  padding: 14px 16px 16px;
-  background: #fff;
-  border: 1px solid #e4e4e7;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-.stmt-search-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  margin-bottom: 12px;
-}
-.stmt-search-title {
-  font-size: 14px;
-  font-weight: 800;
-  color: #18181b;
-  letter-spacing: -0.01em;
-}
-.stmt-search-hint {
-  font-size: 12px;
-  color: #a1a1aa;
-}
-.stmt-search-meta {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 600;
-  color: #005f73;
-}
-.stmt-search-fields {
-  display: grid;
-  grid-template-columns: minmax(240px, 2fr) repeat(3, minmax(110px, 1fr)) auto;
-  gap: 10px;
-  align-items: end;
-}
-.stmt-field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-.stmt-field-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: #71717a;
-  letter-spacing: 0.02em;
-}
-.stmt-input {
-  height: 36px;
-  width: 100%;
-  padding: 0 11px;
-  border: 1px solid #d4d4d8;
-  border-radius: 8px;
-  background: #fff;
-  color: #18181b;
-  font-size: 13px;
-  box-sizing: border-box;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.stmt-input::placeholder { color: #c4c4cc; }
-.stmt-input:focus {
-  outline: none;
-  border-color: #005f73;
-  box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.12);
-}
-/* 거래처 칸 — 기존 칩 입력 + 드롭다운을 같은 높이로 */
-.stmt-field-client {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.stmt-field-client .calendar-chip-box {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 36px;
-  box-sizing: border-box;
-}
-.stmt-field-client .sort-select {
-  height: 36px;
-  border-radius: 8px;
-  flex: 0 0 auto;
-  max-width: 130px;
-}
-.stmt-field-client .sort-btn {
-  flex: 0 0 auto;
-  white-space: nowrap;
-  padding: 6px 8px;
-}
-.stmt-search-actions {
-  display: flex;
-  gap: 6px;
-}
-.stmt-btn {
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-.stmt-btn--primary {
-  border: 1px solid #005f73;
-  background: #005f73;
-  color: #fff;
-}
-.stmt-btn--primary:hover:not(:disabled) { background: #004b5b; }
-.stmt-btn--ghost {
-  border: 1px solid #d4d4d8;
-  background: #fff;
-  color: #52525b;
-}
-.stmt-btn--ghost:hover:not(:disabled) { border-color: #a1a1aa; color: #18181b; }
-.stmt-btn:disabled { opacity: 0.45; cursor: default; }
-@media (max-width: 1100px) {
-  .stmt-search-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .stmt-field--client { grid-column: 1 / -1; }
-  .stmt-search-actions { grid-column: 1 / -1; justify-content: flex-end; }
-}
-@media (max-width: 640px) {
-  .stmt-search { padding: 12px; }
-  .stmt-search-fields { grid-template-columns: 1fr; }
-  .stmt-search-meta { margin-left: 0; }
-  .stmt-search-actions .stmt-btn { flex: 1; }
-}
 .stmt-hit-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .stmt-hit-rows {
   list-style: none;
@@ -3214,3 +3084,177 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
 .stmt-hit-rows span { color: #0a7d8c; }
 .stmt-hit-rows em { font-style: normal; color: #64748b; }
 .stmt-hit-more { color: #64748b; }
+
+/* 명세서 탭 — 똑똑한 검색창(StatementSmartSearch) */
+.ss {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e4e4e7;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.ss-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 10px; }
+.ss-title { font-size: 14px; font-weight: 800; color: #18181b; letter-spacing: -0.01em; }
+.ss-hint { font-size: 12px; color: #a1a1aa; }
+.ss-box-wrap { position: relative; }
+.ss-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 5px 8px 5px 12px;
+  border: 1px solid #d4d4d8;
+  border-radius: 10px;
+  background: #fff;
+  cursor: text;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.ss-box.is-focus { border-color: #005f73; box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.12); }
+.ss-icon { color: #a1a1aa; font-size: 18px; line-height: 1; margin-right: 2px; }
+.ss-input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  height: 32px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  color: #18181b;
+}
+.ss-input::placeholder { color: #c4c4cc; }
+.ss-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+}
+.ss-chip-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 4px 4px 4px 10px;
+  cursor: pointer;
+}
+.ss-chip-type { font-size: 10px; font-weight: 800; opacity: 0.7; letter-spacing: 0.02em; }
+.ss-chip-x {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  width: 22px;
+  height: 26px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.ss-chip-x:hover { opacity: 1; }
+/* 종류별 색 — 거래처/품목코드/규격/품목텍스트 */
+.ss-chip--client { background: #eef2ff; color: #4338ca; }
+.ss-chip--code { background: #e6f4f1; color: #005f73; }
+.ss-chip--spec { background: #fff4e5; color: #b45309; }
+.ss-chip--text { background: #f4f4f5; color: #3f3f46; }
+.ss-spin {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #d4d4d8;
+  border-top-color: #005f73;
+  border-radius: 50%;
+  animation: ss-spin 0.7s linear infinite;
+}
+@keyframes ss-spin { to { transform: rotate(360deg); } }
+.ss-clear {
+  border: none;
+  background: transparent;
+  color: #71717a;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ss-clear:hover { background: #f4f4f5; color: #18181b; }
+.ss-pop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #e4e4e7;
+  border-radius: 10px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.1);
+}
+.ss-pop li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: #18181b;
+  cursor: pointer;
+}
+.ss-pop li.is-hi, .ss-pop li:hover { background: #f4f4f5; }
+.ss-pop li.ss-pop-head { cursor: default; background: none; font-size: 11px; font-weight: 800; color: #a1a1aa; padding: 6px 10px 2px; }
+.ss-pop-type {
+  flex: 0 0 auto;
+  min-width: 64px;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-align: center;
+}
+.ss-pop-type--client { background: #eef2ff; color: #4338ca; }
+.ss-pop-type--code { background: #e6f4f1; color: #005f73; }
+.ss-pop-type--spec { background: #fff4e5; color: #b45309; }
+.ss-pop-type--text { background: #f4f4f5; color: #3f3f46; }
+.ss-mini { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.ss-sum {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #f8fafb;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #3f3f46;
+}
+.ss-sum b { color: #18181b; }
+.ss-sum-dot { margin: 0 6px; color: #d4d4d8; }
+.ss-sum-sub { color: #71717a; }
+.ss-sum-warn { color: #b45309; font-weight: 600; }
+.ss-sort { display: inline-flex; gap: 2px; padding: 2px; background: #eceef0; border-radius: 8px; }
+.ss-sort-btn {
+  border: none;
+  background: transparent;
+  color: #52525b;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ss-sort-btn.is-on { background: #fff; color: #18181b; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+@media (max-width: 640px) {
+  .ss { padding: 12px; }
+  .ss-hint { display: none; }
+}

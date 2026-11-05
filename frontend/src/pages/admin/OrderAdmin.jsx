@@ -7,7 +7,7 @@ import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import KakaoShareButton from "../../components/common/KakaoShareButton.jsx";
 import { safeFileName } from "../../utils/shareImage.js";
 import { fetchCompletedPages, fetchCompletedPage, appendUnique, oldestLoadedDate } from "../../utils/completedPages.js";
-import { ITEM_CODES } from "./autoquote/itemCodes";
+import StatementSmartSearch from "./StatementSmartSearch.jsx";
 import "./OrderAdmin.css";
 
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
@@ -405,11 +405,21 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [clientSearch, setClientSearch] = useState("");
   // 명세서 검색(명세서 탭) — 저장된 명세서의 같은 행에서 품목코드·규격·품목 텍스트가 모두 맞는 지시서만.
   // 서버가 3년 보관분 전체에서 찾아 준다(화면에 받아둔 30일치와 무관). null = 검색 안 함(평소 목록).
-  const [stmtCode, setStmtCode] = useState("");
-  const [stmtSpec, setStmtSpec] = useState("");
-  const [stmtText, setStmtText] = useState("");
+  // 칩 = {type:'client'|'code'|'spec'|'text', value}. 거래처 칩만 있으면 평소 목록을 거래처로만 거르고,
+  // 품목코드·규격·품목 텍스트 칩이 하나라도 있으면 서버 3년치 검색.
+  const [stmtTokens, setStmtTokens] = useState([]);
   const [stmtResult, setStmtResult] = useState(null); // {items, matches, truncated, tookMs}
   const [stmtSearching, setStmtSearching] = useState(false);
+  const [stmtSort, setStmtSort] = useState("recent"); // recent | low | high
+  const [allClientNames, setAllClientNames] = useState([]); // 전체 거래처(자동완성·분류) — 30일치 화면과 무관
+  const [stmtRecent, setStmtRecent] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem("hd.stmtRecent") || "[]");
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  });
   // 달력 — 보고 있는 월의 1일, 카드 영역에 보여줄 선택 일자(YYYY-MM-DD).
   // 진입 시엔 일자 선택 없이 "전체 보기"(selectedCalendarDate === null)로 시작 —
   // 필터 결과 전체를 날짜별 그룹으로 한 화면에 본다. 달력에서 날짜를 누르면 그날만.
@@ -943,54 +953,76 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const isStatementView = activeFilter === "STATEMENT";
   const statementOrders = useMemo(() => {
     if (!isStatementView) return [];
-    // 명세서 검색 중이면 서버 결과(3년치)에 거래처 필터만 얹는다.
-    let base = calendarOrdersBase;
-    if (stmtResult) {
-      const tokens = [...calendarClientChips];
-      if (clientSearch.trim()) tokens.push(clientSearch.trim());
-      const lc = tokens.map((t) => t.toLowerCase());
-      base = stmtResult.items.filter((o) => {
-        if (lc.length === 0) return true;
-        const name = (o.clientCompanyName || "").toLowerCase();
-        return lc.some((t) => name.includes(t));
+    // 명세서 탭은 위쪽 거래처 필터(다른 탭용)와 무관 — 검색창의 거래처 칩만 쓴다.
+    const clientToks = stmtTokens.filter((t) => t.type === "client").map((t) => t.value.toLowerCase());
+    const base = stmtResult
+      ? stmtResult.items // 서버가 거래처까지 걸러 줌
+      : statusFilteredOrders.filter((o) => {
+          if (clientToks.length === 0) return true;
+          const name = (o.clientCompanyName || "").toLowerCase();
+          return clientToks.some((t) => name.includes(t));
+        });
+    const byNew = (x, y) => {
+      const ta = x.createdAt ? new Date(x.createdAt).getTime() : 0;
+      const tb = y.createdAt ? new Date(y.createdAt).getTime() : 0;
+      return tb - ta;
+    };
+    if (stmtResult && stmtSort !== "recent") {
+      // 카드별 '걸린 행' 중 가장 싼 단가 기준. 단가 없는 카드는 뒤로.
+      const priceOf = (o) => {
+        const ps = (stmtResult.matches[String(o.id)] || [])
+          .map((h) => Number(String(h["단가"] || "").replace(/[^\d.]/g, "")))
+          .filter((n) => Number.isFinite(n) && n > 0);
+        return ps.length ? Math.min(...ps) : null;
+      };
+      return [...base].sort((x, y) => {
+        const px = priceOf(x);
+        const py = priceOf(y);
+        if (px == null && py == null) return byNew(x, y);
+        if (px == null) return 1;
+        if (py == null) return -1;
+        return stmtSort === "low" ? px - py : py - px;
       });
     }
-    return [...base].sort((a, b) => {
-      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return tb - ta;
-    });
-  }, [isStatementView, calendarOrdersBase, stmtResult, calendarClientChips, clientSearch]);
+    return [...base].sort(byNew);
+  }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort]);
 
-  const runStmtSearch = async () => {
-    const code = stmtCode.trim();
-    const spec = stmtSpec.trim();
-    const text = stmtText.trim();
-    if (!code && !spec && !text) {
+  const runStmtSearch = async (toks, seq) => {
+    const pick = (type) => toks.filter((t) => t.type === type).map((t) => t.value);
+    const codes = pick("code");
+    const specs = pick("spec");
+    const texts = pick("text");
+    if (codes.length + specs.length + texts.length === 0) {
       setStmtResult(null);
       return;
     }
     setStmtSearching(true);
     try {
       const qs = new URLSearchParams();
-      if (code) qs.set("code", code);
-      if (spec) qs.set("spec", spec);
-      if (text) qs.set("text", text);
+      codes.forEach((v) => qs.append("code", v));
+      specs.forEach((v) => qs.append("spec", v));
+      texts.forEach((v) => qs.append("text", v));
       // 거래처도 서버에서 같이 거른다 — 화면에서만 거르면 '최신 300건'이 다른 거래처로 차서 빠질 수 있음.
-      const clients = [...calendarClientChips];
-      if (clientSearch.trim()) clients.push(clientSearch.trim());
-      clients.forEach((c) => qs.append("client", c));
+      pick("client").forEach((v) => qs.append("client", v));
       qs.set("requestType", requestType);
       const res = await fetch(`${BASE_URL}/api/admin/orders/statement-search?${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("명세서 검색에 실패했습니다.");
       const data = await res.json();
+      if (seq != null && seq !== stmtSeq.current) return; // 그사이 칩이 또 바뀜 — 옛 응답 버림
       setStmtResult({
         items: (Array.isArray(data.items) ? data.items : []).filter((o) => o.requestType === requestType),
         matches: data.matches || {},
         truncated: !!data.truncated,
         tookMs: data.tookMs,
+      });
+      // 최근 검색 — 같은 조합은 맨 앞으로, 최대 6개(이 PC 에만 저장).
+      const key = JSON.stringify(toks);
+      setStmtRecent((prev) => {
+        const next = [toks, ...prev.filter((x) => JSON.stringify(x) !== key)].slice(0, 6);
+        try { localStorage.setItem("hd.stmtRecent", JSON.stringify(next)); } catch { /* 저장 불가 무시 */ }
+        return next;
       });
     } catch (err) {
       setFeedback({ type: "error", msg: err.message || "명세서 검색에 실패했습니다." });
@@ -998,41 +1030,33 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setStmtSearching(false);
     }
   };
-  // 검색 결과를 보는 중에 거래처 칩을 바꾸면 서버에서 다시 찾는다(화면 필터만으론 300건 상한 밖이 빠짐).
-  const stmtChipsKey = calendarClientChips.join("\u0001");
-  const stmtChipsRef = useRef(stmtChipsKey);
-  useEffect(() => {
-    if (stmtChipsRef.current === stmtChipsKey) return;
-    stmtChipsRef.current = stmtChipsKey;
-    if (isStatementView && stmtResult) runStmtSearch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stmtChipsKey]);
-  const clearStmtSearch = () => {
-    setStmtCode("");
-    setStmtSpec("");
-    setStmtText("");
-    setStmtResult(null);
-  };
-  const stmtEnter = (e) => {
-    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      runStmtSearch();
-    }
-  };
 
-  // 명세서 탭에서만 20초마다 조용히 목록 갱신 → 다른 사람의 "작성중" 배지를 거의 실시간으로 반영.
-  // 폴링 방식이라 WebSocket 같은 추가 인프라 불필요. 다른 탭에선 폴링하지 않아 부담 없음.
+  // 칩이 바뀌면 바로 검색(버튼 없음). 연속 입력에 요청이 겹치지 않게 살짝 늦춘다.
+  const stmtSeq = useRef(0);
   useEffect(() => {
     if (!isStatementView || !token) return undefined;
-    const timer = setInterval(() => loadOrders({ silent: true }), 20000);
-    return () => clearInterval(timer);
+    const my = ++stmtSeq.current;
+    const timer = setTimeout(() => {
+      if (my === stmtSeq.current) runStmtSearch(stmtTokens, my);
+    }, 150);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isStatementView, token]);
+  }, [stmtTokens, isStatementView, token, requestType]);
 
-  // 모달 prev/next 의 "현재 화면" 대상 — 명세서 탭은 최신순 평면 목록, 달력 전체보기면 필터된 모든 주문,
-  // 그 외엔 선택 일자 카드. 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과.
-  // 명세서 탭 목록 끝 — '이전 30일 더보기' 버튼 + 무한스크롤 감지점(같은 요소).
-  // 작업완료 탭은 최근 30일만(더보기 없음).
+  // 전체 거래처 이름 — 명세서 탭에 처음 들어올 때 한 번.
+  useEffect(() => {
+    if (!isStatementView || !token || allClientNames.length) return;
+    fetch(`${BASE_URL}/api/admin/clients`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((list) => {
+        const names = Array.from(new Set((Array.isArray(list) ? list : []).map((c) => c.companyName).filter(Boolean)));
+        names.sort((x, y) => x.localeCompare(y, "ko"));
+        setAllClientNames(names);
+      })
+      .catch(() => {});
+  }, [isStatementView, token, allClientNames.length]);
+  const stmtClientNames = allClientNames.length ? allClientNames : availableClients;
+
   const trashMoreBlock = isStatementView && !stmtResult && (trashHasMore || trashLoadingMore) ? (
     <div className="trash-load-more" ref={trashSentinelRef}>
       <button
@@ -2004,19 +2028,16 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               type="search"
               className="calendar-chip-input"
               placeholder={
-                isStatementView
-                  ? (calendarClientChips.length === 0 ? "나라광고" : "")
-                  : calendarClientChips.length === 0
-                    ? "거래처 검색 — Enter 로 해당 카드 위치로 이동"
-                    : "거래처 검색..."
+                calendarClientChips.length === 0
+                  ? "거래처 검색 — Enter 로 해당 카드 위치로 이동"
+                  : "거래처 검색..."
               }
               value={clientSearch}
               onChange={(e) => setClientSearch(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  if (isStatementView && (stmtCode.trim() || stmtSpec.trim() || stmtText.trim())) runStmtSearch();
-                  else if (clientSearch.trim()) scrollToNextClientCard(clientSearch);
+                  if (clientSearch.trim()) scrollToNextClientCard(clientSearch);
                 } else if (
                   e.key === "Backspace" &&
                   clientSearch === "" &&
@@ -2185,90 +2206,23 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </button>
               </span>
             </h3>
-            {/* 명세서 검색 — 같은 행에서 모두 맞는 것만(AND). 규격은 500*100 / 500 100 / 100*500 모두 같은 것. */}
-            <div className="stmt-search">
-              <div className="stmt-search-head">
-                <span className="stmt-search-title">명세서 검색</span>
-                <span className="stmt-search-hint">
-                  같은 행에 모두 있는 명세서만 · 규격은 가로·세로 순서 무관 · 3년치 전체
-                </span>
-                {stmtResult && (
-                  <span className="stmt-search-meta">
-                    {stmtResult.truncated ? "최신 300건까지만 표시 · " : ""}
-                    {stmtResult.tookMs != null ? `${(stmtResult.tookMs / 1000).toFixed(2)}초` : ""}
-                  </span>
-                )}
-              </div>
-              <div className="stmt-search-fields">
-                <div className="stmt-field stmt-field--client">
-                  <span className="stmt-field-label">거래처</span>
-                  <div className="stmt-field-client">{clientFilterControls}</div>
-                </div>
-                <label className="stmt-field">
-                  <span className="stmt-field-label">품목코드</span>
-                  <input
-                    type="text"
-                    className="stmt-input"
-                    list="stmt-item-codes"
-                    value={stmtCode}
-                    onChange={(e) => setStmtCode(e.target.value)}
-                    onKeyDown={stmtEnter}
-                    placeholder="아크릴5T"
-                  />
-                </label>
-                <datalist id="stmt-item-codes">
-                  {ITEM_CODES.map((c) => <option key={c} value={c} />)}
-                </datalist>
-                <label className="stmt-field">
-                  <span className="stmt-field-label">규격</span>
-                  <input
-                    type="text"
-                    className="stmt-input"
-                    value={stmtSpec}
-                    onChange={(e) => setStmtSpec(e.target.value)}
-                    onKeyDown={stmtEnter}
-                    placeholder="500*100"
-                  />
-                </label>
-                <label className="stmt-field">
-                  <span className="stmt-field-label">품목 텍스트</span>
-                  <input
-                    type="text"
-                    className="stmt-input"
-                    value={stmtText}
-                    onChange={(e) => setStmtText(e.target.value)}
-                    onKeyDown={stmtEnter}
-                    placeholder="포장전용"
-                  />
-                </label>
-                <div className="stmt-search-actions">
-                  <button
-                    type="button"
-                    className="stmt-btn stmt-btn--primary"
-                    onClick={runStmtSearch}
-                    disabled={stmtSearching}
-                  >
-                    {stmtSearching ? "검색 중…" : "검색"}
-                  </button>
-                  <button
-                    type="button"
-                    className="stmt-btn stmt-btn--ghost"
-                    onClick={clearStmtSearch}
-                    disabled={!(stmtResult || stmtCode || stmtSpec || stmtText)}
-                    title="명세서 검색 해제 — 평소 목록으로"
-                  >
-                    초기화
-                  </button>
-                </div>
-              </div>
-            </div>
+            <StatementSmartSearch
+              clientNames={stmtClientNames}
+              tokens={stmtTokens}
+              onTokens={setStmtTokens}
+              searching={stmtSearching}
+              result={stmtResult}
+              recent={stmtRecent}
+              sort={stmtSort}
+              onSort={setStmtSort}
+            />
             {loading ? (
               <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
             ) : statementOrders.length === 0 ? (
               <div className="order-empty">
                 {stmtResult
                   ? "검색 조건에 맞는 명세서 행이 있는 지시서가 없습니다."
-                  : calendarClientChips.length > 0 || clientSearch.trim()
+                  : stmtTokens.length > 0
                     ? "필터에 맞는 작업중·작업완료 카드가 없습니다."
                     : "작업중·작업완료 카드가 없습니다."}
               </div>

@@ -184,9 +184,9 @@ public class AdminOrderController {
     // 응답: {items:[주문카드...], matches:{orderId:[{품목코드,품목,규격,수량,단가}...]}, truncated}
     @GetMapping("/statement-search")
     public ResponseEntity<?> searchStatements(
-            @RequestParam(required = false) String code,
-            @RequestParam(required = false) String spec,
-            @RequestParam(required = false) String text,
+            @RequestParam(required = false) List<String> code,
+            @RequestParam(required = false) List<String> spec,
+            @RequestParam(required = false) List<String> text,
             @RequestParam(required = false) List<String> client,
             @RequestParam(required = false) String requestType
     ) {
