@@ -403,10 +403,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [clientSearch, setClientSearch] = useState("");
-  // 명세서 검색(명세서 탭) — 저장된 명세서의 같은 행에서 품목코드·규격·품목 텍스트가 모두 맞는 지시서만.
+  // 명세서 검색(명세서 탭) — 저장된 명세서의 같은 행에서 품목코드·규격·작업키워드(품목칸)가 모두 맞는 지시서만.
   // 서버가 3년 보관분 전체에서 찾아 준다(화면에 받아둔 30일치와 무관). null = 검색 안 함(평소 목록).
   // 칩 = {type:'client'|'code'|'spec'|'text', value}. 거래처 칩만 있으면 평소 목록을 거래처로만 거르고,
-  // 품목코드·규격·품목 텍스트 칩이 하나라도 있으면 서버 3년치 검색.
+  // 품목코드·규격·작업키워드 칩이 하나라도 있으면 서버 3년치 검색.
   const [stmtTokens, setStmtTokens] = useState([]);
   const [stmtResult, setStmtResult] = useState(null); // {items, matches, truncated, tookMs}
   const [stmtSearching, setStmtSearching] = useState(false);

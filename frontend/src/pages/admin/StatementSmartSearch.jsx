@@ -3,14 +3,14 @@ import { ITEM_CODES, normCode, matchCodes } from "./autoquote/itemCodes";
 
 /**
  * 명세서 탭 '똑똑한 검색창' — 입력 하나에 단서를 아무렇게나 치면 종류를 알아서 정해 칩으로 만든다.
- *   거래처(거래처 목록에 있는 이름) / 품목코드(품목코드 사전) / 규격(숫자×숫자) / 품목 텍스트(그 외).
+ *   거래처(거래처 목록에 있는 이름) / 품목코드(품목코드 사전) / 규격(숫자×숫자) / 작업키워드(그 외 — 품목칸 글자).
  * 칩을 누르면 종류가 바뀐다(잘못 분류됐을 때). 칩이 바뀌면 부모가 바로 검색한다.
  *
  * 토큰 = {type: 'client'|'code'|'spec'|'text', value}
  */
 
 const TOKEN_TYPES = ["client", "code", "spec", "text"];
-const TOKEN_LABEL = { client: "거래처", code: "품목코드", spec: "규격", text: "품목 텍스트" };
+const TOKEN_LABEL = { client: "거래처", code: "품목코드", spec: "규격", text: "작업키워드" };
 
 const SPEC_RE = /^\d+(?:\.\d+)?\s*[*x×X]\s*\d+(?:\.\d+)?$/;
 const NUM_RE = /^\d+(?:\.\d+)?$/;
@@ -158,7 +158,7 @@ export default function StatementSmartSearch({
       <div className="ss-head">
         <span className="ss-title">명세서 검색</span>
         <span className="ss-hint">
-          거래처·품목코드·규격·품목 텍스트를 띄어쓰기로 이어서 치고 Enter · 칩을 누르면 종류 변경 · 3년치 전체
+          거래처·품목코드·규격·작업키워드(품목칸 글자)를 띄어쓰기로 이어서 치고 Enter · 칩을 누르면 종류 변경 · 3년치 전체
         </span>
       </div>
 
