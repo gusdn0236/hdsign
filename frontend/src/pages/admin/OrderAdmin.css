@@ -3258,3 +3258,18 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   .ss { padding: 12px; }
   .ss-hint { display: none; }
 }
+.ss-pop li.ss-recent { flex-wrap: nowrap; justify-content: space-between; }
+.ss-recent-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.ss-recent-del {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ss-recent-del:hover { background: #fee2e2; color: #dc2626; }

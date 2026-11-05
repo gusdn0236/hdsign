@@ -2213,6 +2213,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               searching={stmtSearching}
               result={stmtResult}
               recent={stmtRecent}
+              onRemoveRecent={(k) =>
+                setStmtRecent((prev) => {
+                  const next = prev.filter((_, j) => j !== k);
+                  try { localStorage.setItem("hd.stmtRecent", JSON.stringify(next)); } catch { /* 저장 불가 무시 */ }
+                  return next;
+                })
+              }
               sort={stmtSort}
               onSort={setStmtSort}
             />

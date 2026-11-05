@@ -74,6 +74,7 @@ export default function StatementSmartSearch({
   searching,
   result,           // {items, matches, truncated, tookMs} | null
   recent,           // 최근 검색(토큰 배열들)
+  onRemoveRecent,   // (index) => void — 최근 검색 한 줄 삭제
   sort,
   onSort,
 }) {
@@ -228,10 +229,19 @@ export default function StatementSmartSearch({
                 <>
                   <li className="ss-pop-head">최근 검색</li>
                   {recent.map((r, k) => (
-                    <li key={k} onClick={() => { onTokens(r); setOpen(false); }}>
-                      {r.map((t, j) => (
-                        <span key={j} className={`ss-mini ss-chip--${t.type}`}>{t.value}</span>
-                      ))}
+                    <li key={k} className="ss-recent" onClick={() => { onTokens(r); setOpen(false); }}>
+                      <span className="ss-recent-chips">
+                        {r.map((t, j) => (
+                          <span key={j} className={`ss-mini ss-chip--${t.type}`}>{t.value}</span>
+                        ))}
+                      </span>
+                      <button
+                        type="button"
+                        className="ss-recent-del"
+                        onClick={(e) => { e.stopPropagation(); onRemoveRecent?.(k); }}
+                        title="이 최근 검색 삭제"
+                        aria-label="최근 검색 삭제"
+                      >×</button>
                     </li>
                   ))}
                 </>
