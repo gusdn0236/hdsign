@@ -1,6 +1,7 @@
 import { useRef, useState, type ComponentType } from 'react';
 import { usePrices } from '../calc/usePrices';
 import AcrylCalc from '../calc/AcrylCalc.jsx';
+import AcrylGadaCalc from '../calc/AcrylGadaCalc.jsx';
 import ChannelCalc from '../calc/ChannelCalc.jsx';
 import LedCalc from '../calc/LedCalc.jsx';
 import FrameCalc from '../calc/FrameCalc.jsx';
@@ -28,6 +29,7 @@ export interface FillPayload {
  */
 const TABS: { key: string; label: string; C: ComponentType<{ prices: unknown }> }[] = [
   { key: 'acryl', label: '아크릴/포맥스', C: AcrylCalc as ComponentType<{ prices: unknown }> },
+  { key: 'gada', label: '아크릴가다', C: AcrylGadaCalc as ComponentType<{ prices: unknown }> },
   { key: 'channel', label: '잔넬', C: ChannelCalc as ComponentType<{ prices: unknown }> },
   { key: 'led', label: 'LED', C: LedCalc as ComponentType<{ prices: unknown }> },
   { key: 'frame', label: '후렘', C: FrameCalc as ComponentType<{ prices: unknown }> },
