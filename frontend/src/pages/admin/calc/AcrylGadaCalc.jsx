@@ -18,13 +18,14 @@ export default function AcrylGadaCalc({ prices }) {
     const { thickness } = calc.axes
     const [tk, setTk] = useState(thickness[0])
     const [type, setType] = useState(GADA_TYPES[0].key)
-    const [w, setW] = useState('')
-    const [h, setH] = useState('')
+    const [size, setSize] = useState('')
     const [qty, setQty] = useState('1')
 
     const g = GADA_TYPES.find(t => t.key === type) || GADA_TYPES[0]
-    const wN = parseFloat(w)
-    const hN = parseFloat(h)
+    // '530*110' / '530 110' / '530x110' 모두 허용 — * · x · × · 공백 으로 가로/세로 구분.
+    const m = size.trim().match(/^(\d+(?:\.\d+)?)\s*(?:[*x×]|\s)\s*(\d+(?:\.\d+)?)$/i)
+    const wN = m ? parseFloat(m[1]) : NaN
+    const hN = m ? parseFloat(m[2]) : NaN
     const qtyN = parseInt(qty, 10)
     const valid = Number.isFinite(wN) && wN > 0 && Number.isFinite(hN) && hN > 0
     const root = valid ? Math.sqrt(wN * hN) : NaN
@@ -32,7 +33,7 @@ export default function AcrylGadaCalc({ prices }) {
     const full = band ? calc.prices?.[tk]?.[g.textType]?.[band] ?? null : null
     const unitPrice = full !== null ? Math.round(full / 2) : null
     const total = unitPrice !== null && Number.isFinite(qtyN) && qtyN > 0 ? unitPrice * qtyN : null
-    const spec = valid ? `${w.trim()}*${h.trim()}` : ''
+    const spec = valid ? `${m[1]}*${m[2]}` : ''
 
     return (
         <div className="calc-card">
@@ -54,20 +55,11 @@ export default function AcrylGadaCalc({ prices }) {
                 </label>
 
                 <label className="calc-field">
-                    <span>가로(mm)</span>
+                    <span>가로*세로</span>
                     <input
-                        type="number" min="1" value={w}
-                        onChange={e => setW(e.target.value)}
-                        onFocus={selectAllOnFocus}
-                        onKeyDown={enterToNextInput}
-                    />
-                </label>
-
-                <label className="calc-field">
-                    <span>세로(mm)</span>
-                    <input
-                        type="number" min="1" value={h}
-                        onChange={e => setH(e.target.value)}
+                        type="text" value={size}
+                        placeholder="530*110 또는 530 110"
+                        onChange={e => setSize(e.target.value)}
                         onFocus={selectAllOnFocus}
                         onKeyDown={enterToNextInput}
                     />
@@ -96,7 +88,7 @@ export default function AcrylGadaCalc({ prices }) {
                         ? `아크릴가다 ${tk} ${g.label} √(${wN}×${hN})≈${Math.ceil(root)}mm — ${g.textType} ${formatPrice(full)}÷2 = ${formatPrice(unitPrice)} × ${qtyN}개`
                         : (valid && root > 890
                             ? `√(가로×세로)≈${Math.ceil(root)}mm — 890mm 까지만 등록되어 있습니다`
-                            : (valid ? '해당 조합에 등록된 단가가 없습니다' : '가로/세로를 입력하세요'))}
+                            : (valid ? '해당 조합에 등록된 단가가 없습니다' : (size.trim() ? '530*110 또는 530 110 형식으로 입력하세요' : '가로*세로를 입력하세요')))}
                 </div>
             </div>
         </div>
