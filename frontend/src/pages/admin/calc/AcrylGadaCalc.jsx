@@ -48,13 +48,6 @@ export default function AcrylGadaCalc({ prices }) {
                 </label>
 
                 <label className="calc-field">
-                    <span>구분</span>
-                    <select value={type} onChange={e => setType(e.target.value)}>
-                        {GADA_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-                    </select>
-                </label>
-
-                <label className="calc-field">
                     <span>가로*세로</span>
                     <input
                         type="text" value={size}
@@ -72,6 +65,13 @@ export default function AcrylGadaCalc({ prices }) {
                         onChange={e => setQty(e.target.value)}
                         onFocus={() => setQty('')}
                     />
+                </label>
+
+                <label className="calc-field">
+                    <span>구분</span>
+                    <select value={type} onChange={e => setType(e.target.value)}>
+                        {GADA_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                    </select>
                 </label>
             </div>
 
