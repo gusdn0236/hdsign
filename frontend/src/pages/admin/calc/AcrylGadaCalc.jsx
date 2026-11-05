@@ -58,7 +58,6 @@ export default function AcrylGadaCalc({ prices }) {
                     <span>가로*세로</span>
                     <input
                         type="text" value={size}
-                        placeholder="530*110 또는 530 110"
                         onChange={e => setSize(e.target.value)}
                         onFocus={selectAllOnFocus}
                         onKeyDown={enterToNextInput}
