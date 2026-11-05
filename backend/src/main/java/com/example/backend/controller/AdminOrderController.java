@@ -54,6 +54,7 @@ public class AdminOrderController {
 
     private final OrderRepository orderRepository;
     private final AutoQuoteEstimateRepository estimateRepository;
+    private final com.example.backend.service.StatementSearchService statementSearchService;
     private final ClientService clientService;
     private final S3Client s3Client;
     private final WorksheetThumbnailService thumbnailService;
@@ -174,6 +175,36 @@ public class AdminOrderController {
         body.put("total", orderRepository.countByDeletedAtIsNotNull());
         body.put("windowDays", com.example.backend.service.CompletedOrderWindow.WINDOW_DAYS);
         body.put("retentionDays", com.example.backend.service.CompletedOrderWindow.RETENTION_DAYS);
+        return ResponseEntity.ok(body);
+    }
+
+    // 명세서 검색 — 명세서 탭. 저장된 명세서의 '같은 행'에서 품목코드·규격(가로세로 뒤집힘 허용)·품목 텍스트가
+    // 모두 맞는 지시서 카드를 3년 보관분 전체(작업중+작업완료)에서 찾는다. 최신 저장순, 최대 300건.
+    // 응답: {items:[주문카드...], matches:{orderId:[{품목코드,품목,규격,수량,단가}...]}, truncated}
+    @GetMapping("/statement-search")
+    public ResponseEntity<?> searchStatements(
+            @RequestParam(required = false) String code,
+            @RequestParam(required = false) String spec,
+            @RequestParam(required = false) String text
+    ) {
+        long t0 = System.currentTimeMillis();
+        com.example.backend.service.StatementSearchService.Result r = statementSearchService.search(code, spec, text);
+        List<Long> ids = r.matches().stream().map(com.example.backend.service.StatementSearchService.Match::orderId).toList();
+        Map<Long, Order> byId = new HashMap<>();
+        if (!ids.isEmpty()) for (Order o : orderRepository.findByIdIn(ids)) byId.put(o.getId(), o);
+        List<Order> ordered = new ArrayList<>();
+        Map<String, Object> matches = new LinkedHashMap<>();
+        for (com.example.backend.service.StatementSearchService.Match m : r.matches()) {
+            Order o = byId.get(m.orderId());
+            if (o == null) continue; // 보관기간 지나 지시서가 정리된 명세서 — 카드 없음
+            ordered.add(o);
+            matches.put(String.valueOf(m.orderId()), m.rows());
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", toResponsesWithEstimates(ordered));
+        body.put("matches", matches);
+        body.put("truncated", r.truncated());
+        body.put("tookMs", System.currentTimeMillis() - t0);
         return ResponseEntity.ok(body);
     }
 

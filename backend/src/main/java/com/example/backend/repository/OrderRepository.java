@@ -30,6 +30,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByDeletedAtIsNotNullOrderByDeletedAtDesc();
 
+    // 명세서 검색 결과(order_id 묶음) → 카드용 주문. client/files 같이 끌어와 N+1 회피.
+    @EntityGraph(attributePaths = {"client", "files"})
+    List<Order> findByIdIn(java.util.Collection<Long> ids);
+
     // 작업완료 목록 30일 창 단위 조회(CompletedOrderWindow) — [from, to).
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByDeletedAtGreaterThanEqualAndDeletedAtLessThanOrderByDeletedAtDesc(

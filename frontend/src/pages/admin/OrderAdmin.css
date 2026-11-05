@@ -3068,3 +3068,47 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   background: #fca5a5;
   cursor: not-allowed;
 }
+
+/* 명세서 탭 — 명세서 검색 줄 + 결과 카드 아래 걸린 행 */
+.stmt-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.stmt-search-label {
+  font-weight: 700;
+  font-size: 13px;
+  color: #334155;
+}
+.stmt-search-input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+.stmt-search-code { width: 160px; }
+.stmt-search-spec { width: 130px; }
+.stmt-search-text { width: 180px; }
+.stmt-search-meta { font-size: 12px; color: #64748b; }
+.stmt-hit-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.stmt-hit-rows {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #334155;
+}
+.stmt-hit-rows li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stmt-hit-rows span { color: #0a7d8c; }
+.stmt-hit-rows em { font-style: normal; color: #64748b; }
+.stmt-hit-more { color: #64748b; }
+@media (max-width: 640px) {
+  .stmt-search-code, .stmt-search-spec, .stmt-search-text { width: 100%; }
+}

@@ -7,6 +7,7 @@ import WorksheetThumbnail from "../../components/common/WorksheetThumbnail.jsx";
 import KakaoShareButton from "../../components/common/KakaoShareButton.jsx";
 import { safeFileName } from "../../utils/shareImage.js";
 import { fetchCompletedPages, fetchCompletedPage, appendUnique, oldestLoadedDate } from "../../utils/completedPages.js";
+import { ITEM_CODES } from "./autoquote/itemCodes";
 import "./OrderAdmin.css";
 
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
@@ -402,6 +403,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [clientSearch, setClientSearch] = useState("");
+  // 명세서 검색(명세서 탭) — 저장된 명세서의 같은 행에서 품목코드·규격·품목 텍스트가 모두 맞는 지시서만.
+  // 서버가 3년 보관분 전체에서 찾아 준다(화면에 받아둔 30일치와 무관). null = 검색 안 함(평소 목록).
+  const [stmtCode, setStmtCode] = useState("");
+  const [stmtSpec, setStmtSpec] = useState("");
+  const [stmtText, setStmtText] = useState("");
+  const [stmtResult, setStmtResult] = useState(null); // {items, matches, truncated, tookMs}
+  const [stmtSearching, setStmtSearching] = useState(false);
   // 달력 — 보고 있는 월의 1일, 카드 영역에 보여줄 선택 일자(YYYY-MM-DD).
   // 진입 시엔 일자 선택 없이 "전체 보기"(selectedCalendarDate === null)로 시작 —
   // 필터 결과 전체를 날짜별 그룹으로 한 화면에 본다. 달력에서 날짜를 누르면 그날만.
@@ -935,12 +943,68 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const isStatementView = activeFilter === "STATEMENT";
   const statementOrders = useMemo(() => {
     if (!isStatementView) return [];
-    return [...calendarOrdersBase].sort((a, b) => {
+    // 명세서 검색 중이면 서버 결과(3년치)에 거래처 필터만 얹는다.
+    let base = calendarOrdersBase;
+    if (stmtResult) {
+      const tokens = [...calendarClientChips];
+      if (clientSearch.trim()) tokens.push(clientSearch.trim());
+      const lc = tokens.map((t) => t.toLowerCase());
+      base = stmtResult.items.filter((o) => {
+        if (lc.length === 0) return true;
+        const name = (o.clientCompanyName || "").toLowerCase();
+        return lc.some((t) => name.includes(t));
+      });
+    }
+    return [...base].sort((a, b) => {
       const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return tb - ta;
     });
-  }, [isStatementView, calendarOrdersBase]);
+  }, [isStatementView, calendarOrdersBase, stmtResult, calendarClientChips, clientSearch]);
+
+  const runStmtSearch = async () => {
+    const code = stmtCode.trim();
+    const spec = stmtSpec.trim();
+    const text = stmtText.trim();
+    if (!code && !spec && !text) {
+      setStmtResult(null);
+      return;
+    }
+    setStmtSearching(true);
+    try {
+      const qs = new URLSearchParams();
+      if (code) qs.set("code", code);
+      if (spec) qs.set("spec", spec);
+      if (text) qs.set("text", text);
+      const res = await fetch(`${BASE_URL}/api/admin/orders/statement-search?${qs}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("명세서 검색에 실패했습니다.");
+      const data = await res.json();
+      setStmtResult({
+        items: (Array.isArray(data.items) ? data.items : []).filter((o) => o.requestType === requestType),
+        matches: data.matches || {},
+        truncated: !!data.truncated,
+        tookMs: data.tookMs,
+      });
+    } catch (err) {
+      setFeedback({ type: "error", msg: err.message || "명세서 검색에 실패했습니다." });
+    } finally {
+      setStmtSearching(false);
+    }
+  };
+  const clearStmtSearch = () => {
+    setStmtCode("");
+    setStmtSpec("");
+    setStmtText("");
+    setStmtResult(null);
+  };
+  const stmtEnter = (e) => {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      runStmtSearch();
+    }
+  };
 
   // 명세서 탭에서만 20초마다 조용히 목록 갱신 → 다른 사람의 "작성중" 배지를 거의 실시간으로 반영.
   // 폴링 방식이라 WebSocket 같은 추가 인프라 불필요. 다른 탭에선 폴링하지 않아 부담 없음.
@@ -955,7 +1019,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // 그 외엔 선택 일자 카드. 작업완료 탭도 동일 — calendarOrdersBase 가 trashOrders 에 필터 적용된 결과.
   // 명세서 탭 목록 끝 — '이전 30일 더보기' 버튼 + 무한스크롤 감지점(같은 요소).
   // 작업완료 탭은 최근 30일만(더보기 없음).
-  const trashMoreBlock = isStatementView && (trashHasMore || trashLoadingMore) ? (
+  const trashMoreBlock = isStatementView && !stmtResult && (trashHasMore || trashLoadingMore) ? (
     <div className="trash-load-more" ref={trashSentinelRef}>
       <button
         type="button"
@@ -2069,7 +2133,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         {isStatementView ? (
           <section className="calendar-selected-section">
             <h3 className="calendar-selected-head">
-              <span className="order-card-group-date">명세서 — 최신 업로드순</span>
+              <span className="order-card-group-date">
+                {stmtResult ? "명세서 검색 결과 — 3년 보관분 전체" : "명세서 — 최신 업로드순"}
+              </span>
               <span className="order-card-group-count">{statementOrders.length}건</span>
               {/* 이 컴퓨터의 표시이름 — 명세서를 작성하면 다른 PC 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이
                   뜬다. 관리자 계정은 공유라 PC 마다 이 이름을 따로 설정(이 PC localStorage 에만 저장). */}
@@ -2095,17 +2161,85 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </button>
               </span>
             </h3>
+            {/* 명세서 검색 — 같은 행에서 모두 맞는 것만(AND). 규격은 500*100 / 500 100 / 100*500 모두 같은 것. */}
+            <div className="stmt-search-row">
+              <span className="stmt-search-label">명세서 검색</span>
+              <input
+                type="text"
+                className="stmt-search-input stmt-search-code"
+                list="stmt-item-codes"
+                value={stmtCode}
+                onChange={(e) => setStmtCode(e.target.value)}
+                onKeyDown={stmtEnter}
+                placeholder="품목코드 (예: 아크릴5T)"
+              />
+              <datalist id="stmt-item-codes">
+                {ITEM_CODES.map((c) => <option key={c} value={c} />)}
+              </datalist>
+              <input
+                type="text"
+                className="stmt-search-input stmt-search-spec"
+                value={stmtSpec}
+                onChange={(e) => setStmtSpec(e.target.value)}
+                onKeyDown={stmtEnter}
+                placeholder="규격 (예: 500*100)"
+              />
+              <input
+                type="text"
+                className="stmt-search-input stmt-search-text"
+                value={stmtText}
+                onChange={(e) => setStmtText(e.target.value)}
+                onKeyDown={stmtEnter}
+                placeholder="품목 텍스트 (예: 포장전용)"
+              />
+              <button type="button" className="sort-btn" onClick={runStmtSearch} disabled={stmtSearching}>
+                {stmtSearching ? "검색 중..." : "검색"}
+              </button>
+              {(stmtResult || stmtCode || stmtSpec || stmtText) && (
+                <button type="button" className="sort-btn" onClick={clearStmtSearch} title="명세서 검색 해제 — 평소 목록으로">
+                  초기화
+                </button>
+              )}
+              {stmtResult && (
+                <span className="stmt-search-meta">
+                  {stmtResult.truncated ? "결과가 많아 최신 300건까지만 표시 · " : ""}
+                  {stmtResult.tookMs != null ? `${(stmtResult.tookMs / 1000).toFixed(2)}초` : ""}
+                </span>
+              )}
+            </div>
             {loading ? (
               <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
             ) : statementOrders.length === 0 ? (
               <div className="order-empty">
-                {calendarClientChips.length > 0 || clientSearch.trim()
-                  ? "필터에 맞는 작업중·작업완료 카드가 없습니다."
-                  : "작업중·작업완료 카드가 없습니다."}
+                {stmtResult
+                  ? "검색 조건에 맞는 명세서 행이 있는 지시서가 없습니다."
+                  : calendarClientChips.length > 0 || clientSearch.trim()
+                    ? "필터에 맞는 작업중·작업완료 카드가 없습니다."
+                    : "작업중·작업완료 카드가 없습니다."}
               </div>
             ) : (
               <div className="order-card-grid">
-                {statementOrders.map(renderOrderCard)}
+                {stmtResult
+                  ? statementOrders.map((o) => {
+                      const hits = stmtResult.matches[String(o.id)] || [];
+                      return (
+                        <div key={o.id} className="stmt-hit-wrap">
+                          {renderOrderCard(o)}
+                          {hits.length > 0 && (
+                            <ul className="stmt-hit-rows" title="검색에 걸린 명세서 행">
+                              {hits.slice(0, 3).map((h, k) => (
+                                <li key={k}>
+                                  <b>{h["품목코드"] || "-"}</b> {h["품목"]} <span>{h["규격"]}</span>
+                                  {h["단가"] ? <em> {h["단가"]}원</em> : null}
+                                </li>
+                              ))}
+                              {hits.length > 3 && <li className="stmt-hit-more">외 {hits.length - 3}행</li>}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })
+                  : statementOrders.map(renderOrderCard)}
               </div>
             )}
             {!loading && trashMoreBlock}
