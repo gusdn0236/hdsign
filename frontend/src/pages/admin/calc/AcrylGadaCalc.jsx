@@ -63,7 +63,6 @@ export default function AcrylGadaCalc({ prices }) {
                         type="number" min="1" value={qty}
                         onKeyDown={enterToFillText}
                         onChange={e => setQty(e.target.value)}
-                        onFocus={() => setQty('')}
                     />
                 </label>
 
