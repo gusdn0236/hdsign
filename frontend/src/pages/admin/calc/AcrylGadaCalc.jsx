@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import { formatPrice, acrylBandForHeight, selectAllOnFocus, buildCopyText } from './helpers'
 import CalcAction from './CalcAction'
-import FillTextSlot from './FillTextSlot'
-import { enterToNextInput, enterToFillText } from './specHeight'
+import { FillContext } from './fillContext'
 
 // 아크릴가다 = 아크릴 가공 후 남는 틀.
 // 가격 = √(가로×세로) 를 높이로 보고, 그 높이의 아크릴 1글자 단가의 절반.
@@ -20,6 +19,9 @@ export default function AcrylGadaCalc({ prices }) {
     const [type, setType] = useState(GADA_TYPES[0].key)
     const [size, setSize] = useState('')
     const [qty, setQty] = useState('1')
+    const fill = useContext(FillContext)
+    const sizeRef = useRef(null)
+    const qtyRef = useRef(null)
 
     const g = GADA_TYPES.find(t => t.key === type) || GADA_TYPES[0]
     // '530*110' / '530 110' / '530x110' 모두 허용 — * · x · × · 공백 으로 가로/세로 구분.
@@ -34,6 +36,23 @@ export default function AcrylGadaCalc({ prices }) {
     const unitPrice = full !== null ? Math.round(full / 2) : null
     const total = unitPrice !== null && Number.isFinite(qtyN) && qtyN > 0 ? unitPrice * qtyN : null
     const spec = valid ? `${m[1]}*${m[2]}` : ''
+    const payload = { code: `아크릴가다${tk}`, spec, qty: qtyN, unit: unitPrice }
+
+    // 사각 박스라 품목 텍스트 입력 없음 — 두께 Enter → 가로*세로 Enter → 수량 Enter = 바로 N번에 채우기.
+    // 채운 뒤엔 가로*세로 칸으로 돌아가 다음 사이즈를 바로 받는다(두께·수량·구분은 유지).
+    const enterTo = (ref) => (e) => {
+        if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return
+        e.preventDefault()
+        ref.current?.focus()
+        ref.current?.select?.()
+    }
+    const onQtyEnter = (e) => {
+        if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return
+        e.preventDefault()
+        if (!fill?.canFill || unitPrice === null || total === null) return
+        fill.onFill(payload)
+        setTimeout(() => { sizeRef.current?.focus(); sizeRef.current?.select() }, 0)
+    }
 
     return (
         <div className="calc-card">
@@ -42,7 +61,7 @@ export default function AcrylGadaCalc({ prices }) {
             <div className="calc-form">
                 <label className="calc-field">
                     <span>두께</span>
-                    <select value={tk} onChange={e => setTk(e.target.value)}>
+                    <select value={tk} onChange={e => setTk(e.target.value)} onKeyDown={enterTo(sizeRef)}>
                         {thickness.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                 </label>
@@ -50,18 +69,18 @@ export default function AcrylGadaCalc({ prices }) {
                 <label className="calc-field">
                     <span>가로*세로</span>
                     <input
-                        type="text" value={size}
+                        ref={sizeRef} type="text" value={size}
                         onChange={e => setSize(e.target.value)}
                         onFocus={selectAllOnFocus}
-                        onKeyDown={enterToNextInput}
+                        onKeyDown={enterTo(qtyRef)}
                     />
                 </label>
 
                 <label className="calc-field">
                     <span>수량</span>
                     <input
-                        type="number" min="1" value={qty}
-                        onKeyDown={enterToFillText}
+                        ref={qtyRef} type="number" min="1" value={qty}
+                        onKeyDown={onQtyEnter}
                         onChange={e => setQty(e.target.value)}
                     />
                 </label>
@@ -74,11 +93,10 @@ export default function AcrylGadaCalc({ prices }) {
                 </label>
             </div>
 
-            <FillTextSlot />
             <div className="calc-result">
                 <CalcAction
                     copyText={buildCopyText(unitPrice, qtyN, '개', total)}
-                    payload={{ code: `아크릴가다${tk}`, spec, qty: qtyN, unit: unitPrice }}
+                    payload={payload}
                 />
                 <div className="calc-result-num">{formatPrice(total)}</div>
                 <div className="calc-result-sub">
