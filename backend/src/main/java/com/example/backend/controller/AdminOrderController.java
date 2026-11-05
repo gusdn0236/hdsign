@@ -180,15 +180,19 @@ public class AdminOrderController {
 
     // 명세서 검색 — 명세서 탭. 저장된 명세서의 '같은 행'에서 품목코드·규격(가로세로 뒤집힘 허용)·품목 텍스트가
     // 모두 맞는 지시서 카드를 3년 보관분 전체(작업중+작업완료)에서 찾는다. 최신 저장순, 최대 300건.
+    // client(여러 개, OR·부분일치)·requestType 도 DB 에서 같이 거른다(상한이 다른 거래처로 차지 않게).
     // 응답: {items:[주문카드...], matches:{orderId:[{품목코드,품목,규격,수량,단가}...]}, truncated}
     @GetMapping("/statement-search")
     public ResponseEntity<?> searchStatements(
             @RequestParam(required = false) String code,
             @RequestParam(required = false) String spec,
-            @RequestParam(required = false) String text
+            @RequestParam(required = false) String text,
+            @RequestParam(required = false) List<String> client,
+            @RequestParam(required = false) String requestType
     ) {
         long t0 = System.currentTimeMillis();
-        com.example.backend.service.StatementSearchService.Result r = statementSearchService.search(code, spec, text);
+        com.example.backend.service.StatementSearchService.Result r =
+                statementSearchService.search(code, spec, text, client, requestType);
         List<Long> ids = r.matches().stream().map(com.example.backend.service.StatementSearchService.Match::orderId).toList();
         Map<Long, Order> byId = new HashMap<>();
         if (!ids.isEmpty()) for (Order o : orderRepository.findByIdIn(ids)) byId.put(o.getId(), o);

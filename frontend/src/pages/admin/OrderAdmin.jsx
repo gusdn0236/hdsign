@@ -976,6 +976,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       if (code) qs.set("code", code);
       if (spec) qs.set("spec", spec);
       if (text) qs.set("text", text);
+      // 거래처도 서버에서 같이 거른다 — 화면에서만 거르면 '최신 300건'이 다른 거래처로 차서 빠질 수 있음.
+      const clients = [...calendarClientChips];
+      if (clientSearch.trim()) clients.push(clientSearch.trim());
+      clients.forEach((c) => qs.append("client", c));
+      qs.set("requestType", requestType);
       const res = await fetch(`${BASE_URL}/api/admin/orders/statement-search?${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -993,6 +998,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       setStmtSearching(false);
     }
   };
+  // 검색 결과를 보는 중에 거래처 칩을 바꾸면 서버에서 다시 찾는다(화면 필터만으론 300건 상한 밖이 빠짐).
+  const stmtChipsKey = calendarClientChips.join("\u0001");
+  const stmtChipsRef = useRef(stmtChipsKey);
+  useEffect(() => {
+    if (stmtChipsRef.current === stmtChipsKey) return;
+    stmtChipsRef.current = stmtChipsKey;
+    if (isStatementView && stmtResult) runStmtSearch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stmtChipsKey]);
   const clearStmtSearch = () => {
     setStmtCode("");
     setStmtSpec("");
@@ -1968,6 +1982,84 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     );
   };
 
+  // 거래처 필터(칩 + 입력 + 드롭다운 + 해제) — 다른 탭은 위 정렬줄에, 명세서 탭은 명세서 검색 줄 맨 앞에 그린다.
+  const clientFilterControls = (
+    <>
+          {/* 거래처 필터 — 입력 후 Enter 로 칩 추가, 여러 거래처 OR 매칭. 입력만 하고 Enter
+              안 눌러도 라이브 미리보기. 백스페이스로 마지막 칩 제거. */}
+          <div className="calendar-chip-box">
+            {calendarClientChips.map((chip) => (
+              <span key={chip} className="calendar-chip">
+                {chip}
+                <button
+                  type="button"
+                  className="calendar-chip-x"
+                  onClick={() => removeCalendarChip(chip)}
+                  aria-label={`${chip} 제거`}
+                  title="제거"
+                >×</button>
+              </span>
+            ))}
+            <input
+              type="search"
+              className="calendar-chip-input"
+              placeholder={
+                calendarClientChips.length === 0
+                  ? "거래처 검색 — Enter 로 해당 카드 위치로 이동"
+                  : "거래처 검색..."
+              }
+              value={clientSearch}
+              onChange={(e) => setClientSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (isStatementView && (stmtCode.trim() || stmtSpec.trim() || stmtText.trim())) runStmtSearch();
+                  else if (clientSearch.trim()) scrollToNextClientCard(clientSearch);
+                } else if (
+                  e.key === "Backspace" &&
+                  clientSearch === "" &&
+                  calendarClientChips.length > 0
+                ) {
+                  e.preventDefault();
+                  setCalendarClientChips((arr) => arr.slice(0, -1));
+                }
+              }}
+            />
+          </div>
+          <select
+            className="sort-select"
+            value=""
+            onChange={(e) => {
+              if (e.target.value) {
+                addCalendarChip(e.target.value);
+                e.target.value = "";
+              }
+            }}
+            title="거래처를 골라 칩으로 추가"
+          >
+            <option value="">+ 거래처 선택</option>
+            {availableClients
+              .filter((name) => !calendarClientChips.includes(name))
+              .map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+          </select>
+          {(calendarClientChips.length > 0 || clientSearch.trim()) && (
+            <button
+              type="button"
+              className="sort-btn"
+              onClick={() => {
+                setCalendarClientChips([]);
+                setClientSearch("");
+              }}
+              title="모든 거래처 필터 해제"
+            >
+              필터 해제
+            </button>
+          )}
+    </>
+  );
+
   return (
     <div className="order-admin-page">
       {feedback && <div className={`order-feedback ${feedback.type}`}>{feedback.msg}</div>}
@@ -2035,77 +2127,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       </div>
 
       <div className="order-sort-row">
-          {/* 거래처 필터 — 입력 후 Enter 로 칩 추가, 여러 거래처 OR 매칭. 입력만 하고 Enter
-              안 눌러도 라이브 미리보기. 백스페이스로 마지막 칩 제거. */}
-          <div className="calendar-chip-box">
-            {calendarClientChips.map((chip) => (
-              <span key={chip} className="calendar-chip">
-                {chip}
-                <button
-                  type="button"
-                  className="calendar-chip-x"
-                  onClick={() => removeCalendarChip(chip)}
-                  aria-label={`${chip} 제거`}
-                  title="제거"
-                >×</button>
-              </span>
-            ))}
-            <input
-              type="search"
-              className="calendar-chip-input"
-              placeholder={
-                calendarClientChips.length === 0
-                  ? "거래처 검색 — Enter 로 해당 카드 위치로 이동"
-                  : "거래처 검색..."
-              }
-              value={clientSearch}
-              onChange={(e) => setClientSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (clientSearch.trim()) scrollToNextClientCard(clientSearch);
-                } else if (
-                  e.key === "Backspace" &&
-                  clientSearch === "" &&
-                  calendarClientChips.length > 0
-                ) {
-                  e.preventDefault();
-                  setCalendarClientChips((arr) => arr.slice(0, -1));
-                }
-              }}
-            />
-          </div>
-          <select
-            className="sort-select"
-            value=""
-            onChange={(e) => {
-              if (e.target.value) {
-                addCalendarChip(e.target.value);
-                e.target.value = "";
-              }
-            }}
-            title="거래처를 골라 칩으로 추가"
-          >
-            <option value="">+ 거래처 선택</option>
-            {availableClients
-              .filter((name) => !calendarClientChips.includes(name))
-              .map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-          </select>
-          {(calendarClientChips.length > 0 || clientSearch.trim()) && (
-            <button
-              type="button"
-              className="sort-btn"
-              onClick={() => {
-                setCalendarClientChips([]);
-                setClientSearch("");
-              }}
-              title="모든 거래처 필터 해제"
-            >
-              필터 해제
-            </button>
-          )}
+          {!isStatementView && clientFilterControls}
           <span className="sort-result-count">
             {isTrashView
               ? `${calendarOrdersBase.length}건`
@@ -2164,6 +2186,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             {/* 명세서 검색 — 같은 행에서 모두 맞는 것만(AND). 규격은 500*100 / 500 100 / 100*500 모두 같은 것. */}
             <div className="stmt-search-row">
               <span className="stmt-search-label">명세서 검색</span>
+              {clientFilterControls}
               <input
                 type="text"
                 className="stmt-search-input stmt-search-code"

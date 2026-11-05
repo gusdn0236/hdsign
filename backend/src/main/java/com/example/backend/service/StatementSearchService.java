@@ -47,19 +47,39 @@ public class StatementSearchService {
 
     public record Result(List<Match> matches, boolean truncated) {}
 
-    public Result search(String code, String spec, String text) {
+    public Result search(String code, String spec, String text, List<String> clients, String requestType) {
         String c = norm(code);
         String t = norm(text);
         double[] sp = parseSpec(spec);
         boolean hasSpec = sp != null;
         if (c.isEmpty() && t.isEmpty() && !hasSpec) return new Result(List.of(), false);
+        List<String> cl = clients == null ? List.of()
+                : clients.stream().map(x -> x == null ? "" : x.trim().toUpperCase(Locale.ROOT)).filter(x -> !x.isEmpty()).toList();
 
         // ① DB 1차 추림 — 전부 '포함' 조건이라 놓치는 건 없고, 정확 판정은 ② 에서.
+        // 주문·거래처 조인 — 거래처/요청유형도 DB 에서 걸러야 '최신 300건' 상한이 다른 거래처로 차지 않는다.
+        // (지시서가 정리된 명세서는 조인에서 자연히 빠짐)
         StringBuilder sql = new StringBuilder(
-                "SELECT order_id, grid_json FROM autoquote_estimate WHERE 1=1");
+                "SELECT e.order_id, e.grid_json FROM autoquote_estimate e"
+                        + " JOIN orders o ON o.id = e.order_id"
+                        + " JOIN client_users cu ON cu.id = o.client_id WHERE 1=1");
         List<Object> args = new ArrayList<>();
         // UPPER — DB collation 이 대소문자 구분(_bin)이어도 동작하게.
-        String squeezed = "UPPER(REPLACE(grid_json, ' ', ''))";
+        String squeezed = "UPPER(REPLACE(e.grid_json, ' ', ''))";
+        if (requestType != null && !requestType.isBlank()) {
+            sql.append(" AND o.request_type = ?");
+            args.add(requestType.trim());
+        }
+        if (!cl.isEmpty()) {
+            // 거래처 여러 개 = OR, 부분일치(화면 거래처 검색과 같은 규칙).
+            sql.append(" AND (");
+            for (int i = 0; i < cl.size(); i++) {
+                if (i > 0) sql.append(" OR ");
+                sql.append("UPPER(cu.company_name) LIKE ? ESCAPE '!'");
+                args.add("%" + like(cl.get(i)) + "%");
+            }
+            sql.append(")");
+        }
         if (!c.isEmpty()) {
             sql.append(" AND ").append(squeezed).append(" LIKE ? ESCAPE '!'");
             args.add("%" + like(c) + "%");
@@ -71,12 +91,12 @@ public class StatementSearchService {
         if (hasSpec) {
             for (double v : sp) {
                 if (Double.isNaN(v)) continue;
-                sql.append(" AND grid_json LIKE ?");
+                sql.append(" AND e.grid_json LIKE ?");
                 args.add("%" + fmt(v) + "%");
             }
         }
         // 1차 추림 상한 — 너무 흔한 조건이 수천 건 JSON 을 메모리에 올리지 않게(MySQL JDBC 는 결과를 통째로 받음).
-        sql.append(" ORDER BY saved_at DESC LIMIT ").append(PREFILTER_LIMIT);
+        sql.append(" ORDER BY e.saved_at DESC LIMIT ").append(PREFILTER_LIMIT);
 
         List<Match> out = new ArrayList<>();
         boolean[] truncated = {false};
