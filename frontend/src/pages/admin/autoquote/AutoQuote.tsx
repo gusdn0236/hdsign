@@ -720,15 +720,120 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
 
   // ---- 붙여넣기 ---------------------------------------------------------
   useEffect(() => {
-    const onPaste = (e: ClipboardEvent) => {
-      const items = [...(e.clipboardData?.items || [])];
-      const it = items.find((i) => i.type.startsWith('image'));
-      if (!it) return;
-      const file = it.getAsFile();
-      if (!file) return;
-      const r = new FileReader();
-      r.onload = () => {
-        const dataUrl = String(r.result);
+    // 브라우저가 실제로 그릴 수 있는 이미지인지 확인 — 못 그리면(HEIC·빈 항목·깨진 데이터) X박스가 뜬다.
+    const loadImg = (src: string) =>
+      new Promise<HTMLImageElement | null>((res) => {
+        const im = new Image();
+        im.onload = () => res(im.naturalWidth > 0 ? im : null);
+        im.onerror = () => res(null);
+        im.src = src;
+      });
+    const canDecode = async (src: string) => !!(await loadImg(src));
+    const readAsDataUrl = (f: File) =>
+      new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result));
+        r.onerror = () => rej(r.error);
+        r.readAsDataURL(f);
+      });
+    // 참고사진은 보기 전용 — 카톡 원본(3000×4000, PNG 15MB)처럼 큰 건 긴 변 2000px JPG 로 줄여 넣는다(보통 0.5~1MB).
+    const REF_MAX_SIDE = 2000;
+    const toRefDataUrl = async (f: File): Promise<string | null> => {
+      const blobUrl = URL.createObjectURL(f);
+      try {
+        const im = await loadImg(blobUrl);
+        if (!im) return null;
+        const w = im.naturalWidth;
+        const h = im.naturalHeight;
+        const scale = Math.min(1, REF_MAX_SIDE / Math.max(w, h));
+        // 이미 작고 가벼우면 원본 그대로(화질 손실 없음).
+        if (scale === 1 && f.size <= 1.5 * 1024 * 1024) return await readAsDataUrl(f);
+        const cw = Math.max(1, Math.round(w * scale));
+        const ch = Math.max(1, Math.round(h * scale));
+        const cv = document.createElement('canvas');
+        cv.width = cw;
+        cv.height = ch;
+        const ctx = cv.getContext('2d');
+        if (!ctx) return await readAsDataUrl(f);
+        ctx.fillStyle = '#fff'; // 투명 PNG → JPG 시 검은 배경 방지.
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(im, 0, 0, cw, ch);
+        const out = cv.toDataURL('image/jpeg', 0.86);
+        cv.width = cv.height = 0; // 큰 캔버스 메모리 바로 반납.
+        return out;
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+    };
+    // 카톡처럼 '꺼낼 때 만들어 주는' 클립보드는 첫 번째에 덜 들어올 수 있어 — 한 번 더 비동기 API 로 읽는다.
+    const readClipboardAgain = async (): Promise<File[]> => {
+      try {
+        const out: File[] = [];
+        for (const ci of await navigator.clipboard.read()) {
+          const t = ci.types.find((x) => x.startsWith('image/'));
+          if (t) {
+            const b = await ci.getType(t);
+            if (b.size > 0) out.push(new File([b], 'clip', { type: t }));
+          }
+        }
+        return out;
+      } catch {
+        return [];
+      }
+    };
+    const onPaste = async (e: ClipboardEvent) => {
+      const cd = e.clipboardData;
+      if (!cd) return;
+      // 후보: 이미지 항목 전부 + 파일(탐색기에서 복사한 사진) — 첫 항목이 못 읽는 형식이어도 다음 걸 시도.
+      const files: File[] = [];
+      for (const i of [...cd.items]) {
+        if (i.kind === 'file' && i.type.startsWith('image')) {
+          const f = i.getAsFile();
+          if (f && f.size > 0) files.push(f);
+        }
+      }
+      for (const f of [...cd.files]) {
+        if (f.type.startsWith('image') && f.size > 0 && !files.some((x) => x.size === f.size && x.type === f.type)) files.push(f);
+      }
+      // 웹페이지에서 복사하면 이미지 대신 HTML(<img src>)만 오는 경우가 있다.
+      const html = cd.getData('text/html');
+      // (입력칸에 글자 붙여넣는 중이면 HTML 쪽은 건드리지 않음)
+      const tg = e.target as HTMLElement | null;
+      const inEditable = !!tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.isContentEditable);
+      const htmlSrc = html && !inEditable ? /<img[^>]+src=["']([^"']+)["']/i.exec(html)?.[1] : undefined;
+      if (!files.length && !htmlSrc) return;
+
+      let dataUrl: string | null = null;
+      const tryFiles = async (fs: File[]) => {
+        for (const f of fs) {
+          try {
+            const u = await toRefDataUrl(f);
+            if (u && (await canDecode(u))) return u;
+          } catch {
+            /* 다음 후보 */
+          }
+        }
+        return null;
+      };
+      dataUrl = await tryFiles(files);
+      if (!dataUrl && files.length) dataUrl = await tryFiles(await readClipboardAgain());
+      if (!dataUrl && htmlSrc && /^(data:image|https?:)/i.test(htmlSrc) && (await canDecode(htmlSrc))) dataUrl = htmlSrc;
+      if (!dataUrl) {
+        const heic = files.some((f) => /heic|heif/i.test(f.type) || /\.(heic|heif)$/i.test(f.name));
+        cdlg(
+          `<b style="font-size:15px">이 사진은 붙여넣을 수 없어요</b>` +
+            `<div style="font-size:12px;color:#6b7785;margin-top:6px">` +
+            (heic
+              ? '폰 사진(HEIC) 형식은 브라우저가 읽지 못합니다. 사진을 화면에 띄운 뒤 캡처(Win+Shift+S)해서 붙여넣거나 JPG로 저장해 주세요.'
+              : '브라우저가 읽을 수 없는 이미지 형식이에요. 사진을 화면에 띄운 뒤 캡처(Win+Shift+S)해서 붙여넣어 주세요.') +
+            `</div>`,
+          [{ label: '확인' }],
+        );
+        return;
+      }
+      {
+        const pasted = dataUrl;
         // 붙여넣은 이미지를 바로 깔지 않고, 참고사진으로 추가할지 먼저 묻는다(작업 중 실수 붙여넣기 방지).
         cdlg(
           `<b style="font-size:15px">참고사진을 추가하시겠습니까?</b>` +
@@ -738,8 +843,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             {
               label: '추가하기',
               fn: () => {
-                setRefSrc(dataUrl); // 참고사진으로 보관(보기 전용).
-                setImgSrc((prev) => prev || dataUrl); // 지시서가 없으면 이 사진을 지시서로도 사용(말풍선 캔버스 확보).
+                setRefSrc(pasted); // 참고사진으로 보관(보기 전용).
+                setImgSrc((prev) => prev || pasted); // 지시서가 없으면 이 사진을 지시서로도 사용(말풍선 캔버스 확보).
                 setShowRef(true); // 바로 참고사진을 띄워 보면서 작성.
                 setStatus('참고사진을 보며 명세서를 작성하세요 · 상단 [지시서] 전환 후 번호 동그라미를 드래그');
               },
@@ -747,8 +852,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             { label: '취소', sec: true },
           ],
         );
-      };
-      r.readAsDataURL(file);
+      }
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
