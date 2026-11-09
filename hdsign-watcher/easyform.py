@@ -837,16 +837,62 @@ def _ef_form_header(form) -> "tuple[str, str]":
     return date, total
 
 
+def _ef_read_remarks():
+    """열린 상세명세서의 비고 칸만 훑는다(+표 끝 판단용 품목 칸) → 비고 글자들 / None(ESC).
+    전체 5칸을 읽는 것보다 훨씬 빠르다. 줄이 10개를 넘으면 비고칸 클릭+Enter 로 한 줄씩 내림."""
+    ci, cr = EF_COLS.index("item"), EF_COLS.index("remark")
+    out: list = []
+    prev = None
+    dup = 0
+
+    def one(cells):
+        it = _ef_copy_cell(*cells[ci])
+        if it is None:
+            return None  # 메뉴 안 뜸 = 표 끝
+        rm = _ef_copy_cell(*cells[cr]) or ""
+        return it, rm
+
+    for cells in EF_CELLS:
+        if ef_aborted():
+            return None
+        r = one(cells)
+        if r is None:
+            return out
+        out.append(r[1])
+    remark_xy = EF_CELLS[-1][cr]
+    while len(out) < 200:
+        if ef_aborted():
+            return None
+        ef_click(*remark_xy)
+        time.sleep(0.05)
+        ef_key(0x0D)  # 줄 이동(저장 아님)
+        time.sleep(0.18)
+        r = one(EF_CELLS[-1])
+        if r is None:
+            break
+        if r == prev:
+            dup += 1
+            if dup >= 2:
+                break  # 더 안 내려감 = 표 끝
+        else:
+            dup = 0
+        prev = r
+        out.append(r[1])
+    return out
+
+
 def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
-    """목록 맨 위부터 명세서를 열어 읽는다. (성공여부, 메시지, 명세서 목록).
-    opts: stopBefore='YYYY.MM.DD'(이보다 오래된 발행일이 나오면 멈춤), max=최대 건수."""
+    """목록 맨 위부터 명세서를 하나씩 열어 **비고만** 훑어 주문번호(findOrderNo)를 찾는다.
+    찾으면 그 명세서만 전체를 읽어 [그 1건] 을 돌려주고 멈춘다. (성공여부, 메시지, 명세서 목록).
+    opts: findOrderNo='261103-19', stopBefore='YYYY.MM.DD'(이보다 오래된 발행일이 나오면 멈춤), max."""
     if not EASYFORM_AVAILABLE:
         return False, "이 PC 에서는 이지폼 찾기를 쓸 수 없습니다.", []
+    want = str(opts.get("findOrderNo") or "").strip()
     stop_before = str(opts.get("stopBefore") or "").strip()
     try:
-        max_n = max(1, min(300, int(opts.get("max") or 80)))
+        max_n = max(1, min(500, int(opts.get("max") or 300)))
     except (TypeError, ValueError):
-        max_n = 80
+        max_n = 300
     found: list = []
 
     def result(ok, msg):
@@ -871,6 +917,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
         ef_click(gl + 45, gt + 33)
         time.sleep(0.2)
         prev_sig = None
+        checked = 0
         for i in range(total_n):
             if ef_aborted():
                 return result(False, "ESC 로 중단했습니다.")
@@ -891,38 +938,65 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                 return result(len(found) > 0, f"{i + 1}번째 명세서가 안 열려서 멈췄어요({len(found)}건 확인).")
             time.sleep(0.25)
             date, total = _ef_form_header(form)
+
+            def close_form():
+                """ESC 한 번. 안 닫히거나 질문 창이 뜨면 아무것도 누르지 않고 False."""
+                ef_key(_VK_ESC)
+                t1 = time.time()
+                while time.time() - t1 < 3.0 and _ef_open_form(main):
+                    time.sleep(0.1)
+                return not (_ef_open_form(main) or _ef_easyform_dialog(main))
+
+            stuck = (f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. "
+                     "저장하지 말고 직접 '아니오'/닫기 해주세요.")
+            if stop_before and date and date < stop_before:
+                if not close_form():
+                    return result(False, stuck)
+                return result(True, f"{checked}건을 훑었지만 {stop_before} 이후 명세서 비고에서 {want} 를 못 찾았어요.")
             if not ef_dock_and_offset():
                 return result(False, "상세명세서 창 위치를 맞추지 못했어요.")
             time.sleep(0.12)
-            rows = _ef_read_open_form()
+            remarks = _ef_read_remarks()
             _EF_OFFSET[0] = 0
             _EF_OFFSET[1] = 0
-            if rows is None:
+            if remarks is None:
                 return result(False, "ESC 로 중단했습니다.")
-            sig = (date, total, tuple(tuple(r.values()) for r in rows))
-            # 닫기 — ESC 한 번. 안 닫히거나 질문 창이 뜨면 아무것도 누르지 않고 멈춘다.
-            ef_key(_VK_ESC)
-            t0 = time.time()
-            while time.time() - t0 < 3.0 and _ef_open_form(main):
-                time.sleep(0.1)
-            if _ef_open_form(main) or _ef_easyform_dialog(main):
-                return result(False, f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. "
-                                     "저장하지 말고 직접 '아니오'/닫기 해주세요.")
+            nos = list(dict.fromkeys(_EF_ORDER_NO_RE.findall(" ".join(remarks))))
+            sig = (date, total, tuple(remarks))
+            if not close_form():
+                return result(False, stuck)
             if sig == prev_sig:
                 break  # ↓ 가 더 안 내려감 = 목록 끝
             prev_sig = sig
-            remark_all = " ".join(r.get("remark", "") for r in rows)
-            found.append({
-                "idx": i, "date": date, "total": total, "rows": rows,
-                "orderNos": list(dict.fromkeys(_EF_ORDER_NO_RE.findall(remark_all))),
-            })
+            checked += 1
             if progress:
                 try:
-                    progress(len(found), total_n, date)
+                    progress(checked, total_n, date)
                 except Exception:
                     pass
-            if stop_before and date and date < stop_before:
-                break  # 역순보기라 이보다 아래는 더 오래된 명세서
+            if want and want in nos:
+                # 찾음 → 같은 줄을 다시 열어(표가 맨 위부터 보이게) 전체 5칸+비고를 읽는다.
+                time.sleep(0.2)
+                ef_key(_VK_RETURN)
+                t0 = time.time()
+                form = None
+                while time.time() - t0 < 4.0:
+                    form = _ef_open_form(main)
+                    if form and _ef_form_header(form)[0] == date:
+                        break
+                    time.sleep(0.1)
+                if not form or not ef_dock_and_offset():
+                    return result(False, f"{date} 명세서에서 찾았는데 다시 열지 못했어요. 그 명세서를 열고 [가져오기] 해주세요.")
+                time.sleep(0.12)
+                rows = _ef_read_open_form()
+                _EF_OFFSET[0] = 0
+                _EF_OFFSET[1] = 0
+                if rows is None:
+                    return result(False, "ESC 로 중단했습니다.")
+                if not close_form():
+                    return result(False, stuck)
+                found.append({"idx": i, "date": date, "total": total, "rows": rows, "orderNos": nos})
+                return result(True, f"{date} 명세서 비고에서 {want} 를 찾았어요({checked}건째).")
             time.sleep(0.15)
     finally:
         _EF_OFFSET[0] = 0
@@ -932,7 +1006,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
             ef_set_clipboard("")
         except Exception:
             pass
-    return result(True, f"명세서 {len(found)}건을 확인했어요.")
+    return result(True, f"목록 끝까지 {checked}건을 훑었지만 비고에서 {want} 를 못 찾았어요.")
 
 
 # 가져오기 상태(웹이 폴링): idle → waiting(버튼 대기) → running → done/error.
@@ -948,7 +1022,8 @@ def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
         return 200, {"armed": False, "message": "이 PC 에서는 이지폼 가져오기를 쓸 수 없습니다."}
     body = body if isinstance(body, dict) else {}
     mode = "scan" if body.get("mode") == "scan" else "one"
-    opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 80}
+    opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 300,
+            "findOrderNo": str(body.get("findOrderNo") or "")}
     with _EF_LOCK:
         _EF_PULL["id"] += 1
         _EF_PULL.update(state="waiting", rows=[], statements=[], message="", at=time.time(),
@@ -1359,7 +1434,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 elif cmd[0] == "pull_result":
                     ok, msg, n = cmd[1], cmd[2], cmd[3]
                     if len(cmd) > 4 and cmd[4] == "scan":
-                        show_done(ok, msg, ok_text=f"✅ 명세서 {n}건을 확인했어요.\n{msg}\n홈페이지 화면에서 고르세요.")
+                        show_done(ok, msg, ok_text=("✅ " if n else "🔍 ") + f"{msg}\n홈페이지 화면에서 확인하세요.")
                     else:
                         show_done(ok, msg, ok_text=f"✅ {n}줄을 가져왔어요.\n홈페이지 명세서 화면에서 확인하세요.")
                     logging.info("이지폼 가져오기 %s — %s", "성공" if ok else "실패/중단", msg)

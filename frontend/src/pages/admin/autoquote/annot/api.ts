@@ -299,6 +299,7 @@ export interface OrderContext {
   worksheetObjectsUrl?: string | null;
   hasEstimate?: boolean;
   easyformUploadedAt?: string | null;
+  dueDate?: string | null; // 마감일 'YYYY-MM-DD' — [이지폼에서 찾기] 범위 기준
 }
 
 /** 주문 단건 — 지시서 이미지/거래처 컨텍스트. */

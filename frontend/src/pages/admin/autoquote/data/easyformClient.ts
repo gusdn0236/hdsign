@@ -213,7 +213,7 @@ export interface EasyformPullStatus {
 
 /** 가져오기 대기. scan = 이지폼 목록(매출처별 조회)에서 위부터 열어 찾기 — stopBefore 보다 오래되면 멈춤. */
 export async function startEasyformPull(
-  opts?: { mode: 'scan'; stopBefore?: string; max?: number },
+  opts?: { mode: 'scan'; stopBefore?: string; findOrderNo?: string; max?: number },
 ): Promise<{ armed: boolean; id?: number; message?: string }> {
   const res = await fetch(`${AGENT_URL}/easyform/pull`, {
     method: 'POST',

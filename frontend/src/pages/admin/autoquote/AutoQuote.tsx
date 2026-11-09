@@ -2012,8 +2012,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       );
     }
   };
-  // [이지폼에서 찾기] 결과 — 목록에서 읽은 명세서들. 사람이 '이 주문 것'을 골라 맞춘다.
-  const [efScan, setEfScan] = useState<{ statements: EasyformScannedStatement[]; message: string } | null>(null);
+  // [이지폼에서 찾기] 결과 — 비고에 이 주문번호가 있던 명세서 1건 → 확인 후 이지폼 기준으로 맞춘다.
   const scannedToRows = (s: EasyformScannedStatement) =>
     s.rows.map((r) => ({
       품목코드: r.item_code || '',
@@ -2024,7 +2023,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       비고: r.remark || '',
     }));
   const pickScanned = (s: EasyformScannedStatement) => {
-    setEfScan(null);
     onEasyformPulled(scannedToRows(s), s.orderNos);
   };
   const pullFromEasyform = async (scan = false) => {
@@ -2034,16 +2032,30 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
       return;
     }
-    // 찾기(scan) — 주문번호의 날짜(261103 → 2026.11.03) 일주일 전보다 오래된 명세서가 나오면 멈춘다.
+    // 찾기(scan) — 이 주문번호를 비고에서 찾는다. 범위 = 마감일(없으면 주문번호 날짜)로부터 6개월 전까지:
+    // 그보다 오래된 발행일이 나오면 멈춘다(1년치를 다 열면 너무 오래 걸림).
+    const own = orderNoCore(order?.orderNumber);
+    if (scan && !own) {
+      cdlg('주문번호가 없는 화면이라 찾을 수 없어요. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
     let stopBefore = '';
-    const m6 = orderNoCore(order?.orderNumber).match(/^(\d{2})(\d{2})(\d{2})-/);
-    if (scan && m6) {
-      const d = new Date(2000 + Number(m6[1]), Number(m6[2]) - 1, Number(m6[3]) - 7);
-      stopBefore = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+    if (scan) {
+      const due = (order?.dueDate || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+      const m6 = own.match(/^(\d{2})(\d{2})(\d{2})-/);
+      const base = due
+        ? new Date(Number(due[1]), Number(due[2]) - 1, Number(due[3]))
+        : m6
+          ? new Date(2000 + Number(m6[1]), Number(m6[2]) - 1, Number(m6[3]))
+          : null;
+      if (base) {
+        base.setMonth(base.getMonth() - 6);
+        stopBefore = `${base.getFullYear()}.${String(base.getMonth() + 1).padStart(2, '0')}.${String(base.getDate()).padStart(2, '0')}`;
+      }
     }
     let id: number;
     try {
-      const r = await startEasyformPull(scan ? { mode: 'scan', stopBefore, max: 80 } : undefined);
+      const r = await startEasyformPull(scan ? { mode: 'scan', stopBefore, findOrderNo: own, max: 300 } : undefined);
       if (!r.armed || r.id == null) {
         cdlg(r.message || '이지폼 가져오기를 시작하지 못했습니다.', [{ label: '확인', sec: true }]);
         return;
@@ -2066,9 +2078,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           `<div style="font-size:13px;margin-top:8px;line-height:1.7">이지폼에서 <b>${order?.clientCompanyName || '이 거래처'}</b> 의<br>` +
           `<b>매출처별 조회 → 올해 1/1~12/31 → 역순보기</b> 목록을 띄워 두고(맨 위가 보이게),<br>` +
           `화면 오른쪽 아래 <b>'이지폼 목록에서 찾기 ▶'</b> 를 눌러주세요.</div>` +
-          `<div style="font-size:12px;color:#6b7785;margin-top:8px">맨 위부터 하나씩 열어 비고의 주문번호를 확인해요` +
-          (stopBefore ? ` (${stopBefore} 보다 오래된 명세서가 나오면 멈춤)` : '') +
-          `. 이지폼은 읽기만 합니다.</div>`,
+          `<div style="font-size:12px;color:#6b7785;margin-top:8px">맨 위부터 하나씩 열어 <b>비고</b>에서 주문번호 <b>${own}</b> 를 찾아요` +
+          (stopBefore ? ` (마감일 6개월 전 ${stopBefore} 까지)` : '') +
+          `. 찾으면 바로 멈춰요. 이지폼은 읽기만 합니다.</div>`,
         [{ label: '취소', sec: true, fn: cancel }],
       );
     } else {
@@ -2108,7 +2120,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       } else if (st.state === 'done' && st.mode === 'scan') {
         job.stop = true;
         setDialog(null);
-        setEfScan({ statements: st.statements || [], message: st.message || '' });
+        const hit = (st.statements || [])[0];
+        if (hit) pickScanned(hit);
+        else
+          cdlg(
+            `<b style="font-size:15px">이지폼에서 못 찾았어요</b>` +
+              `<div style="font-size:13px;margin-top:8px">${st.message || ''}</div>` +
+              `<div style="font-size:12px;color:#6b7785;margin-top:6px">비고에 주문번호 없이 입력된 명세서라면, 그 명세서를 열고 [📥 이지폼에서 가져오기] 하세요.</div>`,
+            [{ label: '확인', sec: true }],
+          );
       } else if (st.state === 'done') {
         job.stop = true;
         setDialog(null);
@@ -4772,51 +4792,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       )}
 
       {/* 작은 다이얼로그 */}
-      {efScan && (
-        <div className="aq-cdlg on" onClick={(e) => e.target === e.currentTarget && setEfScan(null)}>
-          <div className="aq-cdbox aq-efscan">
-            <div className="aq-efscan-h">
-              <b>이지폼에서 찾은 명세서 {efScan.statements.length}건</b>
-              <span>{order?.clientCompanyName || ''} · 이 주문 {orderNoCore(order?.orderNumber)}</span>
-            </div>
-            {efScan.message && <div className="aq-efscan-msg">{efScan.message}</div>}
-            <div className="aq-efscan-hint">
-              비고에 주문번호가 <b>없는</b> 명세서가 이지폼에 따로 입력한 후보예요. 이 주문 것을 눌러 고르세요.
-            </div>
-            <div className="aq-efscan-list">
-              {efScan.statements.map((s) => {
-                const own = orderNoCore(order?.orderNumber);
-                const mine = !!own && s.orderNos.includes(own);
-                const items = s.rows
-                  .map((r) => r.item)
-                  .filter((t) => (t || '').trim())
-                  .slice(0, 4)
-                  .join(' · ');
-                return (
-                  <button
-                    key={s.idx}
-                    type="button"
-                    className={'aq-efscan-row' + (s.orderNos.length ? ' linked' : ' cand') + (mine ? ' mine' : '')}
-                    onClick={() => pickScanned(s)}
-                  >
-                    <span className="d">{s.date}</span>
-                    <span className="t">{s.total}원</span>
-                    <span className="i">{items || '(품목 없음)'}</span>
-                    <span className="b">
-                      {mine ? '✅ 이 주문' : s.orderNos.length ? `🔗 ${s.orderNos.join(', ')}` : '❓ 주문번호 없음'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="aq-cdbtns">
-              <button className="sec" onClick={() => setEfScan(null)}>
-                닫기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {dialog && (
         <div className="aq-cdlg on" onClick={(e) => e.target === e.currentTarget && setDialog(null)}>
           <div className="aq-cdbox">
