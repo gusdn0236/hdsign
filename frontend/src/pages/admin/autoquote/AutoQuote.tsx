@@ -266,19 +266,6 @@ function isEpoxyCode(code: string): boolean {
   return parseCode(code)?.calc === 'epoxy';
 }
 
-/**
- * 품목을 newItem 으로 바꿀 때 수량을 따라가게 한 vals 를 만든다. 단, 수량이 '기존 품목의 글자수'와
- * 일치할 때만(=비전 자동입력 후 손대지 않은 동기 상태). 사용자가 수량을 직접 다르게 넣었으면 보존.
- */
-function syncQty(oldVals: Record<string, string>, newItem: string): Record<string, string> {
-  const v = { ...oldVals, 품목: newItem };
-  const oldQty = num(oldVals['수량']);
-  if (oldQty != null && oldQty === charCount(oldVals['품목'] || '', 'all')) {
-    v['수량'] = String(charCount(newItem, 'all'));
-  }
-  return v;
-}
-
 // 공유 이미지용 한 줄 라벨 — "품목 규격 / 단가원 ×수량개 = 합계원".
 function pinLabel(p: Pin): string {
   const top = [p.vals['품목'] ? `"${p.vals['품목']}"` : '', p.vals['규격']].filter(Boolean).join(' ');
@@ -1529,8 +1516,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     setPins((prev) => {
       const next = prev.map((p, i) => {
         if (i !== active) return p;
-        // 품목 단계면 수량(글자수)도 동기(비전 자동입력 후 손 안 댄 경우만).
-        const nv = FIELDS[p.fi] === '품목' && !p.qtyFixed ? syncQty(p.vals, val) : { ...p.vals, [FIELDS[p.fi]]: val };
+        // 품목을 고쳐도 수량은 그대로(사용자 지시 2026-11-09 — 가격을 다 적은 뒤 품목만 고치면 수량이
+        // 글자수로 바뀌어 금액이 틀어졌음). 수량은 직접 입력하거나 품목 글자를 수량칸에 붙여넣어 센다.
+        const nv = { ...p.vals, [FIELDS[p.fi]]: val };
         const np = { ...p, vals: nv, fi: p.fi + 1 };
         if (np.splitPending && FIELDS[np.fi - 1] === '품목') {
           np.fi = FIELDS.indexOf('단가');
@@ -1745,17 +1733,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           next[j] = { ax: 30, ay: 30 + j * 30, lx: 30, ly: 30 + j * 30, dragged: false, vals: {}, fi: FIELDS.length };
         }
       }
-      next[i] =
-        key === '품목' && !next[i].qtyFixed
-          ? { ...next[i], vals: syncQty(next[i].vals, value) } // 품목 수정 시 수량(글자수) 자동 동기
-          : {
-              ...next[i],
-              vals: { ...next[i].vals, [key]: value },
-              // 단가를 직접 고치면 '한·영 합계' 내역은 의미가 없어지므로 제거.
-              ...(key === '단가' ? { sumParts: undefined } : {}),
-            };
+      // 품목을 고쳐도 수량은 자동으로 안 바뀐다(사용자 지시 2026-11-09). 수량칸 붙여넣기 = 글자수(onQtyPaste).
+      next[i] = {
+        ...next[i],
+        vals: { ...next[i].vals, [key]: value },
+        // 단가를 직접 고치면 '한·영 합계' 내역은 의미가 없어지므로 제거.
+        ...(key === '단가' ? { sumParts: undefined } : {}),
+      };
       return next;
     });
+  };
+
+  // 수량칸에 글자를 붙여넣으면 그 글자수(공백 제외)를 수량으로 — 품목 글자를 복사해 붙여넣어 세는 용도.
+  // 숫자('3', '1,200')를 붙여넣으면 평소처럼 그대로 들어간다.
+  const onQtyPaste = (e: React.ClipboardEvent<HTMLInputElement>, row: number) => {
+    const text = e.clipboardData.getData('text/plain') || '';
+    if (!text.trim() || /^[\d,.\s]+$/.test(text.trim())) return; // 숫자면 기본 붙여넣기
+    e.preventDefault();
+    const n = charCount(text, 'all');
+    setCell(row, '수량', String(n));
+    setStatus(`붙여넣은 글자 "${text.trim().slice(0, 20)}" → 수량 ${n}개`);
   };
 
   /**
@@ -4263,6 +4260,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                         <input
                           value={v['수량'] || ''}
                           onChange={(e) => setCell(i, '수량', e.target.value)}
+                          onPaste={(e) => onQtyPaste(e, i)}
                           onFocus={(e) => {
                             const r = e.currentTarget.getBoundingClientRect();
                             setQtyTool({ row: i, right: Math.max(6, window.innerWidth - r.right), top: r.bottom });
