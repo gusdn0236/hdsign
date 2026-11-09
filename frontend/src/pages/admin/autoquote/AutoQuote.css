@@ -227,6 +227,40 @@
     max-height: 45vh;
   }
 }
+/* 단서 입력 단계(아직 품목 안 훑음) — 지시서를 크게 보며 단서를 친다. */
+.aq-efprev-body.wide-img {
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+}
+/* 확대·이동 이미지(지시서) */
+.aq-zoomimg {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #f1f5f9;
+  touch-action: none;
+  user-select: none;
+}
+.aq-zoomimg img {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  will-change: transform;
+}
+.aq-zoomimg-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+}
 /* 단서로 찾기 오른쪽 — 단서 칩 + ◀ n/N ▶ + 품목·규격·비고 표. */
 .aq-clue-right {
   padding: 10px;

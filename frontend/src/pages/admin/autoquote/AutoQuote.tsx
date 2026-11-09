@@ -56,6 +56,7 @@ import LookupResultModal, { type PickedRow } from './LookupResultModal';
 import MiniCalc from './MiniCalc';
 import DimensionOverlay, { type DimGeom } from './components/DimensionOverlay';
 import LedOverlay from './components/LedOverlay';
+import ZoomPanImage from './components/ZoomPanImage';
 import './AutoQuote.css';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -4899,12 +4900,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   <b>단서로 찾기 — 맞는 명세서를 골라주세요</b>
                   <span>{efClue.message}</span>
                 </div>
-                <div className="aq-efprev-body">
+                <div className={'aq-efprev-body' + (efClue.withItems ? '' : ' wide-img')}>
                   <div className="aq-efprev-img">
                     <div className="cap">
                       지시서 — {[orderNoCore(order?.orderNumber), order?.clientCompanyName].filter(Boolean).join(' · ')}
                     </div>
-                    {imgSrc ? <img src={imgSrc} alt="작업지시서" /> : <div className="none">지시서 사진이 없어요</div>}
+                    {imgSrc ? <ZoomPanImage src={imgSrc} alt="작업지시서" /> : <div className="none">지시서 사진이 없어요</div>}
                   </div>
                   <div className="aq-efprev-grid aq-clue-right">
                     {/* 단서 칩 입력 — 한 단어 + Enter. 넣을수록 맞는 명세서가 앞으로. */}
