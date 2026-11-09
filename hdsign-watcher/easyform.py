@@ -816,6 +816,31 @@ def _ef_easyform_dialog(main) -> bool:
     return bool(found)
 
 
+def ef_force_foreground(hwnd) -> bool:
+    """다른 창(이지폼)이 앞에 있어도 hwnd(홈페이지 브라우저)를 맨 앞으로. 현장 에이전트 ForceForeground 와 같은
+    방식: 포그라운드 잠금 타임아웃 0 → 현재 전면 스레드에 AttachThreadInput → SetForegroundWindow.
+    (Alt 키 트릭은 안 씀 — 이지폼 메뉴가 켜질 수 있음.)"""
+    if not hwnd or not _user32.IsWindow(hwnd):
+        return False
+    try:
+        if _user32.IsIconic(hwnd):
+            _user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        _user32.SystemParametersInfoW(0x2001, 0, None, 2)  # SPI_SETFOREGROUNDLOCKTIMEOUT=0
+        fg = _user32.GetForegroundWindow()
+        fg_tid = _user32.GetWindowThreadProcessId(fg, None) if fg else 0
+        my_tid = _kernel32.GetCurrentThreadId()
+        attached = bool(fg_tid and fg_tid != my_tid and _user32.AttachThreadInput(my_tid, fg_tid, True))
+        _user32.SetForegroundWindow(hwnd)
+        _user32.BringWindowToTop(hwnd)
+        _user32.ShowWindow(hwnd, 5)  # SW_SHOW
+        if attached:
+            _user32.AttachThreadInput(my_tid, fg_tid, False)
+        return _user32.GetForegroundWindow() == hwnd
+    except Exception:
+        logging.exception("홈페이지 창 앞으로 가져오기 실패")
+        return False
+
+
 def _ef_open_form(main):
     forms = [f for f in _ef_children(main, "TfrmExchange")]
     return forms[0] if forms else None
@@ -1032,10 +1057,15 @@ def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
     mode = "scan" if body.get("mode") == "scan" else "one"
     opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 300,
             "findOrderNo": str(body.get("findOrderNo") or "")}
+    # 웹 버튼을 누른 순간 앞에 있는 창 = 홈페이지 브라우저 → 끝나면 이 창으로 되돌아간다.
+    try:
+        ret = _user32.GetForegroundWindow()
+    except Exception:
+        ret = None
     with _EF_LOCK:
         _EF_PULL["id"] += 1
         _EF_PULL.update(state="waiting", rows=[], statements=[], message="", at=time.time(),
-                        mode=mode, opts=opts, progress="")
+                        mode=mode, opts=opts, progress="", return_hwnd=ret)
         pid = _EF_PULL["id"]
     try:
         _EF_UI_QUEUE.put(("pull_show", mode))
@@ -1456,6 +1486,15 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                         win.withdraw()
                 elif cmd[0] == "pull_result":
                     ok, msg, n = cmd[1], cmd[2], cmd[3]
+                    with _EF_LOCK:
+                        ret = _EF_PULL.get("return_hwnd")
+                    if ok and ret:
+                        # 성공 → 워처 완료판 없이 바로 홈페이지 명세서 화면으로(결과·확인창은 웹이 띄움).
+                        hide_overlay()
+                        if not ef_force_foreground(ret):
+                            root.after(300, lambda h=ret: ef_force_foreground(h))
+                        logging.info("이지폼 가져오기 성공 — 홈페이지 창으로 복귀: %s", msg)
+                        continue
                     if len(cmd) > 4 and cmd[4] == "scan":
                         show_done(ok, msg, ok_text=("✅ " if n else "🔍 ") + f"{msg}\n홈페이지 화면에서 확인하세요.")
                     else:
