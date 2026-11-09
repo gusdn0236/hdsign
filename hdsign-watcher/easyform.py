@@ -1209,7 +1209,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                 if not close_form():
                     return result(False, stuck)
                 if clue_mode:
-                    return result(True, f"단서 찾기용으로 {checked}건을 훑었어요({stop_before} 이후).")
+                    return result(True, f"키워드 찾기용으로 {checked}건을 훑었어요({stop_before} 이후).")
                 return result(True, f"{checked}건을 훑었지만 {stop_before} 이후 명세서 비고에서 {want} 를 못 찾았어요.")
             if not _ef_dock_fast():
                 return result(False, "상세명세서 창 위치를 맞추지 못했어요.")
@@ -1268,7 +1268,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
         except Exception:
             pass
     if clue_mode:
-        return result(True, f"단서 찾기용으로 {checked}건을 훑었어요.")
+        return result(True, f"키워드 찾기용으로 {checked}건을 훑었어요.")
     return result(True, f"{checked}건을 훑었지만 비고에서 {want} 를 못 찾았어요.")
 
 
@@ -1661,10 +1661,10 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             return
         # 한 번 더 확인([이지폼 입력] 과 같은 방식). 아니오 = 대기 상태 그대로(다시 누를 수 있음).
         if pmode == "scan" and popts.get("clues"):
-            q = ("이지폼 목록 맨 위부터 명세서를 하나씩 열어\n품목·규격을 훑을까요? (단서로 찾기)\n\n"
+            q = ("이지폼 목록 맨 위부터 명세서를 하나씩 열어\n품목·규격을 훑을까요? (키워드로 찾기)\n\n"
                  + (f"({popts.get('stopBefore')} 까지 보고 멈춥니다)\n" if popts.get("stopBefore") else "")
                  + "훑는 동안 마우스가 잠깁니다. (중단하려면 ESC)")
-            title = "이지폼에서 단서로 찾기"
+            title = "이지폼에서 키워드로 찾기"
         elif pmode == "scan":
             want = popts.get("findOrderNo") or ""
             q = (f"이지폼 목록 맨 위부터 명세서를 하나씩 열어\n비고에서 주문번호 {want} 를 찾을까요?\n\n"

@@ -2139,7 +2139,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       );
     } else if (scan && clues) {
       cdlg(
-        `<b style="font-size:15px">단서로 찾기 — 품목·규격 훑기</b>` +
+        `<b style="font-size:15px">키워드로 찾기 — 품목·규격 훑기</b>` +
           `<div style="font-size:13px;margin-top:8px;line-height:1.8">이지폼 목록을 그대로 두고<br>` +
           `오른쪽 아래 <b>'이지폼 목록에서 찾기 ▶'</b> 버튼을 눌러주세요</div>`,
         [{ label: '취소', sec: true, fn: cancel }],
@@ -4897,7 +4897,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 }}
               >
                 <div className="aq-efprev-h">
-                  <b>단서로 찾기 — 맞는 명세서를 골라주세요</b>
+                  <b>키워드로 찾기 — 맞는 명세서를 골라주세요</b>
                   <span>{efClue.message}</span>
                 </div>
                 <div className={'aq-efprev-body' + (efClue.withItems ? '' : ' wide-img')}>
@@ -4946,7 +4946,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                       <input
                         className="aq-clue-input"
                         autoFocus
-                        placeholder={clues.length ? '단서 더 넣기 — Enter' : '지시서 단서를 한 단어씩 치고 Enter — 예: 삼겹살 ⏎ h:118 ⏎'}
+                        placeholder={clues.length ? '키워드 더 넣기 — Enter' : '지시서를 보며 키워드를 한 단어씩 치고 Enter — 예: 삼겹살 ⏎ h:118 ⏎'}
                         value={clueDraft}
                         onChange={(e) => setClueDraft(e.target.value)}
                         onKeyDown={(e) => {
@@ -4998,7 +4998,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                               {pos + 1} / {seq.length}
                             </b>{' '}
                             · {cur.s.date} · {cur.s.total}원
-                            {cur.matched.length ? <span className="m"> · 맞은 단서 {cur.matched.join(', ')}</span> : null}
+                            {cur.matched.length ? <span className="m"> · 맞은 키워드 {cur.matched.join(', ')}</span> : null}
                           </div>
                           <button type="button" onClick={() => go(1)} disabled={pos >= seq.length - 1} aria-label="다음 명세서">
                             ▶
