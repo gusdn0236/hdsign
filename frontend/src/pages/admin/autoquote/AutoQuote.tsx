@@ -29,6 +29,7 @@ import {
   deleteEstimate,
   markEasyformUploaded,
   syncEstimateFromEasyform,
+  findEasyformMatch,
   readText,
   getVisionQuota,
   DailyLimitError,
@@ -1933,7 +1934,39 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   }, []);
   // 가져온 이지폼 명세서 처리 — 비고에 홈페이지 주문번호가 있으면 그 주문(들)의 명세서를 이지폼 기준으로
   // 맞춰 바로 저장(여러 개면 합친 명세서 1장 공유). 없으면 예전처럼 표에만 넣는다. 이지폼은 안 건드림.
-  const onEasyformPulled = (raw: Record<string, string>[], foundNos: string[]) => {
+  type EfMeta = { date?: string; total?: string };
+  // 먼저 '같은 이지폼 명세서가 이미 다른 주문에 저장돼 있나'(거래처·발행일·합계 지문) 확인 → 있으면
+  // 합친 명세서로 묶을지 묻는다(한 이지폼 명세서에 지시서 2개). 없으면 평소 흐름.
+  const onEasyformPulled = async (raw: Record<string, string>[], foundNos: string[], meta?: EfMeta) => {
+    const own = orderNoCore(order?.orderNumber);
+    if (order && own && meta?.date && meta?.total) {
+      const groups = await findEasyformMatch(token, order.id, meta.date, meta.total);
+      const g = groups.find((x) => x.orders.some((o) => !foundNos.includes(orderNoCore(o.orderNumber))));
+      if (g) {
+        const others = g.orders.map((o) => orderNoCore(o.orderNumber));
+        const merged = [...others, ...foundNos, own].filter((n, i, a) => n && a.indexOf(n) === i);
+        cdlg(
+          `<b style="font-size:15px">이미 다른 주문에 저장된 이지폼 명세서예요</b>` +
+            `<div style="font-size:13px;margin-top:8px;line-height:1.6">이 이지폼 명세서(${meta.date} · ${meta.total}원)는 ` +
+            `<b>주문 ${others.join(' + ')}</b> 에 저장돼 있어요.<br>한 명세서에 지시서가 같이 적힌 거라면 <b>합친 명세서</b>로 묶으세요.</div>` +
+            `<div style="font-size:12px;color:#6b7785;margin-top:6px">묶으면 두 주문이 명세서 1장을 같이 쓰고, 매출은 한 번만 잡혀요.</div>`,
+          [
+            { label: `합친 명세서로 묶기 (${merged.join(' + ')})`, fn: () => onEasyformPulledInner(raw, merged, meta, true) },
+            { label: '이 주문에만 따로 저장', sec: true, fn: () => onEasyformPulledInner(raw, foundNos, meta) },
+            { label: '취소', sec: true },
+          ],
+        );
+        return;
+      }
+    }
+    onEasyformPulledInner(raw, foundNos, meta);
+  };
+  const onEasyformPulledInner = (
+    raw: Record<string, string>[],
+    foundNos: string[],
+    meta?: EfMeta,
+    directSync = false,
+  ) => {
     const own = orderNoCore(order?.orderNumber);
     if (!foundNos.length && !own) {
       importEasyform(raw);
@@ -1949,7 +1982,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       try {
         const grid = efRowsToGrid(rows);
         const sum = grid.reduce((a, g) => a + (Number(g.공급가액) || 0), 0);
-        const res = await syncEstimateFromEasyform(token, { orderNumbers: nos, grid, total: sum, source: 'pull' });
+        const res = await syncEstimateFromEasyform(token, {
+          orderNumbers: nos,
+          grid,
+          total: sum,
+          source: 'pull',
+          efDate: meta?.date,
+          efTotal: meta?.total,
+        });
         const linkedLabel = res.linked.map((l) => orderNoCore(l.orderNumber)).join(' + ');
         if (applyHere) {
           setLinkedOrders(res.linked.length > 1 ? res.linked : []);
@@ -1976,6 +2016,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         );
       }
     };
+    if (directSync) {
+      // [합친 명세서로 묶기] 를 이미 눌렀음 — 다시 묻지 않고 이 화면에 넣고 저장.
+      void doSync(nos.includes(own));
+      return;
+    }
     if (noRemark) {
       cdlg(
         `<b style="font-size:15px">이지폼 명세서 ${rows.length}줄 · 비고에 주문번호 없음</b>` +
@@ -2024,7 +2069,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       비고: r.remark || '',
     }));
   const pickScanned = (s: EasyformScannedStatement) => {
-    onEasyformPulled(scannedToRows(s), s.orderNos);
+    void onEasyformPulled(scannedToRows(s), s.orderNos, { date: s.date, total: s.total });
   };
   // 주문번호로 못 찾았을 때 — 훑은 명세서들(품목·규격)에서 사람이 넣은 단서로 고른다(이지폼 다시 안 뒤짐).
   const [efClue, setEfClue] = useState<{ scanned: EasyformScannedStatement[]; message: string } | null>(null);
@@ -2164,7 +2209,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           비고: r.remark || '',
         }));
         const nos = extractOrderNos(pulled.map((r) => r.remark || '').join(' '));
-        if (rows.length) onEasyformPulled(rows, nos);
+        if (rows.length) void onEasyformPulled(rows, nos, { date: st.date, total: st.total });
         else cdlg('가져온 줄이 없어요.', [{ label: '확인', sec: true }]);
       } else if (st.state === 'error') {
         job.stop = true;

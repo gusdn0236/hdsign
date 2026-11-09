@@ -545,9 +545,12 @@ public class AdminOrderController {
         if (!refs.isEmpty()) doc.set("refPhotos", refs);
         if (orders.size() > 1) doc.set("linkedOrders", linked);
         else doc.remove("linkedOrders");
-        doc.putObject("easyformSync")
+        com.fasterxml.jackson.databind.node.ObjectNode syncMeta = doc.putObject("easyformSync")
                 .put("at", LocalDateTime.now().toString())
                 .put("source", body.path("source").asText("pull"));
+        // 이지폼 명세서 '지문'(거래처|발행일|합계) — 같은 명세서를 다른 주문에서 또 찾았을 때 알아보는 데 쓴다.
+        String efKey = efKey(primary, body.path("efDate").asText(""), body.path("efTotal").asText(""));
+        if (efKey != null) syncMeta.put("efKey", efKey);
         LocalDateTime now = LocalDateTime.now();
         String editor = normalizeEditorName(editorName);
         est.setGridJson(doc.toString());
@@ -579,6 +582,44 @@ public class AdminOrderController {
         res.put("notFound", notFound);
         res.put("changed", changed);
         return ResponseEntity.ok(res);
+    }
+
+    // 같은 이지폼 명세서가 이미 다른 주문에 저장돼 있나 — 거래처|발행일|합계 지문으로 찾는다.
+    // 한 이지폼 명세서에 지시서 2개가 적힌 경우, 두 번째 주문에서 찾았을 때 '합친 명세서로 묶기'를 제안하려고.
+    // 저장된 명세서 JSON 에서 글자 검색 1번(수천 건 규모라 가벼움). 결과 = 그 명세서를 쓰는 주문 묶음들.
+    @GetMapping("/estimate/easyform-match")
+    public ResponseEntity<?> easyformMatch(
+            @RequestParam Long orderId,
+            @RequestParam String date,
+            @RequestParam String total
+    ) {
+        Order me = orderRepository.findById(orderId).orElse(null);
+        String key = me == null ? null : efKey(me, date, total);
+        if (key == null) return ResponseEntity.ok(Map.of("groups", List.of()));
+        String needle = "%\"efKey\":\"" + key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "\"%";
+        List<Map<String, Object>> groups = new ArrayList<>();
+        jdbcTemplate.query("SELECT order_id, grid_json FROM autoquote_estimate WHERE grid_json LIKE ?", rs -> {
+            long primaryId = rs.getLong("order_id");
+            List<Long> ids = linkedOrderIds(rs.getString("grid_json"));
+            if (ids.isEmpty()) ids = List.of(primaryId);
+            if (ids.contains(orderId)) return; // 이미 이 주문과 같은 묶음
+            List<Map<String, Object>> orders = new ArrayList<>();
+            for (Long id : ids) {
+                orderRepository.findById(id).ifPresent(o ->
+                        orders.add(Map.of("id", o.getId(), "orderNumber", o.getOrderNumber())));
+            }
+            if (!orders.isEmpty()) groups.add(Map.of("primaryOrderId", primaryId, "orders", orders));
+        }, needle);
+        return ResponseEntity.ok(Map.of("groups", groups));
+    }
+
+    /** 이지폼 명세서 지문 '거래처id|YYYY.MM.DD|합계숫자'. 발행일·합계가 없으면 null. */
+    private static String efKey(Order order, String date, String total) {
+        String d = date == null ? "" : date.trim();
+        String t = total == null ? "" : total.replaceAll("[^0-9-]", "");
+        if (d.isEmpty() || t.isEmpty() || order == null) return null;
+        String client = order.getClient() != null ? String.valueOf(order.getClient().getId()) : "none";
+        return client + "|" + d + "|" + t;
     }
 
     private static final ObjectMapper OM = new ObjectMapper();

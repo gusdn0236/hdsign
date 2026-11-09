@@ -375,7 +375,14 @@ export interface EasyformSyncResult {
 export async function syncEstimateFromEasyform(
   token: string | null | undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  body: { orderNumbers: string[]; grid: any[]; total?: number; source: 'pull' | 'fill' | 'batch' },
+  body: {
+    orderNumbers: string[];
+    grid: any[];
+    total?: number;
+    source: 'pull' | 'fill' | 'batch';
+    efDate?: string; // 이지폼 명세서 발행일 — 같은 명세서 알아보기(지문)
+    efTotal?: string; // 이지폼 명세서 합계
+  },
 ): Promise<EasyformSyncResult> {
   const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-sync${editorNameQuery()}`, {
     method: 'POST',
@@ -388,6 +395,29 @@ export async function syncEstimateFromEasyform(
     throw new Error((j?.message || `명세서 동기화 실패 (${res.status})`) + nf);
   }
   return j as EasyformSyncResult;
+}
+
+export interface EasyformMatchGroup {
+  primaryOrderId: number;
+  orders: { id: number; orderNumber: string }[];
+}
+
+/** 같은 이지폼 명세서(이 주문의 거래처 · 발행일 · 합계)가 이미 다른 주문에 저장돼 있나. 실패하면 빈 목록. */
+export async function findEasyformMatch(
+  token: string | null | undefined,
+  orderId: number | string,
+  date: string,
+  total: string,
+): Promise<EasyformMatchGroup[]> {
+  try {
+    const q = `orderId=${encodeURIComponent(String(orderId))}&date=${encodeURIComponent(date)}&total=${encodeURIComponent(total)}`;
+    const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-match?${q}`, { headers: authHeaders(token) });
+    if (!res.ok) return [];
+    const j = await res.json();
+    return Array.isArray(j?.groups) ? j.groups : [];
+  } catch {
+    return [];
+  }
 }
 
 /** 명세서 참고사진 1장 업로드(R2) → 공개 URL. 저장 직전에 아직 안 올라간(data:) 사진만 올린다. */

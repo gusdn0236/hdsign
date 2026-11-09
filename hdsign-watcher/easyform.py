@@ -653,6 +653,9 @@ def _ef_read_row(cells):
     return out, True
 
 
+_EF_LAST_HEADER = ["", ""]  # 직접가져오기로 읽은 명세서의 (발행일, 합계)
+
+
 def run_easyform_extract() -> "tuple[bool, str, list]":
     """이지폼에 열린 상세명세서 표를 읽는다. (성공여부, 메시지, rows)."""
     if not EASYFORM_AVAILABLE:
@@ -663,6 +666,12 @@ def run_easyform_extract() -> "tuple[bool, str, list]":
         if not ef_dock_and_offset():
             return False, "이지폼에서 옮길 상세명세서 창을 못 찾았습니다(먼저 열어두세요).", []
         time.sleep(0.15)
+        # 발행일·합계(클릭 없이 글자 읽기) — 같은 이지폼 명세서가 다른 주문에 이미 있나 확인용.
+        try:
+            _form = _ef_find_main_form()[1]
+            _EF_LAST_HEADER[0], _EF_LAST_HEADER[1] = _ef_form_header(_form) if _form else ("", "")
+        except Exception:
+            _EF_LAST_HEADER[0] = _EF_LAST_HEADER[1] = ""
         rows = _ef_read_open_form()
     finally:
         _EF_OFFSET[0] = 0
@@ -1145,6 +1154,8 @@ def handle_pull_status(pid: int) -> dict:
         if st == "done":
             out["rows"] = list(_EF_PULL["rows"])
             out["statements"] = list(_EF_PULL["statements"])
+            hd = _EF_PULL.get("header") or ["", ""]
+            out["date"], out["total"] = hd[0], hd[1]  # 직접가져오기: 명세서 발행일·합계
             _EF_PULL.update(state="idle", rows=[], statements=[])
         elif st == "error":
             _EF_PULL["state"] = "idle"
@@ -1513,7 +1524,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 logging.exception("이지폼 가져오기 오류(UI)")
             with _EF_LOCK:
                 if _EF_PULL["id"] == pid:
-                    _EF_PULL.update(state="done" if ok else "error", rows=rows, statements=stmts, message=msg)
+                    _EF_PULL.update(state="done" if ok else "error", rows=rows, statements=stmts, message=msg,
+                                    header=list(_EF_LAST_HEADER) if pmode != "scan" else ["", ""])
             _EF_UI_QUEUE.put(("pull_result", ok, msg, len(stmts) if pmode == "scan" else len(rows), pmode))
 
         threading.Thread(target=worker, daemon=True).start()

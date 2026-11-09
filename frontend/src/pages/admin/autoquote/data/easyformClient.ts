@@ -214,6 +214,8 @@ export interface EasyformPullStatus {
   progress?: string; // scan 진행 '3/23 · 2026.10.12'
   rows?: EasyformPulledRow[];
   statements?: EasyformScannedStatement[];
+  date?: string; // 직접가져오기: 명세서 발행일
+  total?: string; // 직접가져오기: 합계금액
 }
 
 /** 가져오기 대기. scan = 이지폼 목록(매출처별 조회)에서 위부터 열어 찾기 — stopBefore 보다 오래되면 멈춤. */
