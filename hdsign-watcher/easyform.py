@@ -613,8 +613,59 @@ def _ef_get_clipboard() -> str:
         _user32.CloseClipboard()
 
 
+def _ef_menu_copy_enabled():
+    """떠 있는 우클릭 메뉴의 '복사' 항목이 켜져 있나 → True/False, 못 읽으면 None.
+    빈 칸이면 '복사'가 회색(MF_GRAYED) — 시간으로 짐작하지 않고 메뉴 상태를 직접 본다
+    (예전엔 0.05초 안에 클립보드가 안 바뀌면 빈칸으로 봐서, 이지폼이 느리면 '1'을 ''로 읽었음)."""
+    mw = _user32.FindWindowW("#32768", None)
+    if not mw:
+        return None
+    try:
+        hm = ctypes.c_void_p(_user32.SendMessageW(mw, 0x01E1, 0, 0))  # MN_GETHMENU
+        if not hm.value:
+            return None
+        n = _user32.GetMenuItemCount(hm)
+        for i in range(max(0, n)):
+            b = ctypes.create_unicode_buffer(128)
+            _user32.GetMenuStringW(hm, i, b, 128, 0x400)  # MF_BYPOSITION
+            if b.value.startswith("복사"):
+                return not (_user32.GetMenuState(hm, i, 0x400) & 0x3)  # MF_GRAYED|MF_DISABLED
+    except Exception:
+        return None
+    return None
+
+
+def _ef_inplace_text(x: int, y: int, timeout: float = 0.3):
+    """셀을 좌클릭하면 이지폼이 그 칸 위에 편집칸(TAdvInplaceEdit)을 띄운다 → 그 글자를 바로 읽는다
+    (WM_GETTEXT, 클립보드·우클릭 메뉴 없음 → 빠르고 정확, '붙여넣기'·'삭제' 메뉴를 누를 일도 없음).
+    편집칸이 **클릭한 칸 위에** 떠야만 인정(이전 칸 편집칸 글자를 잘못 읽지 않게). 못 찾으면 None."""
+    form = _ef_find_main_form()[1]
+    grid = _ef_find_child_class(form, "TAdvStringGrid") if form else None
+    if not grid:
+        return None
+    px, py = x + _EF_OFFSET[0], y + _EF_OFFSET[1]
+    ef_click(x, y)
+    t = time.time()
+    while time.time() - t < timeout:
+        for h in _ef_children(grid, "TAdvInplaceEdit"):
+            l, tp, r, b = _ef_rect(h)
+            if l - 2 <= px <= r + 2 and tp - 2 <= py <= b + 2:
+                return " ".join(_ef_wtext(h).replace("\t", " ").split())
+        time.sleep(0.01)
+    return None
+
+
 def _ef_copy_cell(x: int, y: int):
-    """한 칸 읽기 → 글자 / ''(빈칸) / None(메뉴 안 뜸 = 표 끝 또는 창 없음)."""
+    """한 칸 읽기 → 글자 / ''(빈칸) / None(표 끝 또는 창 없음).
+    1순위 편집칸 글자 직접 읽기, 안 되면(표 밖 등) 예전 우클릭 '복사' 방식."""
+    v = _ef_inplace_text(x, y)
+    if v is not None:
+        return v
+    return _ef_copy_cell_menu(x, y)
+
+
+def _ef_copy_cell_menu(x: int, y: int):
+    """(예전 방식) 우클릭 메뉴 '복사' 로 한 칸 읽기 → 글자 / '' / None(메뉴 안 뜸 = 표 끝)."""
     ef_set_clipboard(_EF_SENT)
     ef_click(x, y)
     ef_right_click(x, y)
@@ -623,16 +674,23 @@ def _ef_copy_cell(x: int, y: int):
         if time.time() - t > 0.6:
             return None
         time.sleep(0.004)
+    time.sleep(0.01)
+    enabled = _ef_menu_copy_enabled()
+    if enabled is False:
+        ef_click(*EF_MENU_SAFE)  # 빈 칸 — '복사' 회색. 메뉴만 닫는다.
+        return ""
     ef_click(x + EF_COPY_OFFSET[0], y + EF_COPY_OFFSET[1])
     t = time.time()
     v = _EF_SENT
-    while time.time() - t < 0.35:
+    # '복사'가 켜져 있으면 글자가 반드시 오므로 넉넉히 기다린다(상태를 못 읽었으면 예전처럼 짧게).
+    limit = 0.8 if enabled else 0.35
+    while time.time() - t < limit:
         cur = _ef_get_clipboard()
         if cur != _EF_SENT:
             v = cur
             break
-        if time.time() - t > 0.05 and _ef_menu_open():
-            break  # '복사'가 비활성(빈 칸) — 메뉴가 안 닫힘
+        if enabled is None and time.time() - t > 0.05 and _ef_menu_open():
+            break  # (상태 못 읽은 경우만) '복사'가 비활성 — 메뉴가 안 닫힘
         time.sleep(0.004)
     if _ef_menu_open():
         ef_click(*EF_MENU_SAFE)
@@ -688,10 +746,66 @@ def run_easyform_extract() -> "tuple[bool, str, list]":
     return True, f"{len(rows)}줄을 가져왔습니다.", rows
 
 
+_WM_VSCROLL, _SB_LINEDOWN, _SB_TOP = 0x0115, 1, 6
+_EF_STUCK = 4  # 같은 줄이 이만큼 더 반복되면(스크롤이 안 내려감) 표 끝 — 안전장치
+
+if EASYFORM_AVAILABLE:
+    _user32.SendMessageW.restype = ctypes.c_ssize_t
+    _user32.GetMenuItemCount.argtypes = [ctypes.c_void_p]
+    _user32.GetMenuStringW.argtypes = [ctypes.c_void_p, wintypes.UINT, wintypes.LPWSTR, ctypes.c_int, wintypes.UINT]
+    _user32.GetMenuState.argtypes = [ctypes.c_void_p, wintypes.UINT, wintypes.UINT]
+
+    class _EF_SCROLLINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("fMask", wintypes.UINT), ("nMin", ctypes.c_int),
+                    ("nMax", ctypes.c_int), ("nPage", wintypes.UINT), ("nPos", ctypes.c_int),
+                    ("nTrackPos", ctypes.c_int)]
+
+
+def _ef_vpos(grid):
+    """표 세로 스크롤 위치 (pos, max) — 이지폼 표는 0~127 비율값. 맨 아래면 pos==max. 못 읽으면 None."""
+    try:
+        si = _EF_SCROLLINFO()
+        si.cbSize = ctypes.sizeof(_EF_SCROLLINFO)
+        si.fMask = 0x17  # SIF_ALL
+        if not _user32.GetScrollInfo(grid, 1, ctypes.byref(si)):  # SB_VERT
+            return None
+        return si.nPos, si.nMax
+    except Exception:
+        return None
+
+
+def _ef_scroll_one(grid) -> bool:
+    """보기만 한 줄 내림 → 실제로 내려갔으면 True, 이미 맨 아래(더 안 움직임)면 False.
+    마지막 줄을 여러 번 읽던 문제의 해결 — 스크롤 위치로 끝을 정확히 안다."""
+    before = _ef_vpos(grid)
+    _ef_grid_scroll(grid, _SB_LINEDOWN)
+    after = _ef_vpos(grid)
+    if before is None or after is None:
+        return True  # 못 읽으면 예전 방식(빈 줄·반복)으로 끝 판단
+    return not (after == before and after[0] >= after[1])
+
+
+def _ef_form_grid():
+    """열린 상세명세서의 표(TAdvStringGrid) 창."""
+    form = _ef_find_main_form()[1]
+    return _ef_find_child_class(form, "TAdvStringGrid") if form else None
+
+
+def _ef_grid_scroll(grid, how) -> None:
+    """표 **보기만** 움직인다(WM_VSCROLL — 스크롤바 화살표 누르는 것과 같음). 키 입력이 아니라
+    셀·줄을 절대 바꾸지 않는다. ※ 예전엔 비고칸 클릭+Enter 로 내렸는데, 마지막 줄에서 Enter 를 누르면
+    이지폼이 **새 빈 줄을 만든다**(저장은 안 되지만 명세서를 건드림) → 읽기에선 Enter 금지."""
+    if grid:
+        _user32.SendMessageW(grid, _WM_VSCROLL, how, 0)
+        time.sleep(0.05)
+
+
 def _ef_read_open_form():
     """열려 있는(기준 위치로 옮겨 둔) 상세명세서 표를 읽는다 → rows / None(ESC 중단).
-    입력 가드는 호출부가 켜 둔 상태여야 한다. 읽기 전용(셀 클릭·우클릭 '복사'·비고칸 Enter 줄이동만)."""
+    입력 가드는 호출부가 켜 둔 상태여야 한다. 읽기 전용(셀 클릭·우클릭 '복사'·표 보기 스크롤만, Enter 없음)."""
     rows: list = []
+    grid = _ef_form_grid()
+    _ef_grid_scroll(grid, _SB_TOP)  # 열 때 아래로 내려가 있어도 첫 줄부터
     if True:
         empty = dup = 0
         prev = None
@@ -700,14 +814,14 @@ def _ef_read_open_form():
             """줄 하나 반영 → 'go' 계속 / 'end' 표 끝."""
             nonlocal empty, dup, prev
             if not any(v.strip() for v in r.values()):
-                empty += 1
+                empty += 1  # 이지폼 표 맨 끝엔 항상 빈 줄 1개 — 스크롤 끝이면 그 빈 줄이 계속 읽힘
                 return "end" if empty >= 2 else "go"
             empty = 0
             sig = tuple(r.values())
             if sig == prev:
                 dup += 1
-                if dup >= 2:
-                    return "end"  # 같은 줄 3번째 = 스크롤이 더 안 내려감(표 끝)
+                if dup >= _EF_STUCK:
+                    return "end"  # 같은 줄이 계속 = 스크롤이 더 안 내려감(같은 내용 2~3줄은 실제 데이터일 수 있음)
             else:
                 dup = 0
             prev = sig
@@ -723,21 +837,20 @@ def _ef_read_open_form():
                 ended = True
                 break
         if not ended:
-            # 보이는 10줄이 다 찼으면 — 마지막 줄 비고 칸 클릭 → Enter = 정확히 한 줄 아래로(휠 금지).
-            remark_xy = EF_CELLS[-1][EF_COLS.index("remark")]
+            # 보이는 10줄이 다 찼으면 — 표 보기만 한 줄씩 내리고(새 줄 안 생김) 마지막 줄을 읽는다.
             while len(rows) < 200:
                 if ef_aborted():
                     return None
-                ef_click(*remark_xy)
-                time.sleep(0.05)
-                ef_key(0x0D)  # VK_RETURN — 줄 이동(저장 아님)
-                time.sleep(0.18)
+                if not _ef_scroll_one(grid):
+                    break  # 맨 아래 — 더 읽을 줄 없음
                 r, ok = _ef_read_row(EF_CELLS[-1])
                 if not ok or take(r) == "end":
                     break
-        # 표 끝에서 스크롤이 멈춰 같은 줄을 한 번 더 읽어 넣은 것 1개만 정리.
-        if dup >= 2 and len(rows) >= 2 and rows[-1] == rows[-2]:
-            rows.pop()
+        # 안전장치로 끝났으면(같은 줄 반복) 반복해 넣은 것들 정리.
+        if dup >= _EF_STUCK:
+            for _ in range(dup):
+                if len(rows) >= 2 and rows[-1] == rows[-2]:
+                    rows.pop()
     return rows
 
 
@@ -875,11 +988,14 @@ def _ef_read_remarks(clues: bool = False):
     """열린 상세명세서를 훑는다 → [(품목, 규격, 비고)] / None(ESC).
     clues=False(주문번호 찾기): **비고 칸만** 읽는다 — 표 끝은 비고 칸 메뉴가 안 뜨는 것으로 판단.
       (10줄 넘어 스크롤할 때만 품목 칸도 읽음 — 같은 줄 반복=표 끝 판단에 비고만으론 부족)
-    clues=True(단서로 찾기 2차): 품목·규격·비고. 줄이 10개를 넘으면 비고칸 클릭+Enter 로 한 줄씩 내림."""
+    clues=True(단서로 찾기 2차): 품목·규격·비고.
+    줄이 10개를 넘으면 **표 보기만** 한 줄씩 내린다(WM_VSCROLL — Enter 는 마지막 줄에서 새 줄을 만들어 금지)."""
     ci, cs, cr = EF_COLS.index("item"), EF_COLS.index("spec"), EF_COLS.index("remark")
     out: list = []
     prev = None
     dup = 0
+    grid = _ef_form_grid()
+    _ef_grid_scroll(grid, _SB_TOP)  # 열 때 아래로 내려가 있어도 첫 줄부터
 
     def one(cells, need_item=False):
         if clues or need_item:
@@ -904,21 +1020,25 @@ def _ef_read_remarks(clues: bool = False):
         if r is None:
             return out
         out.append(r)
-    remark_xy = EF_CELLS[-1][cr]
+    empty = 0
     while len(out) < 200:
         if ef_aborted():
             return None
-        ef_click(*remark_xy)
-        time.sleep(0.05)
-        ef_key(0x0D)  # 줄 이동(저장 아님)
-        time.sleep(0.18)
+        if not _ef_scroll_one(grid):  # 보기만 한 줄 아래로(새 줄 안 생김) — 맨 아래면 끝
+            break
         r = one(EF_CELLS[-1], need_item=True)
         if r is None:
             break
+        if not any(v.strip() for v in r):
+            empty += 1  # 표 맨 끝 빈 줄 — 스크롤이 멈추면 계속 그 빈 줄
+            if empty >= 2:
+                break
+            continue
+        empty = 0
         if r == prev:
             dup += 1
-            if dup >= 2:
-                break  # 더 안 내려감 = 표 끝
+            if dup >= _EF_STUCK:
+                break  # 안전장치: 같은 줄 계속 = 더 안 내려감
         else:
             dup = 0
         prev = r
@@ -1137,8 +1257,8 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
         except Exception:
             pass
     if clue_mode:
-        return result(True, f"단서 찾기용으로 목록 끝까지 {checked}건을 훑었어요.")
-    return result(True, f"목록 끝까지 {checked}건을 훑었지만 비고에서 {want} 를 못 찾았어요.")
+        return result(True, f"단서 찾기용으로 {checked}건을 훑었어요.")
+    return result(True, f"{checked}건을 훑었지만 비고에서 {want} 를 못 찾았어요.")
 
 
 # 가져오기 상태(웹이 폴링): idle → waiting(버튼 대기) → running → done/error.
