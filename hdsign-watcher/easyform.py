@@ -863,9 +863,10 @@ def _ef_form_header(form) -> "tuple[str, str]":
 
 
 def _ef_read_remarks():
-    """열린 상세명세서의 비고 칸만 훑는다(+표 끝 판단용 품목 칸) → 비고 글자들 / None(ESC).
-    전체 5칸을 읽는 것보다 훨씬 빠르다. 줄이 10개를 넘으면 비고칸 클릭+Enter 로 한 줄씩 내림."""
-    ci, cr = EF_COLS.index("item"), EF_COLS.index("remark")
+    """열린 상세명세서의 품목·규격·비고 칸만 훑는다 → [(품목, 규격, 비고)] / None(ESC).
+    비고=주문번호 찾기, 품목·규격=못 찾았을 때 사람이 넣는 단서로 웹이 고르는 데 쓴다(다시 안 뒤짐).
+    전체 5칸보다 빠르다. 줄이 10개를 넘으면 비고칸 클릭+Enter 로 한 줄씩 내림."""
+    ci, cs, cr = EF_COLS.index("item"), EF_COLS.index("spec"), EF_COLS.index("remark")
     out: list = []
     prev = None
     dup = 0
@@ -874,8 +875,9 @@ def _ef_read_remarks():
         it = _ef_copy_cell(*cells[ci])
         if it is None:
             return None  # 메뉴 안 뜸 = 표 끝
+        sp = _ef_copy_cell(*cells[cs]) or ""
         rm = _ef_copy_cell(*cells[cr]) or ""
-        return it, rm
+        return it, sp, rm
 
     for cells in EF_CELLS:
         if ef_aborted():
@@ -883,7 +885,7 @@ def _ef_read_remarks():
         r = one(cells)
         if r is None:
             return out
-        out.append(r[1])
+        out.append(r)
     remark_xy = EF_CELLS[-1][cr]
     while len(out) < 200:
         if ef_aborted():
@@ -902,7 +904,7 @@ def _ef_read_remarks():
         else:
             dup = 0
         prev = r
-        out.append(r[1])
+        out.append(r)
     return out
 
 
@@ -949,6 +951,61 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
             ef_key(0x21)  # VK_PRIOR(PageUp)
             time.sleep(0.04)
         time.sleep(0.2)
+
+        def close_form():
+            """ESC 한 번. 안 닫히거나 질문 창이 뜨면 아무것도 누르지 않고 False."""
+            ef_key(_VK_ESC)
+            t1 = time.time()
+            while time.time() - t1 < 3.0 and _ef_open_form(main):
+                time.sleep(0.1)
+            return not (_ef_open_form(main) or _ef_easyform_dialog(main))
+
+        # ── 고른 1건만 열기(openIdx) — 단서로 고른 명세서: 맨 위에서 ↓ N번 → Enter → 발행일·합계가
+        #    고를 때와 같은지 확인(목록이 바뀌었으면 멈춤) → 전체 읽기. 다른 명세서는 안 연다.
+        if opts.get("openIdx") is not None:
+            try:
+                n_down = max(0, int(opts.get("openIdx")))
+            except (TypeError, ValueError):
+                return result(False, "열 명세서 번호가 잘못됐어요.")
+            for _ in range(n_down):
+                if ef_aborted():
+                    return result(False, "ESC 로 중단했습니다.")
+                ef_key(_VK_DOWN)
+                time.sleep(0.08)
+            time.sleep(0.2)
+            ef_key(_VK_RETURN)
+            form = None
+            t0 = time.time()
+            while time.time() - t0 < 4.0:
+                form = _ef_open_form(main)
+                if form and "_" not in _ef_form_header(form)[0] and _ef_form_header(form)[0]:
+                    break
+                time.sleep(0.1)
+            if not form:
+                return result(False, "명세서가 안 열렸어요. 목록을 확인해주세요.")
+            time.sleep(0.25)
+            date, total = _ef_form_header(form)
+            exp_d, exp_t = str(opts.get("expectDate") or ""), str(opts.get("expectTotal") or "")
+            if (exp_d and date != exp_d) or (exp_t and total != exp_t):
+                ok_close = close_form()
+                return result(False, f"목록이 바뀌었어요({date} {total}원이 열림, 찾던 건 {exp_d} {exp_t}원)."
+                                     + ("" if ok_close else " 열린 창은 직접 닫아주세요.")
+                                     + " 다시 [이지폼에서 찾기] 해주세요.")
+            if not ef_dock_and_offset():
+                return result(False, "상세명세서 창 위치를 맞추지 못했어요.")
+            time.sleep(0.12)
+            rows = _ef_read_open_form()
+            _EF_OFFSET[0] = 0
+            _EF_OFFSET[1] = 0
+            if rows is None:
+                return result(False, "ESC 로 중단했습니다.")
+            if not close_form():
+                return result(False, f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 직접 닫아주세요.")
+            remark_all = " ".join(r.get("remark", "") for r in rows)
+            found.append({"idx": n_down, "date": date, "total": total, "rows": rows, "match": True,
+                          "orderNos": list(dict.fromkeys(_EF_ORDER_NO_RE.findall(remark_all)))})
+            return result(True, f"{date} 명세서를 읽었어요.")
+
         prev_sig = None
         checked = 0
         for i in range(total_n):
@@ -971,15 +1028,6 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                 return result(len(found) > 0, f"{i + 1}번째 명세서가 안 열려서 멈췄어요({len(found)}건 확인).")
             time.sleep(0.25)
             date, total = _ef_form_header(form)
-
-            def close_form():
-                """ESC 한 번. 안 닫히거나 질문 창이 뜨면 아무것도 누르지 않고 False."""
-                ef_key(_VK_ESC)
-                t1 = time.time()
-                while time.time() - t1 < 3.0 and _ef_open_form(main):
-                    time.sleep(0.1)
-                return not (_ef_open_form(main) or _ef_easyform_dialog(main))
-
             stuck = (f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. "
                      "저장하지 말고 직접 '아니오'/닫기 해주세요.")
             if stop_before and date and date < stop_before:
@@ -994,7 +1042,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
             _EF_OFFSET[1] = 0
             if remarks is None:
                 return result(False, "ESC 로 중단했습니다.")
-            nos = list(dict.fromkeys(_EF_ORDER_NO_RE.findall(" ".join(remarks))))
+            nos = list(dict.fromkeys(_EF_ORDER_NO_RE.findall(" ".join(r[2] for r in remarks))))
             sig = (date, total, tuple(remarks))
             if not close_form():
                 return result(False, stuck)
@@ -1002,6 +1050,10 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                 break  # ↓ 가 더 안 내려감 = 목록 끝
             prev_sig = sig
             checked += 1
+            # 못 찾았을 때 단서로 고를 수 있게 가볍게 남긴다(품목·규격·비고 + 목록 위치 idx).
+            found.append({"idx": i, "date": date, "total": total, "light": True, "orderNos": nos,
+                          "items": [r[0] for r in remarks], "specs": [r[1] for r in remarks],
+                          "remarks": [r[2] for r in remarks]})
             if progress:
                 try:
                     progress(checked, total_n, date)
@@ -1028,7 +1080,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                     return result(False, "ESC 로 중단했습니다.")
                 if not close_form():
                     return result(False, stuck)
-                found.append({"idx": i, "date": date, "total": total, "rows": rows, "orderNos": nos})
+                found.append({"idx": i, "date": date, "total": total, "rows": rows, "orderNos": nos, "match": True})
                 return result(True, f"{date} 명세서 비고에서 {want} 를 찾았어요({checked}건째).")
             time.sleep(0.15)
     finally:
@@ -1057,6 +1109,10 @@ def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
     mode = "scan" if body.get("mode") == "scan" else "one"
     opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 300,
             "findOrderNo": str(body.get("findOrderNo") or "")}
+    if mode == "scan" and body.get("openIdx") is not None:
+        opts.update(openIdx=body.get("openIdx"), expectDate=str(body.get("expectDate") or ""),
+                    expectTotal=str(body.get("expectTotal") or ""))
+    auto = bool(body.get("auto")) and "openIdx" in opts  # 웹에서 이미 확인 → 코너 버튼 없이 바로
     # 웹 버튼을 누른 순간 앞에 있는 창 = 홈페이지 브라우저 → 끝나면 이 창으로 되돌아간다.
     try:
         ret = _user32.GetForegroundWindow()
@@ -1068,7 +1124,7 @@ def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
                         mode=mode, opts=opts, progress="", return_hwnd=ret)
         pid = _EF_PULL["id"]
     try:
-        _EF_UI_QUEUE.put(("pull_show", mode))
+        _EF_UI_QUEUE.put(("pull_auto",) if auto else ("pull_show", mode))
     except Exception:
         pass
     logging.info("이지폼 가져오기 대기 #%d — '가져오기' 버튼 대기", pid)
@@ -1380,7 +1436,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         win.lift()
         win.attributes("-topmost", True)
 
-    def on_pull():
+    def on_pull(auto=False):
         if busy["v"]:
             return
         with _EF_LOCK:
@@ -1393,12 +1449,21 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                           "이지폼 가져오기")
             win.withdraw()
             return
+        def precheck_fail(msg):
+            # 자동(웹에서 고른 1건 열기)은 코너 버튼이 없으니 웹에 오류로 알린다(안 그러면 웹이 계속 대기).
+            if auto:
+                with _EF_LOCK:
+                    if _EF_PULL["id"] == pid:
+                        _EF_PULL.update(state="error", message=msg)
+            else:
+                ef_messagebox(msg, "이지폼 찾기")
+
         if pmode == "scan":
             if not _ef_find_list()[2]:
-                ef_messagebox("이지폼 [매출 거래명세서 목록 → 매출처별 조회] 를 먼저 띄워 두세요.", "이지폼 찾기")
+                precheck_fail("이지폼 [매출 거래명세서 목록 → 매출처별 조회] 를 먼저 띄워 두세요.")
                 return
             if _ef_open_form(_ef_find_list()[0]):
-                ef_messagebox("열려 있는 상세명세서 창을 먼저 닫고(ESC), 목록만 띄워 두세요.", "이지폼 찾기")
+                precheck_fail("열려 있는 상세명세서 창을 먼저 닫고(ESC), 목록만 띄워 두세요.")
                 return
         elif not ef_focus_easyform():
             ef_messagebox("이지폼에서 옮길 상세명세서를 먼저 열어두세요.", "이지폼 가져오기")
@@ -1414,7 +1479,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             q = ("열려 있는 상세명세서를 홈페이지 명세서로 가져올까요?\n\n"
                  "가져오는 동안 마우스가 잠깁니다. (중단하려면 ESC)")
             title = "이지폼에서 가져오기"
-        if not ef_confirm(q, title):
+        if not auto and not ef_confirm(q, title):
             return
         with _EF_LOCK:
             if _EF_PULL["id"] != pid or _EF_PULL["state"] != "waiting":
@@ -1481,6 +1546,10 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     on_fill()
                 elif cmd[0] == "pull_show":
                     set_pull(cmd[1] if len(cmd) > 1 else "one")
+                elif cmd[0] == "pull_auto":  # 단서로 고른 1건 열기 — 웹에서 이미 확인, 바로 실행
+                    mode["v"] = "pull"
+                    busy["v"] = False
+                    on_pull(auto=True)
                 elif cmd[0] == "pull_cancel":
                     if mode["v"] == "pull" and not busy["v"]:
                         win.withdraw()

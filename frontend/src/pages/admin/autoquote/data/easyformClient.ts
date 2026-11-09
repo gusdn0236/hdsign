@@ -195,11 +195,16 @@ export function orderNoCore(orderNumber: string | null | undefined): string {
 
 /** [이지폼에서 찾기] 로 목록에서 하나씩 열어 읽은 명세서 1건. */
 export interface EasyformScannedStatement {
-  idx: number;
+  idx: number; // 목록 맨 위에서 몇 번째(0부터) — 고른 1건을 다시 열 때 씀
   date: string; // 발행일 'YYYY.MM.DD'
   total: string; // 합계금액(화면 글자)
-  rows: EasyformPulledRow[];
+  rows?: EasyformPulledRow[]; // 전체 읽기(match)일 때만
   orderNos: string[]; // 비고에서 찾은 홈페이지 주문번호
+  match?: boolean; // 주문번호로 찾았거나 고른 1건(전체 읽음)
+  light?: boolean; // 훑기만 한 것 — 품목·규격·비고만
+  items?: string[];
+  specs?: string[];
+  remarks?: string[];
 }
 
 export interface EasyformPullStatus {
@@ -213,7 +218,17 @@ export interface EasyformPullStatus {
 
 /** 가져오기 대기. scan = 이지폼 목록(매출처별 조회)에서 위부터 열어 찾기 — stopBefore 보다 오래되면 멈춤. */
 export async function startEasyformPull(
-  opts?: { mode: 'scan'; stopBefore?: string; findOrderNo?: string; max?: number },
+  opts?: {
+    mode: 'scan';
+    stopBefore?: string;
+    findOrderNo?: string;
+    max?: number;
+    // 단서로 고른 1건만 열기 — 맨 위에서 openIdx 번째, 발행일·합계가 같아야 읽음. auto=코너 버튼 없이 바로.
+    openIdx?: number;
+    expectDate?: string;
+    expectTotal?: string;
+    auto?: boolean;
+  },
 ): Promise<{ armed: boolean; id?: number; message?: string }> {
   const res = await fetch(`${AGENT_URL}/easyform/pull`, {
     method: 'POST',

@@ -112,6 +112,127 @@
   font-size: 12px;
   font-weight: 600;
 }
+/* 이지폼 찾기 — 주문번호로 못 찾았을 때 단서로 고르기. */
+.aq-clue {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.aq-clue-sub {
+  font-size: 12px;
+  color: #6b7785;
+}
+.aq-clue-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+.aq-clue-input:focus {
+  outline: none;
+  border-color: #0a9396;
+}
+.aq-clue-hint {
+  font-size: 12px;
+  color: #475569;
+}
+.aq-clue-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.aq-clue-chip {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+}
+.aq-clue-chip.rare {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+  font-weight: 700;
+}
+.aq-clue-chip.mid {
+  background: #fef9c3;
+  border-color: #fde047;
+  color: #854d0e;
+}
+.aq-clue-chip.common {
+  color: #94a3b8;
+}
+.aq-clue-chip.none {
+  color: #94a3b8;
+  text-decoration: line-through;
+}
+.aq-clue-list {
+  overflow-y: auto;
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.aq-clue-empty {
+  font-size: 13px;
+  color: #94a3b8;
+  padding: 14px 4px;
+}
+.aq-clue-row {
+  display: grid;
+  grid-template-columns: 88px 96px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.aq-clue-row:hover {
+  border-color: #0a9396;
+  background: #f0fdfa;
+}
+.aq-clue-row.top {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+.aq-clue-row .d {
+  font-weight: 700;
+}
+.aq-clue-row .t {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.aq-clue-row .i {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #334155;
+}
+.aq-clue-row .m {
+  font-size: 12px;
+  color: #166534;
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .aq-clue-row {
+    grid-template-columns: 1fr auto;
+  }
+  .aq-clue-row .i,
+  .aq-clue-row .m {
+    grid-column: 1 / -1;
+  }
+}
 /* 참고사진 빼기 — 우하단(라벨과 안 겹치게). */
 .aq-refdel {
   position: absolute;
