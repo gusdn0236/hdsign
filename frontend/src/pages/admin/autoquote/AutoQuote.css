@@ -967,6 +967,15 @@
   font-size: 15px;
   color: var(--navy);
 }
+/* 헤더 아래 둘째 버튼줄(이지폼에서 찾기·가져오기) — 오른쪽 정렬, 좁으면 줄바꿈. */
+.aq-h2 {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .aq-tag {
   background: var(--soft);
   color: var(--teal);

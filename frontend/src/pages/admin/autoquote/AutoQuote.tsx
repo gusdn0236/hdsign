@@ -2754,35 +2754,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // grid 를 로컬 에이전트로 보내 스테이징(arm)만 한다. 실제 기입은 사용자가 이지폼 '매출
   // 거래명세서' 새로작성 → 거래처 선택 후, 그 창에서 핫키(F6)를 눌렀을 때 에이전트가 수행.
   const [efBusy, setEfBusy] = useState(false);
-  // [이지폼 입력] — 먼저 '같이 적을 다른 주문번호'(한 이지폼 명세서에 지시서 2개 이상)를 묻는다.
-  // 이 주문 + 다른 주문번호를 이지폼 첫 줄 비고에 적어 둬, 나중에 이지폼→홈페이지 동기화 때 찾는다.
+  // [이지폼 입력] — 이 주문의 주문번호를 이지폼 첫 줄 비고에 자동으로 적는다(묻지 않음).
+  // 합친 명세서면 같이 묶인 주문번호들도 함께. 나중에 [이지폼에서 찾기] 가 이 번호로 찾는다.
   const sendToEasyform = () => {
     if (!order) {
       cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
       return;
     }
     const own = orderNoCore(order.orderNumber);
-    const pre = linkedOrders
-      .map((l) => orderNoCore(l.orderNumber))
-      .filter((n) => n !== own)
-      .join(', ');
-    cdlg(
-      `<b style="font-size:15px">이지폼으로 보내기</b>` +
-        `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼 비고에 주문번호 <b>${own}</b> 를 적어 둡니다.</div>` +
-        `<div style="font-size:12px;color:#6b7785;margin-top:10px">이 명세서에 <b>다른 지시서도 같이</b> 들어가면 그 주문번호를 적어주세요 (없으면 비워두기)</div>` +
-        `<input id="aq-ef-extra" placeholder="예: 261103-20, 261103-21" value="${pre}" ` +
-        `style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px">`,
-      [
-        {
-          label: '이지폼으로 보내기',
-          fn: () => {
-            const v = (document.getElementById('aq-ef-extra') as HTMLInputElement | null)?.value || '';
-            void doSendToEasyform(extractOrderNos(v).filter((n) => n !== own));
-          },
-        },
-        { label: '취소', sec: true },
-      ],
-    );
+    void doSendToEasyform(linkedOrders.map((l) => orderNoCore(l.orderNumber)).filter((n) => n && n !== own));
   };
   const doSendToEasyform = async (extras: string[]) => {
     if (!order) return;
@@ -4028,6 +4008,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             >
               🧮 계산기
             </button>
+          </div>
+          {/* 이지폼 → 홈페이지 버튼줄 — 헤더 한 줄에 다 넣으면 잘려서 계산기 아래 줄로(오른쪽 정렬). */}
+          <div className="aq-h2">
+            <button
+              type="button"
+              className="aq-calcbtn"
+              onClick={() => void pullFromEasyform(true)}
+              title="이지폼 매출처별 조회 목록을 위부터 하나씩 열어, 비고에서 이 주문번호를 찾기"
+            >
+              🔍 이지폼에서 찾기
+            </button>
             <button
               type="button"
               className="aq-calcbtn"
@@ -4035,14 +4026,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               title="이지폼에 열어 둔 상세명세서 1건의 품목코드·품목·규격·수량·단가를 이 표로 가져오기"
             >
               📥 이지폼에서 가져오기
-            </button>
-            <button
-              type="button"
-              className="aq-calcbtn"
-              onClick={() => void pullFromEasyform(true)}
-              title="이지폼 매출처별 조회 목록을 위부터 하나씩 열어, 이 주문의 명세서를 찾기"
-            >
-              🔍 이지폼에서 찾기
             </button>
           </div>
           {/* 도장비 합치기/펼치기 바 — 도장비 행이 2건+ 이거나 이미 합쳐져 있을 때만. */}
