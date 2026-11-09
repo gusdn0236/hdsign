@@ -359,7 +359,26 @@ export async function putEstimate(
   return res.json();
 }
 
-/** 명세서 임시저장 삭제 — 행을 전부 비운 채 저장 시 '임시저장' 라벨 제거용. 없으면(404) 무시. */
+/** 명세서 참고사진 1장 업로드(R2) → 공개 URL. 저장 직전에 아직 안 올라간(data:) 사진만 올린다. */
+export async function uploadEstimateRefPhoto(
+  token: string | null | undefined,
+  orderId: number | string,
+  blob: Blob,
+): Promise<string> {
+  const fd = new FormData();
+  const ext = blob.type.includes('png') ? 'png' : 'jpg';
+  fd.append('file', blob, `ref.${ext}`);
+  const res = await fetch(`${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate/ref-photo`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: fd,
+  });
+  if (!res.ok) throw new Error(`참고사진 업로드 실패 (${res.status})`);
+  const j = await res.json();
+  return String(j.url);
+}
+
+/** 명세서 임시저장 삭제 —행을 전부 비운 채 저장 시 '임시저장' 라벨 제거용. 없으면(404) 무시. */
 export async function deleteEstimate(
   token: string | null | undefined,
   orderId: number | string,

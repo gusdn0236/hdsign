@@ -101,6 +101,24 @@
   font-weight: 700;
   pointer-events: none;
 }
+/* 참고사진 빼기 — 우하단(라벨과 안 겹치게). */
+.aq-refdel {
+  position: absolute;
+  bottom: 12px;
+  right: 14px;
+  z-index: 12;
+  border: none;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.aq-refdel:hover {
+  background: #dc2626;
+}
 
 .aq-wrap {
   display: flex;

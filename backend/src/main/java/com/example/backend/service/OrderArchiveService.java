@@ -53,6 +53,17 @@ public class OrderArchiveService {
         addKey(keys, order.getWorksheetOriginalPdfUrl());
         addKey(keys, order.getWorksheetThumbnailUrl());
         addKey(keys, order.getWorksheetObjectsUrl()); // 치수 오버레이 지오메트리 JSON(R2) — 누락 시 고아로 남던 것
+        // 명세서 참고사진(orders/{주문번호}/estimate-ref/) — DB 에 키 목록이 없으니 접두어로 찾아 지운다.
+        try {
+            String prefix = "orders/" + order.getOrderNumber() + "/estimate-ref/";
+            for (software.amazon.awssdk.services.s3.model.S3Object o : s3Client.listObjectsV2Paginator(
+                    software.amazon.awssdk.services.s3.model.ListObjectsV2Request.builder()
+                            .bucket(bucket).prefix(prefix).build()).contents()) {
+                if (!keys.contains(o.key())) keys.add(o.key());
+            }
+        } catch (Exception ignored) {
+            // best-effort
+        }
         for (String key : keys) {
             try {
                 s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());

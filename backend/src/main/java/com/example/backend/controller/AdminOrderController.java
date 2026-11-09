@@ -329,6 +329,14 @@ public class AdminOrderController {
         }
         AutoQuoteEstimate est = estimateRepository.findByOrderId(order.getId())
                 .orElseGet(() -> AutoQuoteEstimate.builder().orderId(order.getId()).build());
+        // 참고사진 — 이전 저장본엔 있었는데 이번엔 빠진 사진은 R2 에서 지운다(고아 방지).
+        // (refPhotos 필드를 안 보내는 옛 화면이 저장해도 사진이 지워지지 않게 — 필드가 있을 때만 비교)
+        if (est.getGridJson() != null && body.has("refPhotos")) {
+            List<String> keep = refPhotoUrls(body);
+            for (String old : refPhotoUrls(est.getGridJson())) {
+                if (!keep.contains(old)) deleteRefPhoto(order, old);
+            }
+        }
         est.setGridJson(body.toString());
         est.setSavedAt(LocalDateTime.now());
         est.setEditorName(normalizeEditorName(editorName));
@@ -348,8 +356,85 @@ public class AdminOrderController {
     // 없으면 멱등하게 ok(이미 비어 있음).
     @DeleteMapping("/{id}/estimate")
     public ResponseEntity<?> deleteEstimate(@PathVariable Long id) {
-        estimateRepository.findByOrderId(id).ifPresent(estimateRepository::delete);
+        estimateRepository.findByOrderId(id).ifPresent(est -> {
+            orderRepository.findById(id).ifPresent(o -> {
+                for (String u : refPhotoUrls(est.getGridJson())) deleteRefPhoto(o, u);
+            });
+            estimateRepository.delete(est);
+        });
         return ResponseEntity.ok(Map.of("orderId", id, "hasEstimate", false));
+    }
+
+    // ===== 명세서 참고사진 — 명세서 작성 때 붙여넣은 사진(여러 장). =====
+    // 프론트가 임시저장/이지폼 입력 직전에 아직 안 올라간 사진을 여기로 올리고, 받은 URL 을
+    // 명세서 JSON 의 refPhotos 배열에 넣어 저장한다. R2 키는 orders/{주문번호}/estimate-ref/ 아래 —
+    // 주문 하드삭제(OrderArchiveService) 때 이 접두어 통째로 같이 지워진다.
+    private static final long REF_PHOTO_MAX_BYTES = 8L * 1024 * 1024;
+
+    @PostMapping("/{id}/estimate/ref-photo")
+    public ResponseEntity<?> uploadEstimateRefPhoto(
+            @PathVariable Long id,
+            @RequestParam("file") MultipartFile file
+    ) {
+        Order order = orderRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "사진이 비어 있습니다."));
+        }
+        String ct = file.getContentType() == null ? "" : file.getContentType().toLowerCase();
+        if (!ct.startsWith("image/")) {
+            return ResponseEntity.badRequest().body(Map.of("message", "이미지만 올릴 수 있습니다."));
+        }
+        if (file.getSize() > REF_PHOTO_MAX_BYTES) {
+            return ResponseEntity.badRequest().body(Map.of("message", "사진이 너무 큽니다(8MB 초과)."));
+        }
+        String ext = ct.contains("png") ? ".png" : ct.contains("webp") ? ".webp" : ".jpg";
+        String key = refPhotoPrefix(order) + UUID.randomUUID() + ext;
+        try {
+            s3Client.putObject(
+                    PutObjectRequest.builder().bucket(bucket).key(key).contentType(ct).build(),
+                    software.amazon.awssdk.core.sync.RequestBody.fromBytes(file.getBytes())
+            );
+        } catch (Exception e) {
+            log.warn("참고사진 업로드 실패 [{}]: {}", order.getOrderNumber(), e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of("message", "사진 업로드 실패"));
+        }
+        String base = publicUrl == null || publicUrl.isBlank()
+                ? "" : (publicUrl.endsWith("/") ? publicUrl : publicUrl + "/");
+        return ResponseEntity.ok(Map.of("url", base + key));
+    }
+
+    private static String refPhotoPrefix(Order order) {
+        return "orders/" + order.getOrderNumber() + "/estimate-ref/";
+    }
+
+    private List<String> refPhotoUrls(Object jsonOrNode) {
+        List<String> out = new ArrayList<>();
+        try {
+            JsonNode root = jsonOrNode instanceof JsonNode n ? n
+                    : jsonOrNode == null ? null : new ObjectMapper().readTree(jsonOrNode.toString());
+            if (root == null) return out;
+            for (JsonNode u : root.path("refPhotos")) {
+                if (u.isTextual() && !u.asText().isBlank()) out.add(u.asText());
+            }
+        } catch (Exception ignored) {
+            // 옛 저장본/깨진 JSON — 참고사진 없음으로 취급
+        }
+        return out;
+    }
+
+    /** 이 주문의 참고사진 접두어 아래 키일 때만 지운다(다른 파일은 절대 안 건드림). */
+    private void deleteRefPhoto(Order order, String url) {
+        if (url == null || publicUrl == null || publicUrl.isBlank()) return;
+        String base = publicUrl.endsWith("/") ? publicUrl : publicUrl + "/";
+        if (!url.startsWith(base)) return;
+        String key = url.substring(base.length());
+        if (!key.startsWith(refPhotoPrefix(order)) || key.contains("..")) return;
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
+        } catch (Exception e) {
+            log.warn("참고사진 삭제 실패 [{}]: {}", key, e.getMessage());
+        }
     }
 
     // 명세서 조회 — 없으면 404(프론트는 "신규 작성"으로 처리).
