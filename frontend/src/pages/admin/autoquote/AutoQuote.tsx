@@ -50,7 +50,7 @@ import {
   orderNoCore,
   type EasyformScannedStatement,
 } from './data/easyformClient';
-import { parseClues, rankByClues } from './data/clueMatch';
+import { normClue, rankByClues } from './data/clueMatch';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal, { type PickedRow } from './LookupResultModal';
 import MiniCalc from './MiniCalc';
@@ -2071,7 +2071,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 주문번호로 못 찾았을 때 — 훑은 명세서들(품목·규격)에서 사람이 넣은 단서로 고른다(이지폼 다시 안 뒤짐).
   // withItems=false: 1차(비고만)로 훑은 상태 → [품목·규격 훑기] 2차를 해야 단서 점수 계산 가능.
   const [efClue, setEfClue] = useState<{ scanned: EasyformScannedStatement[]; message: string; withItems: boolean } | null>(null);
-  const [clueText, setClueText] = useState('');
+  // 단서 = 칩 목록(Enter 로 한 단어씩) + 아직 Enter 안 친 입력칸 글자.
+  const [clueList, setClueList] = useState<string[]>([]);
+  const [clueDraft, setClueDraft] = useState('');
   const pullFromEasyform = async (scan = false, pick?: EasyformScannedStatement, clues = false) => {
     if (pullRef.current && !pullRef.current.stop) return; // 이미 대기 중
     const probe = await probeEasyformAgent();
@@ -2191,7 +2193,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           const scanned = all.filter((s) => s.light);
           if (scanned.length) {
             // 못 찾음 → 단서 입력창. 1차(비고만)면 단서 먼저 받고 [품목·규격 훑기], 2차 끝이면 바로 점수 순.
-            if (!clues) setClueText(''); // 2차는 입력해 둔 단서 유지
+            if (!clues) {
+              setClueList([]); // 2차는 입력해 둔 단서 유지
+              setClueDraft('');
+            }
             setEfClue({ scanned, message: st.message || '', withItems: clues });
           } else {
             cdlg(
@@ -4850,7 +4855,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       {/* 작은 다이얼로그 */}
       {efClue &&
         (() => {
-          const clues = parseClues(clueText);
+          const clues = clueList;
           const { stats, hits } = rankByClues(efClue.scanned, clues);
           const n = efClue.scanned.length;
           return (
@@ -4863,14 +4868,57 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     ? `훑은 명세서 ${n}건의 품목·규격에서 찾아요.`
                     : `단서를 넣고 [품목·규격 훑기] 를 누르면 같은 ${n}건의 품목·규격을 한 번 더 훑어요.`}
                 </div>
-                <textarea
-                  className="aq-clue-input"
-                  autoFocus
-                  rows={2}
-                  placeholder="지시서 단서를 쉼표로 — 예: 삼겹살, 숙성삼겹살, h:118, 고무스카시20T"
-                  value={clueText}
-                  onChange={(e) => setClueText(e.target.value)}
-                />
+                {/* 똑똑한 검색창처럼 — 한 단어 치고 Enter = 칩 1개. ×·빈칸 Backspace = 지우기. */}
+                <div className="aq-clue-box" onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()}>
+                  {clues.map((c) => {
+                    const st = stats.find((s) => s.clue === c);
+                    const cls = !efClue.withItems || !st
+                      ? ''
+                      : st.df === 0
+                        ? ' none'
+                        : st.df <= 2
+                          ? ' rare'
+                          : st.df > n * 0.3
+                            ? ' common'
+                            : ' mid';
+                    return (
+                      <span
+                        key={c}
+                        className={'aq-clue-chip' + cls}
+                        title={st && efClue.withItems ? (st.df === 0 ? '어느 명세서에도 없음' : `${n}건 중 ${st.df}건에 있음`) : undefined}
+                      >
+                        {c}
+                        {efClue.withItems && st ? ` · ${st.df}건` : ''}
+                        <button
+                          type="button"
+                          className="x"
+                          aria-label={`${c} 지우기`}
+                          onClick={() => setClueList((l) => l.filter((x) => x !== c))}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                  <input
+                    className="aq-clue-input"
+                    autoFocus
+                    placeholder={clues.length ? '단서 더 넣기 — Enter' : '지시서 단서를 한 단어씩 치고 Enter — 예: 삼겹살 ⏎ 숙성삼겹살 ⏎ h:118 ⏎'}
+                    value={clueDraft}
+                    onChange={(e) => setClueDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용(칩 2개 방지)
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const w = clueDraft.trim();
+                        if (w && !clues.some((c) => normClue(c) === normClue(w))) setClueList((l) => [...l, w]);
+                        setClueDraft('');
+                      } else if (e.key === 'Backspace' && !clueDraft && clues.length) {
+                        setClueList((l) => l.slice(0, -1));
+                      }
+                    }}
+                  />
+                </div>
                 <div className="aq-clue-hint">
                   작업 내용(간판 글자·상호)·규격처럼 <b>드문 단서일수록 강하게</b>, 도장처럼 흔한 단서는 약하게 반영해요.
                   (품목코드 칸은 안 읽어요 — 고무스카시20T 같은 코드보다 품목·규격 글자를 넣어주세요)
@@ -4879,29 +4927,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   <button
                     type="button"
                     className="aq-clue-go"
-                    disabled={clues.length === 0}
+                    disabled={clues.length === 0 && !clueDraft.trim()}
                     onClick={() => {
+                      const w = clueDraft.trim(); // Enter 안 친 단어도 단서로
+                      if (w && !clues.some((c) => normClue(c) === normClue(w))) setClueList((l) => [...l, w]);
+                      setClueDraft('');
                       setEfClue(null);
                       void pullFromEasyform(true, undefined, true);
                     }}
                   >
                     🔍 이지폼에서 품목·규격 훑기 ({n}건)
                   </button>
-                )}
-                {efClue.withItems && stats.length > 0 && (
-                  <div className="aq-clue-chips">
-                    {stats.map((st) => (
-                      <span
-                        key={st.clue}
-                        className={
-                          'aq-clue-chip ' + (st.df === 0 ? 'none' : st.df <= 2 ? 'rare' : st.df > n * 0.3 ? 'common' : 'mid')
-                        }
-                        title={st.df === 0 ? '어느 명세서에도 없음' : `${n}건 중 ${st.df}건에 있음`}
-                      >
-                        {st.clue} · {st.df}건
-                      </span>
-                    ))}
-                  </div>
                 )}
                 <div className="aq-clue-list" style={efClue.withItems ? undefined : { display: 'none' }}>
                   {clues.length === 0 ? (
