@@ -871,21 +871,30 @@ def _ef_form_header(form) -> "tuple[str, str]":
     return date, total
 
 
-def _ef_read_remarks():
-    """열린 상세명세서의 품목·규격·비고 칸만 훑는다 → [(품목, 규격, 비고)] / None(ESC).
-    비고=주문번호 찾기, 품목·규격=못 찾았을 때 사람이 넣는 단서로 웹이 고르는 데 쓴다(다시 안 뒤짐).
-    전체 5칸보다 빠르다. 줄이 10개를 넘으면 비고칸 클릭+Enter 로 한 줄씩 내림."""
+def _ef_read_remarks(clues: bool = False):
+    """열린 상세명세서를 훑는다 → [(품목, 규격, 비고)] / None(ESC).
+    clues=False(주문번호 찾기): **비고 칸만** 읽는다 — 표 끝은 비고 칸 메뉴가 안 뜨는 것으로 판단.
+      (10줄 넘어 스크롤할 때만 품목 칸도 읽음 — 같은 줄 반복=표 끝 판단에 비고만으론 부족)
+    clues=True(단서로 찾기 2차): 품목·규격·비고. 줄이 10개를 넘으면 비고칸 클릭+Enter 로 한 줄씩 내림."""
     ci, cs, cr = EF_COLS.index("item"), EF_COLS.index("spec"), EF_COLS.index("remark")
     out: list = []
     prev = None
     dup = 0
 
-    def one(cells):
-        it = _ef_copy_cell(*cells[ci])
-        if it is None:
-            return None  # 메뉴 안 뜸 = 표 끝
-        sp = _ef_copy_cell(*cells[cs]) or ""
-        rm = _ef_copy_cell(*cells[cr]) or ""
+    def one(cells, need_item=False):
+        if clues or need_item:
+            it = _ef_copy_cell(*cells[ci])
+            if it is None:
+                return None  # 메뉴 안 뜸 = 표 끝
+        else:
+            it = ""
+        sp = (_ef_copy_cell(*cells[cs]) or "") if clues else ""
+        rm = _ef_copy_cell(*cells[cr])
+        if rm is None:
+            if clues or need_item:
+                rm = ""
+            else:
+                return None  # 비고만 읽을 때: 메뉴 안 뜸 = 표 끝
         return it, sp, rm
 
     for cells in EF_CELLS:
@@ -903,7 +912,7 @@ def _ef_read_remarks():
         time.sleep(0.05)
         ef_key(0x0D)  # 줄 이동(저장 아님)
         time.sleep(0.18)
-        r = one(EF_CELLS[-1])
+        r = one(EF_CELLS[-1], need_item=True)
         if r is None:
             break
         if r == prev:
@@ -917,6 +926,29 @@ def _ef_read_remarks():
     return out
 
 
+def _ef_dock_fast() -> bool:
+    """찾기용 빠른 위치 맞추기 — 상세 창이 이미 기준 위치면 옮기지 않고(대기 0) 격자 잔차만 계산.
+    ef_dock_and_offset 은 매번 전면화+이동+0.28초 대기라 건마다 쌓이면 느리다."""
+    _main, form = _ef_find_main_form()
+    if not form:
+        return False
+    try:
+        if _ef_topleft(form) != EF_FORM_HOME:
+            _ef_move_to_screen(form, EF_FORM_HOME[0], EF_FORM_HOME[1])
+            time.sleep(0.12)
+        grid = _ef_find_child_class(form, "TAdvStringGrid")
+        if grid:
+            gl, gt = _ef_topleft(grid)
+            _EF_OFFSET[0] = gl - EF_GRID_REF[0]
+            _EF_OFFSET[1] = gt - EF_GRID_REF[1]
+        else:
+            _EF_OFFSET[0] = _EF_OFFSET[1] = 0
+    except Exception:
+        logging.exception("이지폼 폼 빠른 보정 실패")
+        return ef_dock_and_offset()
+    return True
+
+
 def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
     """목록 맨 위부터 명세서를 하나씩 열어 **비고만** 훑어 주문번호(findOrderNo)를 찾는다.
     찾으면 그 명세서만 전체를 읽어 [그 1건] 을 돌려주고 멈춘다. (성공여부, 메시지, 명세서 목록).
@@ -924,6 +956,9 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
     if not EASYFORM_AVAILABLE:
         return False, "이 PC 에서는 이지폼 찾기를 쓸 수 없습니다.", []
     want = str(opts.get("findOrderNo") or "").strip()
+    clue_mode = bool(opts.get("clues"))  # 단서 찾기 2차: 품목·규격·비고를 훑기만(주문번호 안 찾음)
+    if clue_mode:
+        want = ""
     stop_before = str(opts.get("stopBefore") or "").strip()
     try:
         max_n = max(1, min(500, int(opts.get("max") or 300)))
@@ -966,7 +1001,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
             ef_key(_VK_ESC)
             t1 = time.time()
             while time.time() - t1 < 3.0 and _ef_open_form(main):
-                time.sleep(0.1)
+                time.sleep(0.04)
             return not (_ef_open_form(main) or _ef_easyform_dialog(main))
 
         # ── 고른 1건만 열기(openIdx) — 단서로 고른 명세서: 맨 위에서 ↓ N번 → Enter → 발행일·합계가
@@ -1022,7 +1057,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                 return result(False, "ESC 로 중단했습니다.")
             if i > 0:
                 ef_key(_VK_DOWN)  # 목록 다음 줄
-                time.sleep(0.2)
+                time.sleep(0.08)
             ef_key(_VK_RETURN)  # 열기
             form = None
             t0 = time.time()
@@ -1030,23 +1065,24 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                 form = _ef_open_form(main)
                 if form and "_" not in _ef_form_header(form)[0] and _ef_form_header(form)[0]:
                     break
-                time.sleep(0.1)
+                time.sleep(0.04)
             if not form:
                 if _ef_easyform_dialog(main):
                     return result(False, f"{i + 1}번째에서 이지폼 알림 창이 떠서 멈췄어요. 직접 확인해주세요.")
                 return result(len(found) > 0, f"{i + 1}번째 명세서가 안 열려서 멈췄어요({len(found)}건 확인).")
-            time.sleep(0.25)
+            time.sleep(0.06)  # 표 그려질 틈(발행일 글자가 뜬 뒤라 짧게)
             date, total = _ef_form_header(form)
             stuck = (f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. "
                      "저장하지 말고 직접 '아니오'/닫기 해주세요.")
             if stop_before and date and date < stop_before:
                 if not close_form():
                     return result(False, stuck)
+                if clue_mode:
+                    return result(True, f"단서 찾기용으로 {checked}건을 훑었어요({stop_before} 이후).")
                 return result(True, f"{checked}건을 훑었지만 {stop_before} 이후 명세서 비고에서 {want} 를 못 찾았어요.")
-            if not ef_dock_and_offset():
+            if not _ef_dock_fast():
                 return result(False, "상세명세서 창 위치를 맞추지 못했어요.")
-            time.sleep(0.12)
-            remarks = _ef_read_remarks()
+            remarks = _ef_read_remarks(clues=clue_mode)
             _EF_OFFSET[0] = 0
             _EF_OFFSET[1] = 0
             if remarks is None:
@@ -1070,7 +1106,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                     pass
             if want and want in nos:
                 # 찾음 → 같은 줄을 다시 열어(표가 맨 위부터 보이게) 전체 5칸+비고를 읽는다.
-                time.sleep(0.2)
+                time.sleep(0.08)
                 ef_key(_VK_RETURN)
                 t0 = time.time()
                 form = None
@@ -1078,10 +1114,10 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                     form = _ef_open_form(main)
                     if form and _ef_form_header(form)[0] == date:
                         break
-                    time.sleep(0.1)
-                if not form or not ef_dock_and_offset():
+                    time.sleep(0.04)
+                time.sleep(0.06)
+                if not form or not _ef_dock_fast():
                     return result(False, f"{date} 명세서에서 찾았는데 다시 열지 못했어요. 그 명세서를 열고 [가져오기] 해주세요.")
-                time.sleep(0.12)
                 rows = _ef_read_open_form()
                 _EF_OFFSET[0] = 0
                 _EF_OFFSET[1] = 0
@@ -1091,7 +1127,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                     return result(False, stuck)
                 found.append({"idx": i, "date": date, "total": total, "rows": rows, "orderNos": nos, "match": True})
                 return result(True, f"{date} 명세서 비고에서 {want} 를 찾았어요({checked}건째).")
-            time.sleep(0.15)
+            time.sleep(0.03)
     finally:
         _EF_OFFSET[0] = 0
         _EF_OFFSET[1] = 0
@@ -1100,6 +1136,8 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
             ef_set_clipboard("")
         except Exception:
             pass
+    if clue_mode:
+        return result(True, f"단서 찾기용으로 목록 끝까지 {checked}건을 훑었어요.")
     return result(True, f"목록 끝까지 {checked}건을 훑었지만 비고에서 {want} 를 못 찾았어요.")
 
 
@@ -1118,7 +1156,8 @@ def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
     mode = "scan" if body.get("mode") == "scan" else "one"
     opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 300,
             "findOrderNo": str(body.get("findOrderNo") or ""),
-            "clientName": str(body.get("clientName") or "")[:40]}  # 코너 창 안내 문구용
+            "clientName": str(body.get("clientName") or "")[:40],  # 코너 창 안내 문구용
+            "clues": bool(body.get("clues"))}  # 단서 찾기 2차(품목·규격·비고 훑기)
     if mode == "scan" and body.get("openIdx") is not None:
         opts.update(openIdx=body.get("openIdx"), expectDate=str(body.get("expectDate") or ""),
                     expectTotal=str(body.get("expectTotal") or ""))
@@ -1490,7 +1529,12 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             ef_messagebox("이지폼에서 옮길 상세명세서를 먼저 열어두세요.", "이지폼 가져오기")
             return
         # 한 번 더 확인([이지폼 입력] 과 같은 방식). 아니오 = 대기 상태 그대로(다시 누를 수 있음).
-        if pmode == "scan":
+        if pmode == "scan" and popts.get("clues"):
+            q = ("이지폼 목록 맨 위부터 명세서를 하나씩 열어\n품목·규격을 훑을까요? (단서로 찾기)\n\n"
+                 + (f"({popts.get('stopBefore')} 까지 보고 멈춥니다)\n" if popts.get("stopBefore") else "")
+                 + "훑는 동안 마우스가 잠깁니다. (중단하려면 ESC)")
+            title = "이지폼에서 단서로 찾기"
+        elif pmode == "scan":
             want = popts.get("findOrderNo") or ""
             q = (f"이지폼 목록 맨 위부터 명세서를 하나씩 열어\n비고에서 주문번호 {want} 를 찾을까요?\n\n"
                  + (f"({popts.get('stopBefore')} 까지 보고 멈춥니다)\n" if popts.get("stopBefore") else "")

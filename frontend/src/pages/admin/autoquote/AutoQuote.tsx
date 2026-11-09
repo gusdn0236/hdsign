@@ -2072,9 +2072,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     void onEasyformPulled(scannedToRows(s), s.orderNos, { date: s.date, total: s.total });
   };
   // 주문번호로 못 찾았을 때 — 훑은 명세서들(품목·규격)에서 사람이 넣은 단서로 고른다(이지폼 다시 안 뒤짐).
-  const [efClue, setEfClue] = useState<{ scanned: EasyformScannedStatement[]; message: string } | null>(null);
+  // withItems=false: 1차(비고만)로 훑은 상태 → [품목·규격 훑기] 2차를 해야 단서 점수 계산 가능.
+  const [efClue, setEfClue] = useState<{ scanned: EasyformScannedStatement[]; message: string; withItems: boolean } | null>(null);
   const [clueText, setClueText] = useState('');
-  const pullFromEasyform = async (scan = false, pick?: EasyformScannedStatement) => {
+  const pullFromEasyform = async (scan = false, pick?: EasyformScannedStatement, clues = false) => {
     if (pullRef.current && !pullRef.current.stop) return; // 이미 대기 중
     const probe = await probeEasyformAgent();
     if (!probe || !probe.easyform) {
@@ -2108,7 +2109,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         pick
           ? { mode: 'scan', openIdx: pick.idx, expectDate: pick.date, expectTotal: pick.total, auto: true }
           : scan
-            ? { mode: 'scan', stopBefore, findOrderNo: own, max: 300, clientName: order?.clientCompanyName || '' }
+            ? { mode: 'scan', stopBefore, findOrderNo: own, max: 300, clientName: order?.clientCompanyName || '', clues }
             : undefined,
       );
       if (!r.armed || r.id == null) {
@@ -2131,6 +2132,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       cdlg(
         `<b style="font-size:15px">이지폼에서 ${pick.date} 명세서를 여는 중…</b>` +
           `<div style="font-size:12px;color:#6b7785;margin-top:6px">이지폼 목록을 그대로 두세요. 끝날 때까지 마우스를 잠시 놓아주세요. (중단: ESC)</div>`,
+        [{ label: '취소', sec: true, fn: cancel }],
+      );
+    } else if (scan && clues) {
+      cdlg(
+        `<b style="font-size:15px">단서로 찾기 — 품목·규격 훑기</b>` +
+          `<div style="font-size:13px;margin-top:8px;line-height:1.8">이지폼 목록을 그대로 두고<br>` +
+          `오른쪽 아래 <b>'이지폼 목록에서 찾기 ▶'</b> 버튼을 눌러주세요</div>`,
         [{ label: '취소', sec: true, fn: cancel }],
       );
     } else if (scan) {
@@ -2185,9 +2193,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         else {
           const scanned = all.filter((s) => s.light);
           if (scanned.length) {
-            // 못 찾음 → 단서 입력창(훑은 명세서들의 품목·규격에서 고르기).
-            setClueText('');
-            setEfClue({ scanned, message: st.message || '' });
+            // 못 찾음 → 단서 입력창. 1차(비고만)면 단서 먼저 받고 [품목·규격 훑기], 2차 끝이면 바로 점수 순.
+            if (!clues) setClueText(''); // 2차는 입력해 둔 단서 유지
+            setEfClue({ scanned, message: st.message || '', withItems: clues });
           } else {
             cdlg(
               `<b style="font-size:15px">이지폼에서 못 찾았어요</b>` +
@@ -4852,7 +4860,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               <div className="aq-cdbox aq-clue">
                 <b style={{ fontSize: 15 }}>주문번호로는 못 찾았어요 — 단서로 찾기</b>
                 <div className="aq-clue-sub">
-                  {efClue.message} 훑은 명세서 {n}건 안에서 찾아요(이지폼을 다시 뒤지지 않음).
+                  {efClue.message}{' '}
+                  {efClue.withItems
+                    ? `훑은 명세서 ${n}건의 품목·규격에서 찾아요.`
+                    : `단서를 넣고 [품목·규격 훑기] 를 누르면 같은 ${n}건의 품목·규격을 한 번 더 훑어요.`}
                 </div>
                 <textarea
                   className="aq-clue-input"
@@ -4866,7 +4877,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   작업 내용(간판 글자·상호)·규격처럼 <b>드문 단서일수록 강하게</b>, 도장처럼 흔한 단서는 약하게 반영해요.
                   (품목코드 칸은 안 읽어요 — 고무스카시20T 같은 코드보다 품목·규격 글자를 넣어주세요)
                 </div>
-                {stats.length > 0 && (
+                {!efClue.withItems && (
+                  <button
+                    type="button"
+                    className="aq-clue-go"
+                    disabled={clues.length === 0}
+                    onClick={() => {
+                      setEfClue(null);
+                      void pullFromEasyform(true, undefined, true);
+                    }}
+                  >
+                    🔍 이지폼에서 품목·규격 훑기 ({n}건)
+                  </button>
+                )}
+                {efClue.withItems && stats.length > 0 && (
                   <div className="aq-clue-chips">
                     {stats.map((st) => (
                       <span
@@ -4881,7 +4905,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     ))}
                   </div>
                 )}
-                <div className="aq-clue-list">
+                <div className="aq-clue-list" style={efClue.withItems ? undefined : { display: 'none' }}>
                   {clues.length === 0 ? (
                     <div className="aq-clue-empty">단서를 넣으면 맞는 명세서가 여기에 점수 순으로 나와요.</div>
                   ) : hits.length === 0 ? (

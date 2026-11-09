@@ -226,6 +226,7 @@ export async function startEasyformPull(
     findOrderNo?: string;
     max?: number;
     clientName?: string; // 워처 코너 창 안내 문구('…'를 검색해주세요)
+    clues?: boolean; // 단서 찾기 2차 — 비고 대신 품목·규격·비고를 훑기만(주문번호 안 찾음)
     // 단서로 고른 1건만 열기 — 맨 위에서 openIdx 번째, 발행일·합계가 같아야 읽음. auto=코너 버튼 없이 바로.
     openIdx?: number;
     expectDate?: string;
