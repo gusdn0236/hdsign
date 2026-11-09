@@ -1117,7 +1117,8 @@ def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
     body = body if isinstance(body, dict) else {}
     mode = "scan" if body.get("mode") == "scan" else "one"
     opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 300,
-            "findOrderNo": str(body.get("findOrderNo") or "")}
+            "findOrderNo": str(body.get("findOrderNo") or ""),
+            "clientName": str(body.get("clientName") or "")[:40]}  # 코너 창 안내 문구용
     if mode == "scan" and body.get("openIdx") is not None:
         opts.update(openIdx=body.get("openIdx"), expectDate=str(body.get("expectDate") or ""),
                     expectTotal=str(body.get("expectTotal") or ""))
@@ -1391,9 +1392,10 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     def set_staged(count):
         busy["v"] = False
         mode["v"] = "fill"
+        win.geometry(f"{w}x{h}+{max(0, sw - w - int(28 * s))}+{max(0, sh - h - int(72 * s))}")  # 찾기로 커졌으면 원래대로
         info_lbl.config(
             text="이지폼 [새로작성 → 거래처 선택] 후\n아래 버튼을 누르면 해당 명세서가 자동입력됩니다.",
-            fg="#333333")
+            fg="#333333", wraplength=w - int(42 * s))
         btn.config(text="이지폼 자동기입 시작하기 ▶", state="normal", bg=accent)
         win.deiconify()
         win.lift()
@@ -1434,14 +1436,22 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         busy["v"] = False
         mode["v"] = "pull"
         if pmode == "scan":
+            # 웹 안내창과 같은 3단계 문구(거래처 이름은 웹이 보내 줌). 3줄이라 창을 조금 키운다.
+            with _EF_LOCK:
+                client = str(_EF_PULL.get("opts", {}).get("clientName") or "").strip() or "이 거래처"
+            ww, hh = int(440 * s), int(205 * s)
+            win.geometry(f"{ww}x{hh}+{max(0, sw - ww - int(28 * s))}+{max(0, sh - hh - int(72 * s))}")
             info_lbl.config(
-                text="이지폼 [매출처별 조회 → 그 해 1/1~12/31 → 역순보기]\n목록을 띄워 둔 뒤(맨 위가 보이게) 아래 버튼을 누르세요.",
-                fg="#333333")
+                text=(f"1. 매출처별 조회에서 '{client}'를 검색해주세요\n"
+                      "2. 날짜를 1/1~12/31로 설정해주세요 (최신순)\n"
+                      "3. '이지폼 목록에서 찾기 ▶' 버튼을 눌러주세요"),
+                fg="#333333", wraplength=ww - int(42 * s))
             btn.config(text="이지폼 목록에서 찾기 ▶", state="normal", bg=accent)
         else:
+            win.geometry(f"{w}x{h}+{max(0, sw - w - int(28 * s))}+{max(0, sh - h - int(72 * s))}")
             info_lbl.config(
                 text="이지폼에서 옮길 상세명세서를 열어 둔 뒤\n아래 버튼을 누르면 홈페이지 명세서로 가져옵니다.",
-                fg="#333333")
+                fg="#333333", wraplength=w - int(42 * s))
             btn.config(text="이지폼에서 가져오기 ▶", state="normal", bg=accent)
         win.deiconify()
         win.lift()

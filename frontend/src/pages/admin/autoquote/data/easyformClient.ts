@@ -225,6 +225,7 @@ export async function startEasyformPull(
     stopBefore?: string;
     findOrderNo?: string;
     max?: number;
+    clientName?: string; // 워처 코너 창 안내 문구('…'를 검색해주세요)
     // 단서로 고른 1건만 열기 — 맨 위에서 openIdx 번째, 발행일·합계가 같아야 읽음. auto=코너 버튼 없이 바로.
     openIdx?: number;
     expectDate?: string;

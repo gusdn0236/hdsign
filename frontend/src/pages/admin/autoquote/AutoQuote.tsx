@@ -2108,7 +2108,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         pick
           ? { mode: 'scan', openIdx: pick.idx, expectDate: pick.date, expectTotal: pick.total, auto: true }
           : scan
-            ? { mode: 'scan', stopBefore, findOrderNo: own, max: 300 }
+            ? { mode: 'scan', stopBefore, findOrderNo: own, max: 300, clientName: order?.clientCompanyName || '' }
             : undefined,
       );
       if (!r.armed || r.id == null) {
