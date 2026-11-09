@@ -655,12 +655,21 @@ def _ef_inplace_text(x: int, y: int, timeout: float = 0.3):
     return None
 
 
+_EF_INPLACE_OK = [False]  # 지금 읽는 명세서에서 편집칸 읽기가 한 번이라도 됐나(읽기 시작마다 초기화)
+
+
 def _ef_copy_cell(x: int, y: int):
     """한 칸 읽기 → 글자 / ''(빈칸) / None(표 끝 또는 창 없음).
-    1순위 편집칸 글자 직접 읽기, 안 되면(표 밖 등) 예전 우클릭 '복사' 방식."""
-    v = _ef_inplace_text(x, y)
+    1순위 편집칸 글자 직접 읽기, 안 되면(표 밖 등) 예전 우클릭 '복사' 방식.
+    이 명세서에서 편집칸이 이미 잘 뜨고 있었다면, 안 뜨는 칸 = 표 끝(마지막 줄 아래)으로 보고 짧게 한 번만
+    다시 확인한 뒤 끝낸다 — 예전엔 여기서 우클릭 메뉴까지 기다려(≈0.9초) 다 읽고도 ESC 가 늦었다."""
+    v = _ef_inplace_text(x, y, timeout=0.15 if _EF_INPLACE_OK[0] else 0.3)
     if v is not None:
+        _EF_INPLACE_OK[0] = True
         return v
+    if _EF_INPLACE_OK[0]:
+        v = _ef_inplace_text(x, y, timeout=0.12)  # 한 번 더(느린 순간 대비)
+        return v  # 그래도 없으면 None = 표 끝
     return _ef_copy_cell_menu(x, y)
 
 
@@ -806,6 +815,7 @@ def _ef_read_open_form():
     rows: list = []
     grid = _ef_form_grid()
     _ef_grid_scroll(grid, _SB_TOP)  # 열 때 아래로 내려가 있어도 첫 줄부터
+    _EF_INPLACE_OK[0] = False  # 명세서마다 편집칸 읽기 여부 새로
     if True:
         empty = dup = 0
         prev = None
@@ -996,6 +1006,7 @@ def _ef_read_remarks(clues: bool = False):
     dup = 0
     grid = _ef_form_grid()
     _ef_grid_scroll(grid, _SB_TOP)  # 열 때 아래로 내려가 있어도 첫 줄부터
+    _EF_INPLACE_OK[0] = False  # 명세서마다 편집칸 읽기 여부 새로
 
     def one(cells, need_item=False):
         if clues or need_item:

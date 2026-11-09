@@ -124,6 +124,183 @@
   font-size: 12px;
   color: #6b7785;
 }
+/* 단서로 고른 명세서 비교 창 — 왼쪽 지시서 사진 | 오른쪽 명세서 표. 좁으면 위아래. */
+.aq-efprev {
+  width: min(1200px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.aq-efprev-h {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 15px;
+}
+.aq-efprev-h span {
+  font-size: 13px;
+  color: #475569;
+}
+.aq-efprev-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.aq-efprev-img,
+.aq-efprev-grid {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.aq-efprev .cap {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.aq-efprev-img img {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+  background: #f1f5f9;
+  flex: 1;
+}
+.aq-efprev-img .none {
+  padding: 40px 10px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.aq-efprev-grid {
+  overflow: auto;
+}
+.aq-efprev-grid table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.aq-efprev-grid th,
+.aq-efprev-grid td {
+  padding: 5px 7px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+  white-space: nowrap;
+}
+.aq-efprev-grid td:nth-child(2) {
+  white-space: normal;
+  min-width: 140px;
+}
+.aq-efprev-grid th {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  color: #64748b;
+  font-weight: 600;
+  border-bottom: 1px solid #e2e8f0;
+}
+.aq-efprev-grid .n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.aq-efprev-grid tfoot td {
+  font-weight: 700;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+@media (max-width: 760px) {
+  .aq-efprev-body {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .aq-efprev-img img {
+    max-height: 45vh;
+  }
+}
+/* 단서로 찾기 오른쪽 — 단서 칩 + ◀ n/N ▶ + 품목·규격·비고 표. */
+.aq-clue-right {
+  padding: 10px;
+  gap: 10px;
+  overflow: hidden;
+}
+.aq-clue-pre {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.aq-clue-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.aq-clue-nav button {
+  flex: none;
+  width: 38px;
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+.aq-clue-nav button:hover:not(:disabled) {
+  border-color: #0a9396;
+  background: #f0fdfa;
+}
+.aq-clue-nav button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.aq-clue-nav .t {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 13px;
+  color: #334155;
+}
+.aq-clue-nav .t .m {
+  color: #166534;
+}
+.aq-clue-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.aq-clue-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.aq-clue-table th,
+.aq-clue-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+}
+.aq-clue-table th {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  color: #64748b;
+  font-weight: 600;
+}
+.aq-clue-table td.hit {
+  background: #dcfce7;
+  color: #166534;
+  font-weight: 700;
+}
 /* 단서 칩 입력칸 — 한 단어 치고 Enter = 칩. 칩과 입력칸이 한 상자 안에서 줄바꿈. */
 .aq-clue-box {
   display: flex;

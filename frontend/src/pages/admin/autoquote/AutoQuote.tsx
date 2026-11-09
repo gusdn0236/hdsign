@@ -1934,7 +1934,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   type EfMeta = { date?: string; total?: string };
   // 먼저 '같은 이지폼 명세서가 이미 다른 주문에 저장돼 있나'(거래처·발행일·합계 지문) 확인 → 있으면
   // 합친 명세서로 묶을지 묻는다(한 이지폼 명세서에 지시서 2개). 없으면 평소 흐름.
-  const onEasyformPulled = async (raw: Record<string, string>[], foundNos: string[], meta?: EfMeta) => {
+  // confirmed=true: 비교 창에서 이미 '맞아요'를 눌렀음 → 저장 확인을 다시 묻지 않는다(합치기 질문만).
+  const onEasyformPulled = async (raw: Record<string, string>[], foundNos: string[], meta?: EfMeta, confirmed = false) => {
     const own = orderNoCore(order?.orderNumber);
     if (order && own && meta?.date && meta?.total) {
       const groups = await findEasyformMatch(token, order.id, meta.date, meta.total);
@@ -1949,14 +1950,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             `<div style="font-size:12px;color:#6b7785;margin-top:6px">묶으면 두 주문이 명세서 1장을 같이 쓰고, 매출은 한 번만 잡혀요.</div>`,
           [
             { label: `합친 명세서로 묶기 (${merged.join(' + ')})`, fn: () => onEasyformPulledInner(raw, merged, meta, true) },
-            { label: '이 주문에만 따로 저장', sec: true, fn: () => onEasyformPulledInner(raw, foundNos, meta) },
+            { label: '이 주문에만 따로 저장', sec: true, fn: () => onEasyformPulledInner(raw, foundNos, meta, confirmed) },
             { label: '취소', sec: true },
           ],
         );
         return;
       }
     }
-    onEasyformPulledInner(raw, foundNos, meta);
+    onEasyformPulledInner(raw, foundNos, meta, confirmed);
   };
   const onEasyformPulledInner = (
     raw: Record<string, string>[],
@@ -2065,6 +2066,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       단가: formatWon(r.unit_price || ''),
       비고: r.remark || '',
     }));
+  // 단서로 찾기 — 지시서 사진 옆에서 훑은 명세서를 ◀ ▶ 로 넘겨 보는 위치.
+  const [cluePos, setCluePos] = useState(0);
   const pickScanned = (s: EasyformScannedStatement) => {
     void onEasyformPulled(scannedToRows(s), s.orderNos, { date: s.date, total: s.total });
   };
@@ -2188,7 +2191,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         setDialog(null);
         const all = st.statements || [];
         const hit = all.find((s) => s.match);
-        if (hit) pickScanned(hit);
+        if (hit && pick) {
+          // 단서 창에서 지시서 사진과 넘겨 보며 이미 골랐음 → 다시 묻지 않고 가져온다(합치기만 확인).
+          void onEasyformPulled(scannedToRows(hit), hit.orderNos, { date: hit.date, total: hit.total }, true);
+        } else if (hit) pickScanned(hit);
         else {
           const scanned = all.filter((s) => s.light);
           if (scanned.length) {
@@ -2197,6 +2203,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               setClueList([]); // 2차는 입력해 둔 단서 유지
               setClueDraft('');
             }
+            setCluePos(0);
             setEfClue({ scanned, message: st.message || '', withItems: clues });
           } else {
             cdlg(
@@ -4855,119 +4862,189 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       {/* 작은 다이얼로그 */}
       {efClue &&
         (() => {
+          // 단서로 찾기 = 왼쪽 지시서 사진 고정 | 오른쪽 훑은 명세서를 ◀ ▶ 로 한 건씩 넘겨 보며 맞는 걸 고른다.
           const clues = clueList;
           const { stats, hits } = rankByClues(efClue.scanned, clues);
           const n = efClue.scanned.length;
+          // 넘겨 볼 순서: 단서 점수 높은 순 → 나머지(최신순). 단서가 없으면 최신순 그대로.
+          const hitIdx = new Set(hits.map((h) => h.s.idx));
+          const seq: { s: EasyformScannedStatement; matched: string[]; score: number }[] = [
+            ...hits.map((h) => ({ s: h.s, matched: h.matched, score: h.score })),
+            ...efClue.scanned.filter((s) => !hitIdx.has(s.idx)).map((s) => ({ s, matched: [] as string[], score: 0 })),
+          ];
+          const pos = Math.min(Math.max(0, cluePos), Math.max(0, seq.length - 1));
+          const cur = seq[pos];
+          const normClues = clues.map(normClue);
+          const isHit = (t: string) => {
+            const x = normClue(t);
+            return !!x && normClues.some((c) => x.includes(c) || (x.length >= 3 && c.includes(x)));
+          };
+          const go = (d: number) => setCluePos(Math.min(Math.max(0, pos + d), seq.length - 1));
+          const close = () => {
+            setEfClue(null);
+            setCluePos(0);
+          };
           return (
-            <div className="aq-cdlg on" onClick={(e) => e.target === e.currentTarget && setEfClue(null)}>
-              <div className="aq-cdbox aq-clue">
-                <b style={{ fontSize: 15 }}>주문번호로는 못 찾았어요 — 단서로 찾기</b>
-                <div className="aq-clue-sub">
-                  {efClue.message}{' '}
-                  {efClue.withItems
-                    ? `훑은 명세서 ${n}건의 품목·규격에서 찾아요.`
-                    : `단서를 넣고 [품목·규격 훑기] 를 누르면 같은 ${n}건의 품목·규격을 한 번 더 훑어요.`}
+            <div className="aq-cdlg on" onClick={(e) => e.target === e.currentTarget && close()}>
+              <div
+                className="aq-cdbox aq-efprev"
+                tabIndex={-1}
+                onKeyDown={(e) => {
+                  if ((e.target as HTMLElement).tagName === 'INPUT') return; // 단서 입력 중엔 화살표=글자 이동
+                  if (e.key === 'ArrowRight') go(1);
+                  else if (e.key === 'ArrowLeft') go(-1);
+                }}
+              >
+                <div className="aq-efprev-h">
+                  <b>단서로 찾기 — 맞는 명세서를 골라주세요</b>
+                  <span>{efClue.message}</span>
                 </div>
-                {/* 똑똑한 검색창처럼 — 한 단어 치고 Enter = 칩 1개. ×·빈칸 Backspace = 지우기. */}
-                <div className="aq-clue-box" onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()}>
-                  {clues.map((c) => {
-                    const st = stats.find((s) => s.clue === c);
-                    const cls = !efClue.withItems || !st
-                      ? ''
-                      : st.df === 0
-                        ? ' none'
-                        : st.df <= 2
-                          ? ' rare'
-                          : st.df > n * 0.3
-                            ? ' common'
-                            : ' mid';
-                    return (
-                      <span
-                        key={c}
-                        className={'aq-clue-chip' + cls}
-                        title={st && efClue.withItems ? (st.df === 0 ? '어느 명세서에도 없음' : `${n}건 중 ${st.df}건에 있음`) : undefined}
-                      >
-                        {c}
-                        {efClue.withItems && st ? ` · ${st.df}건` : ''}
+                <div className="aq-efprev-body">
+                  <div className="aq-efprev-img">
+                    <div className="cap">
+                      지시서 — {[orderNoCore(order?.orderNumber), order?.clientCompanyName].filter(Boolean).join(' · ')}
+                    </div>
+                    {imgSrc ? <img src={imgSrc} alt="작업지시서" /> : <div className="none">지시서 사진이 없어요</div>}
+                  </div>
+                  <div className="aq-efprev-grid aq-clue-right">
+                    {/* 단서 칩 입력 — 한 단어 + Enter. 넣을수록 맞는 명세서가 앞으로. */}
+                    <div className="aq-clue-box" onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()}>
+                      {clues.map((c) => {
+                        const st = stats.find((s) => s.clue === c);
+                        const cls = !efClue.withItems || !st
+                          ? ''
+                          : st.df === 0
+                            ? ' none'
+                            : st.df <= 2
+                              ? ' rare'
+                              : st.df > n * 0.3
+                                ? ' common'
+                                : ' mid';
+                        return (
+                          <span
+                            key={c}
+                            className={'aq-clue-chip' + cls}
+                            title={st && efClue.withItems ? (st.df === 0 ? '어느 명세서에도 없음' : `${n}건 중 ${st.df}건에 있음`) : undefined}
+                          >
+                            {c}
+                            {efClue.withItems && st ? ` · ${st.df}건` : ''}
+                            <button
+                              type="button"
+                              className="x"
+                              aria-label={`${c} 지우기`}
+                              onClick={() => {
+                                setClueList((l) => l.filter((x) => x !== c));
+                                setCluePos(0);
+                              }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })}
+                      <input
+                        className="aq-clue-input"
+                        autoFocus
+                        placeholder={clues.length ? '단서 더 넣기 — Enter' : '지시서 단서를 한 단어씩 치고 Enter — 예: 삼겹살 ⏎ h:118 ⏎'}
+                        value={clueDraft}
+                        onChange={(e) => setClueDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용(칩 2개 방지)
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const w = clueDraft.trim();
+                            if (w && !clues.some((c) => normClue(c) === normClue(w))) {
+                              setClueList((l) => [...l, w]);
+                              setCluePos(0); // 새 단서 → 가장 잘 맞는 것부터 다시
+                            }
+                            setClueDraft('');
+                          } else if (e.key === 'Backspace' && !clueDraft && clues.length) {
+                            setClueList((l) => l.slice(0, -1));
+                            setCluePos(0);
+                          }
+                        }}
+                      />
+                    </div>
+                    {!efClue.withItems ? (
+                      <div className="aq-clue-pre">
+                        <div className="aq-clue-sub">
+                          지금은 비고만 훑은 상태예요. [품목·규격 훑기] 를 누르면 같은 {n}건의 품목·규격을 한 번 더 읽어서,
+                          여기서 한 건씩 넘겨 보며 고를 수 있어요.
+                        </div>
                         <button
                           type="button"
-                          className="x"
-                          aria-label={`${c} 지우기`}
-                          onClick={() => setClueList((l) => l.filter((x) => x !== c))}
+                          className="aq-clue-go"
+                          onClick={() => {
+                            const w = clueDraft.trim(); // Enter 안 친 단어도 단서로
+                            if (w && !clues.some((c) => normClue(c) === normClue(w))) setClueList((l) => [...l, w]);
+                            setClueDraft('');
+                            setEfClue(null);
+                            setCluePos(0);
+                            void pullFromEasyform(true, undefined, true);
+                          }}
                         >
-                          ×
+                          🔍 이지폼에서 품목·규격 훑기 ({n}건)
                         </button>
-                      </span>
-                    );
-                  })}
-                  <input
-                    className="aq-clue-input"
-                    autoFocus
-                    placeholder={clues.length ? '단서 더 넣기 — Enter' : '지시서 단서를 한 단어씩 치고 Enter — 예: 삼겹살 ⏎ 숙성삼겹살 ⏎ h:118 ⏎'}
-                    value={clueDraft}
-                    onChange={(e) => setClueDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용(칩 2개 방지)
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const w = clueDraft.trim();
-                        if (w && !clues.some((c) => normClue(c) === normClue(w))) setClueList((l) => [...l, w]);
-                        setClueDraft('');
-                      } else if (e.key === 'Backspace' && !clueDraft && clues.length) {
-                        setClueList((l) => l.slice(0, -1));
-                      }
-                    }}
-                  />
+                      </div>
+                    ) : cur ? (
+                      <>
+                        <div className="aq-clue-nav">
+                          <button type="button" onClick={() => go(-1)} disabled={pos === 0} aria-label="이전 명세서">
+                            ◀
+                          </button>
+                          <div className="t">
+                            <b>
+                              {pos + 1} / {seq.length}
+                            </b>{' '}
+                            · {cur.s.date} · {cur.s.total}원
+                            {cur.matched.length ? <span className="m"> · 맞은 단서 {cur.matched.join(', ')}</span> : null}
+                          </div>
+                          <button type="button" onClick={() => go(1)} disabled={pos >= seq.length - 1} aria-label="다음 명세서">
+                            ▶
+                          </button>
+                        </div>
+                        <div className="aq-clue-table">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>품목</th>
+                                <th>규격</th>
+                                <th>비고</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(cur.s.items || []).map((it, k) => (
+                                <tr key={k}>
+                                  <td className={isHit(it) ? 'hit' : ''}>{it}</td>
+                                  <td className={isHit(cur.s.specs?.[k] || '') ? 'hit' : ''}>{cur.s.specs?.[k] || ''}</td>
+                                  <td>{cur.s.remarks?.[k] || ''}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="aq-clue-sub">
+                          ←/→ 키로도 넘길 수 있어요. 고르면 그 명세서만 이지폼에서 열어 수량·단가까지 전부 읽고 이 주문 명세서로 가져와요.
+                        </div>
+                      </>
+                    ) : (
+                      <div className="aq-clue-empty">훑은 명세서가 없어요.</div>
+                    )}
+                  </div>
                 </div>
-                <div className="aq-clue-hint">
-                  작업 내용(간판 글자·상호)·규격처럼 <b>드문 단서일수록 강하게</b>, 도장처럼 흔한 단서는 약하게 반영해요.
-                  (품목코드 칸은 안 읽어요 — 고무스카시20T 같은 코드보다 품목·규격 글자를 넣어주세요)
-                </div>
-                {!efClue.withItems && (
-                  <button
-                    type="button"
-                    className="aq-clue-go"
-                    disabled={clues.length === 0 && !clueDraft.trim()}
-                    onClick={() => {
-                      const w = clueDraft.trim(); // Enter 안 친 단어도 단서로
-                      if (w && !clues.some((c) => normClue(c) === normClue(w))) setClueList((l) => [...l, w]);
-                      setClueDraft('');
-                      setEfClue(null);
-                      void pullFromEasyform(true, undefined, true);
-                    }}
-                  >
-                    🔍 이지폼에서 품목·규격 훑기 ({n}건)
-                  </button>
-                )}
-                <div className="aq-clue-list" style={efClue.withItems ? undefined : { display: 'none' }}>
-                  {clues.length === 0 ? (
-                    <div className="aq-clue-empty">단서를 넣으면 맞는 명세서가 여기에 점수 순으로 나와요.</div>
-                  ) : hits.length === 0 ? (
-                    <div className="aq-clue-empty">맞는 명세서가 없어요. 다른 단서를 넣어보세요.</div>
-                  ) : (
-                    hits.slice(0, 8).map((h, k) => (
-                      <button
-                        key={h.s.idx}
-                        type="button"
-                        className={'aq-clue-row' + (k === 0 ? ' top' : '')}
-                        onClick={() => {
-                          setEfClue(null);
-                          void pullFromEasyform(false, h.s);
-                        }}
-                      >
-                        <span className="d">{h.s.date}</span>
-                        <span className="t">{h.s.total}원</span>
-                        <span className="i">
-                          {(h.s.items || []).filter((t) => (t || '').trim()).slice(0, 4).join(' · ') || '(품목 없음)'}
-                        </span>
-                        <span className="m">{h.matched.join(', ')}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-                <div className="aq-clue-sub">고르면 그 명세서만 이지폼에서 열어 전부 읽은 뒤, 이 주문 명세서로 맞출지 물어봐요.</div>
                 <div className="aq-cdbtns">
-                  <button className="sec" onClick={() => setEfClue(null)}>
+                  {efClue.withItems && cur && (
+                    <button
+                      onClick={() => {
+                        const pick = cur.s;
+                        close();
+                        void pullFromEasyform(false, pick);
+                      }}
+                    >
+                      ✅ 이 명세서로 가져오기 ({cur.s.date} · {cur.s.total}원)
+                    </button>
+                  )}
+                  <button className="sec" onClick={close}>
                     닫기
                   </button>
                 </div>
