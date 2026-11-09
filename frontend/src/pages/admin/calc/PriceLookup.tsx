@@ -45,8 +45,7 @@ interface LkState {
  */
 export default function PriceLookup() {
   const { token } = useAuth();
-  const [code, setCode] = useState(''); // 품목코드 입력칸 텍스트(아직 태그 안 됨)
-  const [codes, setCodes] = useState<string[]>([]); // 확정된 품목코드 필터 태그들
+  const [code, setCode] = useState(''); // 단일 검색어(품목코드 또는 품목명). 한 번에 하나만.
   const [spec, setSpec] = useState('');
   const [client, setClient] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,35 +56,21 @@ export default function PriceLookup() {
   const [msg, setMsg] = useState('');
   const [sugg, setSugg] = useState<CodeSuggestion[]>([]); // 비슷한 코드 추천 칩(같은 물건 다른 표기/오타)
 
-  // 품목코드 태그 추가/삭제. 같은 코드 중복은 무시.
-  // 모달이 열린 상태(결과 표시 중)면 발주관리처럼 즉시 재검색 — 모달 안 태그바에서 바로 다듬게.
-  const addTag = (c: string) => {
+  // 검색어를 c 로 고정하고 즉시 검색. 드롭다운 선택·추천칩·'혹시 …인가요?' 모두 이걸 쓴다.
+  // (예전 멀티태그 방식 폐기 — 단가계산기는 한 번에 하나만 검색.)
+  const pick = (c: string) => {
     const t = c.trim();
-    setCode('');
+    if (!t) return;
+    setCode(t);
     setAcOpen(false);
     setAcIdx(-1);
-    if (!t || codes.includes(t)) return;
-    const next = [...codes, t];
-    setCodes(next);
-    if (lk) run(next);
-  };
-  const removeTag = (t: string) => {
-    const next = codes.filter((x) => x !== t);
-    setCodes(next);
-    if (lk) run(next);
-  };
-  // 추천 칩 클릭 = 태그 추가 후 즉시 재검색.
-  const onSugg = (c: string) => {
-    if (codes.includes(c)) return;
-    const next = [...codes, c];
-    setCodes(next);
-    run(next);
+    run(t);
   };
 
-  const run = async (codesOverride?: string[]) => {
-    // 확정 태그가 있으면 그 코드들로, 없으면 입력칸 텍스트를 단일 코드로(하위호환).
-    const tags = codesOverride ?? codes;
-    const active = tags.length ? tags : code.trim() ? [code.trim()] : [];
+  const run = async (termOverride?: string) => {
+    // 품목코드든 품목명이든 입력한 한 단어로 검색(백엔드가 품목코드 버킷 + 품목명 부분일치 둘 다 본다).
+    const term = (termOverride ?? code).trim();
+    const active = term ? [term] : [];
     if (!active.length && !spec.trim()) {
       setMsg('품목코드 또는 규격을 입력하세요.');
       return;
@@ -129,7 +114,7 @@ export default function PriceLookup() {
         file: pr.ref_file,
         invoiceIdx: pr.ref_invoice_idx,
       }));
-      const codeLabel = active.length ? active.join(' + ') : '품목';
+      const codeLabel = active.length ? active[0] : '품목';
       const q = `"${codeLabel}${spec ? ' / ' + spec : ''}"${client ? ' · ' + client : ''}`;
 
       // 무거운 건 사진. 앞 5장만 먼저 받아 모달을 바로 띄우고, 나머지는 사용자가 그 5장을
@@ -212,16 +197,12 @@ export default function PriceLookup() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lk?.ri, lk?.refs[lk?.ri ?? 0]?.file, lk?.refs[lk?.ri ?? 0]?.invoiceIdx, token]);
 
-  const ms = acOpen && code.trim() ? matchCodes(code).filter((c) => !codes.includes(c)) : [];
+  const ms = acOpen && code.trim() ? matchCodes(code) : [];
   const dym = ms.length ? didYouMean(code, ms) : null;
 
-  // 품목코드 칸 키 — 드롭다운 탐색(↓↑)/Esc. Enter=태그 추가(있으면). 빈칸 Enter=검색. 빈칸 Backspace=마지막 태그 삭제.
+  // 품목코드 칸 키 — 드롭다운 탐색(↓↑)/Esc. Enter=하이라이트 항목으로 고정·검색, 없으면 입력어 그대로 검색.
   const onCodeKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !code && codes.length) {
-      removeTag(codes[codes.length - 1]);
-      return;
-    }
-    const m = matchCodes(code).filter((c) => !codes.includes(c));
+    const m = matchCodes(code);
     if (acOpen && m.length) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -241,20 +222,19 @@ export default function PriceLookup() {
         e.preventDefault();
         const d = didYouMean(code, m);
         if (acIdx >= 0 && m[acIdx]) {
-          addTag(m[acIdx]);
+          pick(m[acIdx]);
           return;
         }
         if (d) {
-          addTag(d);
+          pick(d);
           return;
         }
-        addTag(code);
+        run();
         return;
       }
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (code.trim()) addTag(code);
-      else run();
+      run();
     }
   };
 
@@ -266,36 +246,21 @@ export default function PriceLookup() {
       </div>
       <div className="pl-form">
         <div className="pl-field pl-code">
-          <label>품목코드</label>
-          {codes.length > 0 && (
-            <div className="pl-tags">
-              {codes.map((c) => (
-                <span key={c} className="pl-tag">
-                  {c}
-                  <button type="button" onClick={() => removeTag(c)} aria-label={`${c} 삭제`}>
-                    ×
-                  </button>
-                </span>
-              ))}
-              <button type="button" className="pl-tags-clear" onClick={() => setCodes([])}>
-                초기화
-              </button>
-            </div>
-          )}
+          <label>품목코드 / 품목명</label>
           <input
             value={code}
             onChange={(e) => {
               const v = e.target.value;
               setCode(v);
               setAcOpen(true);
-              const m = matchCodes(v).filter((c) => !codes.includes(c));
+              const m = matchCodes(v);
               const d = didYouMean(v, m);
               setAcIdx(d ? m.indexOf(d) : -1);
             }}
             onFocus={() => setAcOpen(true)}
             onBlur={() => setTimeout(() => setAcOpen(false), 150)}
             onKeyDown={onCodeKey}
-            placeholder={codes.length ? '코드 더 추가… (Enter)' : '예: 갈바레이저타공 (Enter로 추가)'}
+            placeholder="예: 갈바레이저타공 또는 품목명(엔터식스) — Enter로 검색"
           />
           {ms.length > 0 && (
             <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, width: '100%', zIndex: 50 }}>
@@ -311,7 +276,7 @@ export default function PriceLookup() {
                     className={'aq-acitem' + (k === acIdx ? ' on' : '')}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      addTag(c);
+                      pick(c);
                     }}
                   >
                     {c}
@@ -347,7 +312,7 @@ export default function PriceLookup() {
         <div className="pl-sugg">
           <span className="pl-sugg-label">혹시 이걸 찾으시나요?</span>
           {sugg.map((s) => (
-            <button key={s.code} type="button" className="pl-sugg-chip" onClick={() => onSugg(s.code)}>
+            <button key={s.code} type="button" className="pl-sugg-chip" onClick={() => pick(s.code)}>
               {s.code} <em>{s.count}건</em>
             </button>
           ))}
@@ -380,27 +345,7 @@ export default function PriceLookup() {
               extras={
                 <>
                   <div className="aq-lkbar">
-                    <span className="aq-lkbar-label">품목코드</span>
-                    {codes.map((c) => (
-                      <span key={c} className="aq-lktag">
-                        {c}
-                        <button type="button" onClick={() => removeTag(c)} aria-label={`${c} 삭제`}>
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                    {codes.length > 0 && (
-                      <button
-                        type="button"
-                        className="aq-lkclear"
-                        onClick={() => {
-                          setCodes([]);
-                          run([]);
-                        }}
-                      >
-                        초기화
-                      </button>
-                    )}
+                    <span className="aq-lkbar-label">품목코드 / 품목명</span>
                     <div className="aq-lkinput">
                       <input
                         value={code}
@@ -408,19 +353,19 @@ export default function PriceLookup() {
                           const v = e.target.value;
                           setCode(v);
                           setAcOpen(true);
-                          const m = matchCodes(v).filter((c) => !codes.includes(c));
+                          const m = matchCodes(v);
                           const d = didYouMean(v, m);
                           setAcIdx(d ? m.indexOf(d) : -1);
                         }}
                         onFocus={() => setAcOpen(true)}
                         onBlur={() => setTimeout(() => setAcOpen(false), 150)}
                         onKeyDown={onCodeKey}
-                        placeholder="+ 코드 추가 (Enter) — 같은 물건 다른 코드 함께"
+                        placeholder="다른 품목코드·품목명으로 다시 검색 (Enter)"
                       />
                       {acOpen &&
                         code.trim() &&
                         (() => {
-                          const m = matchCodes(code).filter((c) => !codes.includes(c));
+                          const m = matchCodes(code);
                           if (!m.length) return null;
                           return (
                             <div className="aq-acdrop" style={{ position: 'absolute', top: '100%', left: 0, zIndex: 60 }}>
@@ -431,7 +376,7 @@ export default function PriceLookup() {
                                     className={'aq-acitem' + (k === acIdx ? ' on' : '')}
                                     onMouseDown={(e) => {
                                       e.preventDefault();
-                                      addTag(c);
+                                      pick(c);
                                     }}
                                   >
                                     {c}
@@ -447,7 +392,7 @@ export default function PriceLookup() {
                     <div className="aq-lksugg">
                       <span className="aq-lksugg-label">혹시 이걸 찾으시나요?</span>
                       {sugg.map((s) => (
-                        <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => onSugg(s.code)}>
+                        <button key={s.code} type="button" className="aq-lksugg-chip" onClick={() => pick(s.code)}>
                           {s.code} <em>{s.count}건</em>
                         </button>
                       ))}
