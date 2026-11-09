@@ -713,6 +713,14 @@ class _PingHandler(BaseHTTPRequestHandler):
         elif self.path == "/easyform/probe":
             # 이지폼 자동기입 feature-detect — 관리자 명세서작성 모달이 호출.
             self._send_json(200, easyform.handle_probe())
+        elif self.path.startswith("/easyform/pull"):
+            # 이지폼 → 홈페이지 가져오기 상태 폴링(웹 명세서작성 [이지폼에서 가져오기]).
+            from urllib.parse import urlparse as _up, parse_qs as _pq
+            try:
+                pid = int((_pq(_up(self.path).query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                pid = 0
+            self._send_json(200, easyform.handle_pull_status(pid))
         else:
             self.send_response(404)
             self._cors()
@@ -721,6 +729,16 @@ class _PingHandler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(self.path)
+        if parsed.path == "/easyform/pull":
+            self._send_json(*easyform.handle_pull_start())
+            return
+        if parsed.path == "/easyform/pull/cancel":
+            try:
+                pid = int((parse_qs(parsed.query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                pid = 0
+            self._send_json(200, easyform.handle_pull_cancel(pid))
+            return
         if parsed.path == "/easyform/fill":
             # 명세서 grid 를 받아 스테이징(arm)만 — 실제 기입은 사용자가 '채우기' 버튼/F6.
             try:

@@ -273,10 +273,23 @@ try:
             return out[0] if out else None
 
         def _ef_find_main_form():
-            main = _ef_find_toplevel_class("TfrmBookMain")
-            if not main:
+            # 이지폼이 여러 개(사업자별) 떠 있을 수 있다 → 거래명세서 폼(TfrmExchange)이 열린 쪽을 고른다.
+            # 둘 다 열려 있으면 가장 최근에 앞에 있던(Z순서 위) 창 — EnumWindows 는 위→아래 순.
+            mains: list = []
+
+            def _cb(hwnd, _):
+                if _ef_classname(hwnd) == "TfrmBookMain" and _user32.IsWindowVisible(hwnd):
+                    mains.append(hwnd)
+                return True
+
+            _user32.EnumWindows(_EF_WNDENUMPROC(_cb), 0)
+            if not mains:
                 return None, None
-            return main, _ef_find_child_class(main, "TfrmExchange")
+            for m in mains:
+                form = _ef_find_child_class(m, "TfrmExchange")
+                if form and _user32.IsWindowVisible(form):
+                    return m, form
+            return mains[0], None
 
         def _ef_topleft(hwnd):
             r = wintypes.RECT()
@@ -563,6 +576,200 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
     return True, f"{n}개 행을 기입했습니다. 내용 확인 후 직접 저장(F5)하세요."
 
 
+# ── 이지폼 → 홈페이지 (가져오기) ────────────────────────────────────────────
+# 이지폼에 열어둔 상세명세서 1건의 표를 읽어 웹 명세서로 보낸다. 방식은 검증된 easyform_fast.py 와
+# 동일: 셀 좌클릭 → 우클릭 → 컨텍스트 메뉴 '복사' 클릭 → 클립보드 읽기. **Ctrl+C 절대 금지** —
+# 전자명세서는 Ctrl 을 누르면 '수정불가' 팝업이 떠 셀을 오염시킨다. 읽기 전용(입력·저장 안 함).
+# 읽는 칸 = 품목코드·품목·규격·수량·단가 5개만(월일·공급가액·세액·비고는 홈페이지에 입력칸이 없음).
+EF_PULL_COLS = ("item_code", "item", "spec", "qty", "unit_price")
+EF_COPY_OFFSET = (41, 68)   # 우클릭점 → 메뉴 '복사' 항목(논리좌표). easyform_fast COPY_DX/DY.
+EF_MENU_SAFE = (325, 214)   # 빈 칸(복사 비활성)일 때 메뉴를 닫으려고 누르는 폼 위 빈 자리.
+_EF_SENT = "__HDSIGN_SENT__"
+
+
+def _ef_menu_open() -> bool:
+    return bool(_user32.FindWindowW("#32768", None))
+
+
+def _ef_get_clipboard() -> str:
+    if not _ef_open_clipboard():
+        return ""
+    try:
+        _user32.GetClipboardData.argtypes = [wintypes.UINT]
+        _user32.GetClipboardData.restype = wintypes.HANDLE
+        h = _user32.GetClipboardData(_CF_UNICODETEXT)
+        if not h:
+            return ""
+        p = _kernel32.GlobalLock(h)
+        if not p:
+            return ""
+        try:
+            return ctypes.wstring_at(p)
+        finally:
+            _kernel32.GlobalUnlock(h)
+    finally:
+        _user32.CloseClipboard()
+
+
+def _ef_copy_cell(x: int, y: int):
+    """한 칸 읽기 → 글자 / ''(빈칸) / None(메뉴 안 뜸 = 표 끝 또는 창 없음)."""
+    ef_set_clipboard(_EF_SENT)
+    ef_click(x, y)
+    ef_right_click(x, y)
+    t = time.time()
+    while not _ef_menu_open():
+        if time.time() - t > 0.6:
+            return None
+        time.sleep(0.004)
+    ef_click(x + EF_COPY_OFFSET[0], y + EF_COPY_OFFSET[1])
+    t = time.time()
+    v = _EF_SENT
+    while time.time() - t < 0.35:
+        cur = _ef_get_clipboard()
+        if cur != _EF_SENT:
+            v = cur
+            break
+        if time.time() - t > 0.05 and _ef_menu_open():
+            break  # '복사'가 비활성(빈 칸) — 메뉴가 안 닫힘
+        time.sleep(0.004)
+    if _ef_menu_open():
+        ef_click(*EF_MENU_SAFE)
+    return "" if v == _EF_SENT else " ".join(v.replace("\t", " ").split())
+
+
+def _ef_read_row(cells):
+    """한 줄 5칸 → (dict, ok). 첫 칸에서 메뉴가 안 뜨면 ok=False(표 끝)."""
+    out = {}
+    for i, key_name in enumerate(EF_PULL_COLS):
+        x, y = cells[EF_COLS.index(key_name)]
+        v = _ef_copy_cell(x, y)
+        if v is None:
+            if i == 0:
+                return out, False
+            v = ""
+        out[key_name] = v
+    return out, True
+
+
+def run_easyform_extract() -> "tuple[bool, str, list]":
+    """이지폼에 열린 상세명세서 표를 읽는다. (성공여부, 메시지, rows)."""
+    if not EASYFORM_AVAILABLE:
+        return False, "이 PC 에서는 이지폼 가져오기를 쓸 수 없습니다.", []
+    abort_msg = "ESC 로 중단했습니다. 홈페이지엔 아무것도 넣지 않았어요."
+    rows: list = []
+    ef_guard_start()
+    try:
+        if not ef_dock_and_offset():
+            return False, "이지폼에서 옮길 상세명세서 창을 못 찾았습니다(먼저 열어두세요).", []
+        time.sleep(0.15)
+        empty = dup = 0
+        prev = None
+
+        def take(r):
+            """줄 하나 반영 → 'go' 계속 / 'end' 표 끝."""
+            nonlocal empty, dup, prev
+            if not any(v.strip() for v in r.values()):
+                empty += 1
+                return "end" if empty >= 2 else "go"
+            empty = 0
+            sig = tuple(r.values())
+            if sig == prev:
+                dup += 1
+                if dup >= 2:
+                    return "end"  # 같은 줄 3번째 = 스크롤이 더 안 내려감(표 끝)
+            else:
+                dup = 0
+            prev = sig
+            rows.append(r)
+            return "go"
+
+        ended = False
+        for cells in EF_CELLS:
+            if ef_aborted():
+                return False, abort_msg, []
+            r, ok = _ef_read_row(cells)
+            if not ok or take(r) == "end":
+                ended = True
+                break
+        if not ended:
+            # 보이는 10줄이 다 찼으면 — 마지막 줄 비고 칸 클릭 → Enter = 정확히 한 줄 아래로(휠 금지).
+            remark_xy = EF_CELLS[-1][EF_COLS.index("remark")]
+            while len(rows) < 200:
+                if ef_aborted():
+                    return False, abort_msg, []
+                ef_click(*remark_xy)
+                time.sleep(0.05)
+                ef_key(0x0D)  # VK_RETURN — 줄 이동(저장 아님)
+                time.sleep(0.18)
+                r, ok = _ef_read_row(EF_CELLS[-1])
+                if not ok or take(r) == "end":
+                    break
+        # 표 끝에서 스크롤이 멈춰 같은 줄을 한 번 더 읽어 넣은 것 1개만 정리.
+        if dup >= 2 and len(rows) >= 2 and rows[-1] == rows[-2]:
+            rows.pop()
+    finally:
+        _EF_OFFSET[0] = 0
+        _EF_OFFSET[1] = 0
+        ef_guard_stop()
+        try:
+            ef_set_clipboard("")
+        except Exception:
+            pass
+    if not rows:
+        return False, "읽은 줄이 없습니다. 상세명세서가 열려 있는지 확인하세요.", []
+    return True, f"{len(rows)}줄을 가져왔습니다.", rows
+
+
+# 가져오기 상태(웹이 폴링): idle → waiting(버튼 대기) → running → done/error.
+_EF_PULL = {"id": 0, "state": "idle", "rows": [], "message": "", "at": 0.0}
+EF_PULL_TTL = 1800
+
+
+def handle_pull_start() -> "tuple[int, dict]":
+    """POST /easyform/pull — 가져오기 대기(arm) + 코너 '가져오기' 버튼창 표시."""
+    if not EASYFORM_AVAILABLE:
+        return 200, {"armed": False, "message": "이 PC 에서는 이지폼 가져오기를 쓸 수 없습니다."}
+    with _EF_LOCK:
+        _EF_PULL["id"] += 1
+        _EF_PULL.update(state="waiting", rows=[], message="", at=time.time())
+        pid = _EF_PULL["id"]
+    try:
+        _EF_UI_QUEUE.put(("pull_show",))
+    except Exception:
+        pass
+    logging.info("이지폼 가져오기 대기 #%d — '가져오기' 버튼 대기", pid)
+    return 200, {"armed": True, "id": pid}
+
+
+def handle_pull_status(pid: int) -> dict:
+    """GET /easyform/pull?id=N — 상태/결과. 결과(done)는 한 번 넘겨주면 idle 로."""
+    with _EF_LOCK:
+        if pid != _EF_PULL["id"]:
+            return {"state": "gone"}
+        if _EF_PULL["state"] == "waiting" and time.time() - _EF_PULL["at"] > EF_PULL_TTL:
+            _EF_PULL["state"] = "idle"
+            return {"state": "gone"}
+        st = _EF_PULL["state"]
+        out = {"state": st, "message": _EF_PULL["message"]}
+        if st == "done":
+            out["rows"] = list(_EF_PULL["rows"])
+            _EF_PULL.update(state="idle", rows=[])
+        elif st == "error":
+            _EF_PULL["state"] = "idle"
+        return out
+
+
+def handle_pull_cancel(pid: int) -> dict:
+    with _EF_LOCK:
+        if pid == _EF_PULL["id"] and _EF_PULL["state"] == "waiting":
+            _EF_PULL["state"] = "idle"
+    try:
+        _EF_UI_QUEUE.put(("pull_cancel",))
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 # ── 스테이징 + 핫키 트리거 ──────────────────────────────────────────────────
 # 웹 '이지폼 입력' 버튼이 grid 를 POST 하면 여기 담아두고(arm), 사용자가 이지폼 창에서 '채우기'
 # 버튼(또는 F6)을 누르면 그때 실행한다. 클릭이 정확한 창에 떨어지려면 실행 순간 이지폼이 최상위여야
@@ -702,8 +909,9 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     run_frame = tk.Frame(panel, bg="#1f2937")
     tk.Label(run_frame, text="🔒", font=("Segoe UI Emoji", int(34 * s)),
              fg="#fbbf24", bg="#1f2937").pack(pady=(int(20 * s), int(4 * s)))
-    tk.Label(run_frame, text="자동입력 중에는 마우스가 잠깁니다.", font=("맑은 고딕", int(14 * s), "bold"),
-             fg="#ffffff", bg="#1f2937").pack()
+    run_lbl = tk.Label(run_frame, text="자동입력 중에는 마우스가 잠깁니다.", font=("맑은 고딕", int(14 * s), "bold"),
+                       fg="#ffffff", bg="#1f2937")
+    run_lbl.pack()
     tk.Label(run_frame, text="중단하시려면 ESC 를 눌러주세요.", font=("맑은 고딕", int(12 * s)),
              fg="#fca5a5", bg="#1f2937").pack(pady=(int(6 * s), 0))
 
@@ -746,8 +954,10 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     _WS_EX_TRANSPARENT = 0x00000020  # 마우스 클릭 통과(밑의 이지폼으로 전달)
     _WS_EX_LAYERED = 0x00080000      # 클릭통과 전제(명시) — 알파와 별개로 확실히 켠다.
     busy = {"v": False}
+    mode = {"v": "fill"}  # 코너 버튼창 용도: fill(웹→이지폼 입력) / pull(이지폼→웹 가져오기)
 
-    def show_overlay():
+    def show_overlay(text="자동입력 중에는 마우스가 잠깁니다."):
+        run_lbl.config(text=text)
         run_frame.pack(fill="both", expand=True)
         done_frame.pack_forget()
         dim.deiconify()
@@ -759,9 +969,9 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         dim.lift()
         panel.lift()
 
-    def show_done(ok, msg):
+    def show_done(ok, msg, ok_text="✅ 자동작성이 완료되었습니다."):
         run_frame.pack_forget()
-        done_lbl.config(text=("✅ 자동작성이 완료되었습니다." if ok else "⏹ 중단되었습니다.") +
+        done_lbl.config(text=(ok_text if ok else "⏹ 중단되었습니다.") +
                         ("" if ok else f"\n{msg}"),
                         fg="#ffffff" if ok else "#fca5a5")
         done_frame.pack(fill="both", expand=True)
@@ -777,6 +987,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
     def set_staged(count):
         busy["v"] = False
+        mode["v"] = "fill"
         info_lbl.config(
             text="이지폼 [새로작성 → 거래처 선택] 후\n아래 버튼을 누르면 해당 명세서가 자동입력됩니다.",
             fg="#333333")
@@ -816,9 +1027,68 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    btn.config(command=on_fill)
+    def set_pull():
+        busy["v"] = False
+        mode["v"] = "pull"
+        info_lbl.config(
+            text="이지폼에서 옮길 상세명세서를 열어 둔 뒤\n아래 버튼을 누르면 홈페이지 명세서로 가져옵니다.",
+            fg="#333333")
+        btn.config(text="이지폼에서 가져오기 ▶", state="normal", bg=accent)
+        win.deiconify()
+        win.lift()
+        win.attributes("-topmost", True)
+
+    def on_pull():
+        if busy["v"]:
+            return
+        with _EF_LOCK:
+            waiting = _EF_PULL["state"] == "waiting"
+            pid = _EF_PULL["id"]
+        if not waiting:
+            ef_messagebox("대기 중인 가져오기가 없습니다(만료). 홈페이지에서 다시 [이지폼에서 가져오기]를 누르세요.",
+                          "이지폼 가져오기")
+            win.withdraw()
+            return
+        if not ef_focus_easyform():
+            ef_messagebox("이지폼에서 옮길 상세명세서를 먼저 열어두세요.", "이지폼 가져오기")
+            return
+        with _EF_LOCK:
+            _EF_PULL["state"] = "running"
+        busy["v"] = True
+        win.withdraw()
+        show_overlay("가져오는 동안에는 마우스가 잠깁니다.")
+        ef_focus_easyform()
+
+        def worker():
+            time.sleep(0.4)
+            try:
+                ok, msg, rows = run_easyform_extract()
+            except Exception as e:  # noqa: BLE001
+                ok, msg, rows = False, f"오류: {e}", []
+                logging.exception("이지폼 가져오기 오류(UI)")
+            with _EF_LOCK:
+                if _EF_PULL["id"] == pid:
+                    _EF_PULL.update(state="done" if ok else "error", rows=rows, message=msg)
+            _EF_UI_QUEUE.put(("pull_result", ok, msg, len(rows)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_btn():
+        if mode["v"] == "pull":
+            on_pull()
+        else:
+            on_fill()
+
+    def on_close():
+        win.withdraw()  # X = 숨김(종료 아님). 가져오기 대기 중이었으면 취소로 본다.
+        if mode["v"] == "pull":
+            with _EF_LOCK:
+                if _EF_PULL["state"] == "waiting":
+                    _EF_PULL["state"] = "idle"
+
+    btn.config(command=on_btn)
     done_btn.config(command=hide_overlay)
-    win.protocol("WM_DELETE_WINDOW", win.withdraw)  # X = 숨김(종료 아님)
+    win.protocol("WM_DELETE_WINDOW", on_close)
     win.withdraw()
 
     def poll():
@@ -829,6 +1099,15 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     set_staged(cmd[1])
                 elif cmd[0] == "trigger":   # F6 보조 트리거 → 버튼과 동일 흐름
                     on_fill()
+                elif cmd[0] == "pull_show":
+                    set_pull()
+                elif cmd[0] == "pull_cancel":
+                    if mode["v"] == "pull" and not busy["v"]:
+                        win.withdraw()
+                elif cmd[0] == "pull_result":
+                    ok, msg, n = cmd[1], cmd[2], cmd[3]
+                    show_done(ok, msg, ok_text=f"✅ {n}줄을 가져왔어요.\n홈페이지 명세서 화면에서 확인하세요.")
+                    logging.info("이지폼 가져오기 %s — %s", "성공" if ok else "실패/중단", msg)
                 elif cmd[0] == "result":
                     ok, msg = cmd[1], cmd[2]
                     show_done(ok, msg)

@@ -25,6 +25,7 @@ import {
   getOrder,
   getEstimate,
   putEstimate,
+  uploadEstimateRefPhoto,
   deleteEstimate,
   markEasyformUploaded,
   readText,
@@ -36,7 +37,14 @@ import {
   type Prediction,
   BASE_URL,
 } from './annot/api';
-import { probeEasyformAgent, fillEasyform, gridToEasyformRows } from './data/easyformClient';
+import {
+  probeEasyformAgent,
+  fillEasyform,
+  gridToEasyformRows,
+  startEasyformPull,
+  pollEasyformPull,
+  cancelEasyformPull,
+} from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal, { type PickedRow } from './LookupResultModal';
 import MiniCalc from './MiniCalc';
@@ -138,6 +146,24 @@ function estForSize(price: number, refSpec?: string, userSpec?: string): number 
 }
 
 const ROWS = 10;
+const EASYFORM_MARKER = 'HDSIGN_EASYFORM_V1'; // scripts/easyform_to_web.py 와 같은 값
+
+/** 사무 워처/명세서 자동작성 프로그램이 안 켜져 있을 때 안내(이지폼 입력·가져오기 공용). */
+const EF_AGENT_MISSING_HTML =
+  '<b>HD사인지시서(사무용)</b> 또는 <b>명세서 자동작성</b> 프로그램이 켜져 있지 않습니다.<br>' +
+    '아래 중 하나를 실행한 뒤 다시 시도해주세요.' +
+    '<div style="display:flex;gap:24px;justify-content:center;margin:18px 0 6px">' +
+    '<div style="text-align:center;width:104px">' +
+    '<div style="width:54px;height:54px;border-radius:13px;background:#0a9396;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto">🖥️</div>' +
+    '<div style="font-size:11.5px;font-weight:700;margin-top:7px;line-height:1.3">HD사인지시서<br>(사무용)</div>' +
+    '</div>' +
+    '<div style="text-align:center;width:104px">' +
+    '<div style="width:54px;height:54px;border-radius:13px;background:#F57C00;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto">📝</div>' +
+    '<div style="font-size:11.5px;font-weight:700;margin-top:7px;color:#F57C00;line-height:1.3">명세서 자동작성</div>' +
+    '<a href="/hdsign_easyform_agent.exe" download="명세서자동작성.exe" ' +
+    'style="display:inline-block;margin-top:6px;font-size:11.5px;color:#fff;background:#F57C00;padding:3px 11px;border-radius:6px;font-weight:700;text-decoration:none">다운로드 ↓</a>' +
+    '</div></div>' +
+    '<div style="font-size:11px;color:#6b7785;margin-top:8px">둘 중 하나만 켜져 있으면 됩니다. 프로그램이 없으면 위 주황(명세서 자동작성)에서 받으세요.</div>';
 
 // 핀 색상 — 은은하고 보기 편한 중채도 팔레트. 핀 순서대로 순환(점·리더선·말풍선 동일색).
 const PIN_COLORS = ['#0a7d8c', '#4f8a5b', '#b07d3a', '#8a5a7d', '#c06a52', '#5a73a8', '#6b8e4e', '#4a8c8c'];
@@ -396,8 +422,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const acDropRef = useRef<HTMLDivElement>(null);
   const gridAcRef = useRef<HTMLDivElement>(null); // 우측 표 품목코드 드롭다운(포털) — 키보드 탐색 스크롤용
   const [imgSrc, setImgSrc] = useState<string | null>(null); // 작업지시서 — 말풍선(핀)을 얹는 캔버스.
-  const [refSrc, setRefSrc] = useState<string | null>(null); // 참고사진 — 보기 전용(붙여넣기). 지시서와 별개.
-  const [showRef, setShowRef] = useState(false); // 스테이지에 참고사진 표시(true) / 지시서 표시(false).
+  // 참고사진 여러 장 — 보기 전용(붙여넣기). 지시서와 별개. 값 = data:(아직 서버에 안 올림) 또는 R2 URL(저장됨).
+  // 임시저장/이지폼 입력 때 data: 인 것만 올리고 URL 로 바꿔 명세서 JSON(refPhotos)에 같이 저장 → 다시 열면 복원.
+  const [refs, setRefs] = useState<string[]>([]);
+  const refsRef = useRef<string[]>([]);
+  const setRefList = useCallback((next: string[]) => {
+    refsRef.current = next;
+    setRefs(next);
+  }, []);
+  const pasteBusyRef = useRef(false); // 참고사진 불러오는 중(중복 붙여넣기 무시).
+  const [view, setView] = useState(0); // 스테이지 표시: 0=작업지시서, k=참고사진 k번째.
+  const showRef = view > 0 && view <= refs.length;
+  const refSrc = showRef ? refs[view - 1] : null;
   const [loadingImg, setLoadingImg] = useState(false); // 주문 진입 시 지시서 자동 로드 진행 중 — 빈화면에 "로딩중" 표시(붙여넣기 안내 대신).
   const [stageW, setStageW] = useState(0); // 표시 이미지 폭/높이 — 말풍선이 경계 넘치면 코너 기준 뒤집기.
   const [stageH, setStageH] = useState(0);
@@ -669,6 +705,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         if (alive) setLoadingImg(false); // 이미지 로드 끝(성공/폴백/없음) — 빈화면이면 붙여넣기 안내로 전환.
         // 기존 명세서가 있으면 grid 를 핀(앵커 없는 grid 행)으로 복원.
         const est = await getEstimate(token, id);
+        // 저장된 참고사진 복원(여러 장).
+        if (alive && Array.isArray(est?.estimate?.refPhotos)) {
+          const rp = (est.estimate.refPhotos as unknown[]).filter((u): u is string => typeof u === 'string' && !!u);
+          if (rp.length) {
+            setRefList(rp);
+            setImgSrc((prev) => prev || rp[0]);
+          }
+        }
         if (alive && est?.estimate?.grid?.length) {
           const restored: Pin[] = est.estimate.grid.map((g: Record<string, unknown>, i: number) => {
             // 저장된 핀 위치(_ax…)가 있으면 원위치로, 없으면(옛 저장본) 좌상단 계단식 폴백.
@@ -785,6 +829,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     const onPaste = async (e: ClipboardEvent) => {
       const cd = e.clipboardData;
       if (!cd) return;
+      // 이지폼 명세서(easyform_to_web.bat 결과) — 표식 있는 글자면 입력칸 안이어도 표 전체로 넣는다.
+      const efRows = parseEasyformRef.current(cd.getData('text/plain') || '', true);
+      if (efRows) {
+        e.preventDefault();
+        importEasyformRef.current(efRows);
+        return;
+      }
       // 후보: 이미지 항목 전부 + 파일(탐색기에서 복사한 사진) — 첫 항목이 못 읽는 형식이어도 다음 걸 시도.
       const files: File[] = [];
       for (const i of [...cd.items]) {
@@ -804,54 +855,68 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       const htmlSrc = html && !inEditable ? /<img[^>]+src=["']([^"']+)["']/i.exec(html)?.[1] : undefined;
       if (!files.length && !htmlSrc) return;
 
-      let dataUrl: string | null = null;
-      const tryFiles = async (fs: File[]) => {
-        for (const f of fs) {
-          try {
-            const u = await toRefDataUrl(f);
-            if (u && (await canDecode(u))) return u;
-          } catch {
-            /* 다음 후보 */
-          }
-        }
-        return null;
-      };
-      dataUrl = await tryFiles(files);
-      if (!dataUrl && files.length) dataUrl = await tryFiles(await readClipboardAgain());
-      if (!dataUrl && htmlSrc && /^(data:image|https?:)/i.test(htmlSrc) && (await canDecode(htmlSrc))) dataUrl = htmlSrc;
-      if (!dataUrl) {
-        const heic = files.some((f) => /heic|heif/i.test(f.type) || /\.(heic|heif)$/i.test(f.name));
-        cdlg(
-          `<b style="font-size:15px">이 사진은 붙여넣을 수 없어요</b>` +
-            `<div style="font-size:12px;color:#6b7785;margin-top:6px">` +
-            (heic
-              ? '폰 사진(HEIC) 형식은 브라우저가 읽지 못합니다. 사진을 화면에 띄운 뒤 캡처(Win+Shift+S)해서 붙여넣거나 JPG로 저장해 주세요.'
-              : '브라우저가 읽을 수 없는 이미지 형식이에요. 사진을 화면에 띄운 뒤 캡처(Win+Shift+S)해서 붙여넣어 주세요.') +
-            `</div>`,
-          [{ label: '확인' }],
-        );
-        return;
-      }
-      {
-        const pasted = dataUrl;
-        // 붙여넣은 이미지를 바로 깔지 않고, 참고사진으로 추가할지 먼저 묻는다(작업 중 실수 붙여넣기 방지).
-        cdlg(
-          `<b style="font-size:15px">참고사진을 추가하시겠습니까?</b>` +
-            `<div style="font-size:12px;color:#6b7785;margin-top:6px">추가하면 이 사진을 보면서 명세서를 작성할 수 있어요. ` +
-            `작성 후 상단 [지시서] 전환 → 표의 번호 동그라미를 사진 위로 드래그하면 그 칸 말풍선이 생깁니다.</div>`,
-          [
-            {
-              label: '추가하기',
-              fn: () => {
-                setRefSrc(pasted); // 참고사진으로 보관(보기 전용).
-                setImgSrc((prev) => prev || pasted); // 지시서가 없으면 이 사진을 지시서로도 사용(말풍선 캔버스 확보).
-                setShowRef(true); // 바로 참고사진을 띄워 보면서 작성.
-                setStatus('참고사진을 보며 명세서를 작성하세요 · 상단 [지시서] 전환 후 번호 동그라미를 드래그');
-              },
+      // 붙여넣은 '순간' 바로 묻는다 — 큰 사진은 읽고 줄이는 데 1초쯤 걸려서, 다 끝난 뒤 창이 뜨면 렉인 줄 알고 또 붙여넣게 됨.
+      // 무거운 작업(읽기·축소·검증)은 [추가하기]를 누른 뒤에.
+      if (pasteBusyRef.current) return; // 불러오는 중 또 붙여넣기 → 무시.
+      cdlg(
+        `<b style="font-size:15px">참고사진을 추가하시겠습니까?</b>` +
+          `<div style="font-size:12px;color:#6b7785;margin-top:6px">추가하면 이 사진을 보면서 명세서를 작성할 수 있어요. ` +
+          `작성 후 상단 [지시서] 전환 → 표의 번호 동그라미를 사진 위로 드래그하면 그 칸 말풍선이 생깁니다.</div>`,
+        [
+          {
+            label: '추가하기',
+            fn: () => {
+              void loadPasted(files, htmlSrc);
             },
-            { label: '취소', sec: true },
-          ],
-        );
+          },
+          { label: '취소', sec: true },
+        ],
+      );
+    };
+
+    const loadPasted = async (files: File[], htmlSrc: string | undefined) => {
+      pasteBusyRef.current = true;
+      cdlg(`<b style="font-size:15px">사진 불러오는 중…</b>` +
+        `<div style="font-size:12px;color:#6b7785;margin-top:6px">큰 사진은 가볍게 줄여서 넣고 있어요. 잠시만요.</div>`, []);
+      // 로딩 창이 먼저 그려지도록 한 프레임 양보.
+      await new Promise((r) => setTimeout(r, 30));
+      try {
+        const tryFiles = async (fs: File[]) => {
+          for (const f of fs) {
+            try {
+              const u = await toRefDataUrl(f);
+              if (u && (await canDecode(u))) return u;
+            } catch {
+              /* 다음 후보 */
+            }
+          }
+          return null;
+        };
+        let dataUrl = await tryFiles(files);
+        if (!dataUrl && files.length) dataUrl = await tryFiles(await readClipboardAgain());
+        if (!dataUrl && htmlSrc && /^(data:image|https?:)/i.test(htmlSrc) && (await canDecode(htmlSrc))) dataUrl = htmlSrc;
+        if (!dataUrl) {
+          const heic = files.some((f) => /heic|heif/i.test(f.type) || /\.(heic|heif)$/i.test(f.name));
+          cdlg(
+            `<b style="font-size:15px">이 사진은 붙여넣을 수 없어요</b>` +
+              `<div style="font-size:12px;color:#6b7785;margin-top:6px">` +
+              (heic
+                ? '폰 사진(HEIC) 형식은 브라우저가 읽지 못합니다. 사진을 화면에 띄운 뒤 캡처(Win+Shift+S)해서 붙여넣거나 JPG로 저장해 주세요.'
+                : '브라우저가 읽을 수 없는 이미지 형식이에요. 사진을 화면에 띄운 뒤 캡처(Win+Shift+S)해서 붙여넣어 주세요.') +
+              `</div>`,
+            [{ label: '확인' }],
+          );
+          return;
+        }
+        const pasted = dataUrl;
+        setDialog(null);
+        const next = [...refsRef.current, pasted]; // 기존 참고사진 뒤에 추가(덮어쓰지 않음).
+        setRefList(next);
+        setImgSrc((prev) => prev || pasted); // 지시서가 없으면 이 사진을 지시서로도 사용(말풍선 캔버스 확보).
+        setView(next.length); // 방금 넣은 사진을 바로 띄워 보면서 작성.
+        setStatus(`참고사진 ${next.length}장 · 좌우 화살표로 넘겨보기 · 임시저장/이지폼 입력 때 같이 저장돼요`);
+      } finally {
+        pasteBusyRef.current = false;
       }
     };
     window.addEventListener('paste', onPaste);
@@ -1768,6 +1833,150 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     // 채운 뒤 안내 모달은 띄우지 않는다 — 행에 값이 바로 보이므로 불필요.
   };
 
+  // ---- 이지폼 붙여넣기 — scripts/easyform_to_web.bat 이 클립보드에 넣은 표(1건)를 명세서 표로 -----
+  // 형식: 첫 줄 EASYFORM_MARKER, 이후 탭 구분 '품목코드 품목 규격 수량 단가'. 표식 없는 5칸 TSV 도 [버튼]으로는 허용.
+  const parseEasyformText = (text: string, requireMarker: boolean): Record<string, string>[] | null => {
+    const lines = text.replace(/\r/g, '').split('\n');
+    const marked = lines[0]?.trim() === EASYFORM_MARKER;
+    if (requireMarker && !marked) return null;
+    const body = (marked ? lines.slice(1) : lines).filter((l) => l.trim());
+    if (!body.length) return null;
+    if (!marked && !body.every((l) => l.split('\t').length >= 4)) return null; // 일반 글자는 표로 안 봄
+    return body.map((l) => {
+      let c = l.split('\t').map((s) => s.trim());
+      // 이지폼 9칸(월일·품목코드·품목·규격·수량·단가·공급가액·세액·비고)이 통째로 오면 월일 떼고 5칸만.
+      // 공급가액은 홈페이지가 단가×수량으로 다시 계산, 월일·세액·비고는 홈페이지에 칸이 없어 버림.
+      if (c.length >= 9) c = c.slice(1, 6);
+      return { 품목코드: c[0] || '', 품목: c[1] || '', 규격: c[2] || '', 수량: c[3] || '', 단가: formatWon(c[4] || '') };
+    });
+  };
+  const applyEasyformRows = (rows: Record<string, string>[], mode: 'replace' | 'append') => {
+    setPins((prev) => {
+      const keep = mode === 'append' ? prev.filter((p) => p && !isEmptyRowVals(p.vals)) : [];
+      const added: Pin[] = rows.map((vals, k) => {
+        const j = keep.length + k;
+        // 수량은 이지폼 값 그대로 — 품목 글씨를 고쳐도 글자수로 바뀌지 않게 qtyFixed.
+        return { ax: 30, ay: 30 + j * 30, lx: 30, ly: 30 + j * 30, dragged: false, vals, fi: FIELDS.length, qtyFixed: true };
+      });
+      return [...keep, ...added];
+    });
+    setMergeSel([]);
+    setStatus(`이지폼 명세서 ${rows.length}줄을 표에 넣었어요 — 확인 후 필요한 칸만 고치세요`);
+  };
+  const importEasyform = (raw: Record<string, string>[]) => {
+    // 이지폼은 빈 수량을 '0' 으로 보여준다 → 단가 없는 줄(제목줄 등)의 수량 0 은 빈칸으로,
+    // 그러고도 아무 글자 없는 줄(표 끝 빈 줄)은 버린다. 중간 빈칸 위치는 그대로.
+    const rows = raw
+      .map((r) => (!r.단가 && /^0+$/.test((r.수량 || '').trim()) ? { ...r, 수량: '' } : r))
+      .filter((r) => Object.values(r).some((v) => (v || '').trim()));
+    if (!rows.length) {
+      cdlg('가져온 줄이 없어요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const has = pinsRef.current.some((p) => p && !isEmptyRowVals(p.vals));
+    const head = `<b style="font-size:15px">이지폼 명세서 ${rows.length}줄을 넣을까요?</b>`;
+    if (!has) {
+      applyEasyformRows(rows, 'replace');
+      return;
+    }
+    cdlg(
+      head + `<div style="font-size:12px;color:#6b7785;margin-top:6px">표에 이미 입력한 줄이 있어요.</div>`,
+      [
+        { label: '지우고 새로 넣기', fn: () => applyEasyformRows(rows, 'replace') },
+        { label: '아래에 이어 붙이기', fn: () => applyEasyformRows(rows, 'append') },
+        { label: '취소', sec: true },
+      ],
+    );
+  };
+  const importEasyformRef = useRef(importEasyform);
+  importEasyformRef.current = importEasyform;
+  const parseEasyformRef = useRef(parseEasyformText);
+  parseEasyformRef.current = parseEasyformText;
+  // [이지폼에서 가져오기] — 워처에 대기 요청 → 사용자가 이지폼 상세명세서를 열고 워처 코너 버튼
+  // '이지폼에서 가져오기 ▶' → 워처가 5칸을 읽음 → 여기서 폴링해 받아 표에 넣는다([이지폼 입력]의 반대 방향).
+  const pullRef = useRef<{ id: number; stop: boolean } | null>(null);
+  useEffect(() => () => {
+    if (pullRef.current) pullRef.current.stop = true;
+  }, []);
+  const pullFromEasyform = async () => {
+    if (pullRef.current && !pullRef.current.stop) return; // 이미 대기 중
+    const probe = await probeEasyformAgent();
+    if (!probe || !probe.easyform) {
+      cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
+      return;
+    }
+    let id: number;
+    try {
+      const r = await startEasyformPull();
+      if (!r.armed || r.id == null) {
+        cdlg(r.message || '이지폼 가져오기를 시작하지 못했습니다.', [{ label: '확인', sec: true }]);
+        return;
+      }
+      id = r.id;
+    } catch (e) {
+      console.error(e);
+      cdlg('이지폼 가져오기를 시작하지 못했습니다. 프로그램을 다시 켜고 시도해주세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const job = { id, stop: false };
+    pullRef.current = job;
+    const cancel = () => {
+      job.stop = true;
+      void cancelEasyformPull(id);
+    };
+    cdlg(
+      `<b style="font-size:15px">이지폼에서 가져오기</b>` +
+        `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼에서 옮길 <b>상세명세서를 열어 둔 뒤</b>,<br>` +
+        `화면 오른쪽 아래 <b>'이지폼에서 가져오기 ▶'</b> 버튼을 눌러주세요.</div>` +
+        `<div style="font-size:12px;color:#6b7785;margin-top:8px">품목코드·품목·규격·수량·단가만 가져와요. 다 읽으면 여기 표에 바로 들어갑니다.</div>`,
+      [{ label: '취소', sec: true, fn: cancel }],
+    );
+    const started = Date.now();
+    let running = false;
+    while (!job.stop) {
+      await new Promise((r) => setTimeout(r, 700));
+      if (job.stop) break;
+      if (Date.now() - started > 30 * 60 * 1000) {
+        cancel();
+        setDialog(null);
+        break;
+      }
+      let st;
+      try {
+        st = await pollEasyformPull(id);
+      } catch {
+        continue; // 일시 오류 — 계속 기다림
+      }
+      if (st.state === 'running' && !running) {
+        running = true;
+        cdlg(
+          `<b style="font-size:15px">이지폼에서 읽는 중…</b>` +
+            `<div style="font-size:12px;color:#6b7785;margin-top:6px">끝날 때까지 마우스를 잠시 놓아주세요. (중단: 이지폼 화면에서 ESC)</div>`,
+          [],
+        );
+      } else if (st.state === 'done') {
+        job.stop = true;
+        setDialog(null);
+        const rows = (st.rows || []).map((r) => ({
+          품목코드: r.item_code || '',
+          품목: r.item || '',
+          규격: r.spec || '',
+          수량: r.qty || '',
+          단가: formatWon(r.unit_price || ''),
+        }));
+        if (rows.length) importEasyform(rows);
+        else cdlg('가져온 줄이 없어요.', [{ label: '확인', sec: true }]);
+      } else if (st.state === 'error') {
+        job.stop = true;
+        cdlg(st.message || '이지폼에서 가져오지 못했습니다.', [{ label: '확인', sec: true }]);
+      } else if (st.state === 'idle' || st.state === 'gone') {
+        job.stop = true; // 워처 창에서 닫음/만료
+        setDialog(null);
+        setStatus('이지폼 가져오기를 취소했어요');
+      }
+    }
+  };
+
   // 우측 명세서 표 Enter 이동 — 편집칸 품목코드(0)·품목(1)·규격(2)·수량(3)·단가(4). 공급가액=읽기전용 제외.
   // Enter 시 그 행의 다른 칸이 비어 있어도 '오른쪽으로만' 이동, 마지막(단가)에서는 다음 줄 품목코드로.
   const GRID_COLS = 5;
@@ -2307,6 +2516,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     });
   };
 
+  // 아직 서버에 안 올라간(data:) 참고사진만 올려 URL 로 바꾼다 → 명세서 JSON 의 refPhotos 로 저장.
+  const persistRefs = async (orderId: number | string): Promise<string[]> => {
+    const src = refsRef.current;
+    const out: string[] = [];
+    for (const u of src) {
+      if (u.startsWith('data:')) {
+        const b = await (await fetch(u)).blob();
+        out.push(await uploadEstimateRefPhoto(token, orderId, b));
+      } else out.push(u);
+    }
+    // 저장 도중 사진이 추가/삭제되지 않았을 때만 교체(그 사이 바뀌었으면 다음 저장 때 올림).
+    if (refsRef.current === src) setRefList(out);
+    return out;
+  };
+
   const save = async () => {
     if (!order) {
       cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
@@ -2315,7 +2539,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     setSaving(true);
     try {
       const grid = buildGrid();
-      if (grid.length === 0) {
+      if (grid.length === 0 && refsRef.current.length === 0) {
         // 행을 전부 지운 채 임시저장 → 임시저장 자체를 해제(원래 빈 상태로). 기존 임시저장이 있으면
         // 서버에서 지우고 '임시저장' 라벨을 뗀다. 없으면 deleteEstimate 가 404 를 조용히 흡수.
         await deleteEstimate(token, order.id);
@@ -2324,10 +2548,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         cdlg('명세서가 비어 있어 임시저장을 해제했어요. 주문 카드의 “임시저장” 라벨이 사라집니다.', [{ label: '확인' }]);
         return;
       }
-      await putEstimate(token, order.id, { grid, total, savedFrom: 'autoquote' });
+      let refPhotos: string[];
+      try {
+        refPhotos = await persistRefs(order.id);
+      } catch (e) {
+        console.error(e);
+        cdlg('참고사진 업로드에 실패해 저장하지 않았어요. 잠시 후 다시 임시저장해 주세요.', [{ label: '확인', sec: true }]);
+        return;
+      }
+      await putEstimate(token, order.id, { grid, total, savedFrom: 'autoquote', refPhotos });
       setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
       onSaved?.();
-      cdlg('임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.', [{ label: '확인' }]);
+      cdlg(
+        '임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.' +
+          (refPhotos.length ? `<br><span style="font-size:12px;color:#6b7785">참고사진 ${refPhotos.length}장도 같이 저장했어요.</span>` : ''),
+        [{ label: '확인' }],
+      );
     } catch (e) {
       console.error(e);
       cdlg('저장에 실패했습니다.', [{ label: '확인', sec: true }]);
@@ -2356,7 +2592,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       // 이지폼 입력 = 확정 명세서. 임시저장을 안 했어도 서버(MySQL autoquote_estimate)에 저장해
       // 매출 데이터로 남긴다. 저장 실패해도 이지폼 입력은 계속(이후 markEasyformUploaded 가 완료시각).
       try {
-        await putEstimate(token, order.id, { grid, total, savedFrom: 'easyform' });
+        // 참고사진 업로드가 실패해도 명세서는 저장 — refPhotos 를 빼고 보내면 서버의 기존 사진은 그대로 남는다.
+        let refPhotos: string[] | undefined;
+        try {
+          refPhotos = await persistRefs(order.id);
+        } catch (e) {
+          console.error('이지폼 입력 시 참고사진 업로드 실패', e);
+        }
+        await putEstimate(token, order.id, { grid, total, savedFrom: 'easyform', ...(refPhotos ? { refPhotos } : {}) });
         setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
         onSaved?.();
       } catch (e) {
@@ -2364,23 +2607,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       }
       const probe = await probeEasyformAgent();
       if (!probe || !probe.easyform) {
-        cdlg(
-          '<b>HD사인지시서(사무용)</b> 또는 <b>명세서 자동작성</b> 프로그램이 켜져 있지 않습니다.<br>' +
-            '아래 중 하나를 실행한 뒤 다시 시도해주세요.' +
-            '<div style="display:flex;gap:24px;justify-content:center;margin:18px 0 6px">' +
-            '<div style="text-align:center;width:104px">' +
-            '<div style="width:54px;height:54px;border-radius:13px;background:#0a9396;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto">🖥️</div>' +
-            '<div style="font-size:11.5px;font-weight:700;margin-top:7px;line-height:1.3">HD사인지시서<br>(사무용)</div>' +
-            '</div>' +
-            '<div style="text-align:center;width:104px">' +
-            '<div style="width:54px;height:54px;border-radius:13px;background:#F57C00;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto">📝</div>' +
-            '<div style="font-size:11.5px;font-weight:700;margin-top:7px;color:#F57C00;line-height:1.3">명세서 자동작성</div>' +
-            '<a href="/hdsign_easyform_agent.exe" download="명세서자동작성.exe" ' +
-            'style="display:inline-block;margin-top:6px;font-size:11.5px;color:#fff;background:#F57C00;padding:3px 11px;border-radius:6px;font-weight:700;text-decoration:none">다운로드 ↓</a>' +
-            '</div></div>' +
-            '<div style="font-size:11px;color:#6b7785;margin-top:8px">둘 중 하나만 켜져 있으면 됩니다. 프로그램이 없으면 위 주황(명세서 자동작성)에서 받으세요.</div>',
-          [{ label: '확인', sec: true }],
-        );
+        cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
         return;
       }
       const res = await fillEasyform(rows);
@@ -2693,15 +2920,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       const what = mode === 'worksheet' ? '작업지시서' : mode === 'statement' ? '명세서' : '작업지시서+명세서';
       const fname = mode === 'worksheet' ? '지시서.png' : mode === 'statement' ? '명세서.png' : '지시서_명세서.png';
       // 참고사진은 지시서가 포함될 때만 — 클립보드는 1장뿐이라 합성·참고사진 2장 모두 파일로 저장.
-      if (wantPhoto && refSrc) {
+      if (wantPhoto && refs.length) {
         dlBlob(blob, fname);
-        try {
-          const rb = await (await fetch(refSrc)).blob();
-          dlBlob(rb, '참고사진.png');
-        } catch {
-          /* 참고사진 저장 실패는 합성 저장엔 영향 없음 */
+        let n = 0;
+        for (const [i, u] of refs.entries()) {
+          try {
+            const rb = await (await fetch(u)).blob();
+            dlBlob(rb, `참고사진${refs.length > 1 ? i + 1 : ''}.${rb.type.includes('png') ? 'png' : 'jpg'}`);
+            n += 1;
+          } catch {
+            /* 참고사진 저장 실패는 합성 저장엔 영향 없음 */
+          }
         }
-        cdlg(`2장(${what} · 참고사진)을 저장했어요. 카톡에 두 장 모두 첨부하세요.`, [{ label: '확인' }]);
+        cdlg(`${n + 1}장(${what} · 참고사진 ${n}장)을 저장했어요. 카톡에 모두 첨부하세요.`, [{ label: '확인' }]);
         return;
       }
       try {
@@ -3094,15 +3325,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           onMouseDown={startStageDrag}
           style={ledPlacing ? { background: '#fff' } : undefined}
         >
-          {/* 참고사진이 있으면 사진 좌·우 화살표로 [작업지시서 ↔ 참고사진] 넘김(2장 캐러셀). */}
-          {imgSrc && refSrc && (
+          {/* 참고사진이 있으면 사진 좌·우 화살표로 [작업지시서 → 참고사진1 → 2 …] 넘김(캐러셀). */}
+          {imgSrc && refs.length > 0 && (
             <>
               <button
                 type="button"
                 className="aq-navarrow left"
                 title="이전 사진 (작업지시서 ↔ 참고사진)"
                 onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setShowRef((v) => !v)}
+                onClick={() => setView((v) => (v - 1 + refs.length + 1) % (refs.length + 1))}
               >
                 ‹
               </button>
@@ -3111,13 +3342,40 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 className="aq-navarrow right"
                 title="다음 사진 (작업지시서 ↔ 참고사진)"
                 onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setShowRef((v) => !v)}
+                onClick={() => setView((v) => (v + 1) % (refs.length + 1))}
               >
                 ›
               </button>
               <div className="aq-navlabel" onMouseDown={(e) => e.stopPropagation()}>
-                {showRef ? '참고사진 (2/2)' : '작업지시서 (1/2)'}
+                {showRef ? `참고사진 ${view} (${view + 1}/${refs.length + 1})` : `작업지시서 (1/${refs.length + 1})`}
               </div>
+              {showRef && (
+                <button
+                  type="button"
+                  className="aq-refdel"
+                  title="이 참고사진 빼기"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    const idx = view - 1;
+                    cdlg(
+                      `<b>참고사진 ${view}번을 뺄까요?</b><div style="font-size:12px;color:#6b7785;margin-top:6px">임시저장/이지폼 입력을 해야 서버에서도 지워져요.</div>`,
+                      [
+                        {
+                          label: '빼기',
+                          fn: () => {
+                            const next = refsRef.current.filter((_, i) => i !== idx);
+                            setRefList(next);
+                            setView(next.length ? Math.min(idx + 1, next.length) : 0);
+                          },
+                        },
+                        { label: '취소', sec: true },
+                      ],
+                    );
+                  }}
+                >
+                  × 이 사진 빼기
+                </button>
+              )}
             </>
           )}
           {imgSrc && !showRef && (
@@ -3545,6 +3803,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               title="단가계산기 창 열기/닫기"
             >
               🧮 계산기
+            </button>
+            <button
+              type="button"
+              className="aq-calcbtn"
+              onClick={() => void pullFromEasyform()}
+              title="이지폼에 열어 둔 상세명세서 1건의 품목코드·품목·규격·수량·단가를 이 표로 가져오기"
+            >
+              📥 이지폼에서 가져오기
             </button>
           </div>
           {/* 도장비 합치기/펼치기 바 — 도장비 행이 2건+ 이거나 이미 합쳐져 있을 때만. */}

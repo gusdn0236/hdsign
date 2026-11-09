@@ -15,7 +15,7 @@ import logging
 import threading
 import tkinter as tk
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import easyform  # 같은 폴더의 자동기입 모듈(단일 소스 — 워처와 공유)
 
@@ -48,13 +48,30 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "app": "hdsign_easyform_agent"})
         elif self.path == "/easyform/probe":
             self._json(200, easyform.handle_probe())
+        elif self.path.startswith("/easyform/pull"):
+            try:
+                pid = int((parse_qs(urlparse(self.path).query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                pid = 0
+            self._json(200, easyform.handle_pull_status(pid))
         else:
             self.send_response(404)
             self._cors()
             self.end_headers()
 
     def do_POST(self):  # noqa: N802
-        if urlparse(self.path).path == "/easyform/fill":
+        parsed = urlparse(self.path)
+        if parsed.path == "/easyform/pull":
+            self._json(*easyform.handle_pull_start())
+            return
+        if parsed.path == "/easyform/pull/cancel":
+            try:
+                pid = int((parse_qs(parsed.query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                pid = 0
+            self._json(200, easyform.handle_pull_cancel(pid))
+            return
+        if parsed.path == "/easyform/fill":
             try:
                 n = int(self.headers.get("Content-Length") or "0")
                 raw = self.rfile.read(n) if n > 0 else b""

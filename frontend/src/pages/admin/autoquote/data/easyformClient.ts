@@ -158,3 +158,53 @@ export async function fillEasyform(rows: EasyformRow[]): Promise<EasyformStaged>
   }
   return (await res.json()) as EasyformStaged;
 }
+
+// ---- 이지폼 → 홈페이지 가져오기 -------------------------------------------------
+// 웹 [이지폼에서 가져오기] → POST /easyform/pull 로 대기(arm) → 워처가 코너에 '이지폼에서 가져오기 ▶'
+// 버튼을 띄움 → 사용자가 이지폼 상세명세서를 열고 그 버튼 → 워처가 우클릭 '복사'로 5칸을 읽음
+// → 웹이 GET /easyform/pull?id= 로 폴링해 rows 를 받는다. (읽기 전용 — 이지폼에 입력·저장 안 함)
+
+/** 가져온 한 줄 — 품목코드·품목·규격·수량·단가 5칸만(월일·공급가액·세액·비고는 홈페이지에 칸이 없음). */
+export interface EasyformPulledRow {
+  item_code: string;
+  item: string;
+  spec: string;
+  qty: string;
+  unit_price: string;
+}
+
+export interface EasyformPullStatus {
+  state: 'idle' | 'waiting' | 'running' | 'done' | 'error' | 'gone';
+  message?: string;
+  rows?: EasyformPulledRow[];
+}
+
+export async function startEasyformPull(): Promise<{ armed: boolean; id?: number; message?: string }> {
+  const res = await fetch(`${AGENT_URL}/easyform/pull`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
+    cache: 'no-store',
+    body: '{}',
+  });
+  if (!res.ok) throw new Error(`이지폼 가져오기 요청 실패 (${res.status}).`);
+  return (await res.json()) as { armed: boolean; id?: number; message?: string };
+}
+
+export async function pollEasyformPull(id: number): Promise<EasyformPullStatus> {
+  const res = await fetch(`${AGENT_URL}/easyform/pull?id=${id}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`이지폼 가져오기 상태 확인 실패 (${res.status}).`);
+  return (await res.json()) as EasyformPullStatus;
+}
+
+export async function cancelEasyformPull(id: number): Promise<void> {
+  try {
+    await fetch(`${AGENT_URL}/easyform/pull/cancel?id=${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
+      cache: 'no-store',
+      body: '{}',
+    });
+  } catch {
+    /* 워처가 꺼졌으면 무시 */
+  }
+}
