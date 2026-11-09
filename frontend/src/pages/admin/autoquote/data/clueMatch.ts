@@ -23,9 +23,11 @@ export function parseClues(text: string): string[] {
   return out;
 }
 
-/** 명세서 1건의 비교용 칸들(품목·규격·비고, 정규화). */
+/** 명세서 1건의 비교용 칸들(품목코드·품목·규격·비고, 정규화). */
 function cells(s: EasyformScannedStatement): string[] {
-  return [...(s.items || []), ...(s.specs || []), ...(s.remarks || [])].map(normClue).filter(Boolean);
+  return [...(s.items || []), ...(s.specs || []), ...(s.remarks || []), ...(s.codes || [])]
+    .map(normClue)
+    .filter(Boolean);
 }
 
 /**

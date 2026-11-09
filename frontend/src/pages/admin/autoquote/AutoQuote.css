@@ -338,6 +338,19 @@
   color: #64748b;
   font-weight: 600;
 }
+.aq-clue-table .no {
+  width: 28px;
+  color: #94a3b8;
+  text-align: right;
+}
+.aq-clue-count {
+  font-size: 13px;
+  color: #475569;
+}
+.aq-clue-count b {
+  color: #166534;
+  font-size: 15px;
+}
 .aq-clue-table td.hit {
   background: #dcfce7;
   color: #166534;

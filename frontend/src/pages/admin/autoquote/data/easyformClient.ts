@@ -205,6 +205,7 @@ export interface EasyformScannedStatement {
   items?: string[];
   specs?: string[];
   remarks?: string[];
+  codes?: string[]; // 키워드 훑기 때만 — 품목코드
 }
 
 export interface EasyformPullStatus {

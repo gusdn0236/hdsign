@@ -5041,28 +5041,60 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                             ▶
                           </button>
                         </div>
-                        <div className="aq-clue-table">
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>품목</th>
-                                <th>규격</th>
-                                <th>비고</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(cur.s.items || []).map((it, k) => (
-                                <tr key={k}>
-                                  <td className={isHit(it) ? 'hit' : ''}>{it}</td>
-                                  <td className={isHit(cur.s.specs?.[k] || '') ? 'hit' : ''}>{cur.s.specs?.[k] || ''}</td>
-                                  <td>{cur.s.remarks?.[k] || ''}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                        {(() => {
+                          // 훑은 칸 전부(품목코드·품목·규격·비고) — 맞은 칸만 초록. 전체 중 몇 칸이 맞았는지 같이.
+                          const cols: { h: string; v?: string[] }[] = [
+                            { h: '품목코드', v: cur.s.codes },
+                            { h: '품목', v: cur.s.items },
+                            { h: '규격', v: cur.s.specs },
+                            { h: '비고', v: cur.s.remarks },
+                          ].filter((c) => c.v && c.v.length);
+                          const nRows = Math.max(0, ...cols.map((c) => c.v!.length));
+                          let filled = 0;
+                          let hitN = 0;
+                          for (const c of cols)
+                            for (const t of c.v!) {
+                              if (!(t || '').trim()) continue;
+                              filled++;
+                              if (isHit(t)) hitN++;
+                            }
+                          return (
+                            <>
+                              <div className="aq-clue-count">
+                                맞은 칸 <b>{hitN}</b> / 전체 {filled}칸 · {nRows}줄
+                              </div>
+                              <div className="aq-clue-table">
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th className="no">#</th>
+                                      {cols.map((c) => (
+                                        <th key={c.h}>{c.h}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {Array.from({ length: nRows }, (_, k) => (
+                                      <tr key={k}>
+                                        <td className="no">{k + 1}</td>
+                                        {cols.map((c) => {
+                                          const t = c.v![k] || '';
+                                          return (
+                                            <td key={c.h} className={isHit(t) ? 'hit' : ''}>
+                                              {t}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          );
+                        })()}
                         <div className="aq-clue-sub">
-                          ←/→ 키로도 넘길 수 있어요. 고르면 그 명세서만 이지폼에서 열어 수량·단가까지 전부 읽고 이 주문 명세서로 가져와요.
+                          ←/→ 키로도 넘길 수 있어요. 고르면 그 명세서만 이지폼에서 다시 열어 수량·단가까지 전부 읽고 이 주문 명세서로 가져와요.
                         </div>
                       </>
                     ) : (

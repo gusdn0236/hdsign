@@ -998,9 +998,10 @@ def _ef_read_remarks(clues: bool = False):
     """열린 상세명세서를 훑는다 → [(품목, 규격, 비고)] / None(ESC).
     clues=False(주문번호 찾기): **비고 칸만** 읽는다 — 표 끝은 비고 칸 메뉴가 안 뜨는 것으로 판단.
       (10줄 넘어 스크롤할 때만 품목 칸도 읽음 — 같은 줄 반복=표 끝 판단에 비고만으론 부족)
-    clues=True(단서로 찾기 2차): 품목·규격·비고.
+    clues=True(키워드로 찾기): 품목코드·품목·규격·비고.
     줄이 10개를 넘으면 **표 보기만** 한 줄씩 내린다(WM_VSCROLL — Enter 는 마지막 줄에서 새 줄을 만들어 금지)."""
     ci, cs, cr = EF_COLS.index("item"), EF_COLS.index("spec"), EF_COLS.index("remark")
+    cc = EF_COLS.index("item_code")
     out: list = []
     prev = None
     dup = 0
@@ -1022,6 +1023,10 @@ def _ef_read_remarks(clues: bool = False):
                 rm = ""
             else:
                 return None  # 비고만 읽을 때: 메뉴 안 뜸 = 표 끝
+        if clues:
+            # 키워드 찾기: 품목코드도(수량·단가는 키워드로 찾을 일이 적어 속도 위해 안 읽음)
+            code = _ef_copy_cell(*cells[cc]) or ""
+            return it, sp, rm, code
         return it, sp, rm
 
     for cells in EF_CELLS:
@@ -1227,9 +1232,12 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
             prev_sig = sig
             checked += 1
             # 못 찾았을 때 단서로 고를 수 있게 가볍게 남긴다(품목·규격·비고 + 목록 위치 idx).
-            found.append({"idx": i, "date": date, "total": total, "light": True, "orderNos": nos,
-                          "items": [r[0] for r in remarks], "specs": [r[1] for r in remarks],
-                          "remarks": [r[2] for r in remarks]})
+            light = {"idx": i, "date": date, "total": total, "light": True, "orderNos": nos,
+                     "items": [r[0] for r in remarks], "specs": [r[1] for r in remarks],
+                     "remarks": [r[2] for r in remarks]}
+            if clue_mode:
+                light["codes"] = [r[3] if len(r) > 3 else "" for r in remarks]
+            found.append(light)
             if progress:
                 try:
                     progress(checked, total_n, date)
