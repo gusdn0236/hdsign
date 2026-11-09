@@ -730,7 +730,14 @@ class _PingHandler(BaseHTTPRequestHandler):
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(self.path)
         if parsed.path == "/easyform/pull":
-            self._send_json(*easyform.handle_pull_start())
+            # body = {} (상세명세서 1건 가져오기) 또는 {mode:'scan', stopBefore, max} (목록에서 찾기)
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(length) if length > 0 else b""
+                pbody = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                pbody = {}
+            self._send_json(*easyform.handle_pull_start(pbody))
             return
         if parsed.path == "/easyform/pull/cancel":
             try:

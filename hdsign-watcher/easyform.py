@@ -658,12 +658,32 @@ def run_easyform_extract() -> "tuple[bool, str, list]":
     if not EASYFORM_AVAILABLE:
         return False, "이 PC 에서는 이지폼 가져오기를 쓸 수 없습니다.", []
     abort_msg = "ESC 로 중단했습니다. 홈페이지엔 아무것도 넣지 않았어요."
-    rows: list = []
     ef_guard_start()
     try:
         if not ef_dock_and_offset():
             return False, "이지폼에서 옮길 상세명세서 창을 못 찾았습니다(먼저 열어두세요).", []
         time.sleep(0.15)
+        rows = _ef_read_open_form()
+    finally:
+        _EF_OFFSET[0] = 0
+        _EF_OFFSET[1] = 0
+        ef_guard_stop()
+        try:
+            ef_set_clipboard("")
+        except Exception:
+            pass
+    if rows is None:
+        return False, abort_msg, []
+    if not rows:
+        return False, "읽은 줄이 없습니다. 상세명세서가 열려 있는지 확인하세요.", []
+    return True, f"{len(rows)}줄을 가져왔습니다.", rows
+
+
+def _ef_read_open_form():
+    """열려 있는(기준 위치로 옮겨 둔) 상세명세서 표를 읽는다 → rows / None(ESC 중단).
+    입력 가드는 호출부가 켜 둔 상태여야 한다. 읽기 전용(셀 클릭·우클릭 '복사'·비고칸 Enter 줄이동만)."""
+    rows: list = []
+    if True:
         empty = dup = 0
         prev = None
 
@@ -688,7 +708,7 @@ def run_easyform_extract() -> "tuple[bool, str, list]":
         ended = False
         for cells in EF_CELLS:
             if ef_aborted():
-                return False, abort_msg, []
+                return None
             r, ok = _ef_read_row(cells)
             if not ok or take(r) == "end":
                 ended = True
@@ -698,7 +718,7 @@ def run_easyform_extract() -> "tuple[bool, str, list]":
             remark_xy = EF_CELLS[-1][EF_COLS.index("remark")]
             while len(rows) < 200:
                 if ef_aborted():
-                    return False, abort_msg, []
+                    return None
                 ef_click(*remark_xy)
                 time.sleep(0.05)
                 ef_key(0x0D)  # VK_RETURN — 줄 이동(저장 아님)
@@ -709,6 +729,201 @@ def run_easyform_extract() -> "tuple[bool, str, list]":
         # 표 끝에서 스크롤이 멈춰 같은 줄을 한 번 더 읽어 넣은 것 1개만 정리.
         if dup >= 2 and len(rows) >= 2 and rows[-1] == rows[-2]:
             rows.pop()
+    return rows
+
+
+# ── 이지폼 목록에서 찾기(scan) ───────────────────────────────────────────────
+# 사람이 이지폼 [매출 거래명세서 목록 → 매출처별 조회 → 그 해 1/1~12/31 → 역순보기] 를 띄워 두면,
+# 목록 맨 위(최신)부터 한 건씩 [Enter 로 열기 → 표·비고 읽기 → ESC 로 닫기 → ↓] 를 반복한다.
+# **읽기 전용**: 쓰는 입력은 좌클릭·우클릭 '복사'·Enter·ESC·↓ 뿐. 닫을 때 저장 질문 창이 뜨거나
+# 창이 안 닫히면 **아무 버튼도 누르지 않고 그 자리에서 멈춘다**(사람이 직접 '아니오').
+import re as _re
+
+_EF_ORDER_NO_RE = _re.compile(r"(?<!\d)(\d{6}-\d{1,4})(?!\d)")
+_VK_DOWN = 0x28
+_VK_RETURN = 0x0D
+_VK_ESC = 0x1B
+
+
+def _ef_wtext(hwnd) -> str:
+    """컨트롤 글자(WM_GETTEXT) — 클릭 없이 읽기."""
+    buf = ctypes.create_unicode_buffer(1024)
+    _user32.SendMessageW(hwnd, 0x000D, 1024, buf)
+    return buf.value or ""
+
+
+def _ef_children(parent, klass=None, visible=True) -> list:
+    out: list = []
+
+    def _cb(h, _):
+        if (klass is None or _ef_classname(h) == klass) and (not visible or _user32.IsWindowVisible(h)):
+            out.append(h)
+        return True
+
+    _user32.EnumChildWindows(parent, _EF_WNDENUMPROC(_cb), 0)
+    return out
+
+
+def _ef_rect(hwnd):
+    r = wintypes.RECT()
+    _user32.GetWindowRect(hwnd, ctypes.byref(r))
+    return r.left, r.top, r.right, r.bottom
+
+
+def _ef_find_list():
+    """(main, 목록창, 목록 표, 전체 건수) — 보이는 TfrmListExchange 의 가장 넓은 표."""
+    mains: list = []
+
+    def _cb(h, _):
+        if _ef_classname(h) == "TfrmBookMain" and _user32.IsWindowVisible(h):
+            mains.append(h)
+        return True
+
+    _user32.EnumWindows(_EF_WNDENUMPROC(_cb), 0)
+    for m in mains:
+        for lst in _ef_children(m, "TfrmListExchange"):
+            grids = sorted(_ef_children(lst, "TAdvStringGrid"),
+                           key=lambda g: _ef_rect(g)[2] - _ef_rect(g)[0], reverse=True)
+            if not grids:
+                continue
+            g = grids[0]
+            gl, gt, gr, gb = _ef_rect(g)
+            count = None
+            for p in _ef_children(lst, "TPanel"):
+                m2 = _re.search(r"(\d+)\s*(?:건|개)의 자료", _ef_wtext(p))  # 목록 아래 '23건의 자료가 있습니다.'
+                pl, pt, _pr, _pb = _ef_rect(p)
+                if m2 and abs(pt - gb) < 40 and pl >= gl - 10:
+                    count = int(m2.group(1))
+            return m, lst, g, count
+    return None, None, None, None
+
+
+def _ef_easyform_dialog(main) -> bool:
+    """이지폼 프로세스의 질문/알림 창(#32770·TMessageForm)이 떠 있나."""
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(main, ctypes.byref(pid))
+    found = []
+
+    def _cb(h, _):
+        if _user32.IsWindowVisible(h) and _ef_classname(h) in ("#32770", "TMessageForm"):
+            p2 = wintypes.DWORD()
+            _user32.GetWindowThreadProcessId(h, ctypes.byref(p2))
+            if p2.value == pid.value:
+                found.append(h)
+        return True
+
+    _user32.EnumWindows(_EF_WNDENUMPROC(_cb), 0)
+    return bool(found)
+
+
+def _ef_open_form(main):
+    forms = [f for f in _ef_children(main, "TfrmExchange")]
+    return forms[0] if forms else None
+
+
+def _ef_form_header(form) -> "tuple[str, str]":
+    """상세 창 발행일(TMaskEdit)·합계금액(표 위 TAdvEdit) — 화면 글자 그대로."""
+    date = ""
+    for e in _ef_children(form, "TMaskEdit"):
+        date = _ef_wtext(e).strip()
+        break
+    total = ""
+    grid = _ef_find_child_class(form, "TAdvStringGrid")
+    gtop = _ef_rect(grid)[1] if grid else 10 ** 6
+    for e in _ef_children(form, "TAdvEdit"):
+        if _ef_rect(e)[3] <= gtop:
+            total = _ef_wtext(e).strip()
+            break
+    return date, total
+
+
+def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
+    """목록 맨 위부터 명세서를 열어 읽는다. (성공여부, 메시지, 명세서 목록).
+    opts: stopBefore='YYYY.MM.DD'(이보다 오래된 발행일이 나오면 멈춤), max=최대 건수."""
+    if not EASYFORM_AVAILABLE:
+        return False, "이 PC 에서는 이지폼 찾기를 쓸 수 없습니다.", []
+    stop_before = str(opts.get("stopBefore") or "").strip()
+    try:
+        max_n = max(1, min(300, int(opts.get("max") or 80)))
+    except (TypeError, ValueError):
+        max_n = 80
+    found: list = []
+
+    def result(ok, msg):
+        return ok, msg, found
+
+    ef_guard_start()
+    try:
+        main, lst, grid, count = _ef_find_list()
+        if not grid:
+            return result(False, "이지폼 [매출 거래명세서 목록] 창을 못 찾았습니다(매출처별 조회를 띄워 두세요).")
+        if _ef_open_form(main):
+            return result(False, "이지폼에 열려 있는 상세명세서 창을 먼저 닫아주세요(목록만 띄워 두기).")
+        total_n = min(max_n, count) if count else max_n
+        if _user32.IsIconic(main):
+            _user32.ShowWindow(main, 9)
+        _user32.SetForegroundWindow(main)
+        _user32.BringWindowToTop(lst)
+        _user32.SetForegroundWindow(main)
+        time.sleep(0.3)
+        gl, gt, _gr, _gb = _ef_rect(grid)
+        # 첫 줄(최신) 발행일자 칸 클릭 = 줄 선택만. ('선택' 체크칸·[세금변환] 버튼은 오른쪽 끝이라 안 건드림)
+        ef_click(gl + 45, gt + 33)
+        time.sleep(0.2)
+        prev_sig = None
+        for i in range(total_n):
+            if ef_aborted():
+                return result(False, "ESC 로 중단했습니다.")
+            if i > 0:
+                ef_key(_VK_DOWN)  # 목록 다음 줄
+                time.sleep(0.2)
+            ef_key(_VK_RETURN)  # 열기
+            form = None
+            t0 = time.time()
+            while time.time() - t0 < 4.0:
+                form = _ef_open_form(main)
+                if form and "_" not in _ef_form_header(form)[0] and _ef_form_header(form)[0]:
+                    break
+                time.sleep(0.1)
+            if not form:
+                if _ef_easyform_dialog(main):
+                    return result(False, f"{i + 1}번째에서 이지폼 알림 창이 떠서 멈췄어요. 직접 확인해주세요.")
+                return result(len(found) > 0, f"{i + 1}번째 명세서가 안 열려서 멈췄어요({len(found)}건 확인).")
+            time.sleep(0.25)
+            date, total = _ef_form_header(form)
+            if not ef_dock_and_offset():
+                return result(False, "상세명세서 창 위치를 맞추지 못했어요.")
+            time.sleep(0.12)
+            rows = _ef_read_open_form()
+            _EF_OFFSET[0] = 0
+            _EF_OFFSET[1] = 0
+            if rows is None:
+                return result(False, "ESC 로 중단했습니다.")
+            sig = (date, total, tuple(tuple(r.values()) for r in rows))
+            # 닫기 — ESC 한 번. 안 닫히거나 질문 창이 뜨면 아무것도 누르지 않고 멈춘다.
+            ef_key(_VK_ESC)
+            t0 = time.time()
+            while time.time() - t0 < 3.0 and _ef_open_form(main):
+                time.sleep(0.1)
+            if _ef_open_form(main) or _ef_easyform_dialog(main):
+                return result(False, f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. "
+                                     "저장하지 말고 직접 '아니오'/닫기 해주세요.")
+            if sig == prev_sig:
+                break  # ↓ 가 더 안 내려감 = 목록 끝
+            prev_sig = sig
+            remark_all = " ".join(r.get("remark", "") for r in rows)
+            found.append({
+                "idx": i, "date": date, "total": total, "rows": rows,
+                "orderNos": list(dict.fromkeys(_EF_ORDER_NO_RE.findall(remark_all))),
+            })
+            if progress:
+                try:
+                    progress(len(found), total_n, date)
+                except Exception:
+                    pass
+            if stop_before and date and date < stop_before:
+                break  # 역순보기라 이보다 아래는 더 오래된 명세서
+            time.sleep(0.15)
     finally:
         _EF_OFFSET[0] = 0
         _EF_OFFSET[1] = 0
@@ -717,26 +932,30 @@ def run_easyform_extract() -> "tuple[bool, str, list]":
             ef_set_clipboard("")
         except Exception:
             pass
-    if not rows:
-        return False, "읽은 줄이 없습니다. 상세명세서가 열려 있는지 확인하세요.", []
-    return True, f"{len(rows)}줄을 가져왔습니다.", rows
+    return result(True, f"명세서 {len(found)}건을 확인했어요.")
 
 
 # 가져오기 상태(웹이 폴링): idle → waiting(버튼 대기) → running → done/error.
-_EF_PULL = {"id": 0, "state": "idle", "rows": [], "message": "", "at": 0.0}
+# mode: 'one' = 열어 둔 상세명세서 1건 / 'scan' = 목록에서 한 건씩 열어 찾기(statements 로 돌려줌).
+_EF_PULL = {"id": 0, "state": "idle", "rows": [], "statements": [], "message": "", "at": 0.0,
+            "mode": "one", "opts": {}, "progress": ""}
 EF_PULL_TTL = 1800
 
 
-def handle_pull_start() -> "tuple[int, dict]":
-    """POST /easyform/pull — 가져오기 대기(arm) + 코너 '가져오기' 버튼창 표시."""
+def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
+    """POST /easyform/pull — 가져오기 대기(arm) + 코너 버튼창 표시. body.mode='scan' 이면 목록 찾기."""
     if not EASYFORM_AVAILABLE:
         return 200, {"armed": False, "message": "이 PC 에서는 이지폼 가져오기를 쓸 수 없습니다."}
+    body = body if isinstance(body, dict) else {}
+    mode = "scan" if body.get("mode") == "scan" else "one"
+    opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 80}
     with _EF_LOCK:
         _EF_PULL["id"] += 1
-        _EF_PULL.update(state="waiting", rows=[], message="", at=time.time())
+        _EF_PULL.update(state="waiting", rows=[], statements=[], message="", at=time.time(),
+                        mode=mode, opts=opts, progress="")
         pid = _EF_PULL["id"]
     try:
-        _EF_UI_QUEUE.put(("pull_show",))
+        _EF_UI_QUEUE.put(("pull_show", mode))
     except Exception:
         pass
     logging.info("이지폼 가져오기 대기 #%d — '가져오기' 버튼 대기", pid)
@@ -752,10 +971,12 @@ def handle_pull_status(pid: int) -> dict:
             _EF_PULL["state"] = "idle"
             return {"state": "gone"}
         st = _EF_PULL["state"]
-        out = {"state": st, "message": _EF_PULL["message"]}
+        out = {"state": st, "message": _EF_PULL["message"], "mode": _EF_PULL["mode"],
+               "progress": _EF_PULL["progress"]}
         if st == "done":
             out["rows"] = list(_EF_PULL["rows"])
-            _EF_PULL.update(state="idle", rows=[])
+            out["statements"] = list(_EF_PULL["statements"])
+            _EF_PULL.update(state="idle", rows=[], statements=[])
         elif st == "error":
             _EF_PULL["state"] = "idle"
         return out
@@ -1029,13 +1250,19 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def set_pull():
+    def set_pull(pmode="one"):
         busy["v"] = False
         mode["v"] = "pull"
-        info_lbl.config(
-            text="이지폼에서 옮길 상세명세서를 열어 둔 뒤\n아래 버튼을 누르면 홈페이지 명세서로 가져옵니다.",
-            fg="#333333")
-        btn.config(text="이지폼에서 가져오기 ▶", state="normal", bg=accent)
+        if pmode == "scan":
+            info_lbl.config(
+                text="이지폼 [매출처별 조회 → 그 해 1/1~12/31 → 역순보기]\n목록을 띄워 둔 뒤(맨 위가 보이게) 아래 버튼을 누르세요.",
+                fg="#333333")
+            btn.config(text="이지폼 목록에서 찾기 ▶", state="normal", bg=accent)
+        else:
+            info_lbl.config(
+                text="이지폼에서 옮길 상세명세서를 열어 둔 뒤\n아래 버튼을 누르면 홈페이지 명세서로 가져옵니다.",
+                fg="#333333")
+            btn.config(text="이지폼에서 가져오기 ▶", state="normal", bg=accent)
         win.deiconify()
         win.lift()
         win.attributes("-topmost", True)
@@ -1046,32 +1273,55 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         with _EF_LOCK:
             waiting = _EF_PULL["state"] == "waiting"
             pid = _EF_PULL["id"]
+            pmode = _EF_PULL["mode"]
+            popts = dict(_EF_PULL["opts"])
         if not waiting:
-            ef_messagebox("대기 중인 가져오기가 없습니다(만료). 홈페이지에서 다시 [이지폼에서 가져오기]를 누르세요.",
+            ef_messagebox("대기 중인 가져오기가 없습니다(만료). 홈페이지에서 다시 눌러주세요.",
                           "이지폼 가져오기")
             win.withdraw()
             return
-        if not ef_focus_easyform():
+        if pmode == "scan":
+            if not _ef_find_list()[2]:
+                ef_messagebox("이지폼 [매출 거래명세서 목록 → 매출처별 조회] 를 먼저 띄워 두세요.", "이지폼 찾기")
+                return
+            if _ef_open_form(_ef_find_list()[0]):
+                ef_messagebox("열려 있는 상세명세서 창을 먼저 닫고(ESC), 목록만 띄워 두세요.", "이지폼 찾기")
+                return
+        elif not ef_focus_easyform():
             ef_messagebox("이지폼에서 옮길 상세명세서를 먼저 열어두세요.", "이지폼 가져오기")
             return
         with _EF_LOCK:
             _EF_PULL["state"] = "running"
         busy["v"] = True
         win.withdraw()
-        show_overlay("가져오는 동안에는 마우스가 잠깁니다.")
-        ef_focus_easyform()
+        if pmode == "scan":
+            show_overlay("명세서를 하나씩 열어 확인하는 동안 마우스가 잠깁니다.")
+        else:
+            show_overlay("가져오는 동안에는 마우스가 잠깁니다.")
+            ef_focus_easyform()
+
+        def on_progress(n, total_n, date):
+            with _EF_LOCK:
+                if _EF_PULL["id"] == pid:
+                    _EF_PULL["progress"] = f"{n}/{total_n} · {date}"
 
         def worker():
             time.sleep(0.4)
+            stmts: list = []
             try:
-                ok, msg, rows = run_easyform_extract()
+                if pmode == "scan":
+                    ok, msg, stmts = run_easyform_scan(popts, on_progress)
+                    rows = []
+                    ok = ok or bool(stmts)  # 중간에 멈춰도 읽은 건 넘긴다(메시지에 이유)
+                else:
+                    ok, msg, rows = run_easyform_extract()
             except Exception as e:  # noqa: BLE001
                 ok, msg, rows = False, f"오류: {e}", []
                 logging.exception("이지폼 가져오기 오류(UI)")
             with _EF_LOCK:
                 if _EF_PULL["id"] == pid:
-                    _EF_PULL.update(state="done" if ok else "error", rows=rows, message=msg)
-            _EF_UI_QUEUE.put(("pull_result", ok, msg, len(rows)))
+                    _EF_PULL.update(state="done" if ok else "error", rows=rows, statements=stmts, message=msg)
+            _EF_UI_QUEUE.put(("pull_result", ok, msg, len(stmts) if pmode == "scan" else len(rows), pmode))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1102,13 +1352,16 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 elif cmd[0] == "trigger":   # F6 보조 트리거 → 버튼과 동일 흐름
                     on_fill()
                 elif cmd[0] == "pull_show":
-                    set_pull()
+                    set_pull(cmd[1] if len(cmd) > 1 else "one")
                 elif cmd[0] == "pull_cancel":
                     if mode["v"] == "pull" and not busy["v"]:
                         win.withdraw()
                 elif cmd[0] == "pull_result":
                     ok, msg, n = cmd[1], cmd[2], cmd[3]
-                    show_done(ok, msg, ok_text=f"✅ {n}줄을 가져왔어요.\n홈페이지 명세서 화면에서 확인하세요.")
+                    if len(cmd) > 4 and cmd[4] == "scan":
+                        show_done(ok, msg, ok_text=f"✅ 명세서 {n}건을 확인했어요.\n{msg}\n홈페이지 화면에서 고르세요.")
+                    else:
+                        show_done(ok, msg, ok_text=f"✅ {n}줄을 가져왔어요.\n홈페이지 명세서 화면에서 확인하세요.")
                     logging.info("이지폼 가져오기 %s — %s", "성공" if ok else "실패/중단", msg)
                 elif cmd[0] == "result":
                     ok, msg = cmd[1], cmd[2]

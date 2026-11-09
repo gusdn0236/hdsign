@@ -47,6 +47,7 @@ import {
   cancelEasyformPull,
   extractOrderNos,
   orderNoCore,
+  type EasyformScannedStatement,
 } from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal, { type PickedRow } from './LookupResultModal';
@@ -2011,16 +2012,38 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       );
     }
   };
-  const pullFromEasyform = async () => {
+  // [이지폼에서 찾기] 결과 — 목록에서 읽은 명세서들. 사람이 '이 주문 것'을 골라 맞춘다.
+  const [efScan, setEfScan] = useState<{ statements: EasyformScannedStatement[]; message: string } | null>(null);
+  const scannedToRows = (s: EasyformScannedStatement) =>
+    s.rows.map((r) => ({
+      품목코드: r.item_code || '',
+      품목: r.item || '',
+      규격: r.spec || '',
+      수량: r.qty || '',
+      단가: formatWon(r.unit_price || ''),
+      비고: r.remark || '',
+    }));
+  const pickScanned = (s: EasyformScannedStatement) => {
+    setEfScan(null);
+    onEasyformPulled(scannedToRows(s), s.orderNos);
+  };
+  const pullFromEasyform = async (scan = false) => {
     if (pullRef.current && !pullRef.current.stop) return; // 이미 대기 중
     const probe = await probeEasyformAgent();
     if (!probe || !probe.easyform) {
       cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
       return;
     }
+    // 찾기(scan) — 주문번호의 날짜(261103 → 2026.11.03) 일주일 전보다 오래된 명세서가 나오면 멈춘다.
+    let stopBefore = '';
+    const m6 = orderNoCore(order?.orderNumber).match(/^(\d{2})(\d{2})(\d{2})-/);
+    if (scan && m6) {
+      const d = new Date(2000 + Number(m6[1]), Number(m6[2]) - 1, Number(m6[3]) - 7);
+      stopBefore = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+    }
     let id: number;
     try {
-      const r = await startEasyformPull();
+      const r = await startEasyformPull(scan ? { mode: 'scan', stopBefore, max: 80 } : undefined);
       if (!r.armed || r.id == null) {
         cdlg(r.message || '이지폼 가져오기를 시작하지 못했습니다.', [{ label: '확인', sec: true }]);
         return;
@@ -2037,15 +2060,29 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       job.stop = true;
       void cancelEasyformPull(id);
     };
-    cdlg(
-      `<b style="font-size:15px">이지폼에서 가져오기</b>` +
-        `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼에서 옮길 <b>상세명세서를 열어 둔 뒤</b>,<br>` +
-        `화면 오른쪽 아래 <b>'이지폼에서 가져오기 ▶'</b> 버튼을 눌러주세요.</div>` +
-        `<div style="font-size:12px;color:#6b7785;margin-top:8px">품목코드·품목·규격·수량·단가만 가져와요. 다 읽으면 여기 표에 바로 들어갑니다.</div>`,
-      [{ label: '취소', sec: true, fn: cancel }],
-    );
+    if (scan) {
+      cdlg(
+        `<b style="font-size:15px">이지폼에서 찾기</b>` +
+          `<div style="font-size:13px;margin-top:8px;line-height:1.7">이지폼에서 <b>${order?.clientCompanyName || '이 거래처'}</b> 의<br>` +
+          `<b>매출처별 조회 → 올해 1/1~12/31 → 역순보기</b> 목록을 띄워 두고(맨 위가 보이게),<br>` +
+          `화면 오른쪽 아래 <b>'이지폼 목록에서 찾기 ▶'</b> 를 눌러주세요.</div>` +
+          `<div style="font-size:12px;color:#6b7785;margin-top:8px">맨 위부터 하나씩 열어 비고의 주문번호를 확인해요` +
+          (stopBefore ? ` (${stopBefore} 보다 오래된 명세서가 나오면 멈춤)` : '') +
+          `. 이지폼은 읽기만 합니다.</div>`,
+        [{ label: '취소', sec: true, fn: cancel }],
+      );
+    } else {
+      cdlg(
+        `<b style="font-size:15px">이지폼에서 가져오기</b>` +
+          `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼에서 옮길 <b>상세명세서를 열어 둔 뒤</b>,<br>` +
+          `화면 오른쪽 아래 <b>'이지폼에서 가져오기 ▶'</b> 버튼을 눌러주세요.</div>` +
+          `<div style="font-size:12px;color:#6b7785;margin-top:8px">품목코드·품목·규격·수량·단가만 가져와요. 다 읽으면 여기 표에 바로 들어갑니다.</div>`,
+        [{ label: '취소', sec: true, fn: cancel }],
+      );
+    }
     const started = Date.now();
     let running = false;
+    let lastProg = '';
     while (!job.stop) {
       await new Promise((r) => setTimeout(r, 700));
       if (job.stop) break;
@@ -2060,13 +2097,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       } catch {
         continue; // 일시 오류 — 계속 기다림
       }
-      if (st.state === 'running' && !running) {
+      if (st.state === 'running' && (!running || (st.progress || '') !== lastProg)) {
         running = true;
+        lastProg = st.progress || '';
         cdlg(
-          `<b style="font-size:15px">이지폼에서 읽는 중…</b>` +
+          `<b style="font-size:15px">이지폼에서 읽는 중…${lastProg ? ` (${lastProg})` : ''}</b>` +
             `<div style="font-size:12px;color:#6b7785;margin-top:6px">끝날 때까지 마우스를 잠시 놓아주세요. (중단: 이지폼 화면에서 ESC)</div>`,
           [],
         );
+      } else if (st.state === 'done' && st.mode === 'scan') {
+        job.stop = true;
+        setDialog(null);
+        setEfScan({ statements: st.statements || [], message: st.message || '' });
       } else if (st.state === 'done') {
         job.stop = true;
         setDialog(null);
@@ -3974,6 +4016,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             >
               📥 이지폼에서 가져오기
             </button>
+            <button
+              type="button"
+              className="aq-calcbtn"
+              onClick={() => void pullFromEasyform(true)}
+              title="이지폼 매출처별 조회 목록을 위부터 하나씩 열어, 이 주문의 명세서를 찾기"
+            >
+              🔍 이지폼에서 찾기
+            </button>
           </div>
           {/* 도장비 합치기/펼치기 바 — 도장비 행이 2건+ 이거나 이미 합쳐져 있을 때만. */}
           {(dojangAtoms.length >= 2 || dojangSummary) && (
@@ -4722,6 +4772,51 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       )}
 
       {/* 작은 다이얼로그 */}
+      {efScan && (
+        <div className="aq-cdlg on" onClick={(e) => e.target === e.currentTarget && setEfScan(null)}>
+          <div className="aq-cdbox aq-efscan">
+            <div className="aq-efscan-h">
+              <b>이지폼에서 찾은 명세서 {efScan.statements.length}건</b>
+              <span>{order?.clientCompanyName || ''} · 이 주문 {orderNoCore(order?.orderNumber)}</span>
+            </div>
+            {efScan.message && <div className="aq-efscan-msg">{efScan.message}</div>}
+            <div className="aq-efscan-hint">
+              비고에 주문번호가 <b>없는</b> 명세서가 이지폼에 따로 입력한 후보예요. 이 주문 것을 눌러 고르세요.
+            </div>
+            <div className="aq-efscan-list">
+              {efScan.statements.map((s) => {
+                const own = orderNoCore(order?.orderNumber);
+                const mine = !!own && s.orderNos.includes(own);
+                const items = s.rows
+                  .map((r) => r.item)
+                  .filter((t) => (t || '').trim())
+                  .slice(0, 4)
+                  .join(' · ');
+                return (
+                  <button
+                    key={s.idx}
+                    type="button"
+                    className={'aq-efscan-row' + (s.orderNos.length ? ' linked' : ' cand') + (mine ? ' mine' : '')}
+                    onClick={() => pickScanned(s)}
+                  >
+                    <span className="d">{s.date}</span>
+                    <span className="t">{s.total}원</span>
+                    <span className="i">{items || '(품목 없음)'}</span>
+                    <span className="b">
+                      {mine ? '✅ 이 주문' : s.orderNos.length ? `🔗 ${s.orderNos.join(', ')}` : '❓ 주문번호 없음'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="aq-cdbtns">
+              <button className="sec" onClick={() => setEfScan(null)}>
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {dialog && (
         <div className="aq-cdlg on" onClick={(e) => e.target === e.currentTarget && setDialog(null)}>
           <div className="aq-cdbox">

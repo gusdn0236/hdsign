@@ -62,7 +62,14 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/easyform/pull":
-            self._json(*easyform.handle_pull_start())
+            # body = {} (상세명세서 1건 가져오기) 또는 {mode:'scan', stopBefore, max} (목록에서 찾기)
+            try:
+                n = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(n) if n > 0 else b""
+                pbody = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                pbody = {}
+            self._json(*easyform.handle_pull_start(pbody))
             return
         if parsed.path == "/easyform/pull/cancel":
             try:

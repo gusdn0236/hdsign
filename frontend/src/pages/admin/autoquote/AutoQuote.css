@@ -112,6 +112,96 @@
   font-size: 12px;
   font-weight: 600;
 }
+/* 이지폼에서 찾기 — 목록에서 읽은 명세서 고르기. */
+.aq-efscan {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+}
+.aq-efscan-h {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 15px;
+}
+.aq-efscan-h span {
+  font-size: 12px;
+  color: #6b7785;
+}
+.aq-efscan-msg {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b45309;
+}
+.aq-efscan-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #475569;
+}
+.aq-efscan-list {
+  margin-top: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.aq-efscan-row {
+  display: grid;
+  grid-template-columns: 88px 96px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.aq-efscan-row:hover {
+  border-color: #0a9396;
+  background: #f0fdfa;
+}
+.aq-efscan-row .d {
+  font-weight: 700;
+}
+.aq-efscan-row .t {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.aq-efscan-row .i {
+  color: #334155;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aq-efscan-row .b {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.aq-efscan-row.cand {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+.aq-efscan-row.linked {
+  opacity: 0.75;
+}
+.aq-efscan-row.mine {
+  opacity: 1;
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+@media (max-width: 560px) {
+  .aq-efscan-row {
+    grid-template-columns: 1fr auto;
+  }
+  .aq-efscan-row .i {
+    grid-column: 1 / -1;
+  }
+}
 /* 참고사진 빼기 — 우하단(라벨과 안 겹치게). */
 .aq-refdel {
   position: absolute;

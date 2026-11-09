@@ -193,18 +193,33 @@ export function orderNoCore(orderNumber: string | null | undefined): string {
   return (orderNumber || '').replace(/^(주문|견적)-/, '');
 }
 
+/** [이지폼에서 찾기] 로 목록에서 하나씩 열어 읽은 명세서 1건. */
+export interface EasyformScannedStatement {
+  idx: number;
+  date: string; // 발행일 'YYYY.MM.DD'
+  total: string; // 합계금액(화면 글자)
+  rows: EasyformPulledRow[];
+  orderNos: string[]; // 비고에서 찾은 홈페이지 주문번호
+}
+
 export interface EasyformPullStatus {
   state: 'idle' | 'waiting' | 'running' | 'done' | 'error' | 'gone';
   message?: string;
+  mode?: 'one' | 'scan';
+  progress?: string; // scan 진행 '3/23 · 2026.10.12'
   rows?: EasyformPulledRow[];
+  statements?: EasyformScannedStatement[];
 }
 
-export async function startEasyformPull(): Promise<{ armed: boolean; id?: number; message?: string }> {
+/** 가져오기 대기. scan = 이지폼 목록(매출처별 조회)에서 위부터 열어 찾기 — stopBefore 보다 오래되면 멈춤. */
+export async function startEasyformPull(
+  opts?: { mode: 'scan'; stopBefore?: string; max?: number },
+): Promise<{ armed: boolean; id?: number; message?: string }> {
   const res = await fetch(`${AGENT_URL}/easyform/pull`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
     cache: 'no-store',
-    body: '{}',
+    body: JSON.stringify(opts || {}),
   });
   if (!res.ok) throw new Error(`이지폼 가져오기 요청 실패 (${res.status}).`);
   return (await res.json()) as { armed: boolean; id?: number; message?: string };
