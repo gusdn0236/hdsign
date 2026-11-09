@@ -320,26 +320,23 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
 }
-.aq-clue-table table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12.5px;
+/* 표 모양은 홈페이지 명세서 표(.aq-rtbl)와 같게 — 여기선 머리줄 고정·상단여백만 조정 */
+.aq-clue-table table.aq-rtbl {
+  margin-top: 0;
+  table-layout: fixed;
 }
-.aq-clue-table th,
-.aq-clue-table td {
-  padding: 5px 8px;
-  border-bottom: 1px solid #f1f5f9;
-  text-align: left;
+.aq-clue-table .aq-rtbl td {
+  word-break: break-all;
 }
-.aq-clue-table th {
+.aq-clue-table .aq-rtbl th {
   position: sticky;
   top: 0;
-  background: #f8fafc;
-  color: #64748b;
-  font-weight: 600;
+  z-index: 1;
+}
+.aq-clue-table .aq-rtbl td.p {
+  text-align: right;
 }
 .aq-clue-table .no {
-  width: 28px;
   color: #94a3b8;
   text-align: right;
 }

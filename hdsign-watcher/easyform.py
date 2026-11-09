@@ -998,10 +998,10 @@ def _ef_read_remarks(clues: bool = False):
     """열린 상세명세서를 훑는다 → [(품목, 규격, 비고)] / None(ESC).
     clues=False(주문번호 찾기): **비고 칸만** 읽는다 — 표 끝은 비고 칸 메뉴가 안 뜨는 것으로 판단.
       (10줄 넘어 스크롤할 때만 품목 칸도 읽음 — 같은 줄 반복=표 끝 판단에 비고만으론 부족)
-    clues=True(키워드로 찾기): 품목코드·품목·규격·비고.
+    clues=True(키워드로 찾기): 품목코드·품목·규격·수량·단가·비고(홈페이지 명세서 칸 그대로).
     줄이 10개를 넘으면 **표 보기만** 한 줄씩 내린다(WM_VSCROLL — Enter 는 마지막 줄에서 새 줄을 만들어 금지)."""
     ci, cs, cr = EF_COLS.index("item"), EF_COLS.index("spec"), EF_COLS.index("remark")
-    cc = EF_COLS.index("item_code")
+    cc, cq, cp = EF_COLS.index("item_code"), EF_COLS.index("qty"), EF_COLS.index("unit_price")
     out: list = []
     prev = None
     dup = 0
@@ -1024,9 +1024,11 @@ def _ef_read_remarks(clues: bool = False):
             else:
                 return None  # 비고만 읽을 때: 메뉴 안 뜸 = 표 끝
         if clues:
-            # 키워드 찾기: 품목코드도(수량·단가는 키워드로 찾을 일이 적어 속도 위해 안 읽음)
+            # 키워드 찾기: 홈페이지 명세서 칸 그대로(품목코드·품목·규격·수량·단가·비고). 공급가·세액은 계산값이라 뺌.
             code = _ef_copy_cell(*cells[cc]) or ""
-            return it, sp, rm, code
+            qty = _ef_copy_cell(*cells[cq]) or ""
+            price = _ef_copy_cell(*cells[cp]) or ""
+            return it, sp, rm, code, qty, price
         return it, sp, rm
 
     for cells in EF_CELLS:
@@ -1237,6 +1239,8 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                      "remarks": [r[2] for r in remarks]}
             if clue_mode:
                 light["codes"] = [r[3] if len(r) > 3 else "" for r in remarks]
+                light["qtys"] = [r[4] if len(r) > 4 else "" for r in remarks]
+                light["prices"] = [r[5] if len(r) > 5 else "" for r in remarks]
             found.append(light)
             if progress:
                 try:

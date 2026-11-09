@@ -5042,52 +5042,75 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           </button>
                         </div>
                         {(() => {
-                          // 훑은 칸 전부(품목코드·품목·규격·비고) — 맞은 칸만 초록. 전체 중 몇 칸이 맞았는지 같이.
-                          const cols: { h: string; v?: string[] }[] = [
-                            { h: '품목코드', v: cur.s.codes },
-                            { h: '품목', v: cur.s.items },
-                            { h: '규격', v: cur.s.specs },
-                            { h: '비고', v: cur.s.remarks },
-                          ].filter((c) => c.v && c.v.length);
-                          const nRows = Math.max(0, ...cols.map((c) => c.v!.length));
+                          // 홈페이지 명세서 작성 표와 같은 칸·폭(품목코드·품목·규격·수량·단가·공급가액) + 끝에 비고.
+                          // 맞은 칸만 초록. 공급가액은 수량×단가 계산값이라 맞은 칸 세기에서 뺀다.
+                          const S = cur.s;
+                          const nRows = Math.max(
+                            0,
+                            ...[S.codes, S.items, S.specs, S.qtys, S.prices, S.remarks].map((v) => v?.length || 0),
+                          );
                           let filled = 0;
                           let hitN = 0;
-                          for (const c of cols)
-                            for (const t of c.v!) {
-                              if (!(t || '').trim()) continue;
+                          const cell = (t: string, cls = '') => {
+                            const h = isHit(t);
+                            if ((t || '').trim()) {
                               filled++;
-                              if (isHit(t)) hitN++;
+                              if (h) hitN++;
                             }
+                            return { className: [cls, h ? 'hit' : ''].filter(Boolean).join(' ') || undefined };
+                          };
+                          const body = Array.from({ length: nRows }, (_, k) => {
+                            const code = S.codes?.[k] || '';
+                            const it = S.items?.[k] || '';
+                            const sp = S.specs?.[k] || '';
+                            const q = S.qtys?.[k] || '';
+                            const pr = S.prices?.[k] || '';
+                            const rm = S.remarks?.[k] || '';
+                            const u = num(pr);
+                            const qn = num(q);
+                            return (
+                              <tr key={k}>
+                                <td className="no">{k + 1}</td>
+                                <td {...cell(code)}>{code}</td>
+                                <td {...cell(it)}>{it}</td>
+                                <td {...cell(sp)}>{sp}</td>
+                                <td {...cell(q)}>{q}</td>
+                                <td {...cell(pr, 'p')}>{u != null ? u.toLocaleString() : pr}</td>
+                                <td className="p">{u != null ? (u * (qn ?? 1)).toLocaleString() : ''}</td>
+                                <td {...cell(rm)}>{rm}</td>
+                              </tr>
+                            );
+                          });
                           return (
                             <>
                               <div className="aq-clue-count">
                                 맞은 칸 <b>{hitN}</b> / 전체 {filled}칸 · {nRows}줄
                               </div>
                               <div className="aq-clue-table">
-                                <table>
+                                <table className="aq-rtbl">
+                                  <colgroup>
+                                    <col style={{ width: 24 }} />
+                                    <col style={{ width: 58 }} />
+                                    <col />
+                                    <col style={{ width: 56 }} />
+                                    <col style={{ width: 34 }} />
+                                    <col style={{ width: 78 }} />
+                                    <col style={{ width: 86 }} />
+                                    <col style={{ width: 110 }} />
+                                  </colgroup>
                                   <thead>
                                     <tr>
-                                      <th className="no">#</th>
-                                      {cols.map((c) => (
-                                        <th key={c.h}>{c.h}</th>
-                                      ))}
+                                      <th className="no"></th>
+                                      <th>품목코드</th>
+                                      <th>품목</th>
+                                      <th>규격</th>
+                                      <th>수량</th>
+                                      <th className="p">단가</th>
+                                      <th className="p">공급가액</th>
+                                      <th>비고</th>
                                     </tr>
                                   </thead>
-                                  <tbody>
-                                    {Array.from({ length: nRows }, (_, k) => (
-                                      <tr key={k}>
-                                        <td className="no">{k + 1}</td>
-                                        {cols.map((c) => {
-                                          const t = c.v![k] || '';
-                                          return (
-                                            <td key={c.h} className={isHit(t) ? 'hit' : ''}>
-                                              {t}
-                                            </td>
-                                          );
-                                        })}
-                                      </tr>
-                                    ))}
-                                  </tbody>
+                                  <tbody>{body}</tbody>
                                 </table>
                               </div>
                             </>

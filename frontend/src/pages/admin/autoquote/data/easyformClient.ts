@@ -205,7 +205,9 @@ export interface EasyformScannedStatement {
   items?: string[];
   specs?: string[];
   remarks?: string[];
-  codes?: string[]; // 키워드 훑기 때만 — 품목코드
+  codes?: string[]; // 키워드 훑기 때만 — 품목코드·수량·단가(홈페이지 명세서 칸 그대로 보여주기용)
+  qtys?: string[];
+  prices?: string[];
 }
 
 export interface EasyformPullStatus {
