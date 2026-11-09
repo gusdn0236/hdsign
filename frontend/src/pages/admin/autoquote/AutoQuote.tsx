@@ -2075,17 +2075,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     if (scan) {
       cdlg(
         `<b style="font-size:15px">이지폼에서 찾기</b>` +
-          `<div style="font-size:13px;margin-top:8px;line-height:1.7">이지폼에서 <b>${order?.clientCompanyName || '이 거래처'}</b> 의<br>` +
-          `<b>매출처별 조회 → 올해 1/1~12/31 → 역순보기</b> 목록을 띄워 두고(맨 위가 보이게),<br>` +
-          `화면 오른쪽 아래 <b>'이지폼 목록에서 찾기 ▶'</b> 를 눌러주세요.</div>` +
-          `<div style="font-size:12px;color:#6b7785;margin-top:8px">맨 위부터 하나씩 열어 <b>비고</b>에서 주문번호 <b>${own}</b> 를 찾아요` +
-          (stopBefore ? ` (마감일 6개월 전 ${stopBefore} 까지)` : '') +
-          `. 찾으면 바로 멈춰요. 이지폼은 읽기만 합니다.</div>`,
+          `<div style="font-size:13px;margin-top:8px;line-height:1.8">` +
+          `1. 매출처별 조회에서 <b>'${order?.clientCompanyName || '이 거래처'}'</b>를 검색해주세요<br>` +
+          `2. 날짜를 <b>1/1~12/31</b>로 설정해주세요 (최신순)<br>` +
+          `3. <b>'이지폼 목록에서 찾기 ▶'</b> 버튼을 눌러주세요</div>`,
         [{ label: '취소', sec: true, fn: cancel }],
       );
     } else {
       cdlg(
-        `<b style="font-size:15px">이지폼에서 가져오기</b>` +
+        `<b style="font-size:15px">이지폼에서 직접가져오기</b>` +
           `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼에서 옮길 <b>상세명세서를 열어 둔 뒤</b>,<br>` +
           `화면 오른쪽 아래 <b>'이지폼에서 가져오기 ▶'</b> 버튼을 눌러주세요.</div>` +
           `<div style="font-size:12px;color:#6b7785;margin-top:8px">품목코드·품목·규격·수량·단가만 가져와요. 다 읽으면 여기 표에 바로 들어갑니다.</div>`,
@@ -2126,7 +2124,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           cdlg(
             `<b style="font-size:15px">이지폼에서 못 찾았어요</b>` +
               `<div style="font-size:13px;margin-top:8px">${st.message || ''}</div>` +
-              `<div style="font-size:12px;color:#6b7785;margin-top:6px">비고에 주문번호 없이 입력된 명세서라면, 그 명세서를 열고 [📥 이지폼에서 가져오기] 하세요.</div>`,
+              `<div style="font-size:12px;color:#6b7785;margin-top:6px">비고에 주문번호 없이 입력된 명세서라면, 그 명세서를 열고 [📥 이지폼에서 직접가져오기] 하세요.</div>`,
             [{ label: '확인', sec: true }],
           );
       } else if (st.state === 'done') {
@@ -4025,7 +4023,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               onClick={() => void pullFromEasyform()}
               title="이지폼에 열어 둔 상세명세서 1건의 품목코드·품목·규격·수량·단가를 이 표로 가져오기"
             >
-              📥 이지폼에서 가져오기
+              📥 이지폼에서 직접가져오기
             </button>
           </div>
           {/* 도장비 합치기/펼치기 바 — 도장비 행이 2건+ 이거나 이미 합쳐져 있을 때만. */}
