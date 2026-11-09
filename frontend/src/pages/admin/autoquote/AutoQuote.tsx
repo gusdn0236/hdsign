@@ -2069,6 +2069,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     }));
   // 단서로 찾기 — 지시서 사진 옆에서 훑은 명세서를 ◀ ▶ 로 넘겨 보는 위치.
   const [cluePos, setCluePos] = useState(0);
+  const [efFindOpen, setEfFindOpen] = useState(false); // [이지폼에서 찾기 ▾] 드롭다운
+  // 키워드로 찾기 — 주문번호 찾기 없이 바로: 지시서 보며 키워드 입력 → [품목·규격 훑기] → 넘겨 보며 고르기.
+  const openKeywordFind = () => {
+    setEfFindOpen(false);
+    setClueList([]);
+    setClueDraft('');
+    setCluePos(0);
+    setEfClue({ scanned: [], message: '', withItems: false });
+  };
   const pickScanned = (s: EasyformScannedStatement) => {
     void onEasyformPulled(scannedToRows(s), s.orderNos, { date: s.date, total: s.total });
   };
@@ -2140,8 +2149,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     } else if (scan && clues) {
       cdlg(
         `<b style="font-size:15px">키워드로 찾기 — 품목·규격 훑기</b>` +
-          `<div style="font-size:13px;margin-top:8px;line-height:1.8">이지폼 목록을 그대로 두고<br>` +
-          `오른쪽 아래 <b>'이지폼 목록에서 찾기 ▶'</b> 버튼을 눌러주세요</div>`,
+          `<div style="font-size:13px;margin-top:8px;line-height:1.8">` +
+          `1. 매출처별 조회에서 <b>'${order?.clientCompanyName || '이 거래처'}'</b>를 검색해주세요<br>` +
+          `2. 날짜를 <b>1/1~12/31</b>로 설정해주세요 (최신순)<br>` +
+          `3. <b>'이지폼 목록에서 찾기 ▶'</b> 버튼을 눌러주세요</div>` +
+          `<div style="font-size:12px;color:#6b7785;margin-top:6px">이미 목록이 떠 있으면 3번만 누르면 돼요.</div>`,
         [{ label: '취소', sec: true, fn: cancel }],
       );
     } else if (scan) {
@@ -4096,14 +4108,38 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           </div>
           {/* 이지폼 → 홈페이지 버튼줄 — 헤더 한 줄에 다 넣으면 잘려서 계산기 아래 줄로(오른쪽 정렬). */}
           <div className="aq-h2">
-            <button
-              type="button"
-              className="aq-calcbtn"
-              onClick={() => void pullFromEasyform(true)}
-              title="이지폼 매출처별 조회 목록을 위부터 하나씩 열어, 비고에서 이 주문번호를 찾기"
-            >
-              🔍 이지폼에서 찾기
-            </button>
+            {/* 이지폼에서 찾기 ▾ — ① 주문번호로 빠른찾기(비고 훑기) ② 키워드로 찾기(지시서 보며 키워드 → 품목·규격 훑기) */}
+            <div className="aq-findwrap">
+              <button
+                type="button"
+                className={'aq-calcbtn' + (efFindOpen ? ' on' : '')}
+                onClick={() => setEfFindOpen((v) => !v)}
+                title="이지폼 매출처별 조회 목록에서 이 주문의 명세서 찾기"
+              >
+                🔍 이지폼에서 찾기 ▾
+              </button>
+              {efFindOpen && (
+                <>
+                  <div className="aq-findmenu-back" onClick={() => setEfFindOpen(false)} />
+                  <div className="aq-findmenu">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEfFindOpen(false);
+                        void pullFromEasyform(true);
+                      }}
+                    >
+                      <b>⚡ 주문번호로 빠른찾기</b>
+                      <span>비고에 적힌 주문번호 {orderNoCore(order?.orderNumber) || ''} 로 찾아요</span>
+                    </button>
+                    <button type="button" onClick={openKeywordFind}>
+                      <b>🔤 키워드로 찾기</b>
+                      <span>지시서를 보며 키워드를 넣고, 품목·규격으로 찾아요</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <button
               type="button"
               className="aq-calcbtn"
@@ -4969,8 +5005,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     {!efClue.withItems ? (
                       <div className="aq-clue-pre">
                         <div className="aq-clue-sub">
-                          지금은 비고만 훑은 상태예요. [품목·규격 훑기] 를 누르면 같은 {n}건의 품목·규격을 한 번 더 읽어서,
-                          여기서 한 건씩 넘겨 보며 고를 수 있어요.
+                          {n
+                            ? `주문번호로는 못 찾았어요(비고만 훑음). [품목·규격 훑기] 를 누르면 같은 ${n}건의 품목·규격을 한 번 더 읽어서, 여기서 한 건씩 넘겨 보며 고를 수 있어요.`
+                            : '왼쪽 지시서를 보며 키워드를 넣고 [품목·규격 훑기] 를 누르면, 이지폼 목록(마감일 2개월 전까지)의 품목·규격을 읽어 맞는 순서로 넘겨 보며 고를 수 있어요.'}
                         </div>
                         <button
                           type="button"
@@ -4984,7 +5021,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                             void pullFromEasyform(true, undefined, true);
                           }}
                         >
-                          🔍 이지폼에서 품목·규격 훑기 ({n}건)
+                          🔍 이지폼에서 품목·규격 훑기{n ? ` (${n}건)` : ''}
                         </button>
                       </div>
                     ) : cur ? (
