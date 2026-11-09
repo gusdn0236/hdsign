@@ -994,6 +994,13 @@ def _ef_form_header(form) -> "tuple[str, str]":
     return date, total
 
 
+def ef_progress_text(n: int, date: str) -> str:
+    """찾기 진행 글자 — '11월 05일까지 총 12개의 명세서를 읽고 있습니다.' (date='YYYY.MM.DD')"""
+    m = _re.match(r"\d{4}\.(\d{1,2})\.(\d{1,2})", date or "")
+    upto = f"{m.group(1)}월 {m.group(2)}일까지 " if m else ""
+    return f"{upto}총 {n}개의 명세서를 읽고 있습니다."
+
+
 def _ef_read_remarks(clues: bool = False):
     """열린 상세명세서를 훑는다 → [(품목, 규격, 비고)] / None(ESC).
     clues=False(주문번호 찾기): **비고 칸만** 읽는다 — 표 끝은 비고 칸 메뉴가 안 뜨는 것으로 판단.
@@ -1498,6 +1505,10 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     run_lbl = tk.Label(run_frame, text="자동입력 중에는 마우스가 잠깁니다.", font=("맑은 고딕", int(14 * s), "bold"),
                        fg="#ffffff", bg="#1f2937")
     run_lbl.pack()
+    # 찾기(순회) 중 진행 — 'MM월 DD일까지 총 n개의 명세서를 읽고 있습니다.' 보고 안 나올 것 같으면 ESC 로 멈추게.
+    prog_lbl = tk.Label(run_frame, text="", font=("맑은 고딕", int(13 * s), "bold"),
+                        fg="#fbbf24", bg="#1f2937")
+    prog_lbl.pack(pady=(int(6 * s), 0))
     tk.Label(run_frame, text="중단하시려면 ESC 를 눌러주세요.", font=("맑은 고딕", int(12 * s)),
              fg="#fca5a5", bg="#1f2937").pack(pady=(int(6 * s), 0))
 
@@ -1544,6 +1555,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
     def show_overlay(text="자동입력 중에는 마우스가 잠깁니다."):
         run_lbl.config(text=text)
+        prog_lbl.config(text="")
         run_frame.pack(fill="both", expand=True)
         done_frame.pack_forget()
         dim.deiconify()
@@ -1704,7 +1716,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         def on_progress(n, total_n, date):
             with _EF_LOCK:
                 if _EF_PULL["id"] == pid:
-                    _EF_PULL["progress"] = f"{n}/{total_n} · {date}"
+                    _EF_PULL["progress"] = ef_progress_text(n, date)
+            _EF_UI_QUEUE.put(("pull_progress", pid, ef_progress_text(n, date)))
 
         def worker():
             time.sleep(0.4)
@@ -1759,6 +1772,11 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     mode["v"] = "pull"
                     busy["v"] = False
                     on_pull(auto=True)
+                elif cmd[0] == "pull_progress":
+                    with _EF_LOCK:
+                        live = _EF_PULL["id"] == cmd[1] and _EF_PULL["state"] == "running"
+                    if live:
+                        prog_lbl.config(text=cmd[2])
                 elif cmd[0] == "pull_cancel":
                     if mode["v"] == "pull" and not busy["v"]:
                         win.withdraw()

@@ -2195,7 +2195,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         running = true;
         lastProg = st.progress || '';
         cdlg(
-          `<b style="font-size:15px">이지폼에서 읽는 중…${lastProg ? ` (${lastProg})` : ''}</b>` +
+          `<b style="font-size:15px">이지폼에서 읽는 중…</b>` +
+            (lastProg ? `<div style="font-size:14px;color:#b45309;font-weight:700;margin-top:6px">${lastProg}</div>` : '') +
             `<div style="font-size:12px;color:#6b7785;margin-top:6px">끝날 때까지 마우스를 잠시 놓아주세요. (중단: 이지폼 화면에서 ESC)</div>`,
           [],
         );
