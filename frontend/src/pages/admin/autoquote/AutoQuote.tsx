@@ -2082,7 +2082,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
       return;
     }
-    // 찾기(scan) — 이 주문번호를 비고에서 찾는다. 범위 = 마감일(없으면 주문번호 날짜)로부터 6개월 전까지:
+    // 찾기(scan) — 이 주문번호를 비고에서 찾는다. 범위 = 마감일(없으면 주문번호 날짜)로부터 2개월 전까지:
     // 그보다 오래된 발행일이 나오면 멈춘다(1년치를 다 열면 너무 오래 걸림).
     const own = orderNoCore(order?.orderNumber);
     if (scan && !own) {
@@ -2099,7 +2099,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           ? new Date(2000 + Number(m6[1]), Number(m6[2]) - 1, Number(m6[3]))
           : null;
       if (base) {
-        base.setMonth(base.getMonth() - 6);
+        base.setMonth(base.getMonth() - 2);
         stopBefore = `${base.getFullYear()}.${String(base.getMonth() + 1).padStart(2, '0')}.${String(base.getDate()).padStart(2, '0')}`;
       }
     }
