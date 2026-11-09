@@ -125,9 +125,17 @@
   color: #6b7785;
 }
 /* 단서로 고른 명세서 비교 창 — 왼쪽 지시서 사진 | 오른쪽 명세서 표. 좁으면 위아래. */
-.aq-efprev {
-  width: min(1200px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
+.aq-cdbox.aq-efprev {
+  /* 명세서 작성 화면만큼 크게 — 지시서 글씨를 보며 키워드를 넣을 수 있게.
+     (.aq-cdbox 의 max-width 560px 를 이기려고 두 클래스로 지정) */
+  width: calc(100vw - 32px);
+  max-width: none;
+  min-width: 0;
+  height: calc(100vh - 32px);
+  max-height: none;
+  box-sizing: border-box;
+  padding: 16px 18px;
+  text-align: left;
   display: flex;
   flex-direction: column;
   gap: 10px;

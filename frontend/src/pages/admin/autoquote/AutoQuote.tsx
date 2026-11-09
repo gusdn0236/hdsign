@@ -5006,8 +5006,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                       <div className="aq-clue-pre">
                         <div className="aq-clue-sub">
                           {n
-                            ? `주문번호로는 못 찾았어요(비고만 훑음). [품목·규격 훑기] 를 누르면 같은 ${n}건의 품목·규격을 한 번 더 읽어서, 여기서 한 건씩 넘겨 보며 고를 수 있어요.`
-                            : '왼쪽 지시서를 보며 키워드를 넣고 [품목·규격 훑기] 를 누르면, 이지폼 목록(마감일 2개월 전까지)의 품목·규격을 읽어 맞는 순서로 넘겨 보며 고를 수 있어요.'}
+                            ? '주문번호로는 못 찾았어요. 키워드를 넣고 [품목·규격 훑기]를 누르세요.'
+                            : '지시서를 보며 키워드를 넣고 [품목·규격 훑기]를 누르세요.'}
                         </div>
                         <button
                           type="button"
