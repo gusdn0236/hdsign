@@ -101,6 +101,17 @@
   font-weight: 700;
   pointer-events: none;
 }
+/* 합친 명세서 안내 — 여러 주문이 명세서 1장 공유. */
+.aq-linked {
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eef6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+}
 /* 참고사진 빼기 — 우하단(라벨과 안 겹치게). */
 .aq-refdel {
   position: absolute;

@@ -322,13 +322,25 @@ public class AdminOrderController {
             @RequestParam(required = false) String editorName,
             @RequestBody(required = false) JsonNode body
     ) {
-        Order order = orderRepository.findById(id)
+        Order requested = orderRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("작업을 찾을 수 없습니다."));
-        if (body == null || body.isNull()) {
+        if (body == null || body.isNull() || !body.isObject()) {
             return ResponseEntity.badRequest().body(Map.of("message", "명세서 본문이 비어 있습니다."));
         }
-        AutoQuoteEstimate est = estimateRepository.findByOrderId(order.getId())
-                .orElseGet(() -> AutoQuoteEstimate.builder().orderId(order.getId()).build());
+        // 합친 명세서(여러 주문이 1장 공유)의 '딸린 주문'에서 저장하면 대표 주문의 명세서에 저장한다.
+        Order order = requested;
+        AutoQuoteEstimate own = estimateRepository.findByOrderId(requested.getId()).orElse(null);
+        Long target = sharedTarget(own);
+        if (target != null) {
+            Order primary = orderRepository.findById(target).orElse(null);
+            if (primary != null) order = primary;
+        }
+        final Order owner = order;
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(owner.getId())
+                .orElseGet(() -> AutoQuoteEstimate.builder().orderId(owner.getId()).build());
+        // 화면은 grid·total·refPhotos 만 보낸다 → 합치기 정보(linkedOrders·easyformSync)는 이전 저장본 것을 유지.
+        preserveKeys(est.getGridJson(), (com.fasterxml.jackson.databind.node.ObjectNode) body,
+                "linkedOrders", "easyformSync");
         // 참고사진 — 이전 저장본엔 있었는데 이번엔 빠진 사진은 R2 에서 지운다(고아 방지).
         // (refPhotos 필드를 안 보내는 옛 화면이 저장해도 사진이 지워지지 않게 — 필드가 있을 때만 비교)
         if (est.getGridJson() != null && body.has("refPhotos")) {
@@ -357,6 +369,18 @@ public class AdminOrderController {
     @DeleteMapping("/{id}/estimate")
     public ResponseEntity<?> deleteEstimate(@PathVariable Long id) {
         estimateRepository.findByOrderId(id).ifPresent(est -> {
+            // 딸린 주문(공유 포인터)이면 연결만 끊는다 — 대표 주문의 합친 명세서는 그대로.
+            if (sharedTarget(est) != null) {
+                estimateRepository.delete(est);
+                return;
+            }
+            // 대표 주문이면 딸린 주문들의 포인터도 같이 지운다(가리킬 곳이 없어지므로).
+            for (Long other : linkedOrderIds(est.getGridJson())) {
+                if (other.equals(id)) continue;
+                estimateRepository.findByOrderId(other)
+                        .filter(e -> id.equals(sharedTarget(e)))
+                        .ifPresent(estimateRepository::delete);
+            }
             orderRepository.findById(id).ifPresent(o -> {
                 for (String u : refPhotoUrls(est.getGridJson())) deleteRefPhoto(o, u);
             });
@@ -441,11 +465,184 @@ public class AdminOrderController {
     @GetMapping("/{id}/estimate")
     public ResponseEntity<?> getEstimate(@PathVariable Long id) {
         AutoQuoteEstimate est = estimateRepository.findByOrderId(id).orElse(null);
+        Long target = sharedTarget(est);
+        if (target != null) {
+            // 딸린 주문 → 대표 주문의 합친 명세서를 보여준다(어느 쪽을 열어도 같은 1장).
+            est = estimateRepository.findByOrderId(target).orElse(null);
+        }
         if (est == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("error", "estimate_not_found"));
         }
-        return ResponseEntity.ok(estimateResponse(est));
+        Map<String, Object> res = estimateResponse(est);
+        if (target != null) res.put("sharedFrom", id);
+        return ResponseEntity.ok(res);
+    }
+
+    // ===== 이지폼 → 홈페이지 동기화 + 합친 명세서(여러 주문이 1장 공유) =====
+    // 이지폼 명세서 비고에 적힌 주문번호(예: 261103-19, 261103-20)로 홈페이지 주문을 찾아,
+    // 이지폼 내용(=최종본)으로 홈페이지 명세서를 맞춘다. 주문번호가 여럿이면 첫 번째가 '대표'로
+    // 명세서 본문을 갖고, 나머지는 {sharedWith: 대표id} 포인터만 갖는다(매출이 두 번 잡히지 않게).
+    // 이지폼 쪽은 절대 건드리지 않는다 — 이 API 는 홈페이지 DB 만 쓴다.
+    private static final java.util.regex.Pattern EF_ORDER_NO =
+            java.util.regex.Pattern.compile("(?<!\\d)(\\d{6}-\\d{1,4})(?!\\d)");
+
+    @PostMapping("/estimate/easyform-sync")
+    public ResponseEntity<?> easyformSync(
+            @RequestParam(required = false) String editorName,
+            @RequestBody JsonNode body
+    ) {
+        if (body == null || !body.isObject() || !body.path("grid").isArray()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "grid 가 없습니다."));
+        }
+        // 주문번호 — orderNumbers 배열 또는 remark 글자에서 추출. 순서 유지·중복 제거.
+        List<String> nums = new ArrayList<>();
+        for (JsonNode n : body.path("orderNumbers")) addOrderNos(nums, n.asText(""));
+        addOrderNos(nums, body.path("remark").asText(""));
+        List<Order> orders = new ArrayList<>();
+        List<String> notFound = new ArrayList<>();
+        for (String n : nums) {
+            Order o = findOrderByLooseNumber(n);
+            if (o == null) notFound.add(n);
+            else if (orders.stream().noneMatch(x -> x.getId().equals(o.getId()))) orders.add(o);
+        }
+        if (orders.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of(
+                    "message", nums.isEmpty() ? "주문번호가 없습니다." : "홈페이지에서 주문을 못 찾았습니다.",
+                    "notFound", notFound));
+        }
+        Order primary = orders.get(0);
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(primary.getId())
+                .orElseGet(() -> AutoQuoteEstimate.builder().orderId(primary.getId()).build());
+        // 대표가 원래 다른 묶음의 딸린 주문이었다면 그 포인터는 버리고 새 본문으로.
+        com.fasterxml.jackson.databind.node.ObjectNode doc;
+        try {
+            JsonNode old = est.getGridJson() == null || sharedTarget(est) != null
+                    ? null : OM.readTree(est.getGridJson());
+            doc = old != null && old.isObject()
+                    ? (com.fasterxml.jackson.databind.node.ObjectNode) old.deepCopy()
+                    : OM.createObjectNode();
+        } catch (Exception e) {
+            doc = OM.createObjectNode();
+        }
+        boolean changed = !gridSig(doc.path("grid")).equals(gridSig(body.path("grid")));
+        // 딸린 주문이 따로 갖고 있던 참고사진은 합친 명세서로 모은다(사진 유실 방지).
+        com.fasterxml.jackson.databind.node.ArrayNode refs = OM.createArrayNode();
+        List<String> seen = new ArrayList<>();
+        for (String u : refPhotoUrls(doc)) { if (!seen.contains(u)) { seen.add(u); refs.add(u); } }
+        for (Order o : orders.subList(1, orders.size())) {
+            estimateRepository.findByOrderId(o.getId()).filter(e -> sharedTarget(e) == null).ifPresent(e -> {
+                for (String u : refPhotoUrls(e.getGridJson())) { if (!seen.contains(u)) { seen.add(u); refs.add(u); } }
+            });
+        }
+        com.fasterxml.jackson.databind.node.ArrayNode linked = OM.createArrayNode();
+        for (Order o : orders) {
+            linked.addObject().put("id", o.getId()).put("orderNumber", o.getOrderNumber());
+        }
+        doc.set("grid", body.get("grid"));
+        if (body.has("total")) doc.set("total", body.get("total"));
+        doc.put("savedFrom", "easyform-sync");
+        if (!refs.isEmpty()) doc.set("refPhotos", refs);
+        if (orders.size() > 1) doc.set("linkedOrders", linked);
+        else doc.remove("linkedOrders");
+        doc.putObject("easyformSync")
+                .put("at", LocalDateTime.now().toString())
+                .put("source", body.path("source").asText("pull"));
+        LocalDateTime now = LocalDateTime.now();
+        String editor = normalizeEditorName(editorName);
+        est.setGridJson(doc.toString());
+        if (changed || est.getSavedAt() == null) est.setSavedAt(now);
+        if (est.getEasyformUploadedAt() == null) est.setEasyformUploadedAt(now); // 이지폼에 있으니 완료
+        if (editor != null) est.setEditorName(editor);
+        estimateRepository.save(est);
+        // 딸린 주문 → 포인터. 카드엔 '명세서 완료' 배지가 똑같이 뜬다.
+        for (Order o : orders.subList(1, orders.size())) {
+            AutoQuoteEstimate p = estimateRepository.findByOrderId(o.getId())
+                    .orElseGet(() -> AutoQuoteEstimate.builder().orderId(o.getId()).build());
+            com.fasterxml.jackson.databind.node.ObjectNode ptr = OM.createObjectNode();
+            ptr.put("sharedWith", primary.getId());
+            ptr.put("sharedWithNumber", primary.getOrderNumber());
+            ptr.set("linkedOrders", linked);
+            ptr.set("grid", OM.createArrayNode());
+            p.setGridJson(ptr.toString());
+            p.setSavedAt(est.getSavedAt());
+            p.setEasyformUploadedAt(est.getEasyformUploadedAt());
+            if (editor != null) p.setEditorName(editor);
+            estimateRepository.save(p);
+        }
+        List<Map<String, Object>> linkedOut = new ArrayList<>();
+        for (Order o : orders) linkedOut.add(Map.of("id", o.getId(), "orderNumber", o.getOrderNumber()));
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("primaryOrderId", primary.getId());
+        res.put("primaryOrderNumber", primary.getOrderNumber());
+        res.put("linked", linkedOut);
+        res.put("notFound", notFound);
+        res.put("changed", changed);
+        return ResponseEntity.ok(res);
+    }
+
+    private static final ObjectMapper OM = new ObjectMapper();
+
+    private static void addOrderNos(List<String> out, String text) {
+        if (text == null) return;
+        java.util.regex.Matcher m = EF_ORDER_NO.matcher(text);
+        while (m.find()) if (!out.contains(m.group(1))) out.add(m.group(1));
+    }
+
+    /** '261103-19' / '주문-261103-19' / '견적-261103-19' 아무거나 → 주문. */
+    private Order findOrderByLooseNumber(String n) {
+        String core = n.replaceFirst("^(주문|견적)-", "");
+        for (String cand : new String[]{n, "주문-" + core, "견적-" + core}) {
+            Order o = orderRepository.findByOrderNumber(cand).orElse(null);
+            if (o != null) return o;
+        }
+        return null;
+    }
+
+    /** 공유 포인터(딸린 주문)면 대표 주문 id, 아니면 null. */
+    private static Long sharedTarget(AutoQuoteEstimate est) {
+        if (est == null || est.getGridJson() == null || !est.getGridJson().contains("sharedWith")) return null;
+        try {
+            JsonNode n = OM.readTree(est.getGridJson()).path("sharedWith");
+            return n.canConvertToLong() ? n.asLong() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static List<Long> linkedOrderIds(String gridJson) {
+        List<Long> out = new ArrayList<>();
+        if (gridJson == null) return out;
+        try {
+            for (JsonNode l : OM.readTree(gridJson).path("linkedOrders")) {
+                if (l.path("id").canConvertToLong()) out.add(l.path("id").asLong());
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    private static void preserveKeys(String oldJson, com.fasterxml.jackson.databind.node.ObjectNode body, String... keys) {
+        if (oldJson == null) return;
+        try {
+            JsonNode old = OM.readTree(oldJson);
+            for (String k : keys) if (!body.has(k) && old.has(k)) body.set(k, old.get(k));
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** 바뀜 비교용 — 품목코드·품목·규격·수량·단가 5칸(공백·콤마 무시), 빈 줄 제외. */
+    private static String gridSig(JsonNode grid) {
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode r : grid) {
+            String line = String.join("\u0001",
+                    r.path("품목코드").asText("").trim(), r.path("품목").asText("").trim(),
+                    r.path("규격").asText("").trim(), r.path("수량").asText("").replace(",", "").trim(),
+                    r.path("단가").asText("").replace(",", "").trim());
+            if (line.replace("\u0001", "").isEmpty()) continue;
+            sb.append(line).append('\n');
+        }
+        return sb.toString();
     }
 
     // 이지폼 업로드 완료 표시(slice-14 매크로가 호출) → "이지폼" 배지. 명세서 선행 필수.
@@ -464,6 +661,15 @@ public class AdminOrderController {
         est.setEasyformUploadedAt(LocalDateTime.now());
         String normalized = normalizeEditorName(editorName);
         if (normalized != null) est.setEditorName(normalized); // 비어오면 직전(임시저장자) 유지
+        // 합친 명세서의 딸린 주문에서 눌렀으면 대표 주문도 같이 완료 표시.
+        Long target = sharedTarget(est);
+        if (target != null) {
+            estimateRepository.findByOrderId(target).ifPresent(p -> {
+                p.setEasyformUploadedAt(LocalDateTime.now());
+                if (normalized != null) p.setEditorName(normalized);
+                estimateRepository.save(p);
+            });
+        }
         return ResponseEntity.ok(estimateResponse(estimateRepository.save(est)));
     }
 

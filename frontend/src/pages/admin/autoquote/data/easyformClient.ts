@@ -33,6 +33,8 @@ export interface EasyformRow {
   unit_price: string;
   supply: string;
   tax: string;
+  /** 비고 — 첫 줄에 홈페이지 주문번호(예: '261103-19, 261103-20'). 동기화 때 이 번호로 주문을 찾는다. */
+  remark: string;
 }
 
 /** AutoQuote 의 buildGrid() 한 행(한글 키) 모양 — 매핑 입력. */
@@ -56,6 +58,7 @@ const ALLOWED_ROW_KEYS: ReadonlyArray<keyof EasyformRow> = [
   'unit_price',
   'supply',
   'tax',
+  'remark',
 ];
 
 /**
@@ -98,6 +101,7 @@ export function gridToEasyformRows(grid: GridRow[]): EasyformRow[] {
       unit_price: g['단가'] ?? '',
       supply: g['공급가액'] ?? '',
       tax: g['세액'] ?? '',
+      remark: g['비고'] ?? '',
     }))
     .filter((r) => ALLOWED_ROW_KEYS.some((k) => String(r[k]).trim() !== ''));
 }
@@ -171,6 +175,22 @@ export interface EasyformPulledRow {
   spec: string;
   qty: string;
   unit_price: string;
+  /** 비고 — 홈페이지 주문번호를 찾는 데만 쓴다. */
+  remark?: string;
+}
+
+/** 글자에서 홈페이지 주문번호(YYMMDD-N) 뽑기 — '주문-261103-19' 도 '261103-19' 로. 순서 유지·중복 제거. */
+export function extractOrderNos(text: string): string[] {
+  const out: string[] = [];
+  for (const m of (text || '').matchAll(/(?<!\d)(\d{6}-\d{1,4})(?!\d)/g)) {
+    if (!out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
+/** 주문번호 앞의 '주문-'/'견적-' 떼기. */
+export function orderNoCore(orderNumber: string | null | undefined): string {
+  return (orderNumber || '').replace(/^(주문|견적)-/, '');
 }
 
 export interface EasyformPullStatus {

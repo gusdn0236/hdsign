@@ -469,10 +469,12 @@ EF_INSERT_BTN = (745, 456)  # "삽입" 버튼 — 행 수만큼 클릭
 # F7 측정값: 우클릭점(207,301) → 붙여넣기(263,391) ⇒ (56, 90). (0,0)이면 Ctrl+V 폴백.
 EF_PASTE_OFFSET = (56, 90)
 
-# 채울 7칸: (grid 키, EF_COLS 인덱스, 숫자 여부). 월일·비고는 건드리지 않는다(월일=자동).
+# 채울 칸: (grid 키, EF_COLS 인덱스, 숫자 여부). 월일=자동. 비고=홈페이지 주문번호(첫 줄만, 웹이 보냄)
+# — 나중에 이지폼→홈페이지 동기화 때 이 번호로 주문을 찾는다. 빈 값이면 칸을 안 건드린다.
 EF_FILL_SEQ = [
     ("item_code", 1, False), ("item", 2, False), ("spec", 3, False),
     ("qty", 4, True), ("unit_price", 5, True), ("supply", 6, True), ("tax", 7, True),
+    ("remark", 8, False),
 ]
 
 
@@ -580,8 +582,8 @@ def run_easyform_fill(rows: "list[dict]") -> "tuple[bool, str]":
 # 이지폼에 열어둔 상세명세서 1건의 표를 읽어 웹 명세서로 보낸다. 방식은 검증된 easyform_fast.py 와
 # 동일: 셀 좌클릭 → 우클릭 → 컨텍스트 메뉴 '복사' 클릭 → 클립보드 읽기. **Ctrl+C 절대 금지** —
 # 전자명세서는 Ctrl 을 누르면 '수정불가' 팝업이 떠 셀을 오염시킨다. 읽기 전용(입력·저장 안 함).
-# 읽는 칸 = 품목코드·품목·규격·수량·단가 5개만(월일·공급가액·세액·비고는 홈페이지에 입력칸이 없음).
-EF_PULL_COLS = ("item_code", "item", "spec", "qty", "unit_price")
+# 읽는 칸 = 품목코드·품목·규격·수량·단가 5개 + 비고(홈페이지 주문번호 찾기용). 월일·공급가액·세액은 안 읽음.
+EF_PULL_COLS = ("item_code", "item", "spec", "qty", "unit_price", "remark")
 EF_COPY_OFFSET = (41, 68)   # 우클릭점 → 메뉴 '복사' 항목(논리좌표). easyform_fast COPY_DX/DY.
 EF_MENU_SAFE = (325, 214)   # 빈 칸(복사 비활성)일 때 메뉴를 닫으려고 누르는 폼 위 빈 자리.
 _EF_SENT = "__HDSIGN_SENT__"
@@ -780,7 +782,7 @@ EF_JOB_TTL = 1800                    # 30분 지나면 자동 만료(새로작�
 EF_HOTKEY_VK = 0x75                  # F6 (이지폼 단축키 F2/F5/F8/F9/F11/F12/Esc 와 충돌 없음) — 보조 트리거
 EF_HOTKEY_LABEL = "F6"
 _EF_UI_QUEUE: "queue.Queue" = queue.Queue()  # HTTP 스레드 → tk UI 스레드 신호
-_EF_ROW_KEYS = ("item_code", "item", "spec", "qty", "unit_price", "supply", "tax")
+_EF_ROW_KEYS = ("item_code", "item", "spec", "qty", "unit_price", "supply", "tax", "remark")
 
 
 def ef_stage_job(rows: "list[dict]") -> None:

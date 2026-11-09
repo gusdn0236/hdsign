@@ -28,6 +28,7 @@ import {
   uploadEstimateRefPhoto,
   deleteEstimate,
   markEasyformUploaded,
+  syncEstimateFromEasyform,
   readText,
   getVisionQuota,
   DailyLimitError,
@@ -44,6 +45,8 @@ import {
   startEasyformPull,
   pollEasyformPull,
   cancelEasyformPull,
+  extractOrderNos,
+  orderNoCore,
 } from './data/easyformClient';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal, { type PickedRow } from './LookupResultModal';
@@ -460,6 +463,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [brush, setBrush] = useState<'s' | 'm' | 'l'>('m'); // 연필·지우개 굵기(화면 px). S=12 M=26 L=46
   const [maskHasInk, setMaskHasInk] = useState(false); // 마스크에 칠한 영역이 있나 — [읽기] 버튼 활성 게이트
   const [order, setOrder] = useState<OrderContext | null>(null);
+  // 합친 명세서 — 이지폼 명세서 1장에 지시서 여러 개(비고 주문번호 2개+)면 그 주문들이 이 명세서를 공유.
+  const [linkedOrders, setLinkedOrders] = useState<{ id: number; orderNumber: string }[]>([]);
   // 치수 오버레이 — 3번 모드(mode==='dim')일 때 지시서 위에 오브젝트별/구간 가로세로(mm) 표시.
   const dimMode = mode === 'dim';
   // LED 계산 오버레이 — 'LED계산' 버튼으로 켜는 모드. 치수와 같은 지오메트리(points)를 쓴다.
@@ -705,6 +710,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         if (alive) setLoadingImg(false); // 이미지 로드 끝(성공/폴백/없음) — 빈화면이면 붙여넣기 안내로 전환.
         // 기존 명세서가 있으면 grid 를 핀(앵커 없는 grid 행)으로 복원.
         const est = await getEstimate(token, id);
+        // 합친 명세서(여러 주문이 1장 공유)면 상단 표시용으로 주문 목록 보관.
+        if (alive) {
+          const lo = est?.estimate?.linkedOrders;
+          setLinkedOrders(Array.isArray(lo) && lo.length > 1 ? lo : []);
+        }
         // 저장된 참고사진 복원(여러 장).
         if (alive && Array.isArray(est?.estimate?.refPhotos)) {
           const rp = (est.estimate.refPhotos as unknown[]).filter((u): u is string => typeof u === 'string' && !!u);
@@ -1863,12 +1873,33 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     setMergeSel([]);
     setStatus(`이지폼 명세서 ${rows.length}줄을 표에 넣었어요 — 확인 후 필요한 칸만 고치세요`);
   };
-  const importEasyform = (raw: Record<string, string>[]) => {
-    // 이지폼은 빈 수량을 '0' 으로 보여준다 → 단가 없는 줄(제목줄 등)의 수량 0 은 빈칸으로,
-    // 그러고도 아무 글자 없는 줄(표 끝 빈 줄)은 버린다. 중간 빈칸 위치는 그대로.
-    const rows = raw
+  // 이지폼은 빈 수량을 '0' 으로 보여준다 → 단가 없는 줄(제목줄 등)의 수량 0 은 빈칸으로,
+  // 그러고도 아무 글자 없는 줄(표 끝 빈 줄)은 버린다. 중간 빈칸 위치는 그대로.
+  const normEfRows = (raw: Record<string, string>[]) =>
+    raw
       .map((r) => (!r.단가 && /^0+$/.test((r.수량 || '').trim()) ? { ...r, 수량: '' } : r))
       .filter((r) => Object.values(r).some((v) => (v || '').trim()));
+  // 가져온 줄 → 저장용 grid(buildGrid 와 같은 모양, 핀 위치 없음).
+  const efRowsToGrid = (rows: Record<string, string>[]) =>
+    rows.map((r) => {
+      const dp = num(r.단가 || '');
+      const qty = num(r.수량 || '') || 1;
+      const supply = dp != null ? dp * qty : null;
+      return {
+        월일: '',
+        품목코드: r.품목코드 || '',
+        품목: r.품목 || '',
+        규격: r.규격 || '',
+        수량: r.수량 || '',
+        단가: r.단가 || '',
+        공급가액: supply != null ? String(supply) : '',
+        세액: supply != null ? String(Math.round(supply * 0.1)) : '',
+        비고: r.비고 || '',
+        _qtyFixed: true,
+      };
+    });
+  const importEasyform = (raw: Record<string, string>[]) => {
+    const rows = normEfRows(raw);
     if (!rows.length) {
       cdlg('가져온 줄이 없어요.', [{ label: '확인', sec: true }]);
       return;
@@ -1898,6 +1929,88 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   useEffect(() => () => {
     if (pullRef.current) pullRef.current.stop = true;
   }, []);
+  // 가져온 이지폼 명세서 처리 — 비고에 홈페이지 주문번호가 있으면 그 주문(들)의 명세서를 이지폼 기준으로
+  // 맞춰 바로 저장(여러 개면 합친 명세서 1장 공유). 없으면 예전처럼 표에만 넣는다. 이지폼은 안 건드림.
+  const onEasyformPulled = (raw: Record<string, string>[], foundNos: string[]) => {
+    const own = orderNoCore(order?.orderNumber);
+    if (!foundNos.length && !own) {
+      importEasyform(raw);
+      return;
+    }
+    // 비고에 주문번호가 없는 예전 명세서 → 지금 열린 주문으로 맞춘다(이지폼 비고는 손대지 않음).
+    const noRemark = !foundNos.length;
+    const nos = noRemark ? [own] : foundNos;
+    const rows = normEfRows(raw);
+    const label = nos.join(' + ');
+    const doSync = async (applyHere: boolean) => {
+      if (applyHere) applyEasyformRows(rows, 'replace');
+      try {
+        const grid = efRowsToGrid(rows);
+        const sum = grid.reduce((a, g) => a + (Number(g.공급가액) || 0), 0);
+        const res = await syncEstimateFromEasyform(token, { orderNumbers: nos, grid, total: sum, source: 'pull' });
+        const linkedLabel = res.linked.map((l) => orderNoCore(l.orderNumber)).join(' + ');
+        if (applyHere) {
+          setLinkedOrders(res.linked.length > 1 ? res.linked : []);
+          setOrder((o) =>
+            o ? { ...o, hasEstimate: true, easyformUploadedAt: o.easyformUploadedAt || new Date().toISOString() } : o,
+          );
+          onSaved?.();
+          onEasyformUploaded?.();
+        }
+        cdlg(
+          `<b style="font-size:15px">이지폼 기준으로 맞췄어요</b>` +
+            `<div style="font-size:13px;margin-top:8px">주문 <b>${linkedLabel}</b>` +
+            `${res.linked.length > 1 ? ' — 합친 명세서 1장으로 저장' : ''}${res.changed ? '' : ' (내용은 이미 같았어요)'}</div>` +
+            (res.notFound.length
+              ? `<div style="font-size:12px;color:#b45309;margin-top:6px">홈페이지에 없는 주문번호: ${res.notFound.join(', ')}</div>`
+              : ''),
+          [{ label: '확인' }],
+        );
+      } catch (e) {
+        console.error(e);
+        cdlg(
+          `홈페이지 명세서에 저장하지 못했어요.<br><span style="font-size:12px;color:#6b7785">${(e as Error).message}</span>`,
+          [{ label: '확인', sec: true }],
+        );
+      }
+    };
+    if (noRemark) {
+      cdlg(
+        `<b style="font-size:15px">이지폼 명세서 ${rows.length}줄 · 비고에 주문번호 없음</b>` +
+          `<div style="font-size:13px;margin-top:8px;line-height:1.6">이 주문(<b>${own}</b>) 명세서를 <b>이지폼 내용으로 맞추고 바로 저장</b>할까요?</div>` +
+          `<div style="font-size:12px;color:#6b7785;margin-top:6px">이지폼 비고는 그대로 둡니다(나중에 이지폼만 고치면 다시 가져오기 해주세요).</div>`,
+        [
+          { label: '이지폼 기준으로 맞추기', fn: () => void doSync(true) },
+          { label: '표에만 넣기(저장 안 함)', sec: true, fn: () => importEasyform(raw) },
+          { label: '취소', sec: true },
+        ],
+      );
+      return;
+    }
+    const head = `<b style="font-size:15px">이지폼 명세서 ${rows.length}줄 · 비고 주문번호 ${label}</b>`;
+    if (own && nos.includes(own)) {
+      cdlg(
+        head +
+          `<div style="font-size:13px;margin-top:8px;line-height:1.6">이 명세서를 <b>이지폼 내용으로 맞추고 바로 저장</b>할까요?` +
+          (nos.length > 1 ? `<br>주문 ${nos.length}건이 <b>합친 명세서 1장</b>을 같이 쓰게 됩니다.` : '') +
+          `</div><div style="font-size:12px;color:#6b7785;margin-top:6px">지금 표 내용은 이지폼 내용으로 바뀝니다. 이지폼은 그대로예요.</div>`,
+        [
+          { label: '이지폼 기준으로 맞추기', fn: () => void doSync(true) },
+          { label: '표에만 넣기(저장 안 함)', sec: true, fn: () => importEasyform(raw) },
+          { label: '취소', sec: true },
+        ],
+      );
+    } else {
+      cdlg(
+        head + `<div style="font-size:13px;margin-top:8px;line-height:1.6">이 이지폼 명세서는 <b>다른 주문(${label})</b> 거예요.</div>`,
+        [
+          { label: `${label} 명세서로 저장`, fn: () => void doSync(false) },
+          { label: '이 화면 표에 넣기', sec: true, fn: () => importEasyform(raw) },
+          { label: '취소', sec: true },
+        ],
+      );
+    }
+  };
   const pullFromEasyform = async () => {
     if (pullRef.current && !pullRef.current.stop) return; // 이미 대기 중
     const probe = await probeEasyformAgent();
@@ -1957,14 +2070,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       } else if (st.state === 'done') {
         job.stop = true;
         setDialog(null);
-        const rows = (st.rows || []).map((r) => ({
+        const pulled = st.rows || [];
+        const rows = pulled.map((r) => ({
           품목코드: r.item_code || '',
           품목: r.item || '',
           규격: r.spec || '',
           수량: r.qty || '',
           단가: formatWon(r.unit_price || ''),
+          비고: r.remark || '',
         }));
-        if (rows.length) importEasyform(rows);
+        const nos = extractOrderNos(pulled.map((r) => r.remark || '').join(' '));
+        if (rows.length) onEasyformPulled(rows, nos);
         else cdlg('가져온 줄이 없어요.', [{ label: '확인', sec: true }]);
       } else if (st.state === 'error') {
         job.stop = true;
@@ -2576,17 +2692,48 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // grid 를 로컬 에이전트로 보내 스테이징(arm)만 한다. 실제 기입은 사용자가 이지폼 '매출
   // 거래명세서' 새로작성 → 거래처 선택 후, 그 창에서 핫키(F6)를 눌렀을 때 에이전트가 수행.
   const [efBusy, setEfBusy] = useState(false);
-  const sendToEasyform = async () => {
+  // [이지폼 입력] — 먼저 '같이 적을 다른 주문번호'(한 이지폼 명세서에 지시서 2개 이상)를 묻는다.
+  // 이 주문 + 다른 주문번호를 이지폼 첫 줄 비고에 적어 둬, 나중에 이지폼→홈페이지 동기화 때 찾는다.
+  const sendToEasyform = () => {
     if (!order) {
       cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
       return;
     }
+    const own = orderNoCore(order.orderNumber);
+    const pre = linkedOrders
+      .map((l) => orderNoCore(l.orderNumber))
+      .filter((n) => n !== own)
+      .join(', ');
+    cdlg(
+      `<b style="font-size:15px">이지폼으로 보내기</b>` +
+        `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼 비고에 주문번호 <b>${own}</b> 를 적어 둡니다.</div>` +
+        `<div style="font-size:12px;color:#6b7785;margin-top:10px">이 명세서에 <b>다른 지시서도 같이</b> 들어가면 그 주문번호를 적어주세요 (없으면 비워두기)</div>` +
+        `<input id="aq-ef-extra" placeholder="예: 261103-20, 261103-21" value="${pre}" ` +
+        `style="width:100%;box-sizing:border-box;margin-top:6px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px">`,
+      [
+        {
+          label: '이지폼으로 보내기',
+          fn: () => {
+            const v = (document.getElementById('aq-ef-extra') as HTMLInputElement | null)?.value || '';
+            void doSendToEasyform(extractOrderNos(v).filter((n) => n !== own));
+          },
+        },
+        { label: '취소', sec: true },
+      ],
+    );
+  };
+  const doSendToEasyform = async (extras: string[]) => {
+    if (!order) return;
     const grid = buildGrid();
     const rows = gridToEasyformRows(grid as unknown as Parameters<typeof gridToEasyformRows>[0]);
     if (rows.length === 0) {
       cdlg('기입할 행이 없습니다. 먼저 명세서를 작성하세요.', [{ label: '확인', sec: true }]);
       return;
     }
+    const allNos = [orderNoCore(order.orderNumber), ...extras];
+    // 첫 줄 비고 = 주문번호들(+ 원래 적힌 메모는 뒤에 유지, 예전 주문번호는 중복 안 되게 뺌).
+    const restMemo = (rows[0].remark || '').replace(/(주문-|견적-)?\d{6}-\d{1,4}[,\s]*/g, '').trim();
+    rows[0] = { ...rows[0], remark: [allNos.join(', '), restMemo].filter(Boolean).join(' ') };
     setEfBusy(true);
     try {
       // 이지폼 입력 = 확정 명세서. 임시저장을 안 했어도 서버(MySQL autoquote_estimate)에 저장해
@@ -2600,6 +2747,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           console.error('이지폼 입력 시 참고사진 업로드 실패', e);
         }
         await putEstimate(token, order.id, { grid, total, savedFrom: 'easyform', ...(refPhotos ? { refPhotos } : {}) });
+        // 다른 주문도 같이 → 합친 명세서로 연결(이 주문이 대표, 나머지는 공유).
+        if (extras.length) {
+          try {
+            const res = await syncEstimateFromEasyform(token, { orderNumbers: allNos, grid, total, source: 'fill' });
+            setLinkedOrders(res.linked.length > 1 ? res.linked : []);
+            if (res.notFound.length) setStatus(`홈페이지에 없는 주문번호: ${res.notFound.join(', ')} — 비고에는 그대로 적혀요`);
+          } catch (e) {
+            console.error('합친 명세서 연결 실패', e);
+          }
+        }
         setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
         onSaved?.();
       } catch (e) {
@@ -3751,6 +3908,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
 
         {/* 우측 이지폼 grid */}
         <div className="aq-side">
+          {linkedOrders.length > 1 && (
+            <div className="aq-linked">
+              🔗 합친 명세서 — 주문 {linkedOrders.map((l) => orderNoCore(l.orderNumber)).join(' + ')} 이(가) 이 명세서 1장을 같이 씁니다
+            </div>
+          )}
           <div className="aq-h">
             <b>견적 (이지폼)</b>
             {/* 버튼들은 오른쪽 정렬 — 스페이서로 밀고, 버튼끼리 간격은 .aq-h 의 gap(8px)으로 일정하게. */}

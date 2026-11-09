@@ -359,6 +359,36 @@ export async function putEstimate(
   return res.json();
 }
 
+export interface EasyformSyncResult {
+  primaryOrderId: number;
+  primaryOrderNumber: string;
+  linked: { id: number; orderNumber: string }[];
+  notFound: string[];
+  changed: boolean;
+}
+
+/**
+ * 이지폼 명세서(=최종본) → 홈페이지 명세서 맞추기. 주문번호가 여럿이면 첫 번째 주문이 합친 명세서를
+ * 갖고 나머지는 그걸 공유한다. 홈페이지 DB 만 쓴다(이지폼은 안 건드림). 주문을 하나도 못 찾으면 throw.
+ */
+export async function syncEstimateFromEasyform(
+  token: string | null | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  body: { orderNumbers: string[]; grid: any[]; total?: number; source: 'pull' | 'fill' | 'batch' },
+): Promise<EasyformSyncResult> {
+  const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-sync${editorNameQuery()}`, {
+    method: 'POST',
+    headers: authHeaders(token, true),
+    body: JSON.stringify(body),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const nf = Array.isArray(j?.notFound) && j.notFound.length ? ` (${j.notFound.join(', ')})` : '';
+    throw new Error((j?.message || `명세서 동기화 실패 (${res.status})`) + nf);
+  }
+  return j as EasyformSyncResult;
+}
+
 /** 명세서 참고사진 1장 업로드(R2) → 공개 URL. 저장 직전에 아직 안 올라간(data:) 사진만 올린다. */
 export async function uploadEstimateRefPhoto(
   token: string | null | undefined,
