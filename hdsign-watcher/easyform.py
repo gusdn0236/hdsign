@@ -913,8 +913,16 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
         _user32.SetForegroundWindow(main)
         time.sleep(0.3)
         gl, gt, _gr, _gb = _ef_rect(grid)
-        # 첫 줄(최신) 발행일자 칸 클릭 = 줄 선택만. ('선택' 체크칸·[세금변환] 버튼은 오른쪽 끝이라 안 건드림)
+        # 목록이 중간까지 내려가 있어도 **맨 위(최신)** 부터 — ① 표를 맨 위로 스크롤(WM_VSCROLL SB_TOP,
+        # 입력 아님) ② 보이는 첫 줄 발행일자 칸 클릭(줄 선택만. '선택' 체크칸·[세금변환]은 오른쪽 끝이라
+        # 안 건드림) ③ PageUp 여러 번 = 선택을 확실히 1번째 줄로(목록 표에서 PageUp 은 이동만).
+        _user32.SendMessageW(grid, 0x0115, 6, 0)  # WM_VSCROLL, SB_TOP
+        time.sleep(0.25)
         ef_click(gl + 45, gt + 33)
+        time.sleep(0.2)
+        for _ in range(((count or 40) // 8) + 3):
+            ef_key(0x21)  # VK_PRIOR(PageUp)
+            time.sleep(0.04)
         time.sleep(0.2)
         prev_sig = None
         checked = 0
@@ -1365,7 +1373,22 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         elif not ef_focus_easyform():
             ef_messagebox("이지폼에서 옮길 상세명세서를 먼저 열어두세요.", "이지폼 가져오기")
             return
+        # 한 번 더 확인([이지폼 입력] 과 같은 방식). 아니오 = 대기 상태 그대로(다시 누를 수 있음).
+        if pmode == "scan":
+            want = popts.get("findOrderNo") or ""
+            q = (f"이지폼 목록 맨 위부터 명세서를 하나씩 열어\n비고에서 주문번호 {want} 를 찾을까요?\n\n"
+                 + (f"({popts.get('stopBefore')} 까지 보고 멈춥니다)\n" if popts.get("stopBefore") else "")
+                 + "찾는 동안 마우스가 잠깁니다. (중단하려면 ESC)")
+            title = "이지폼에서 찾기"
+        else:
+            q = ("열려 있는 상세명세서를 홈페이지 명세서로 가져올까요?\n\n"
+                 "가져오는 동안 마우스가 잠깁니다. (중단하려면 ESC)")
+            title = "이지폼에서 가져오기"
+        if not ef_confirm(q, title):
+            return
         with _EF_LOCK:
+            if _EF_PULL["id"] != pid or _EF_PULL["state"] != "waiting":
+                return  # 확인창 떠 있는 사이 웹에서 취소/만료
             _EF_PULL["state"] = "running"
         busy["v"] = True
         win.withdraw()
