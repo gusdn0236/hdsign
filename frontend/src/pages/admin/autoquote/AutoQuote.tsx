@@ -4934,18 +4934,31 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 }}
               >
                 <div className="aq-efprev-h">
-                  <b>키워드로 찾기 — 맞는 명세서를 골라주세요</b>
-                  <span>{efClue.message}</span>
+                  <span className="ic" aria-hidden>
+                    🔍
+                  </span>
+                  <div className="ttl">
+                    <b>키워드로 찾기</b>
+                    <small>
+                      {efClue.withItems ? '지시서와 비교해 맞는 명세서를 골라주세요' : '지시서를 보며 키워드를 한 단어씩 넣어주세요'}
+                    </small>
+                  </div>
+                  {efClue.message ? <span className="msg">{efClue.message}</span> : null}
+                  <button type="button" className="x" onClick={close} aria-label="닫기">
+                    ×
+                  </button>
                 </div>
                 <div className={'aq-efprev-body' + (efClue.withItems ? '' : ' wide-img')}>
                   <div className="aq-efprev-img">
                     <div className="cap">
-                      지시서 — {[orderNoCore(order?.orderNumber), order?.clientCompanyName].filter(Boolean).join(' · ')}
+                      <span className="tag">지시서</span>
+                      {[orderNoCore(order?.orderNumber), order?.clientCompanyName].filter(Boolean).join(' · ')}
                     </div>
                     {imgSrc ? <ZoomPanImage src={imgSrc} alt="작업지시서" /> : <div className="none">지시서 사진이 없어요</div>}
                   </div>
                   <div className="aq-efprev-grid aq-clue-right">
                     {/* 단서 칩 입력 — 한 단어 + Enter. 넣을수록 맞는 명세서가 앞으로. */}
+                    <div className="aq-clue-lbl">키워드</div>
                     <div className="aq-clue-box" onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()}>
                       {clues.map((c) => {
                         const st = stats.find((s) => s.clue === c);
@@ -5033,13 +5046,35 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           <button type="button" onClick={() => go(-1)} disabled={pos === 0} aria-label="이전 명세서">
                             ◀
                           </button>
-                          <div className="t">
-                            <b>
-                              {pos + 1} / {seq.length}
-                            </b>{' '}
-                            · {cur.s.date} · {cur.s.total}원
-                            {cur.matched.length ? <span className="m"> · 맞은 키워드 {cur.matched.join(', ')}</span> : null}
-                          </div>
+                          {(() => {
+                            // 명세서 카드 — 날짜·금액 + 키워드 블록(맞음 초록 / 안 맞음 회색, 이지폼 판과 같은 모양)
+                            const md = (cur.s.date || '').match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})/);
+                            const full = clues.length > 0 && clues.every((c) => cur.matched.includes(c));
+                            return (
+                              <div className={'t' + (full ? ' full' : '')}>
+                                <div className="row1">
+                                  <span className="d">
+                                    {md ? `${Number(md[2])}월 ${Number(md[3])}일` : cur.s.date}
+                                    {md ? <small>{md[1]}</small> : null}
+                                  </span>
+                                  <span className="amt">{cur.s.total}원</span>
+                                  <span className="cnt">
+                                    {pos + 1} / {seq.length}
+                                  </span>
+                                </div>
+                                {clues.length ? (
+                                  <div className="blocks">
+                                    {full ? <span className="all">✔ 전부 일치하는 명세서</span> : null}
+                                    {clues.map((c) => (
+                                      <span key={c} className={'kb' + (cur.matched.includes(c) ? ' on' : '')}>
+                                        {c}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
                           <button type="button" onClick={() => go(1)} disabled={pos >= seq.length - 1} aria-label="다음 명세서">
                             ▶
                           </button>

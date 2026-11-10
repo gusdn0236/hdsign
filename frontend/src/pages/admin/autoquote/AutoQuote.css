@@ -2456,3 +2456,288 @@
 .aq-tbl td.it:has(.aq-unmerge) input {
   padding-right: 74px;
 }
+
+/* ── 키워드로 찾기 창 리디자인(2026-11-10) — 회색 바탕 위 흰 카드, 큰 제목, 이지폼 판과 같은 키워드 블록 ── */
+.aq-cdbox.aq-efprev {
+  background: #f4f6f8;
+  padding: 0;
+  gap: 0;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.aq-efprev .aq-efprev-h {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #fff;
+  border-bottom: 1px solid #e5e9ee;
+}
+.aq-efprev-h .ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: #e6f4f4;
+  font-size: 19px;
+}
+.aq-efprev-h .ttl {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.aq-efprev-h .ttl b {
+  font-size: 17px;
+  color: #0f172a;
+  letter-spacing: -0.2px;
+}
+.aq-efprev-h .ttl small {
+  font-size: 12.5px;
+  color: #64748b;
+}
+.aq-efprev-h .msg {
+  margin-left: auto;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+.aq-efprev-h .x {
+  flex: none;
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: #64748b;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.aq-efprev-h .msg + .x {
+  margin-left: 0;
+}
+.aq-efprev-h .x:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+.aq-efprev .aq-efprev-body {
+  padding: 14px 16px;
+  gap: 14px;
+}
+.aq-efprev .aq-efprev-img,
+.aq-efprev .aq-efprev-grid {
+  background: #fff;
+  border: 1px solid #e5e9ee;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+.aq-efprev .cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: #fff;
+  border-bottom: 1px solid #eef1f4;
+  font-size: 13px;
+  color: #334155;
+}
+.aq-efprev .cap .tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.aq-efprev .aq-clue-right {
+  padding: 14px;
+  gap: 12px;
+}
+.aq-clue-lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: -6px;
+}
+.aq-efprev .aq-clue-box {
+  min-height: 46px;
+  padding: 7px 10px;
+  border: 1.5px solid #dbe1e8;
+  border-radius: 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.aq-efprev .aq-clue-box:focus-within {
+  border-color: #0a9396;
+  box-shadow: 0 0 0 3px rgba(10, 147, 150, 0.14);
+}
+.aq-efprev .aq-clue-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 6px 4px 11px;
+  border-radius: 7px;
+  border: none;
+  background: #16a34a;
+  color: #fff;
+}
+.aq-efprev .aq-clue-chip.mid {
+  background: #ca8a04;
+  color: #fff;
+}
+.aq-efprev .aq-clue-chip.common {
+  background: #94a3b8;
+  color: #fff;
+}
+.aq-efprev .aq-clue-chip.none {
+  background: #e5e7eb;
+  color: #9ca3af;
+}
+.aq-efprev .aq-clue-chip .x {
+  margin-left: 6px;
+  opacity: 0.75;
+  font-size: 15px;
+}
+.aq-efprev .aq-clue-pre {
+  gap: 12px;
+  padding: 18px 16px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px dashed #d5dce4;
+}
+.aq-efprev .aq-clue-go {
+  align-self: stretch;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(10, 147, 150, 0.25);
+}
+.aq-efprev .aq-clue-go:hover {
+  background: #097a7d;
+}
+/* 명세서 카드 — ◀ [날짜·금액 + 키워드 블록] ▶ */
+.aq-efprev .aq-clue-nav {
+  align-items: stretch;
+  gap: 10px;
+}
+.aq-efprev .aq-clue-nav button {
+  width: 42px;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid #dbe1e8;
+  color: #334155;
+  font-size: 15px;
+}
+.aq-efprev .aq-clue-nav .t {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  text-align: left;
+  border-radius: 12px;
+  border: 1.5px solid #e5e9ee;
+  background: #fff;
+}
+.aq-efprev .aq-clue-nav .t.full {
+  border-color: #16a34a;
+  background: #f0fdf4;
+}
+.aq-clue-nav .row1 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.aq-clue-nav .row1 .d {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+}
+.aq-clue-nav .row1 .d small {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+.aq-clue-nav .row1 .amt {
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+  font-variant-numeric: tabular-nums;
+}
+.aq-clue-nav .row1 .cnt {
+  margin-left: auto;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.aq-clue-nav .blocks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.aq-clue-nav .blocks .all {
+  flex-basis: 100%;
+  font-size: 13px;
+  font-weight: 800;
+  color: #15803d;
+}
+.aq-clue-nav .kb {
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: #e5e7eb;
+  color: #9ca3af;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.aq-clue-nav .kb.on {
+  background: #16a34a;
+  color: #fff;
+}
+.aq-efprev .aq-clue-count {
+  font-size: 12.5px;
+}
+.aq-efprev .aq-clue-table {
+  border-radius: 10px;
+  border-color: #e5e9ee;
+}
+.aq-efprev .aq-clue-table td.hit {
+  background: #dcfce7;
+  color: #15803d;
+}
+.aq-efprev .aq-clue-sub {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.aq-efprev > .aq-cdbtns {
+  justify-content: flex-end;
+  padding: 12px 18px;
+  background: #fff;
+  border-top: 1px solid #e5e9ee;
+}
+.aq-efprev > .aq-cdbtns button {
+  padding: 11px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.aq-efprev > .aq-cdbtns button:not(.sec) {
+  background: #16a34a;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);
+}
+.aq-efprev > .aq-cdbtns button:not(.sec):hover {
+  background: #15803d;
+}
