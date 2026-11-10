@@ -2148,7 +2148,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       );
     } else if (scan && clues) {
       cdlg(
-        `<b style="font-size:15px">키워드로 찾기 — 품목·규격 훑기</b>` +
+        `<b style="font-size:15px">이지폼에서 키워드 찾기</b>` +
           `<div style="font-size:13px;margin-top:8px;line-height:1.8">` +
           `1. 매출처별 조회에서 <b>'${order?.clientCompanyName || '이 거래처'}'</b>를 검색해주세요<br>` +
           `2. 날짜를 <b>1/1~12/31</b>로 설정해주세요 (최신순)<br>` +
@@ -5020,8 +5020,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                       <div className="aq-clue-pre">
                         <div className="aq-clue-sub">
                           {n
-                            ? '주문번호로는 못 찾았어요. 키워드를 넣고 [품목·규격 훑기]를 누르세요.'
-                            : '지시서를 보며 키워드를 넣고 [품목·규격 훑기]를 누르세요.'}
+                            ? '주문번호로는 못 찾았어요. 키워드를 넣고 [이지폼에서 키워드 찾기]를 누르세요.'
+                            : '지시서를 보며 키워드를 넣고 [이지폼에서 키워드 찾기]를 누르세요.'}
                         </div>
                         <button
                           type="button"
@@ -5037,7 +5037,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                             void pullFromEasyform(true, undefined, true, add ? [...clues, w] : clues);
                           }}
                         >
-                          🔍 이지폼에서 품목·규격 훑기{n ? ` (${n}건)` : ''}
+                          🔍 이지폼에서 키워드 찾기{n ? ` (${n}건)` : ''}
                         </button>
                       </div>
                     ) : cur ? (
