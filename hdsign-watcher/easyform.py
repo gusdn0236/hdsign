@@ -1280,7 +1280,8 @@ def run_easyform_scan(opts: dict, progress=None, on_hit=None) -> "tuple[bool, st
                 try:
                     kws, texts = ef_keyword_hits(light, keywords)
                     if kws:
-                        on_hit(date, total, kws, texts)
+                        first = next((str(x).strip() for x in (light.get("items") or []) if str(x).strip()), "")
+                        on_hit(date, total, kws, texts, first)  # first = 맨 첫 줄 품목(보통 '(시흥점)' 같은 지점명)
                 except Exception:
                     pass
             if progress:
@@ -1648,7 +1649,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                      | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW)
         kwp.lift()
 
-    def kw_add(date, total, kws, texts):
+    def kw_add(date, total, kws, texts, first=""):
         kw_state["n"] += 1
         allk = kw_state["kws"] or list(kws)
         hit = set(kws)
@@ -1664,6 +1665,11 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         md = _re.match(r"\d{4}\.(\d{1,2})\.(\d{1,2})", date or "")
         d = f"{int(md.group(1))}월 {int(md.group(2))}일" if md else (date or "")
         tk.Label(left, text=d, font=(KW_FONT, int(13 * s), "bold"), fg=KW_INK, bg=bg).pack(anchor="w")
+        if first:
+            # 날짜 밑 = 맨 첫 줄 품목(보통 '(시흥점)' 지점명). 길면 줄여서 날짜 칸 폭 안에.
+            ft = first if len(first) <= 12 else first[:11] + "…"
+            tk.Label(left, text=ft, font=(KW_FONT, int(10 * s), "bold"), fg="#374151", bg=bg,
+                     anchor="w", justify="left", wraplength=int(110 * s)).pack(anchor="w")
         if total:
             tk.Label(left, text=f"{total}원", font=(KW_FONT, int(9 * s)), fg=KW_SUB, bg=bg).pack(anchor="w")
         # 오른쪽: '전부 일치하는 명세서' + 키워드 블록(맞음 초록 / 안 맞음 회색)
@@ -1893,8 +1899,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     _EF_PULL["progress"] = ef_progress_text(n, date)
             _EF_UI_QUEUE.put(("pull_progress", pid, ef_progress_text(n, date), n))
 
-        def on_hit(date, total, kws, texts):
-            _EF_UI_QUEUE.put(("pull_hit", pid, date, total, kws, texts))
+        def on_hit(date, total, kws, texts, first=""):
+            _EF_UI_QUEUE.put(("pull_hit", pid, date, total, kws, texts, first))
 
         def worker():
             time.sleep(0.4)
