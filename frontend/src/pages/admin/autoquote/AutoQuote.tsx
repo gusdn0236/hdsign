@@ -2087,7 +2087,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 단서 = 칩 목록(Enter 로 한 단어씩) + 아직 Enter 안 친 입력칸 글자.
   const [clueList, setClueList] = useState<string[]>([]);
   const [clueDraft, setClueDraft] = useState('');
-  const pullFromEasyform = async (scan = false, pick?: EasyformScannedStatement, clues = false) => {
+  const pullFromEasyform = async (scan = false, pick?: EasyformScannedStatement, clues = false, keywords: string[] = []) => {
     if (pullRef.current && !pullRef.current.stop) return; // 이미 대기 중
     const probe = await probeEasyformAgent();
     if (!probe || !probe.easyform) {
@@ -2121,7 +2121,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         pick
           ? { mode: 'scan', openIdx: pick.idx, expectDate: pick.date, expectTotal: pick.total, auto: true }
           : scan
-            ? { mode: 'scan', stopBefore, findOrderNo: own, max: 300, clientName: order?.clientCompanyName || '', clues }
+            ? { mode: 'scan', stopBefore, findOrderNo: own, max: 300, clientName: order?.clientCompanyName || '', clues, keywords: clues ? keywords : undefined }
             : undefined,
       );
       if (!r.armed || r.id == null) {
@@ -5015,11 +5015,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           className="aq-clue-go"
                           onClick={() => {
                             const w = clueDraft.trim(); // Enter 안 친 단어도 단서로
-                            if (w && !clues.some((c) => normClue(c) === normClue(w))) setClueList((l) => [...l, w]);
+                            const add = !!w && !clues.some((c) => normClue(c) === normClue(w));
+                            if (add) setClueList((l) => [...l, w]);
                             setClueDraft('');
                             setEfClue(null);
                             setCluePos(0);
-                            void pullFromEasyform(true, undefined, true);
+                            // 키워드를 워처에도 넘김 → 훑는 동안 이지폼 화면 오른쪽 위에 맞은 명세서가 하나씩 뜸(보고 ESC)
+                            void pullFromEasyform(true, undefined, true, add ? [...clues, w] : clues);
                           }}
                         >
                           🔍 이지폼에서 품목·규격 훑기{n ? ` (${n}건)` : ''}

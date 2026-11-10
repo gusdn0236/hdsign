@@ -230,6 +230,7 @@ export async function startEasyformPull(
     max?: number;
     clientName?: string; // 워처 코너 창 안내 문구('…'를 검색해주세요)
     clues?: boolean; // 단서 찾기 2차 — 비고 대신 품목·규격·비고를 훑기만(주문번호 안 찾음)
+    keywords?: string[]; // 키워드로 찾기 — 워처가 훑는 동안 맞은 명세서를 오른쪽 위 판에 하나씩 띄움
     // 단서로 고른 1건만 열기 — 맨 위에서 openIdx 번째, 발행일·합계가 같아야 읽음. auto=코너 버튼 없이 바로.
     openIdx?: number;
     expectDate?: string;

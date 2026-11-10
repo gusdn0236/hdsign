@@ -1094,7 +1094,33 @@ def _ef_dock_fast() -> bool:
     return True
 
 
-def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
+def _kw_norm(t: str) -> str:
+    """키워드 비교용 — 공백 제거·소문자(웹 clueMatch.normClue 와 같음)."""
+    return _re.sub(r"\s+", "", t or "").lower()
+
+
+def ef_keyword_hits(light: dict, keywords: list) -> "tuple[list, list]":
+    """훑은 명세서 1건에 맞은 키워드 → (맞은 키워드[원래 글자], 맞은 칸 글자[원래]).
+    웹 clueMatch.hasClue 와 같은 규칙: 칸 ⊃ 키워드, 또는 3글자 넘는 칸 ⊂ 키워드."""
+    raw = [str(x) for k in ("codes", "items", "specs", "qtys", "prices", "remarks")
+           for x in (light.get(k) or []) if x]
+    cells = [(c, _kw_norm(c)) for c in raw]
+    cells = [(c, n) for c, n in cells if n]
+    matched, texts = [], []
+    for kw in keywords:
+        k = _kw_norm(kw)
+        if not k:
+            continue
+        hit = [c for c, n in cells if k in n or (len(n) >= 3 and n in k)]
+        if hit:
+            matched.append(kw)
+            for c in hit:
+                if c not in texts:
+                    texts.append(c)
+    return matched, texts
+
+
+def run_easyform_scan(opts: dict, progress=None, on_hit=None) -> "tuple[bool, str, list]":
     """목록 맨 위부터 명세서를 하나씩 열어 **비고만** 훑어 주문번호(findOrderNo)를 찾는다.
     찾으면 그 명세서만 전체를 읽어 [그 1건] 을 돌려주고 멈춘다. (성공여부, 메시지, 명세서 목록).
     opts: findOrderNo='261103-19', stopBefore='YYYY.MM.DD'(이보다 오래된 발행일이 나오면 멈춤), max."""
@@ -1102,6 +1128,7 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
         return False, "이 PC 에서는 이지폼 찾기를 쓸 수 없습니다.", []
     want = str(opts.get("findOrderNo") or "").strip()
     clue_mode = bool(opts.get("clues"))  # 단서 찾기 2차: 품목·규격·비고를 훑기만(주문번호 안 찾음)
+    keywords = [str(k) for k in (opts.get("keywords") or []) if str(k).strip()][:20] if clue_mode else []
     if clue_mode:
         want = ""
     stop_before = str(opts.get("stopBefore") or "").strip()
@@ -1249,6 +1276,13 @@ def run_easyform_scan(opts: dict, progress=None) -> "tuple[bool, str, list]":
                 light["qtys"] = [r[4] if len(r) > 4 else "" for r in remarks]
                 light["prices"] = [r[5] if len(r) > 5 else "" for r in remarks]
             found.append(light)
+            if clue_mode and on_hit and keywords:
+                try:
+                    kws, texts = ef_keyword_hits(light, keywords)
+                    if kws:
+                        on_hit(date, total, kws, texts)
+                except Exception:
+                    pass
             if progress:
                 try:
                     progress(checked, total_n, date)
@@ -1307,7 +1341,10 @@ def handle_pull_start(body: "dict | None" = None) -> "tuple[int, dict]":
     opts = {"stopBefore": str(body.get("stopBefore") or ""), "max": body.get("max") or 300,
             "findOrderNo": str(body.get("findOrderNo") or ""),
             "clientName": str(body.get("clientName") or "")[:40],  # 코너 창 안내 문구용
-            "clues": bool(body.get("clues"))}  # 단서 찾기 2차(품목·규격·비고 훑기)
+            "clues": bool(body.get("clues")),  # 단서 찾기 2차(품목·규격·비고 훑기)
+            # 키워드로 찾기 — 훑는 동안 맞는 명세서가 나오면 오른쪽 위 판에 하나씩 띄움(보고 ESC 로 멈추게)
+            "keywords": [str(k)[:40] for k in body.get("keywords") if str(k).strip()][:20]
+            if isinstance(body.get("keywords"), list) else []}
     if mode == "scan" and body.get("openIdx") is not None:
         opts.update(openIdx=body.get("openIdx"), expectDate=str(body.get("expectDate") or ""),
                     expectTotal=str(body.get("expectTotal") or ""))
@@ -1512,6 +1549,82 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     tk.Label(run_frame, text="중단하시려면 ESC 를 눌러주세요.", font=("맑은 고딕", int(12 * s)),
              fg="#fca5a5", bg="#1f2937").pack(pady=(int(6 * s), 0))
 
+    # ── 키워드 판(오른쪽 위) — 키워드로 찾기 때만: 찾는 키워드 + 맞은 명세서가 나올 때마다 한 줄씩.
+    #    원하는 게 보이면 ESC → 지금까지 읽은 것 중에서 홈페이지에서 고른다.
+    kwp = tk.Toplevel(root)
+    kwp.overrideredirect(True)
+    kwp.configure(bg="#111827")
+    kpw = int(440 * s)
+    kwp.attributes("-topmost", True)
+    kwp.attributes("-alpha", 0.97)
+    kw_box = tk.Frame(kwp, bg="#111827", padx=int(16 * s), pady=int(12 * s))
+    kw_box.pack(fill="both", expand=True)
+    tk.Label(kw_box, text="🔤 찾는 키워드", font=("맑은 고딕", int(11 * s), "bold"),
+             fg="#9ca3af", bg="#111827").pack(anchor="w")
+    kw_lbl = tk.Label(kw_box, text="", font=("맑은 고딕", int(13 * s), "bold"), fg="#fbbf24", bg="#111827",
+                      justify="left", anchor="w", wraplength=kpw - int(36 * s))
+    kw_lbl.pack(anchor="w", fill="x", pady=(int(2 * s), int(8 * s)))
+    kw_head = tk.Label(kw_box, text="", font=("맑은 고딕", int(11 * s), "bold"),
+                       fg="#9ca3af", bg="#111827")
+    kw_head.pack(anchor="w")
+    kw_list = tk.Frame(kw_box, bg="#111827")
+    kw_list.pack(anchor="w", fill="x")
+    tk.Label(kw_box, text="원하는 명세서가 보이면 ESC — 지금까지 읽은 것 중에서 고를 수 있어요.",
+             font=("맑은 고딕", int(10 * s)), fg="#fca5a5", bg="#111827", justify="left",
+             wraplength=kpw - int(36 * s)).pack(anchor="w", pady=(int(10 * s), 0))
+    kwp.withdraw()
+    kw_state = {"n": 0, "kws": []}
+    KW_SHOW = 8  # 판에는 최근 8건만(전체 개수는 머리글에)
+
+    def _kw_fit():
+        kwp.update_idletasks()
+        kh = kwp.winfo_reqheight()
+        kwp.geometry(f"{kpw}x{kh}+{max(0, sw - kpw - int(20 * s))}+{int(20 * s)}")
+
+    def kw_show(keywords):
+        for ch in kw_list.winfo_children():
+            ch.destroy()
+        kw_state.update(n=0, kws=list(keywords))
+        kw_lbl.config(text="  ·  ".join(keywords))
+        kw_head.config(text="맞은 명세서 — 아직 없음")
+        _kw_fit()
+        kwp.deiconify()
+        _set_exstyle(kwp, add=_WS_EX_LAYERED | _WS_EX_TRANSPARENT | _WS_EX_NOACTIVATE
+                     | _WS_EX_TOPMOST | _WS_EX_TOOLWINDOW)
+        kwp.lift()
+
+    def kw_add(date, total, kws, texts):
+        kw_state["n"] += 1
+        n_all = len(kw_state["kws"]) or 1
+        full = len(kws) >= n_all  # 키워드 전부 맞음 = 초록
+        bg = "#064e3b" if full else "#1f2937"
+        row = tk.Frame(kw_list, bg=bg, padx=int(8 * s), pady=int(5 * s))
+        md = _re.match(r"\d{4}\.(\d{1,2})\.(\d{1,2})", date or "")
+        d = f"{int(md.group(1))}월 {int(md.group(2))}일" if md else (date or "")
+        top = (f"{'✅' if full else '•'} {d}" + (f" · {total}원" if total else "")
+               + f"   ({len(kws)}/{n_all}) {', '.join(kws)}")
+        tk.Label(row, text=top, font=("맑은 고딕", int(11 * s), "bold"), fg="#ffffff", bg=bg,
+                 anchor="w", justify="left", wraplength=kpw - int(52 * s)).pack(anchor="w")
+        snip = " / ".join(texts[:3])
+        if len(snip) > 60:
+            snip = snip[:58] + "…"
+        tk.Label(row, text=snip, font=("맑은 고딕", int(10 * s)), fg="#a7f3d0" if full else "#d1d5db",
+                 bg=bg, anchor="w", justify="left", wraplength=kpw - int(52 * s)).pack(anchor="w")
+        kids = kw_list.pack_slaves()  # 화면 순서(맨 위=최신). row 는 아직 pack 전이라 안 들어 있음
+        if kids:
+            row.pack(anchor="w", fill="x", pady=(0, int(4 * s)), before=kids[0])  # 최신이 맨 위
+        else:
+            row.pack(anchor="w", fill="x", pady=(0, int(4 * s)))
+        for old in kw_list.pack_slaves()[KW_SHOW:]:
+            old.destroy()
+        kw_head.config(text=f"맞은 명세서 {kw_state['n']}건"
+                       + (f" (최근 {KW_SHOW}건)" if kw_state["n"] > KW_SHOW else ""))
+        _kw_fit()
+        kwp.lift()
+
+    def kw_hide():
+        kwp.withdraw()
+
     done_frame = tk.Frame(panel, bg="#1f2937")
     done_lbl = tk.Label(done_frame, text="", font=("맑은 고딕", int(15 * s), "bold"),
                         fg="#ffffff", bg="#1f2937", justify="center", wraplength=pw - int(60 * s))
@@ -1579,6 +1692,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         panel.attributes("-topmost", True)
 
     def hide_overlay():
+        kw_hide()
         panel.withdraw()
         dim.withdraw()
         busy["v"] = False
@@ -1709,6 +1823,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         win.withdraw()
         if pmode == "scan":
             show_overlay("명세서를 하나씩 열어 확인하는 동안 마우스가 잠깁니다.")
+            if popts.get("clues") and popts.get("keywords"):
+                kw_show(popts["keywords"])
         else:
             show_overlay("가져오는 동안에는 마우스가 잠깁니다.")
             ef_focus_easyform()
@@ -1719,12 +1835,15 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     _EF_PULL["progress"] = ef_progress_text(n, date)
             _EF_UI_QUEUE.put(("pull_progress", pid, ef_progress_text(n, date)))
 
+        def on_hit(date, total, kws, texts):
+            _EF_UI_QUEUE.put(("pull_hit", pid, date, total, kws, texts))
+
         def worker():
             time.sleep(0.4)
             stmts: list = []
             try:
                 if pmode == "scan":
-                    ok, msg, stmts = run_easyform_scan(popts, on_progress)
+                    ok, msg, stmts = run_easyform_scan(popts, on_progress, on_hit)
                     rows = []
                     ok = ok or bool(stmts)  # 중간에 멈춰도 읽은 건 넘긴다(메시지에 이유)
                 else:
@@ -1777,11 +1896,17 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                         live = _EF_PULL["id"] == cmd[1] and _EF_PULL["state"] == "running"
                     if live:
                         prog_lbl.config(text=cmd[2])
+                elif cmd[0] == "pull_hit":
+                    with _EF_LOCK:
+                        live = _EF_PULL["id"] == cmd[1] and _EF_PULL["state"] == "running"
+                    if live:
+                        kw_add(*cmd[2:])
                 elif cmd[0] == "pull_cancel":
                     if mode["v"] == "pull" and not busy["v"]:
                         win.withdraw()
                 elif cmd[0] == "pull_result":
                     ok, msg, n = cmd[1], cmd[2], cmd[3]
+                    kw_hide()
                     with _EF_LOCK:
                         ret = _EF_PULL.get("return_hwnd")
                     if ok and ret:
