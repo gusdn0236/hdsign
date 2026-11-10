@@ -1594,7 +1594,12 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     kwp.attributes("-alpha", 0.995)
     kw_box = tk.Frame(kwp, bg=KW_BG, padx=int(18 * s), pady=int(16 * s))
     kw_box.pack(fill="both", expand=True)
-    tk.Label(kw_box, text="찾는 키워드", font=(KW_FONT, int(11 * s)), fg=KW_SUB, bg=KW_BG).pack(anchor="w")
+    kw_top = tk.Frame(kw_box, bg=KW_BG)
+    kw_top.pack(fill="x")
+    tk.Label(kw_top, text="찾는 키워드", font=(KW_FONT, int(11 * s)), fg=KW_SUB, bg=KW_BG).pack(side="left")
+    # 오른쪽 위 작게 — 지금까지 읽었는데 키워드가 하나도 안 맞은 명세서 수
+    kw_miss = tk.Label(kw_top, text="", font=(KW_FONT, int(9 * s)), fg="#9ca3af", bg=KW_BG)
+    kw_miss.pack(side="right")
     kw_chips = tk.Frame(kw_box, bg=KW_BG)
     kw_chips.pack(anchor="w", fill="x", pady=(int(6 * s), int(12 * s)))
     tk.Frame(kw_box, bg="#e5e7eb", height=max(1, int(1 * s))).pack(fill="x")
@@ -1634,6 +1639,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             for ch in fr.winfo_children():
                 ch.destroy()
         kw_state.update(n=0, kws=list(keywords))
+        kw_miss.config(text="일치하지 않는 명세서 0개")
         _kw_blocks(kw_chips, KW_BG, [(k, KW_ON) for k in keywords], kpw - int(40 * s), size=12)
         kw_head.config(text="찾은 명세서 0건", fg=KW_SUB)
         _kw_fit()
@@ -1885,7 +1891,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             with _EF_LOCK:
                 if _EF_PULL["id"] == pid:
                     _EF_PULL["progress"] = ef_progress_text(n, date)
-            _EF_UI_QUEUE.put(("pull_progress", pid, ef_progress_text(n, date)))
+            _EF_UI_QUEUE.put(("pull_progress", pid, ef_progress_text(n, date), n))
 
         def on_hit(date, total, kws, texts):
             _EF_UI_QUEUE.put(("pull_hit", pid, date, total, kws, texts))
@@ -1948,6 +1954,9 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                         live = _EF_PULL["id"] == cmd[1] and _EF_PULL["state"] == "running"
                     if live:
                         prog_lbl.config(text=cmd[2])
+                        if len(cmd) > 3 and kw_state["kws"]:
+                            # 맞은 명세서는 진행 알림보다 먼저 판에 들어옴 → 읽은 수 - 맞은 수 = 안 맞은 수
+                            kw_miss.config(text=f"일치하지 않는 명세서 {max(0, cmd[3] - kw_state['n'])}개")
                 elif cmd[0] == "pull_hit":
                     with _EF_LOCK:
                         live = _EF_PULL["id"] == cmd[1] and _EF_PULL["state"] == "running"
