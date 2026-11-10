@@ -1571,21 +1571,22 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
     # ── 키워드 판(오른쪽 위) — 키워드로 찾기 때만: 찾는 키워드 + 맞은 명세서가 나올 때마다 한 줄씩.
     #    원하는 게 보이면 ESC → 지금까지 읽은 것 중에서 홈페이지에서 고른다.
-    #    어두운 딤 위라 **흰 카드 + 큰 글자**로 단순하게: 키워드 / 찾은 명세서(날짜·금액 + 맞은 키워드) / ESC 안내.
+    #    키워드 = 블록 하나씩. 맨 위 '찾는 키워드' 는 초록 블록, 명세서 줄은 [날짜 | 키워드 블록들]로
+    #    맞은 키워드 = 초록, 안 맞은 키워드 = 회색. 다 맞으면 '전부 일치하는 명세서' — 한눈에 구분.
     KW_BG, KW_INK, KW_SUB = "#ffffff", "#111827", "#6b7280"
+    KW_ON, KW_OFF = ("#16a34a", "#ffffff"), ("#e5e7eb", "#9ca3af")  # (블록 배경, 글자)
     KW_FONT = "맑은 고딕"
     kwp = tk.Toplevel(root)
     kwp.overrideredirect(True)
     kwp.configure(bg=KW_BG)
-    kpw = int(400 * s)
+    kpw = int(470 * s)
     kwp.attributes("-topmost", True)
     kwp.attributes("-alpha", 0.995)
-    kw_box = tk.Frame(kwp, bg=KW_BG, padx=int(20 * s), pady=int(16 * s))
+    kw_box = tk.Frame(kwp, bg=KW_BG, padx=int(18 * s), pady=int(16 * s))
     kw_box.pack(fill="both", expand=True)
     tk.Label(kw_box, text="찾는 키워드", font=(KW_FONT, int(11 * s)), fg=KW_SUB, bg=KW_BG).pack(anchor="w")
-    kw_lbl = tk.Label(kw_box, text="", font=(KW_FONT, int(15 * s), "bold"), fg=KW_INK, bg=KW_BG,
-                      justify="left", anchor="w", wraplength=kpw - int(40 * s))
-    kw_lbl.pack(anchor="w", fill="x", pady=(int(2 * s), int(12 * s)))
+    kw_chips = tk.Frame(kw_box, bg=KW_BG)
+    kw_chips.pack(anchor="w", fill="x", pady=(int(6 * s), int(12 * s)))
     tk.Frame(kw_box, bg="#e5e7eb", height=max(1, int(1 * s))).pack(fill="x")
     kw_head = tk.Label(kw_box, text="", font=(KW_FONT, int(12 * s), "bold"), fg=KW_INK, bg=KW_BG)
     kw_head.pack(anchor="w", pady=(int(12 * s), int(6 * s)))
@@ -1602,11 +1603,28 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         kh = kwp.winfo_reqheight()
         kwp.geometry(f"{kpw}x{kh}+{max(0, sw - kpw - int(20 * s))}+{int(20 * s)}")
 
+    def _kw_blocks(parent, bg, items, max_w, size=11):
+        """키워드 블록들을 왼쪽부터 늘어놓고, 폭(max_w)을 넘으면 다음 줄로. items=[(글자, (배경, 글자색))]."""
+        line, used = None, 0
+        gap = int(6 * s)
+        for text, (cbg, cfg) in items:
+            chip = tk.Label(parent, text=text, font=(KW_FONT, int(size * s), "bold"), fg=cfg, bg=cbg,
+                            padx=int(9 * s), pady=int(3 * s))
+            cw = chip.winfo_reqwidth()
+            if line is None or (used and used + gap + cw > max_w):
+                line = tk.Frame(parent, bg=bg)
+                line.pack(anchor="w", pady=(0, int(4 * s)))
+                used = 0
+            chip.lift(line)
+            chip.pack(in_=line, side="left", padx=(0 if used == 0 else gap, 0))
+            used += (gap if used else 0) + cw
+
     def kw_show(keywords):
-        for ch in kw_list.winfo_children():
-            ch.destroy()
+        for fr in (kw_list, kw_chips):
+            for ch in fr.winfo_children():
+                ch.destroy()
         kw_state.update(n=0, kws=list(keywords))
-        kw_lbl.config(text="  ·  ".join(keywords))
+        _kw_blocks(kw_chips, KW_BG, [(k, KW_ON) for k in keywords], kpw - int(40 * s), size=12)
         kw_head.config(text="찾은 명세서 0건", fg=KW_SUB)
         _kw_fit()
         kwp.deiconify()
@@ -1616,16 +1634,30 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
     def kw_add(date, total, kws, texts):
         kw_state["n"] += 1
-        full = len(kws) >= (len(kw_state["kws"]) or 1)  # 키워드 전부 맞음 = 초록
-        bg = "#dcfce7" if full else "#f3f4f6"
-        row = tk.Frame(kw_list, bg=bg, padx=int(12 * s), pady=int(7 * s))
+        allk = kw_state["kws"] or list(kws)
+        hit = set(kws)
+        full = all(k in hit for k in allk)
+        bg = "#f0fdf4" if full else "#f9fafb"
+        row = tk.Frame(kw_list, bg=bg, padx=int(10 * s), pady=int(8 * s),
+                       highlightthickness=max(1, int(1 * s)),
+                       highlightbackground="#16a34a" if full else "#e5e7eb")
+        # 왼쪽: 날짜(크게) + 금액(작게)
+        left = tk.Frame(row, bg=bg)
+        left.pack(side="left", anchor="n")
+        tk.Frame(left, bg=bg, width=int(92 * s), height=0).pack()  # 날짜 칸 최소 폭(줄마다 블록 위치 맞춤)
         md = _re.match(r"\d{4}\.(\d{1,2})\.(\d{1,2})", date or "")
         d = f"{int(md.group(1))}월 {int(md.group(2))}일" if md else (date or "")
-        tk.Label(row, text=d + (f"   {total}원" if total else ""), font=(KW_FONT, int(14 * s), "bold"),
-                 fg=KW_INK, bg=bg, anchor="w").pack(anchor="w")
-        tk.Label(row, text=("✔ " if full else "") + ", ".join(kws), font=(KW_FONT, int(12 * s)),
-                 fg="#15803d" if full else "#374151", bg=bg, anchor="w", justify="left",
-                 wraplength=kpw - int(64 * s)).pack(anchor="w")
+        tk.Label(left, text=d, font=(KW_FONT, int(13 * s), "bold"), fg=KW_INK, bg=bg).pack(anchor="w")
+        if total:
+            tk.Label(left, text=f"{total}원", font=(KW_FONT, int(9 * s)), fg=KW_SUB, bg=bg).pack(anchor="w")
+        # 오른쪽: '전부 일치하는 명세서' + 키워드 블록(맞음 초록 / 안 맞음 회색)
+        right = tk.Frame(row, bg=bg)
+        right.pack(side="left", fill="x", expand=True)
+        if full:
+            tk.Label(right, text="✔ 전부 일치하는 명세서", font=(KW_FONT, int(11 * s), "bold"),
+                     fg="#15803d", bg=bg).pack(anchor="w", pady=(0, int(4 * s)))
+        _kw_blocks(right, bg, [(k, KW_ON if k in hit else KW_OFF) for k in allk],
+                   kpw - int(40 * s) - int(92 * s) - int(24 * s))
         kids = kw_list.pack_slaves()  # 화면 순서(맨 위=최신). row 는 아직 pack 전이라 안 들어 있음
         if kids:
             row.pack(anchor="w", fill="x", pady=(0, int(6 * s)), before=kids[0])  # 최신이 맨 위
