@@ -1503,20 +1503,40 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     win.title("HD사인 이지폼 자동기입")
     win.attributes("-topmost", True)
     win.resizable(False, False)
-    w, h = int(370 * s), int(195 * s)
-    win.geometry(f"{w}x{h}+{max(0, sw - w - int(28 * s))}+{max(0, sh - h - int(72 * s))}")
+    w = int(390 * s)
 
-    frame = tk.Frame(win, bg="#ffffff", padx=int(14 * s), pady=int(12 * s))
+    # 깔끔한 흰 카드: 제목 / 안내(번호 단계는 색 동그라미) / 큰 버튼. 높이는 내용에 맞춰 자동.
+    frame = tk.Frame(win, bg="#ffffff", padx=int(20 * s), pady=int(16 * s))
     frame.pack(fill="both", expand=True)
-    tk.Label(frame, text="이지폼 자동기입", font=("맑은 고딕", int(12 * s), "bold"),
-             fg="#0a3d4a", bg="#ffffff").pack(anchor="w")
-    info_lbl = tk.Label(frame, text="", font=("맑은 고딕", int(10 * s)), fg="#333333",
-                        bg="#ffffff", justify="left", wraplength=w - int(42 * s))
-    info_lbl.pack(anchor="w", pady=(int(6 * s), int(10 * s)))
+    title_lbl = tk.Label(frame, text="이지폼 자동기입", font=("맑은 고딕", int(14 * s), "bold"),
+                         fg="#111827", bg="#ffffff")
+    title_lbl.pack(anchor="w")
+    info_box = tk.Frame(frame, bg="#ffffff")
+    info_box.pack(anchor="w", fill="x", pady=(int(10 * s), int(14 * s)))
     btn = tk.Button(frame, text="이지폼 자동기입 시작하기 ▶", font=("맑은 고딕", int(13 * s), "bold"),
                     bg=accent, fg="white", activebackground=accent_dark, activeforeground="white",
-                    relief="flat", padx=int(14 * s), pady=int(8 * s), cursor="hand2")
+                    relief="flat", bd=0, padx=int(14 * s), pady=int(10 * s), cursor="hand2")
     btn.pack(fill="x")
+
+    def set_info(title, text, ww=None):
+        """코너 창 내용 바꾸기 — '1. …' 줄은 번호 동그라미 + 글자, 나머지는 그냥 글자. 창 크기는 내용에 맞춤."""
+        ww = ww or w
+        title_lbl.config(text=title)
+        for ch in info_box.winfo_children():
+            ch.destroy()
+        for line in (text or "").split("\n"):
+            m = _re.match(r"\s*(\d+)\.\s*(.*)", line)
+            row = tk.Frame(info_box, bg="#ffffff")
+            row.pack(anchor="w", fill="x", pady=(0, int(5 * s)))
+            if m:
+                tk.Label(row, text=m.group(1), font=("맑은 고딕", int(9 * s), "bold"), fg="white", bg=accent,
+                         width=2).pack(side="left", padx=(0, int(8 * s)))
+                line = m.group(2)
+            tk.Label(row, text=line, font=("맑은 고딕", int(11 * s)), fg="#374151", bg="#ffffff",
+                     justify="left", anchor="w", wraplength=ww - int(80 * s)).pack(side="left", anchor="w")
+        win.update_idletasks()
+        hh = win.winfo_reqheight()
+        win.geometry(f"{ww}x{hh}+{max(0, sw - ww - int(28 * s))}+{max(0, sh - hh - int(72 * s))}")
 
     # ── 풀스크린 딤(반투명 검정) ──
     dim = tk.Toplevel(root)
@@ -1530,51 +1550,52 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     # ── 중앙 패널(불투명 카드) — 실행 안내 / 완료 두 화면 ──
     panel = tk.Toplevel(root)
     panel.overrideredirect(True)
-    panel.configure(bg="#1f2937")
-    pw, ph = int(560 * s), int(220 * s)
+    panel.configure(bg="#ffffff")
+    pw, ph = int(520 * s), int(200 * s)
     panel.geometry(f"{pw}x{ph}+{(sw - pw) // 2}+{(sh - ph) // 2}")
     panel.attributes("-topmost", True)
-    panel.attributes("-alpha", 0.97)  # 살짝만 투명 → WS_EX_LAYERED 적용(클릭통과 전제), 보기엔 불투명
+    panel.attributes("-alpha", 0.995)  # 살짝만 투명 → WS_EX_LAYERED 적용(클릭통과 전제), 보기엔 불투명
 
-    run_frame = tk.Frame(panel, bg="#1f2937")
-    tk.Label(run_frame, text="🔒", font=("Segoe UI Emoji", int(34 * s)),
-             fg="#fbbf24", bg="#1f2937").pack(pady=(int(20 * s), int(4 * s)))
+    run_frame = tk.Frame(panel, bg="#ffffff")
+    tk.Label(run_frame, text="🔒", font=("Segoe UI Emoji", int(26 * s)),
+             fg="#111827", bg="#ffffff").pack(pady=(int(22 * s), int(6 * s)))
     run_lbl = tk.Label(run_frame, text="자동입력 중에는 마우스가 잠깁니다.", font=("맑은 고딕", int(14 * s), "bold"),
-                       fg="#ffffff", bg="#1f2937")
+                       fg="#111827", bg="#ffffff")
     run_lbl.pack()
     # 찾기(순회) 중 진행 — 'MM월 DD일까지 총 n개의 명세서를 읽고 있습니다.' 보고 안 나올 것 같으면 ESC 로 멈추게.
     prog_lbl = tk.Label(run_frame, text="", font=("맑은 고딕", int(13 * s), "bold"),
-                        fg="#fbbf24", bg="#1f2937")
-    prog_lbl.pack(pady=(int(6 * s), 0))
-    tk.Label(run_frame, text="중단하시려면 ESC 를 눌러주세요.", font=("맑은 고딕", int(12 * s)),
-             fg="#fca5a5", bg="#1f2937").pack(pady=(int(6 * s), 0))
+                        fg="#c2410c", bg="#ffffff")
+    prog_lbl.pack(pady=(int(8 * s), 0))
+    tk.Label(run_frame, text="멈추려면 ESC", font=("맑은 고딕", int(11 * s)),
+             fg="#6b7280", bg="#ffffff").pack(pady=(int(8 * s), 0))
 
     # ── 키워드 판(오른쪽 위) — 키워드로 찾기 때만: 찾는 키워드 + 맞은 명세서가 나올 때마다 한 줄씩.
     #    원하는 게 보이면 ESC → 지금까지 읽은 것 중에서 홈페이지에서 고른다.
+    #    어두운 딤 위라 **흰 카드 + 큰 글자**로 단순하게: 키워드 / 찾은 명세서(날짜·금액 + 맞은 키워드) / ESC 안내.
+    KW_BG, KW_INK, KW_SUB = "#ffffff", "#111827", "#6b7280"
+    KW_FONT = "맑은 고딕"
     kwp = tk.Toplevel(root)
     kwp.overrideredirect(True)
-    kwp.configure(bg="#111827")
-    kpw = int(440 * s)
+    kwp.configure(bg=KW_BG)
+    kpw = int(400 * s)
     kwp.attributes("-topmost", True)
-    kwp.attributes("-alpha", 0.97)
-    kw_box = tk.Frame(kwp, bg="#111827", padx=int(16 * s), pady=int(12 * s))
+    kwp.attributes("-alpha", 0.995)
+    kw_box = tk.Frame(kwp, bg=KW_BG, padx=int(20 * s), pady=int(16 * s))
     kw_box.pack(fill="both", expand=True)
-    tk.Label(kw_box, text="🔤 찾는 키워드", font=("맑은 고딕", int(11 * s), "bold"),
-             fg="#9ca3af", bg="#111827").pack(anchor="w")
-    kw_lbl = tk.Label(kw_box, text="", font=("맑은 고딕", int(13 * s), "bold"), fg="#fbbf24", bg="#111827",
-                      justify="left", anchor="w", wraplength=kpw - int(36 * s))
-    kw_lbl.pack(anchor="w", fill="x", pady=(int(2 * s), int(8 * s)))
-    kw_head = tk.Label(kw_box, text="", font=("맑은 고딕", int(11 * s), "bold"),
-                       fg="#9ca3af", bg="#111827")
-    kw_head.pack(anchor="w")
-    kw_list = tk.Frame(kw_box, bg="#111827")
+    tk.Label(kw_box, text="찾는 키워드", font=(KW_FONT, int(11 * s)), fg=KW_SUB, bg=KW_BG).pack(anchor="w")
+    kw_lbl = tk.Label(kw_box, text="", font=(KW_FONT, int(15 * s), "bold"), fg=KW_INK, bg=KW_BG,
+                      justify="left", anchor="w", wraplength=kpw - int(40 * s))
+    kw_lbl.pack(anchor="w", fill="x", pady=(int(2 * s), int(12 * s)))
+    tk.Frame(kw_box, bg="#e5e7eb", height=max(1, int(1 * s))).pack(fill="x")
+    kw_head = tk.Label(kw_box, text="", font=(KW_FONT, int(12 * s), "bold"), fg=KW_INK, bg=KW_BG)
+    kw_head.pack(anchor="w", pady=(int(12 * s), int(6 * s)))
+    kw_list = tk.Frame(kw_box, bg=KW_BG)
     kw_list.pack(anchor="w", fill="x")
-    tk.Label(kw_box, text="원하는 명세서가 보이면 ESC — 지금까지 읽은 것 중에서 고를 수 있어요.",
-             font=("맑은 고딕", int(10 * s)), fg="#fca5a5", bg="#111827", justify="left",
-             wraplength=kpw - int(36 * s)).pack(anchor="w", pady=(int(10 * s), 0))
+    tk.Label(kw_box, text="찾았으면 ESC", font=(KW_FONT, int(12 * s), "bold"),
+             fg="#dc2626", bg=KW_BG).pack(anchor="w", pady=(int(10 * s), 0))
     kwp.withdraw()
     kw_state = {"n": 0, "kws": []}
-    KW_SHOW = 8  # 판에는 최근 8건만(전체 개수는 머리글에)
+    KW_SHOW = 6  # 판에는 최근 6건만(전체 개수는 머리글에)
 
     def _kw_fit():
         kwp.update_idletasks()
@@ -1586,7 +1607,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             ch.destroy()
         kw_state.update(n=0, kws=list(keywords))
         kw_lbl.config(text="  ·  ".join(keywords))
-        kw_head.config(text="맞은 명세서 — 아직 없음")
+        kw_head.config(text="찾은 명세서 0건", fg=KW_SUB)
         _kw_fit()
         kwp.deiconify()
         _set_exstyle(kwp, add=_WS_EX_LAYERED | _WS_EX_TRANSPARENT | _WS_EX_NOACTIVATE
@@ -1595,43 +1616,37 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
     def kw_add(date, total, kws, texts):
         kw_state["n"] += 1
-        n_all = len(kw_state["kws"]) or 1
-        full = len(kws) >= n_all  # 키워드 전부 맞음 = 초록
-        bg = "#064e3b" if full else "#1f2937"
-        row = tk.Frame(kw_list, bg=bg, padx=int(8 * s), pady=int(5 * s))
+        full = len(kws) >= (len(kw_state["kws"]) or 1)  # 키워드 전부 맞음 = 초록
+        bg = "#dcfce7" if full else "#f3f4f6"
+        row = tk.Frame(kw_list, bg=bg, padx=int(12 * s), pady=int(7 * s))
         md = _re.match(r"\d{4}\.(\d{1,2})\.(\d{1,2})", date or "")
         d = f"{int(md.group(1))}월 {int(md.group(2))}일" if md else (date or "")
-        top = (f"{'✅' if full else '•'} {d}" + (f" · {total}원" if total else "")
-               + f"   ({len(kws)}/{n_all}) {', '.join(kws)}")
-        tk.Label(row, text=top, font=("맑은 고딕", int(11 * s), "bold"), fg="#ffffff", bg=bg,
-                 anchor="w", justify="left", wraplength=kpw - int(52 * s)).pack(anchor="w")
-        snip = " / ".join(texts[:3])
-        if len(snip) > 60:
-            snip = snip[:58] + "…"
-        tk.Label(row, text=snip, font=("맑은 고딕", int(10 * s)), fg="#a7f3d0" if full else "#d1d5db",
-                 bg=bg, anchor="w", justify="left", wraplength=kpw - int(52 * s)).pack(anchor="w")
+        tk.Label(row, text=d + (f"   {total}원" if total else ""), font=(KW_FONT, int(14 * s), "bold"),
+                 fg=KW_INK, bg=bg, anchor="w").pack(anchor="w")
+        tk.Label(row, text=("✔ " if full else "") + ", ".join(kws), font=(KW_FONT, int(12 * s)),
+                 fg="#15803d" if full else "#374151", bg=bg, anchor="w", justify="left",
+                 wraplength=kpw - int(64 * s)).pack(anchor="w")
         kids = kw_list.pack_slaves()  # 화면 순서(맨 위=최신). row 는 아직 pack 전이라 안 들어 있음
         if kids:
-            row.pack(anchor="w", fill="x", pady=(0, int(4 * s)), before=kids[0])  # 최신이 맨 위
+            row.pack(anchor="w", fill="x", pady=(0, int(6 * s)), before=kids[0])  # 최신이 맨 위
         else:
-            row.pack(anchor="w", fill="x", pady=(0, int(4 * s)))
+            row.pack(anchor="w", fill="x", pady=(0, int(6 * s)))
         for old in kw_list.pack_slaves()[KW_SHOW:]:
             old.destroy()
-        kw_head.config(text=f"맞은 명세서 {kw_state['n']}건"
-                       + (f" (최근 {KW_SHOW}건)" if kw_state["n"] > KW_SHOW else ""))
+        kw_head.config(text=f"찾은 명세서 {kw_state['n']}건", fg=KW_INK)
         _kw_fit()
         kwp.lift()
 
     def kw_hide():
         kwp.withdraw()
 
-    done_frame = tk.Frame(panel, bg="#1f2937")
-    done_lbl = tk.Label(done_frame, text="", font=("맑은 고딕", int(15 * s), "bold"),
-                        fg="#ffffff", bg="#1f2937", justify="center", wraplength=pw - int(60 * s))
+    done_frame = tk.Frame(panel, bg="#ffffff")
+    done_lbl = tk.Label(done_frame, text="", font=("맑은 고딕", int(14 * s), "bold"),
+                        fg="#111827", bg="#ffffff", justify="center", wraplength=pw - int(60 * s))
     done_lbl.pack(pady=(int(26 * s), int(14 * s)))
     done_btn = tk.Button(done_frame, text="확인", font=("맑은 고딕", int(13 * s), "bold"),
                          bg=accent, fg="white", activebackground=accent_dark, activeforeground="white",
-                         relief="flat", padx=int(26 * s), pady=int(7 * s), cursor="hand2")
+                         relief="flat", bd=0, padx=int(30 * s), pady=int(8 * s), cursor="hand2")
     done_btn.pack()
     panel.withdraw()
 
@@ -1684,7 +1699,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         run_frame.pack_forget()
         done_lbl.config(text=(ok_text if ok else "⏹ 중단되었습니다.") +
                         ("" if ok else f"\n{msg}"),
-                        fg="#ffffff" if ok else "#fca5a5")
+                        fg="#111827" if ok else "#dc2626")
         done_frame.pack(fill="both", expand=True)
         # 완료 화면은 [확인] 클릭을 받아야 하니 클릭통과·비활성 해제.
         _set_exstyle(panel, remove=_WS_EX_NOACTIVATE | _WS_EX_TRANSPARENT)
@@ -1700,10 +1715,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     def set_staged(count):
         busy["v"] = False
         mode["v"] = "fill"
-        win.geometry(f"{w}x{h}+{max(0, sw - w - int(28 * s))}+{max(0, sh - h - int(72 * s))}")  # 찾기로 커졌으면 원래대로
-        info_lbl.config(
-            text="이지폼 [새로작성 → 거래처 선택] 후\n아래 버튼을 누르면 해당 명세서가 자동입력됩니다.",
-            fg="#333333", wraplength=w - int(42 * s))
+        set_info("이지폼 자동기입",
+                 "1. 이지폼에서 [새로작성 → 거래처 선택]\n2. 아래 버튼을 누르면 명세서가 자동입력돼요")
         btn.config(text="이지폼 자동기입 시작하기 ▶", state="normal", bg=accent)
         win.deiconify()
         win.lift()
@@ -1747,19 +1760,16 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             # 웹 안내창과 같은 3단계 문구(거래처 이름은 웹이 보내 줌). 3줄이라 창을 조금 키운다.
             with _EF_LOCK:
                 client = str(_EF_PULL.get("opts", {}).get("clientName") or "").strip() or "이 거래처"
-            ww, hh = int(440 * s), int(205 * s)
-            win.geometry(f"{ww}x{hh}+{max(0, sw - ww - int(28 * s))}+{max(0, sh - hh - int(72 * s))}")
-            info_lbl.config(
-                text=(f"1. 매출처별 조회에서 '{client}'를 검색해주세요\n"
-                      "2. 날짜를 1/1~12/31로 설정해주세요 (최신순)\n"
-                      "3. '이지폼 목록에서 찾기 ▶' 버튼을 눌러주세요"),
-                fg="#333333", wraplength=ww - int(42 * s))
+            with _EF_LOCK:
+                kwd = bool(_EF_PULL.get("opts", {}).get("clues"))
+            set_info("이지폼에서 키워드로 찾기" if kwd else "이지폼에서 찾기",
+                     (f"1. 매출처별 조회에서 '{client}' 검색\n"
+                      "2. 날짜를 1/1~12/31 로 (최신순)\n"
+                      "3. 아래 버튼 누르기"), ww=int(420 * s))
             btn.config(text="이지폼 목록에서 찾기 ▶", state="normal", bg=accent)
         else:
-            win.geometry(f"{w}x{h}+{max(0, sw - w - int(28 * s))}+{max(0, sh - h - int(72 * s))}")
-            info_lbl.config(
-                text="이지폼에서 옮길 상세명세서를 열어 둔 뒤\n아래 버튼을 누르면 홈페이지 명세서로 가져옵니다.",
-                fg="#333333", wraplength=w - int(42 * s))
+            set_info("이지폼에서 가져오기",
+                     "1. 이지폼에서 옮길 상세명세서 열기\n2. 아래 버튼을 누르면 홈페이지 명세서로 가져와요")
             btn.config(text="이지폼에서 가져오기 ▶", state="normal", bg=accent)
         win.deiconify()
         win.lift()
