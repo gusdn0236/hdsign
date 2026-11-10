@@ -32,8 +32,12 @@ function Step($m) { Write-Host "`n==== $m ====" -ForegroundColor Cyan }
 if (-not $DeployOnly) {
     if (-not (Test-Path $python)) { throw "Python 3.9 not found: $python  (이 PC에 맞게 deploy_office.ps1 의 `$python 경로 수정)" }
 
-    Step '실행 중인 워처 종료 (있으면)'
-    Get-Process hdsign_worksheet -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # 빌드 폴더(dist)에서 직접 띄운 워처만 종료 — 빌드 산출물 잠금 해제용.
+    # 이 PC 에서 바로가기로 쓰는 워처(C:\HDSign\...)는 건드리지 않는다(배포할 때마다 작업 중 꺼지던 문제).
+    Step '빌드 폴더에서 실행 중인 워처 종료 (있으면)'
+    Get-Process hdsign_worksheet -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($here, [StringComparison]::OrdinalIgnoreCase) } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
 
     Step '이전 빌드 산출물 정리'
     foreach ($p in @($distDir, (Join-Path $here 'build'),

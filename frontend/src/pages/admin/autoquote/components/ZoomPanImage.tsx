@@ -28,7 +28,7 @@ export default function ZoomPanImage({ src, alt }: Props) {
       const mx = e.clientX - r.left;
       const my = e.clientY - r.top;
       setT((p) => {
-        const s = Math.min(8, Math.max(1, p.s * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+        const s = Math.min(10, Math.max(1, p.s * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
         if (s === 1) return { s: 1, x: 0, y: 0 };
         // 마우스 아래 지점이 그대로 있게 이동량 보정
         const k = s / p.s;

@@ -1532,6 +1532,16 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 tk.Label(row, text=m.group(1), font=("맑은 고딕", int(9 * s), "bold"), fg="white", bg=accent,
                          width=2).pack(side="left", padx=(0, int(8 * s)))
                 line = m.group(2)
+            if "**" in line:
+                # '**거래처명**' = 진하고 크게(나머지 글자는 보통). 조각별 Label 을 옆으로 이어 붙인다.
+                for k, part in enumerate(_re.split(r"\*\*(.+?)\*\*", line)):
+                    if not part:
+                        continue
+                    big = k % 2 == 1
+                    tk.Label(row, text=part, bg="#ffffff",
+                             font=("맑은 고딕", int((13 if big else 11) * s), "bold" if big else "normal"),
+                             fg="#111827" if big else "#374151").pack(side="left", anchor="s")
+                continue
             tk.Label(row, text=line, font=("맑은 고딕", int(11 * s)), fg="#374151", bg="#ffffff",
                      justify="left", anchor="w", wraplength=ww - int(80 * s)).pack(side="left", anchor="w")
         win.update_idletasks()
@@ -1795,7 +1805,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             with _EF_LOCK:
                 kwd = bool(_EF_PULL.get("opts", {}).get("clues"))
             set_info("이지폼에서 키워드로 찾기" if kwd else "이지폼에서 찾기",
-                     (f"1. 매출처별 조회에서 '{client}' 검색\n"
+                     (f"1. 매출처별 조회에서 **{client}** 검색\n"
                       "2. 날짜를 1/1~12/31 로 (최신순)\n"
                       "3. 아래 버튼 누르기"), ww=int(420 * s))
             btn.config(text="이지폼 목록에서 찾기 ▶", state="normal", bg=accent)

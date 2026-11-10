@@ -256,7 +256,8 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-  will-change: transform;
+  /* will-change: transform 금지 — Chrome 이 맞춤 크기로 한 번 그린 비트맵을 늘려 확대해 글씨가 뭉개진다.
+     없으면 배율 바뀔 때마다 고해상 원본(~7200px)에서 다시 그려 명세서 작성 화면 지시서처럼 선명. */
 }
 .aq-zoomimg-hint {
   position: absolute;
@@ -2740,4 +2741,11 @@
 }
 .aq-efprev > .aq-cdbtns button:not(.sec):hover {
   background: #15803d;
+}
+/* Backspace 1번 = 지울 준비(반투명 + 점선), 한 번 더 = 지움 */
+.aq-clue-chip.armed {
+  opacity: 0.38;
+  outline: 1.5px dashed currentColor;
+  outline-offset: 1px;
+  transition: opacity 0.12s;
 }

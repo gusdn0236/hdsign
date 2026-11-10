@@ -2087,6 +2087,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 단서 = 칩 목록(Enter 로 한 단어씩) + 아직 Enter 안 친 입력칸 글자.
   const [clueList, setClueList] = useState<string[]>([]);
   const [clueDraft, setClueDraft] = useState('');
+  // 빈 입력칸에서 Backspace 1번 = 마지막 키워드 반투명(지울 준비), 한 번 더 = 지움. 다른 키·클릭이면 취소.
+  const [clueDelArmed, setClueDelArmed] = useState(false);
   const pullFromEasyform = async (scan = false, pick?: EasyformScannedStatement, clues = false, keywords: string[] = []) => {
     if (pullRef.current && !pullRef.current.stop) return; // 이미 대기 중
     const probe = await probeEasyformAgent();
@@ -4960,8 +4962,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     {/* 단서 칩 입력 — 한 단어 + Enter. 넣을수록 맞는 명세서가 앞으로. */}
                     <div className="aq-clue-lbl">키워드</div>
                     <div className="aq-clue-box" onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus()}>
-                      {clues.map((c) => {
+                      {clues.map((c, ci) => {
                         const st = stats.find((s) => s.clue === c);
+                        const armed = clueDelArmed && ci === clues.length - 1;
                         const cls = !efClue.withItems || !st
                           ? ''
                           : st.df === 0
@@ -4974,8 +4977,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                         return (
                           <span
                             key={c}
-                            className={'aq-clue-chip' + cls}
-                            title={st && efClue.withItems ? (st.df === 0 ? '어느 명세서에도 없음' : `${n}건 중 ${st.df}건에 있음`) : undefined}
+                            className={'aq-clue-chip' + cls + (armed ? ' armed' : '')}
+                            title={
+                              armed
+                                ? 'Backspace 한 번 더 누르면 지워져요'
+                                : st && efClue.withItems
+                                  ? st.df === 0
+                                    ? '어느 명세서에도 없음'
+                                    : `${n}건 중 ${st.df}건에 있음`
+                                  : undefined
+                            }
                           >
                             {c}
                             {efClue.withItems && st ? ` · ${st.df}건` : ''}
@@ -4998,9 +5009,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                         autoFocus
                         placeholder={clues.length ? '키워드 더 넣기 — Enter' : '지시서를 보며 키워드를 한 단어씩 치고 Enter — 예: 삼겹살 ⏎ h:118 ⏎'}
                         value={clueDraft}
-                        onChange={(e) => setClueDraft(e.target.value)}
+                        onChange={(e) => {
+                          setClueDraft(e.target.value);
+                          setClueDelArmed(false);
+                        }}
+                        onBlur={() => setClueDelArmed(false)}
                         onKeyDown={(e) => {
                           if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용(칩 2개 방지)
+                          if (e.key !== 'Backspace') setClueDelArmed(false);
                           if (e.key === 'Enter') {
                             e.preventDefault();
                             const w = clueDraft.trim();
@@ -5010,8 +5026,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                             }
                             setClueDraft('');
                           } else if (e.key === 'Backspace' && !clueDraft && clues.length) {
-                            setClueList((l) => l.slice(0, -1));
-                            setCluePos(0);
+                            if (!clueDelArmed) {
+                              setClueDelArmed(true); // 1번째: 반투명으로 '지울 준비'만
+                            } else {
+                              setClueList((l) => l.slice(0, -1)); // 2번째: 지움
+                              setCluePos(0);
+                              setClueDelArmed(false);
+                            }
                           }
                         }}
                       />
