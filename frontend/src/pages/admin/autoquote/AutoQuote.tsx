@@ -5064,9 +5064,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     ) : cur ? (
                       <>
                         <div className="aq-clue-nav">
-                          <button type="button" onClick={() => go(-1)} disabled={pos === 0} aria-label="이전 명세서">
-                            ◀
-                          </button>
                           {(() => {
                             // 명세서 카드 — 날짜·금액 + 키워드 블록(맞음 초록 / 안 맞음 회색, 이지폼 판과 같은 모양)
                             const md = (cur.s.date || '').match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})/);
@@ -5079,8 +5076,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                                     {md ? <small>{md[1]}</small> : null}
                                   </span>
                                   <span className="amt">{cur.s.total}원</span>
-                                  <span className="cnt">
-                                    {pos + 1} / {seq.length}
+                                  {/* ◀ n / N ▶ 를 한 묶음으로(카드 오른쪽 위) — 버튼이 양끝에 멀리 있던 것 */}
+                                  <span className="pager">
+                                    <button type="button" onClick={() => go(-1)} disabled={pos === 0} aria-label="이전 명세서">
+                                      ◀
+                                    </button>
+                                    <span className="cnt">
+                                      {pos + 1} / {seq.length}
+                                    </span>
+                                    <button type="button" onClick={() => go(1)} disabled={pos >= seq.length - 1} aria-label="다음 명세서">
+                                      ▶
+                                    </button>
                                   </span>
                                 </div>
                                 {clues.length ? (
@@ -5096,9 +5102,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                               </div>
                             );
                           })()}
-                          <button type="button" onClick={() => go(1)} disabled={pos >= seq.length - 1} aria-label="다음 명세서">
-                            ▶
-                          </button>
                         </div>
                         {(() => {
                           // 홈페이지 명세서 작성 표와 같은 칸·폭(품목코드·품목·규격·수량·단가·공급가액) + 끝에 비고.
@@ -5148,14 +5151,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                               <div className="aq-clue-table">
                                 <table className="aq-rtbl">
                                   <colgroup>
-                                    <col style={{ width: 24 }} />
-                                    <col style={{ width: 58 }} />
+                                    {/* 명세서 칸이 4/10 로 좁아져 고정 px 대신 비율 — 품목 칸이 가장 넓게 */}
+                                    <col style={{ width: '5%' }} />
+                                    <col style={{ width: '10%' }} />
                                     <col />
-                                    <col style={{ width: 56 }} />
-                                    <col style={{ width: 34 }} />
-                                    <col style={{ width: 78 }} />
-                                    <col style={{ width: 86 }} />
-                                    <col style={{ width: 110 }} />
+                                    <col style={{ width: '13%' }} />
+                                    <col style={{ width: '7%' }} />
+                                    <col style={{ width: '12%' }} />
+                                    <col style={{ width: '12%' }} />
+                                    <col style={{ width: '14%' }} />
                                   </colgroup>
                                   <thead>
                                     <tr>
@@ -5193,7 +5197,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                         void pullFromEasyform(false, pick);
                       }}
                     >
-                      ✅ 이 명세서로 가져오기 ({cur.s.date} · {cur.s.total}원)
+                      ✅ 이 명세서로 가져오기
                     </button>
                   )}
                   <button className="sec" onClick={close}>
