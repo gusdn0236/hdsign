@@ -5153,13 +5153,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                                   <colgroup>
                                     {/* 명세서 칸이 4/10 로 좁아져 고정 px 대신 비율 — 품목 칸이 가장 넓게 */}
                                     <col style={{ width: '5%' }} />
-                                    <col style={{ width: '10%' }} />
+                                    <col style={{ width: '12%' }} /> {/* 품목코드 = 단가 칸과 같은 폭 */}
                                     <col />
-                                    <col style={{ width: '13%' }} />
+                                    <col style={{ width: '15%' }} /> {/* 규격도 +2%(품목에서 뺌) */}
                                     <col style={{ width: '7%' }} />
                                     <col style={{ width: '12%' }} />
                                     <col style={{ width: '12%' }} />
-                                    <col style={{ width: '14%' }} />
+                                    <col style={{ width: '12%' }} /> {/* 비고도 단가 칸과 같은 폭 */}
                                   </colgroup>
                                   <thead>
                                     <tr>
