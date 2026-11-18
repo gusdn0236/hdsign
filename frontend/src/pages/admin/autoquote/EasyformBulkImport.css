@@ -1322,3 +1322,45 @@
 .efb-ask-sub b {
   color: #fff;
 }
+/* 두 지시서 합치기 확인 — 지시서를 나란히 */
+.efb-askbox--wide {
+  width: min(760px, 94vw);
+}
+.efb-merge-row {
+  display: flex;
+  gap: 12px;
+  margin: 0 0 18px;
+  overflow-x: auto;
+}
+.efb-merge-ws {
+  flex: 1 1 0;
+  min-width: 200px;
+  max-width: 340px;
+  border: 1px solid var(--efb-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0f1620;
+}
+.efb-merge-thumb {
+  aspect-ratio: 4 / 3;
+  background: #fff;
+  overflow: hidden;
+}
+.efb-merge-thumb > * {
+  width: 100%;
+}
+.efb-merge-thumb--empty {
+  display: grid;
+  place-items: center;
+  background: #1e293b;
+  color: var(--efb-mute);
+  font-size: 13px;
+}
+.efb-merge-cap {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--efb-mute);
+}
+.efb-merge-cap b {
+  color: #fff;
+}

@@ -95,7 +95,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   // 같은 이지폼 명세서를 다른 지시서도 쓸 때(다른 지시서에서 [맞아요] 했거나 홈페이지에 이미 저장됨) — 합칠지 묻는다.
   // merge = 합친 명세서로 묶어 저장, separate = 이 지시서에만 따로.
   const [mergeChoice, setMergeChoice] = useState<Record<number, 'merge' | 'separate'>>({});
-  const [mergeAsk, setMergeAsk] = useState<{ orderId: number; nos: string[]; loading: boolean } | null>(null);
+  const [mergeAsk, setMergeAsk] = useState<{ orderId: number; nos: string[]; loading: boolean; others: number[] } | null>(null);
   // 사람이 넣은 단서(키워드·사이즈) — 지시서별. 넣은 지시서는 단서로 가려내고, 안 넣은 건 지금 방식대로.
   const [clues, setClues] = useState<Record<number, string[]>>({});
   const jobRef = useRef<{ id: number; stop: boolean } | null>(null);
@@ -342,7 +342,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       const sh = sharersOf(orderId);
       if (sh.session.length || sh.saved) {
         const nos = sh.session.map((o) => orderNoCore(o.orderNumber));
-        setMergeAsk({ orderId, nos, loading: sh.saved });
+        setMergeAsk({ orderId, nos, loading: sh.saved, others: sh.session.map((o) => o.id) });
         if (sh.saved) {
           const m = matches[orderId];
           const rd = reads[m.best!.key];
@@ -755,49 +755,75 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         </>
       )}
 
-      {mergeAsk && (
-        <div className="efb-ask" role="dialog" aria-label="합친 명세서 확인" onClick={() => setMergeAsk(null)}>
-          <div className="efb-askbox" onClick={(e) => e.stopPropagation()}>
-            <p className="efb-ask-title">다른 지시서도 쓰는 명세서예요</p>
-            <p className="efb-ask-sub">
-              이 이지폼 명세서는{' '}
-              {mergeAsk.nos.length ? <b>주문 {mergeAsk.nos.join(', ')}</b> : mergeAsk.loading ? '다른 주문' : '다른 지시서'}
-              {mergeAsk.loading ? ' …' : ''}에도 쓰였어요.
-              <br />
-              한 명세서에 지시서 여러 장을 같이 끊은 거라면 <b>합친 명세서</b>로 묶으세요. 명세서 1장을 같이 쓰고 매출은 한 번만
-              잡혀요.
-            </p>
-            <div className="efb-ask-btns">
-              <button type="button" className="efb-ask-cancel" onClick={() => setMergeAsk(null)}>
-                취소
-              </button>
-              <button
-                type="button"
-                className="efb-ask-plain"
-                onClick={() => {
-                  const id = mergeAsk.orderId;
-                  setMergeAsk(null);
-                  mark(id, 'yes', 'separate');
-                }}
-              >
-                이 지시서에만 따로
-              </button>
-              <button
-                type="button"
-                className="efb-primary"
-                autoFocus
-                onClick={() => {
-                  const id = mergeAsk.orderId;
-                  setMergeAsk(null);
-                  mark(id, 'yes', 'merge');
-                }}
-              >
-                합친 명세서로 묶기
-              </button>
+      {mergeAsk && (() => {
+        const me = orders.find((o) => o.id === mergeAsk.orderId);
+        const peers = mergeAsk.others.map((id) => orders.find((o) => o.id === id)).filter((o): o is EfBulkOrder => !!o);
+        const savedNos = mergeAsk.nos.filter((no) => !peers.some((p) => orderNoCore(p.orderNumber) === no));
+        const card = (o: EfBulkOrder | undefined, label: string) =>
+          o ? (
+            <div className="efb-merge-ws" key={o.id}>
+              <div className="efb-merge-thumb">
+                <WorksheetThumbnail pdfUrl={o.worksheetPdfUrl || null} thumbnailUrl={o.worksheetThumbnailUrl || null} />
+              </div>
+              <div className="efb-merge-cap">
+                <b>{label}</b> {shortDate(o.dueDate || o.createdAt)}
+                {o.dueDate ? ' 납' : ''} · {orderNoCore(o.orderNumber)}
+              </div>
+            </div>
+          ) : null;
+        const choose = (c: 'merge' | 'separate') => {
+          const id = mergeAsk.orderId;
+          setMergeAsk(null);
+          mark(id, 'yes', c);
+        };
+        return (
+          <div className="efb-ask" role="dialog" aria-label="두 지시서 합치기 확인" onClick={() => setMergeAsk(null)}>
+            <div className="efb-askbox efb-askbox--wide" onClick={(e) => e.stopPropagation()}>
+              <p className="efb-ask-title">같은 현장에 들어간 지시서인가요?</p>
+              <p className="efb-ask-sub">
+                이 이지폼 명세서를{' '}
+                {peers.length ? '아래 지시서에서도 맞다고 했어요' : ''}
+                {peers.length && (savedNos.length || mergeAsk.loading) ? ', ' : ''}
+                {savedNos.length ? (
+                  <>
+                    <b>주문 {savedNos.join(', ')}</b>에 이미 등록돼 있어요
+                  </>
+                ) : mergeAsk.loading ? (
+                  '다른 주문에 이미 등록돼 있어요 …'
+                ) : (
+                  ''
+                )}
+                .<br />
+                같은 현장이라 명세서 한 장으로 끊은 거라면 <b>두 지시서를 합치세요</b> — 명세서 1장을 같이 쓰고 매출은 한 번만
+                잡혀요.
+              </p>
+              <div className="efb-merge-row">
+                {card(me, '이 지시서')}
+                {peers.map((p) => card(p, '같은 명세서 지시서'))}
+                {savedNos.map((no) => (
+                  <div className="efb-merge-ws efb-merge-ws--saved" key={no}>
+                    <div className="efb-merge-thumb efb-merge-thumb--empty">이미 등록됨</div>
+                    <div className="efb-merge-cap">
+                      <b>이미 등록된 지시서</b> · {no}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="efb-ask-btns">
+                <button type="button" className="efb-ask-cancel" onClick={() => setMergeAsk(null)}>
+                  취소
+                </button>
+                <button type="button" className="efb-ask-plain" onClick={() => choose('separate')}>
+                  다른 현장 — 따로 두기
+                </button>
+                <button type="button" className="efb-primary" autoFocus onClick={() => choose('merge')}>
+                  같은 현장 — 두 지시서 합치기
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {closeAsk && (
         <div className="efb-ask" role="dialog" aria-label="닫기 확인" onClick={() => setCloseAsk(false)}>
