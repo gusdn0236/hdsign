@@ -12,7 +12,10 @@ import { ITEM_CODES, normCode, matchCodes } from "./autoquote/itemCodes";
 const TOKEN_TYPES = ["client", "code", "spec", "text"];
 const TOKEN_LABEL = { client: "거래처", code: "품목코드", spec: "규격", text: "작업키워드" };
 
-const SPEC_RE = /^\d+(?:\.\d+)?\s*[*x×X]\s*\d+(?:\.\d+)?$/;
+// 규격 — '500*100'·'500x100' 같은 숫자×숫자, 또는 'h:140'·'H140'·'w:500'·'가로500'·'높이 120'·'Ø50' 처럼
+// 치수 표시가 붙은 숫자 하나(규격 칸에 그 숫자가 들어간 줄 — 백엔드 parseSpec 이 숫자 하나도 지원).
+const SPEC_RE =
+  /^(?:\d+(?:\.\d+)?\s*[*x×X]\s*\d+(?:\.\d+)?(?:\s*[*x×X]\s*\d+(?:\.\d+)?)?|(?:[hHwWlLdDtT]|가로|세로|높이|폭|길이|두께|지름|[ØøΦφ])\s*[:=]?\s*\d+(?:\.\d+)?)$/;
 const NUM_RE = /^\d+(?:\.\d+)?$/;
 const squeeze = (s) => String(s || "").replace(/\s+/g, "").toLowerCase();
 const CODE_SET = new Set(ITEM_CODES.map(normCode));
@@ -57,6 +60,12 @@ function parseInput(line, clientIndex) {
     // 숫자 + 숫자 → 규격
     if (NUM_RE.test(words[i]) && i + 1 < words.length && NUM_RE.test(words[i + 1])) {
       out.push({ type: "spec", value: `${words[i]}*${words[i + 1]}` });
+      i += 2;
+      continue;
+    }
+    // 치수 표시 + 숫자가 띄어쓰기로 갈라진 경우(예: 'h 140', '높이 120', 'h: 140') → 규격 하나로
+    if (i + 1 < words.length && !NUM_RE.test(words[i]) && SPEC_RE.test(words[i] + words[i + 1])) {
+      out.push({ type: "spec", value: (words[i] + words[i + 1]).replace(/\s+/g, "") });
       i += 2;
       continue;
     }
