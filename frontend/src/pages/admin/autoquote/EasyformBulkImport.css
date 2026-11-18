@@ -1264,3 +1264,22 @@
   flex: 1;
   min-width: 0;
 }
+.efb-clue-chip.is-armed {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+/* 지시서: 미리보기 사진 즉시 → 선명한 PDF 다 그려지면 위로 */
+.efb-fit {
+  position: relative;
+}
+.efb-fit-pdf {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.efb-fit-pdf.is-loading {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}

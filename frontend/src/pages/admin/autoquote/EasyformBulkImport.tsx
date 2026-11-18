@@ -28,7 +28,6 @@ import {
   candidatesToRead,
   rescoreByContent,
   markMerged,
-  splitClues,
   worksheetDims,
   type EfMatch,
   type EfCandidate,
@@ -129,6 +128,12 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   );
 
   const go = useCallback((d: number) => setPos((p) => Math.max(0, Math.min(n - 1, p + d))), [n]);
+  // 비교창 — 다음·이전 지시서를 미리 받아 둬서 넘기자마자 뜨게
+  useEffect(() => {
+    if (detail == null) return;
+    const i = orders.findIndex((o) => o.id === detail);
+    prefetchWorksheets([orders[i + 1], orders[i + 2], orders[i - 1]]);
+  }, [detail, orders]);
 
   // 워처 작업 하나를 끝날 때까지 폴링. onTick 으로 중간 결과(읽은 명세서)를 바로 반영.
   const runJob = async (body: Parameters<typeof startEfBulk>[0], onTick?: (s: Awaited<ReturnType<typeof pollEfBulk>>) => void) => {
@@ -571,7 +576,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                         <span className="efb-ws-client">{o.clientCompanyName || '거래처 없음'}</span>
                       </div>
                       <div className="efb-ws-title" title={o.title || ''}>{o.title || orderNoCore(o.orderNumber)}</div>
-                      {clues[o.id]?.length ? <div className="efb-ws-clues">단서 · {clues[o.id].join(' ')}</div> : null}
+                      {clues[o.id]?.length ? <div className="efb-ws-clues">키워드 · {clues[o.id].join(', ')}</div> : null}
                     </div>
 
                     {state !== 'idle' && <div className={`efb-arrow efb-arrow--${state}`} aria-hidden="true" />}
@@ -655,10 +660,10 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             </p>
             <div className="efb-cta-btns">
               <button type="button" className="efb-secondary" onClick={() => setPhase('clue')} disabled={!n}>
-                ✎ 단서 입력하고 찾기
+                ✎ 키워드 입력하고 찾기
               </button>
               <button type="button" className="efb-primary" onClick={start} disabled={!n}>
-                {Object.keys(clues).length ? `찾기 시작 (단서 ${Object.keys(clues).length}건)` : '바로 찾기'}
+                {Object.keys(clues).length ? `찾기 시작 (키워드 ${Object.keys(clues).length}건)` : '바로 찾기'}
               </button>
             </div>
           </div>
@@ -795,7 +800,7 @@ function DetailView({
   reasons.push({ t: best.days === 0 ? '날짜 같음' : `날짜 ${best.days}일 차이`, good: best.days <= 3 });
   if (best.title >= 0.5) reasons.push({ t: '현장명 일치', good: true });
   if (best.clueN)
-    reasons.push({ t: `단서 일치 ${best.clueHit}/${best.clueN}`, good: best.clueHit === best.clueN });
+    reasons.push({ t: `키워드 일치 ${best.clueHit}/${best.clueN}`, good: best.clueHit === best.clueN });
   if (match.mergedWith?.length)
     reasons.push({ t: `합친 명세서 — 주문 ${mergedNos.join(', ')} 와(과) 같이 써요`, good: true });
   if (best.dimN) reasons.push({ t: `규격 치수 지시서와 일치 ${best.dimHit}/${best.dimN}`, good: (best.dimHit || 0) / best.dimN >= 0.6 });
@@ -902,10 +907,14 @@ function DetailView({
 
 /** 비교창 지시서 — 칸에 꽉 차게(스크롤 없이) 가로·세로 중 맞는 쪽에 맞춰 PDF 1쪽을 그린다. */
 function FitWorksheet({ pdfUrl, thumbUrl, title }: { pdfUrl?: string | null; thumbUrl?: string | null; title?: string | null }) {
+  // 넘기자마자 보이게: ① 미리 만들어 둔 미리보기 사진(JPEG)을 즉시 ② 선명한 PDF 가 다 그려지면 그 위로 바꿔 끼움.
+  // 크기는 미리보기 사진 비율로 먼저 정해 PDF 를 두 번 그리지 않는다.
   const box = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [ratio, setRatio] = useState<number | null>(null); // 가로/세로
   const [failed, setFailed] = useState(false);
+  const [rendered, setRendered] = useState(false);
+  const [thumbBad, setThumbBad] = useState(false);
   useEffect(() => {
     const el = box.current;
     if (!el) return undefined;
@@ -918,31 +927,71 @@ function FitWorksheet({ pdfUrl, thumbUrl, title }: { pdfUrl?: string | null; thu
   useEffect(() => {
     setRatio(null);
     setFailed(false);
-  }, [pdfUrl]);
-  const width = size.w && size.h ? (ratio ? Math.floor(Math.min(size.w, size.h * ratio)) : Math.floor(Math.min(size.w, size.h * 0.75))) : 0;
-  const fallback = thumbUrl ? (
-    <img className="efb-fit-img" src={thumbUrl} alt="지시서" />
-  ) : (
-    <div className="efb-ws-empty">{title || '지시서 없음'}</div>
-  );
+    setRendered(false);
+    setThumbBad(false);
+  }, [pdfUrl, thumbUrl]);
+  const fit = (r: number) => Math.floor(Math.min(size.w, size.h * r));
+  const width = size.w && size.h ? fit(ratio || 0.75) : 0;
+  const ph = thumbUrl && !thumbBad ? (
+    <img
+      className="efb-fit-img"
+      src={thumbUrl}
+      alt="지시서"
+      style={ratio && width ? { width, height: Math.floor(width / ratio) } : undefined}
+      onLoad={(e) => {
+        const im = e.currentTarget;
+        if (!ratio && im.naturalWidth && im.naturalHeight) setRatio(im.naturalWidth / im.naturalHeight);
+      }}
+      onError={() => setThumbBad(true)}
+    />
+  ) : null;
+  if (!pdfUrl || failed) {
+    return (
+      <div className="efb-fit" ref={box}>
+        {ph || <div className="efb-ws-empty">{title || '지시서 없음'}</div>}
+      </div>
+    );
+  }
+  // 미리보기 사진이 있으면 비율을 알 때까지(사진 로드) PDF 를 그리지 않는다 — 한 번만 그리게.
+  const canDraw = width > 0 && (ratio != null || !thumbUrl || thumbBad);
   return (
     <div className="efb-fit" ref={box}>
-      {!pdfUrl || failed ? (
-        fallback
-      ) : width > 0 ? (
-        <Document file={pdfUrl} loading={<span className="efb-spin" />} error={fallback} onLoadError={() => setFailed(true)}>
-          <Page
-            pageNumber={1}
-            width={width}
-            renderTextLayer={false}
-            renderAnnotationLayer={false}
-            devicePixelRatio={Math.min(2.5, window.devicePixelRatio || 1)}
-            onLoadSuccess={(p) => setRatio(p.originalWidth / p.originalHeight)}
-          />
-        </Document>
-      ) : null}
+      {!rendered && (ph || <span className="efb-spin" />)}
+      {canDraw && (
+        <div className={rendered ? 'efb-fit-pdf' : 'efb-fit-pdf is-loading'}>
+          <Document file={pdfUrl} loading={null} error={null} onLoadError={() => setFailed(true)}>
+            <Page
+              pageNumber={1}
+              width={width}
+              renderTextLayer={false}
+              renderAnnotationLayer={false}
+              devicePixelRatio={Math.min(2.5, window.devicePixelRatio || 1)}
+              loading={null}
+              onLoadSuccess={(p) => !ratio && setRatio(p.originalWidth / p.originalHeight)}
+              onRenderSuccess={() => setRendered(true)}
+            />
+          </Document>
+        </div>
+      )}
     </div>
   );
+}
+
+/** 다음 지시서들 미리 받아 두기 — 미리보기 사진 + PDF(브라우저 캐시). 넘기는 순간 바로 뜨게. */
+const prefetched = new Set<string>();
+function prefetchWorksheets(list: (EfBulkOrder | undefined)[]) {
+  for (const o of list) {
+    if (!o) continue;
+    if (o.worksheetThumbnailUrl && !prefetched.has(o.worksheetThumbnailUrl)) {
+      prefetched.add(o.worksheetThumbnailUrl);
+      const im = new Image();
+      im.src = o.worksheetThumbnailUrl;
+    }
+    if (o.worksheetPdfUrl && !prefetched.has(o.worksheetPdfUrl)) {
+      prefetched.add(o.worksheetPdfUrl);
+      fetch(o.worksheetPdfUrl, { cache: 'force-cache' }).catch(() => prefetched.delete(o.worksheetPdfUrl!));
+    }
+  }
 }
 
 /**
@@ -967,6 +1016,7 @@ function ClueEntry({
   onStart: () => void;
 }) {
   const [text, setText] = useState('');
+  const [delArmed, setDelArmed] = useState(false); // 빈칸 Backspace 1번 = 지울 준비, 2번 = 지움(키워드로 찾기와 같음)
   const input = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const n = orders.length;
@@ -975,7 +1025,8 @@ function ClueEntry({
   useEffect(() => {
     input.current?.focus();
     listRef.current?.querySelector('.is-on')?.scrollIntoView({ block: 'nearest' });
-  }, [pos]);
+    prefetchWorksheets([orders[pos + 1], orders[pos + 2], orders[pos - 1]]);
+  }, [pos, orders]);
   if (!o) return null;
   const setMine = (list: string[]) =>
     setClues((prev) => {
@@ -986,20 +1037,31 @@ function ClueEntry({
     });
   const go = (d: number) => {
     setText('');
+    setDelArmed(false);
     setPos(Math.max(0, Math.min(n - 1, pos + d)));
   };
+  const norm = (x: string) => x.replace(/\s+/g, '').toLowerCase();
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용
+    if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용(칩 2개 방지)
+    if (e.key !== 'Backspace') setDelArmed(false);
     if (e.key === 'Enter') {
       e.preventDefault();
       if (e.shiftKey) return go(-1);
-      const add = splitClues(text);
-      if (add.length) setMine([...mine, ...add.filter((c) => !mine.includes(c))]);
-      if (pos < n - 1) go(1);
-      else setText('');
+      const w = text.trim();
+      if (w) {
+        // 키워드 하나 추가 — 같은 지시서에 계속 쌓는다(키워드로 찾기와 같은 방식)
+        if (!mine.some((c) => norm(c) === norm(w))) setMine([...mine, w]);
+        setText('');
+      } else if (pos < n - 1) {
+        go(1); // 빈칸 Enter = 다음 지시서
+      }
     } else if (e.key === 'Backspace' && !text && mine.length) {
       e.preventDefault();
-      setMine(mine.slice(0, -1));
+      if (!delArmed) setDelArmed(true);
+      else {
+        setMine(mine.slice(0, -1));
+        setDelArmed(false);
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onBack();
@@ -1016,7 +1078,7 @@ function ClueEntry({
           <span className="efb-clue-pos">
             <b>{pos + 1}</b> / {n}
           </span>
-          <span className="efb-clue-done">단서 넣은 지시서 {done}개</span>
+          <span className="efb-clue-done">키워드 넣은 지시서 {done}개</span>
         </div>
         <div className="efb-clue-order">
           <b>{o.clientCompanyName || '거래처 없음'}</b>
@@ -1033,25 +1095,33 @@ function ClueEntry({
           ref={input}
           className="efb-clue-input"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setDelArmed(false);
+          }}
+          onBlur={() => setDelArmed(false)}
           onKeyDown={onKey}
-          placeholder="예: 갈바 채널 2400*600"
+          placeholder={mine.length ? '키워드 더 넣기 · 빈칸 Enter = 다음' : '한 단어씩 치고 Enter — 예: 갈바 ⏎ 2400*600 ⏎'}
           autoComplete="off"
         />
         <div className="efb-clue-chips">
-          {mine.map((c) => (
-            <span key={c} className="efb-clue-chip">
+          {mine.map((c, i) => (
+            <span
+              key={c}
+              className={`efb-clue-chip ${delArmed && i === mine.length - 1 ? 'is-armed' : ''}`}
+              title={delArmed && i === mine.length - 1 ? 'Backspace 한 번 더 누르면 지워져요' : undefined}
+            >
               {c}
               <button type="button" onClick={() => setMine(mine.filter((x) => x !== c))} aria-label={`${c} 지우기`}>
                 ✕
               </button>
             </span>
           ))}
-          {!mine.length && <span className="efb-clue-none">단서 없음 — 거래처·납기·지시서 수치로 찾아요</span>}
+          {!mine.length && <span className="efb-clue-none">키워드 없음 — 거래처·납기·지시서 수치로 찾아요</span>}
         </div>
         <p className="efb-clue-help">
-          <kbd>Enter</kbd> 다음 지시서 · 빈칸 <kbd>Enter</kbd> 건너뛰기 · <kbd>Shift+Enter</kbd> 이전 · 빈칸{' '}
-          <kbd>Backspace</kbd> 지우기
+          키워드 치고 <kbd>Enter</kbd> = 하나씩 추가 · 빈칸 <kbd>Enter</kbd> = 다음 지시서 · <kbd>Shift+Enter</kbd> = 이전 ·
+          빈칸 <kbd>Backspace</kbd> 두 번 = 지우기
         </p>
         <div className="efb-clue-list" ref={listRef}>
           {orders.map((x, i) => (
@@ -1066,7 +1136,7 @@ function ClueEntry({
             >
               <span className="efb-clue-row-date">{shortDate(x.dueDate || x.createdAt)}</span>
               <span className="efb-clue-row-client">{x.clientCompanyName}</span>
-              <span className="efb-clue-row-clues">{(clues[x.id] || []).join(' ')}</span>
+              <span className="efb-clue-row-clues">{(clues[x.id] || []).join(', ')}</span>
             </button>
           ))}
         </div>
