@@ -8,19 +8,32 @@
  *       ⑤ [n건 저장] → 홈페이지 명세서에 일괄 입력(이지폼은 안 건드림)
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { Document, Page } from 'react-pdf';
 import WorksheetThumbnailJs from '../../../components/common/WorksheetThumbnail.jsx';
 import {
   startEfBulk,
   pollEfBulk,
   cancelEfBulk,
+  pauseEfBulk,
   probeEasyformAgent,
   extractOrderNos,
   orderNoCore,
   type EfListRow,
   type EfBulkResult,
 } from './data/easyformClient';
-import { matchOrders, efRowsToGrid, rememberClientAlias, type EfMatch, type EfCandidate, type EfOrder } from './data/efMatch';
-import { getEasyformUsedKeys, syncEstimateFromEasyform } from './annot/api';
+import {
+  matchOrders,
+  efRowsToGrid,
+  rememberClientAlias,
+  candidatesToRead,
+  rescoreByContent,
+  markMerged,
+  worksheetDims,
+  type EfMatch,
+  type EfCandidate,
+  type EfOrder,
+} from './data/efMatch';
+import { BASE_URL, getEasyformUsedKeys, syncEstimateFromEasyform } from './annot/api';
 import './EasyformBulkImport.css';
 
 // JS(memo) 컴포넌트라 props 타입이 추론되지 않음 → 느슨하게.
@@ -52,10 +65,18 @@ const shortDate = (s?: string | null) => {
 };
 const bizLabel = (b?: string) => (b === 'corp' ? '주식회사' : '개인');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const dateOf = (o: EfBulkOrder) => new Date(o.dueDate || o.createdAt || 0).getTime();
+const byDate = (a: EfBulkOrder, b: EfBulkOrder) => dateOf(a) - dateOf(b) || a.id - b.id;
+const etaText = (sec: number) => (sec < 60 ? `약 ${Math.max(5, Math.round(sec / 5) * 5)}초 남음` : `약 ${Math.round(sec / 60)}분 남음`);
+const SEC_PER_READ = 6; // 첫 결과 전 추정(실측 6건 38초)
 
 export default function EasyformBulkImport({ orders: ordersProp, token, onClose, onSaved }: Props) {
   // 열 때의 목록으로 고정 — 저장하면서 부모 목록이 줄어들어도 화면이 흔들리지 않게.
-  const [orders] = useState(ordersProp);
+  // 오래된 날짜순. 찾고 나면 '찾은 것 먼저(왼쪽) → 각각 오래된 날짜순'으로 다시 줄 세운다.
+  const [orders, setOrders] = useState(() => [...ordersProp].sort(byDate));
+  const [eta, setEta] = useState('');
+  const [pauseWanted, setPauseWanted] = useState(false);
+  const [pausedNow, setPausedNow] = useState(false);
   const [phase, setPhase] = useState<Phase>('intro');
   const [pos, setPos] = useState(0);
   const [progress, setProgress] = useState('');
@@ -67,10 +88,16 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [swapping, setSwapping] = useState('');
   const [saveResult, setSaveResult] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[] } | null>(null);
   const jobRef = useRef<{ id: number; stop: boolean } | null>(null);
+  const matchRef = useRef<Record<number, EfMatch>>({});
+  const readsRef = useRef<Record<string, EfBulkResult>>({});
+  const dimsRef = useRef<Record<number, number[] | undefined>>({});
+  const dimsWait = useRef<Promise<void>>(Promise.resolve());
+  const phaseRef = useRef<Phase>('intro');
   const trackRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(1200);
 
   const busy = phase === 'export' || phase === 'read' || phase === 'saving' || !!swapping;
+  phaseRef.current = phase;
   const n = orders.length;
 
   useEffect(() => {
@@ -105,6 +132,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       if (job.stop) throw new Error('취소했어요.');
       const s = await pollEfBulk(job.id);
       onTick?.(s);
+      setPausedNow(!!s.paused);
       if (s.progress) setProgress(s.progress);
       if (s.state === 'gone') throw new Error('워처가 다시 시작돼서 작업이 끊겼어요.');
       if (s.state !== 'running') {
@@ -117,6 +145,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
 
   const applyResults = (rs?: EfBulkResult[]) => {
     if (!rs?.length) return;
+    rs.forEach((x) => (readsRef.current[x.key] = x));
     setReads((prev) => {
       const next = { ...prev };
       rs.forEach((x) => (next[x.key] = x));
@@ -139,35 +168,105 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       const ms = matchOrders(orders, rows, used);
       const map: Record<number, EfMatch> = {};
       ms.forEach((m) => (map[m.order.id] = m));
+      matchRef.current = map;
       setMatches(map);
-      const items = ms.filter((m) => m.best).map((m) => ({ ...m.best!.row, key: m.best!.key }));
+      // 짝 찾은 지시서 먼저(왼쪽부터), 각각 오래된 날짜순
+      setOrders((prev) => [...prev].sort((a, b) => Number(!!map[b.id]?.best) - Number(!!map[a.id]?.best) || byDate(a, b)));
+      setPos(0);
+      // 헷갈리는 지시서(같은 거래처·비슷한 점수 후보)는 후보를 최대 3개 같이 읽는다 → 지시서 수치로 다시 매김
+      const seen = new Set<string>();
+      const items = ms
+        .flatMap((m) => candidatesToRead(m))
+        .filter((c) => !seen.has(c.key) && seen.add(c.key))
+        .map((c) => ({ ...c.row, key: c.key }));
+      dimsWait.current = loadDims(ms.filter((m) => candidatesToRead(m).length > 1).map((m) => m.order as EfBulkOrder));
       if (!items.length) {
         setPhase('review');
         setProgress('');
         return;
       }
       setPhase('read');
-      setProgress(`짝지은 명세서 ${items.length}건을 이지폼에서 읽고 있어요`);
-      // 지시서 순서대로 읽히는 게 보기 좋지만, 워처는 목록 위→아래로 움직이는 게 빠르다 → 워처가 정렬.
-      const fin = await runJob({ phase: 'read', items }, (s) => applyResults(s.results));
+      setProgress(`후보 명세서 ${items.length}건을 이지폼에서 읽고 있어요`);
+      setEta(etaText(items.length * SEC_PER_READ));
+      // 남은 시간 — 지금까지 1건당 걸린 시간(일시정지 시간 뺌) × 남은 건수
+      const t0 = Date.now();
+      let pausedMs = 0;
+      let lastTick = t0;
+      const fin = await runJob({ phase: 'read', items }, (s) => {
+        applyResults(s.results);
+        const now = Date.now();
+        if (s.paused) pausedMs += now - lastTick;
+        lastTick = now;
+        const done = s.results?.length || 0;
+        const per = done ? (now - t0 - pausedMs) / 1000 / done : SEC_PER_READ;
+        setEta(s.paused ? '' : etaText(per * (items.length - done)));
+      });
       applyResults(fin.results);
-      setPhase('review');
-      setProgress('');
+      await dimsWait.current;
+      finishRead(fin.results);
     } catch (e) {
       const st = (e as { status?: { results?: EfBulkResult[] } }).status;
       applyResults(st?.results);
       setError((e as Error).message);
       // 읽다가 멈췄어도 읽은 것까지는 확인할 수 있게 review 로.
-      setPhase((p) => (p === 'read' ? 'review' : 'intro'));
+      if (phaseRef.current === 'read') {
+        await dimsWait.current;
+        finishRead(st?.results);
+      }
+      else setPhase('intro');
       setProgress('');
+    } finally {
+      setEta('');
+      setPauseWanted(false);
+      setPausedNow(false);
     }
   };
 
+  // 지시서 수치(도형 가로·세로 mm) — 지시서 올릴 때 같이 올라간 데이터. 헷갈리는 지시서만, 6개씩 나눠 받는다.
+  const loadDims = async (list: EfBulkOrder[]) => {
+    const q = [...list];
+    const worker = async () => {
+      for (let o = q.shift(); o; o = q.shift()) {
+        if (!o.orderNumber || dimsRef.current[o.id] !== undefined) continue;
+        try {
+          const r = await fetch(`${BASE_URL}/api/public/worksheets/${encodeURIComponent(o.orderNumber)}/objects`);
+          dimsRef.current[o.id] = r.ok ? worksheetDims(await r.json()) : [];
+        } catch {
+          dimsRef.current[o.id] = [];
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
+  };
+
+  // 읽기 끝 — 읽은 명세서 내용(규격↔지시서 수치, 비고 주문번호)으로 짝을 다시 정하고,
+  // 짝 찾은 지시서를 왼쪽부터(각각 오래된 날짜순) 다시 세워 확인 단계로.
+  const finishRead = (rs?: EfBulkResult[]) => {
+    (rs || []).forEach((x) => (readsRef.current[x.key] = x));
+    const map = rescoreByContent(matchRef.current, readsRef.current, dimsRef.current);
+    matchRef.current = map;
+    setMatches(map);
+    const ok = new Set(Object.values(readsRef.current).filter((x) => x.ok).map((x) => x.key));
+    const rank = (o: EfBulkOrder) => (map[o.id]?.best && ok.has(map[o.id].best!.key) ? 0 : map[o.id]?.best ? 1 : 2);
+    setOrders((prev) => [...prev].sort((a, b) => rank(a) - rank(b) || byDate(a, b)));
+    setPos(0);
+    setPhase('review');
+    setProgress('');
+  };
+
+  // [정지] — 워처가 지금 명세서까지 닫고 멈춘다(폴링이 끝을 받아 읽은 것까지 확인 단계로).
   const cancel = () => {
-    if (jobRef.current) {
-      jobRef.current.stop = true;
-      cancelEfBulk(jobRef.current.id);
-    }
+    if (jobRef.current) cancelEfBulk(jobRef.current.id);
+    setPauseWanted(false);
+    setProgress('지금 읽던 명세서까지 닫고 멈추는 중…');
+  };
+  // [일시정지]/[계속] — 명세서를 다 닫고 다음 건으로 넘어가는 자리에서 선다.
+  const togglePause = () => {
+    if (!jobRef.current) return;
+    const on = !pauseWanted;
+    setPauseWanted(on);
+    pauseEfBulk(jobRef.current.id, on);
+    if (!on) setPausedNow(false);
   };
 
   // 다른 후보로 바꾸기 — 그 1건만 워처가 열어 읽고, 이 지시서의 짝으로 바꾼다(다른 지시서 짝이었으면 거기선 뺌).
@@ -182,14 +281,18 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       }
       setMatches((prev) => {
         const next = { ...prev };
+        // 다른 지시서가 쓰는 명세서 — 같은 거래처·납기 ±1일이면 빼앗지 않고 같이 쓰기(합친 명세서), 아니면 가져옴
+        const share = c.client >= 0.85 && c.days <= 1;
         Object.values(next).forEach((m) => {
-          if (m.order.id !== orderId && m.best?.key === c.key) {
+          if (m.order.id !== orderId && m.best?.key === c.key && !share) {
             next[m.order.id] = { ...m, best: null, others: [c, ...m.others] };
           }
         });
         const me = next[orderId];
         const old = me.best;
         next[orderId] = { ...me, best: c, others: [...(old ? [old] : []), ...me.others.filter((x) => x.key !== c.key)], sure: false };
+        for (const m of markMerged(Object.values(next))) next[m.order.id] = m;
+        matchRef.current = next;
         return next;
       });
       setVerdict((v) => {
@@ -228,27 +331,35 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     setError('');
     let ok = 0;
     const fail: { order: EfBulkOrder; msg: string }[] = [];
-    const queue = [...yesList];
+    // 같은 이지폼 명세서를 [맞아요] 한 지시서끼리 묶는다 → 합친 명세서 1장(대표 = 납기 빠른 주문), 매출은 한 번만.
+    const groups = new Map<string, EfBulkOrder[]>();
+    for (const o of [...yesList].sort(byDate)) {
+      const k = matches[o.id].best!.key;
+      groups.set(k, [...(groups.get(k) || []), o]);
+    }
+    const queue = [...groups.values()];
     const worker = async () => {
-      for (let o = queue.shift(); o; o = queue.shift()) {
-        const m = matches[o.id];
+      for (let g = queue.shift(); g; g = queue.shift()) {
+        const m = matches[g[0].id];
         const rd = reads[m.best!.key];
         try {
           const grid = efRowsToGrid(rd.rows || []);
-          const sum = grid.reduce((a, g) => a + (Number(g.공급가액) || 0), 0);
+          const sum = grid.reduce((a, x) => a + (Number(x.공급가액) || 0), 0);
           await syncEstimateFromEasyform(token, {
-            orderNumbers: [orderNoCore(o.orderNumber)],
+            orderNumbers: g.map((o) => orderNoCore(o.orderNumber)),
             grid,
             total: sum,
             source: 'batch',
             efDate: rd.date || m.best!.row.date,
             efTotal: rd.total || m.best!.row.total,
           });
-          rememberClientAlias(o.clientCompanyName, m.best!.row.client);
-          onSaved(o.id);
-          ok++;
+          g.forEach((o) => {
+            rememberClientAlias(o.clientCompanyName, m.best!.row.client);
+            onSaved(o.id);
+          });
+          ok += g.length;
         } catch (e) {
-          fail.push({ order: o, msg: (e as Error).message });
+          g.forEach((o) => fail.push({ order: o, msg: (e as Error).message }));
         }
       }
     };
@@ -312,8 +423,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     return { found, none, yes, no, left: Math.max(0, found - yes - no) };
   }, [orders, matches, reads, verdict]);
 
-  const CARD_W = 248;
-  const GAP = 28;
+  const CARD_W = 300;
+  const GAP = 34;
   const offset = viewW / 2 - CARD_W / 2 - pos * (CARD_W + GAP);
   const detailOrder = detail != null ? orders.find((o) => o.id === detail) : null;
 
@@ -337,16 +448,31 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             </li>
           ))}
         </ol>
-        <button type="button" className="efb-x" onClick={busy ? cancel : onClose} title={busy ? '멈추기' : '닫기 (Esc)'}>
-          {busy ? '멈추기' : '✕'}
+        <button type="button" className="efb-x" onClick={onClose} disabled={busy} title={busy ? '작업 중엔 [정지]를 먼저 눌러주세요' : '닫기 (Esc)'}>
+          ✕
         </button>
       </header>
 
       {(phase === 'export' || phase === 'read' || progress) && (
-        <div className="efb-progress">
-          <span className="efb-spin" aria-hidden="true" />
-          <span>{progress || '이지폼 작업 중'}</span>
-          <span className="efb-progress-hint">이지폼은 숨은 채로 작업해요 · 그동안 이지폼은 만지지 마세요 · ESC 로 멈춤</span>
+        <div className={`efb-progress ${pausedNow ? 'is-paused' : ''}`}>
+          {pausedNow ? <span className="efb-pausedot" aria-hidden="true" /> : <span className="efb-spin" aria-hidden="true" />}
+          <span>
+            {pausedNow
+              ? '일시정지됨 — [계속]을 누르면 이어서 해요'
+              : pauseWanted
+                ? '지금 명세서까지 읽고 일시정지해요…'
+                : progress || '이지폼 작업 중'}
+          </span>
+          {eta && !pauseWanted && <span className="efb-eta">{eta}</span>}
+          {(phase === 'export' || phase === 'read') && (
+            <span className="efb-ctl">
+              <button type="button" onClick={togglePause} className={pauseWanted ? 'is-on' : ''}>
+                {pauseWanted ? '▶ 계속' : '❚❚ 일시정지'}
+              </button>
+              <button type="button" onClick={cancel} className="efb-ctl-stop">■ 정지</button>
+            </span>
+          )}
+          <span className="efb-progress-hint">이지폼은 숨은 채로 작업해요 · 그동안 이지폼은 만지지 마세요</span>
         </div>
       )}
       {error && (
@@ -418,7 +544,22 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                         <span className="efb-ef-top">
                           <span className={`efb-biz efb-biz--${m.best.row.biz}`}>{bizLabel(m.best.row.biz)}</span>
                           <span className="efb-ef-date">{shortDate(rd.date || m.best.row.date)}</span>
-                          {sure && <span className="efb-sure" title="이지폼 비고에 이 주문번호가 적혀 있어요">주문번호 ✓</span>}
+                          {m.mergedWith?.length ? (
+                            <span
+                              className="efb-merged"
+                              title={`이 명세서를 같이 쓰는 지시서: ${m.mergedWith
+                                .map((id) => orderNoCore(orders.find((x) => x.id === id)?.orderNumber))
+                                .join(', ')}`}
+                            >
+                              합친 명세서 +{m.mergedWith.length}
+                            </span>
+                          ) : sure ? (
+                            <span className="efb-sure" title="이지폼 비고에 이 주문번호가 적혀 있어요">주문번호 ✓</span>
+                          ) : phase === 'review' && m.others.some((c) => reads[c.key]?.ok) ? (
+                            <span className="efb-alt" title="비슷한 명세서가 더 있어요 — 눌러서 비교해 보세요">
+                              후보 {1 + m.others.filter((c) => reads[c.key]?.ok).length}개
+                            </span>
+                          ) : null}
                         </span>
                         <span className="efb-ef-client">{m.best.row.client}</span>
                         <span className="efb-ef-item">{m.best.row.firstItem || '—'}</span>
@@ -434,6 +575,21 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           </>
         )}
       </div>
+
+      {n > 5 && (
+        <div className="efb-scrub-row">
+          <input
+            type="range"
+            className="efb-scrub"
+            min={0}
+            max={n - 1}
+            value={pos}
+            onChange={(e) => setPos(Number(e.target.value))}
+            aria-label="지시서 넘기기"
+            style={{ ['--efb-p' as string]: `${n > 1 ? (pos / (n - 1)) * 100 : 0}%` }}
+          />
+        </div>
+      )}
 
       <footer className="efb-foot">
         <div className="efb-count">
@@ -505,6 +661,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           onClose={() => setDetail(null)}
           onMark={(v) => mark(detailOrder.id, v)}
           onUse={(c) => pickCandidate(detailOrder.id, c)}
+          mergedNos={(matches[detailOrder.id].mergedWith || []).map((id) => orderNoCore(orders.find((x) => x.id === id)?.orderNumber))}
           onNav={(d) => {
             const idx = orders.findIndex((o) => o.id === detailOrder.id);
             const ni = Math.max(0, Math.min(n - 1, idx + d));
@@ -530,6 +687,7 @@ function DetailView({
   onMark,
   onUse,
   onNav,
+  mergedNos,
 }: {
   order: EfBulkOrder;
   match: EfMatch;
@@ -543,6 +701,7 @@ function DetailView({
   onMark: (v: Verdict) => void;
   onUse: (c: EfCandidate) => void;
   onNav: (d: number) => void;
+  mergedNos: string[];
 }) {
   const best = match.best!;
   const rows = (read?.rows || []).map((r) => r);
@@ -555,6 +714,9 @@ function DetailView({
   reasons.push({ t: best.client >= 0.85 ? '거래처 같음' : `거래처 비슷함 (${Math.round(best.client * 100)}%)`, good: best.client >= 0.85 });
   reasons.push({ t: best.days === 0 ? '날짜 같음' : `날짜 ${best.days}일 차이`, good: best.days <= 3 });
   if (best.title >= 0.5) reasons.push({ t: '현장명 일치', good: true });
+  if (match.mergedWith?.length)
+    reasons.push({ t: `합친 명세서 — 주문 ${mergedNos.join(', ')} 와(과) 같이 써요`, good: true });
+  if (best.dimN) reasons.push({ t: `규격 치수 지시서와 일치 ${best.dimHit}/${best.dimN}`, good: (best.dimHit || 0) / best.dimN >= 0.6 });
 
   return (
     <div className="efb-detail" role="dialog" aria-label="지시서와 명세서 비교" onClick={onClose}>
@@ -570,12 +732,7 @@ function DetailView({
         </div>
         <div className="efb-dbody">
           <div className="efb-dws">
-            <WorksheetThumbnail
-              pdfUrl={order.worksheetPdfUrl || null}
-              thumbnailUrl={order.worksheetPdfUrl ? null : order.worksheetThumbnailUrl || null}
-              rootMargin="400px 0px"
-              fallback={<div className="efb-ws-empty">{order.title || '지시서 없음'}</div>}
-            />
+            <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
           </div>
           <div className="efb-dstmt">
             <div className="efb-dstmt-head">
@@ -656,6 +813,51 @@ function DetailView({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 비교창 지시서 — 칸에 꽉 차게(스크롤 없이) 가로·세로 중 맞는 쪽에 맞춰 PDF 1쪽을 그린다. */
+function FitWorksheet({ pdfUrl, thumbUrl, title }: { pdfUrl?: string | null; thumbUrl?: string | null; title?: string | null }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [ratio, setRatio] = useState<number | null>(null); // 가로/세로
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return undefined;
+    const upd = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    const ro = new ResizeObserver(upd);
+    ro.observe(el);
+    upd();
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    setRatio(null);
+    setFailed(false);
+  }, [pdfUrl]);
+  const width = size.w && size.h ? (ratio ? Math.floor(Math.min(size.w, size.h * ratio)) : Math.floor(Math.min(size.w, size.h * 0.75))) : 0;
+  const fallback = thumbUrl ? (
+    <img className="efb-fit-img" src={thumbUrl} alt="지시서" />
+  ) : (
+    <div className="efb-ws-empty">{title || '지시서 없음'}</div>
+  );
+  return (
+    <div className="efb-fit" ref={box}>
+      {!pdfUrl || failed ? (
+        fallback
+      ) : width > 0 ? (
+        <Document file={pdfUrl} loading={<span className="efb-spin" />} error={fallback} onLoadError={() => setFailed(true)}>
+          <Page
+            pageNumber={1}
+            width={width}
+            renderTextLayer={false}
+            renderAnnotationLayer={false}
+            devicePixelRatio={Math.min(2.5, window.devicePixelRatio || 1)}
+            onLoadSuccess={(p) => setRatio(p.originalWidth / p.originalHeight)}
+          />
+        </Document>
+      ) : null}
     </div>
   );
 }

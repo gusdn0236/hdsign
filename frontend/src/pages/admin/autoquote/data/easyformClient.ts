@@ -19,7 +19,7 @@
  * 현장 에이전트(17345)가 아니라 워처에 통합 — 사무실은 상시 켜두는 워처 1개만으로 동작(별도 exe 없음).
  */
 const AGENT_URL =
-  import.meta.env.VITE_HDSIGN_WATCHER_URL || 'http://127.0.0.1:5577';
+  import.meta.env?.VITE_HDSIGN_WATCHER_URL || 'http://127.0.0.1:5577';
 
 /**
  * 이지폼 한 행으로 채워질 셀들 — 정확히 이 7개(월일=자동·비고=미사용은 제외).
@@ -300,6 +300,7 @@ export interface EfBulkStatus {
   progress?: string;
   lists?: { biz: 'corp' | 'personal'; name: string; rows: EfListRow[] }[];
   results?: EfBulkResult[];
+  paused?: boolean;
 }
 
 export async function startEfBulk(
@@ -324,6 +325,20 @@ export async function pollEfBulk(id: number): Promise<EfBulkStatus> {
 export async function cancelEfBulk(id: number): Promise<void> {
   try {
     await fetch(`${AGENT_URL}/easyform/bulk/cancel?id=${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
+      cache: 'no-store',
+      body: '{}',
+    });
+  } catch {
+    /* 워처가 꺼졌으면 무시 */
+  }
+}
+
+/** 일시정지(on=true)/계속(on=false) — 워처는 명세서를 다 닫고 다음 건으로 넘어가는 자리에서 멈춘다. */
+export async function pauseEfBulk(id: number, on: boolean): Promise<void> {
+  try {
+    await fetch(`${AGENT_URL}/easyform/bulk/pause?id=${id}&on=${on ? 1 : 0}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
       cache: 'no-store',

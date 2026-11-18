@@ -8,7 +8,7 @@
 백그라운드(2026-11-18 실측): 화면 클릭(SendInput) 대신 **그 컨트롤 창에 직접 마우스·키 메시지를 보낸다**
 (PostMessage WM_LBUTTONDOWN/UP, WM_KEYDOWN/UP). 이지폼이 최소화돼 있어도(델파이 = 메인 창 숨김) 버튼·목록·
 명세서 표 모두 반응한다 → 이지폼을 펼치지 않고, 홈페이지 화면만 보인 채로 끝난다. 사람 마우스·키보드는
-막지 않는다(화면을 안 쓰므로). ESC 는 누르면 멈춤(감시만). ⚠ 작업 중엔 이지폼을 직접 만지지 말 것.
+막지 않는다(화면을 안 쓰므로). 정지·일시정지는 웹 버튼으로만(ESC 정지 없음 — 실수 방지). ⚠ 작업 중엔 이지폼을 직접 만지지 말 것.
 (BM_CLICK·WM_COMMAND(BN_CLICKED)·CN_COMMAND 는 안 먹었음 — 마우스 메시지만 됨.)
 
 안전 규칙(사용자 지시 2026-11-18 — 이지폼은 함부로 누르면 안 됨):
@@ -36,6 +36,7 @@ _JOB = {"id": 0, "state": "idle", "phase": "", "message": "", "progress": "",
         "lists": [], "results": [], "at": 0.0}
 _CSV_DIR_HINT = "easyformnetc\\temp"
 _ABORT = threading.Event()
+_PAUSE = threading.Event()
 _LAST_LISTS: dict = {}  # biz → 마지막 export 목록(읽기에서 줄 어긋남 보정용)
 
 if ef.EASYFORM_AVAILABLE:
@@ -180,19 +181,29 @@ def _assert_clean(main, allow=("TfrmListExchange",)) -> None:
 
 
 def _aborted() -> bool:
-    """ESC = 멈춤. 사람 키보드는 막지 않고 눌렸는지만 본다. 웹 [멈추기]·잠금 중 ESC 도 같은 신호."""
-    if _u.GetAsyncKeyState(0x1B) & 0x8000:
-        _ABORT.set()
-    try:
-        if ef._EF_ABORT.is_set():  # 아래 '이지폼이 앞에 나오면 잠금' 중에 누른 ESC
-            _ABORT.set()
-    except Exception:
-        pass
+    """웹 [정지] 버튼으로만 멈춘다(사용자 지시 2026-11-18 — 실수로 ESC 를 눌러 멈추는 일이 있어 ESC 정지는 없앰)."""
     return _ABORT.is_set()
 
 
+def _pause_point(progress=None) -> None:
+    """웹 [일시정지] — 명세서를 다 닫고 다음 건으로 넘어가는 자리에서만 멈춘다(이지폼에 창이 열린 채 서지 않게).
+    [계속] 이면 이어서, [정지] 면 멈춤."""
+    if not _PAUSE.is_set():
+        return
+    with _LOCK:
+        _JOB["paused"] = True
+    if progress:
+        progress("일시정지됨 — [계속]을 누르면 이어서 해요")
+    while _PAUSE.is_set() and not _ABORT.is_set():
+        time.sleep(0.15)
+    with _LOCK:
+        _JOB["paused"] = False
+    if _ABORT.is_set():
+        raise Stop("정지했어요.")
+
+
 def _watch_front(stop: threading.Event, home) -> None:
-    """작업 중 사람이 이지폼을 앞으로 불러오면(사용자 제안 2026-11-18): 즉시 마우스·키보드 잠금(ESC 는 멈춤)
+    """작업 중 사람이 이지폼을 앞으로 불러오면(사용자 제안 2026-11-18): 즉시 마우스·키보드 잠금
     → 이지폼을 다시 내리고 홈페이지 창을 앞으로 → 잠금 해제. 자동화는 숨은 창에 메시지로 하므로 계속 진행된다.
     ⚠ 이지폼을 불러온 첫 클릭 자체는 못 막는다(이미 들어간 뒤 감지)."""
     pids = set()
@@ -233,7 +244,7 @@ def _wait(cond, timeout: float, step: float = 0.08):
     t0 = time.time()
     while time.time() - t0 < timeout:
         if _aborted():
-            raise Stop("ESC 로 멈췄어요.")
+            raise Stop("정지했어요.")
         v = cond()
         if v:
             return v
@@ -547,13 +558,13 @@ def _read_form(form) -> list:
     going = True
     for rc in cells:
         if _aborted():
-            raise Stop("ESC 로 멈췄어요.")
+            raise Stop("정지했어요.")
         if not take(read_row(rc)):
             going = False
             break
     while going and len(rows) < 200:
         if _aborted():
-            raise Stop("ESC 로 멈췄어요.")
+            raise Stop("정지했어요.")
         before = ef._ef_vpos(grid)
         _u.SendMessageW(grid, 0x0115, 1, None)  # SB_LINEDOWN — 보기만 한 줄 아래(새 줄 안 생김)
         time.sleep(0.05)
@@ -613,8 +624,9 @@ def _read_items(items: list, progress, on_result) -> None:
                 raise Stop(f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
 
         for it in sorted(its, key=lambda x: int(x.get("idx") or 0)):
+            _pause_point(progress)
             if _aborted():
-                raise Stop("ESC 로 멈췄어요.")
+                raise Stop("정지했어요.")
             idx = int(it.get("idx") or 0)
             want = str(it.get("total") or "")
             progress(f"이지폼 명세서 읽는 중 {done + 1}/{total_n} · {it.get('date', '')} {it.get('client', '')}")
@@ -677,8 +689,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
         home = _JOB.get("home")
     watch_stop = threading.Event()
     threading.Thread(target=_watch_front, args=(watch_stop, home), daemon=True).start()
-    _wait(lambda: not (_u.GetAsyncKeyState(0x1B) & 0x8000), 0.5)  # 시작 순간 눌려 있던 ESC 무시
-    _ABORT.clear()
+    _PAUSE.clear()
     try:
         if phase == "export":
             year = int(body.get("year") or time.localtime().tm_year)
@@ -687,6 +698,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
                 raise Stop("켜져 있는 이지폼이 없어요.")
             lists = []
             for m in ms:
+                _pause_point(progress)
                 rows = _export_one(m, year, progress)
                 lists.append({"biz": m["biz"], "name": m["name"], "rows": rows})
                 _LAST_LISTS[m["biz"]] = rows
@@ -727,7 +739,7 @@ def handle_start(body: "dict | None") -> "tuple[int, dict]":
         except Exception:
             home = None
         _JOB.update(state="running", phase=phase, message="", progress="", lists=[], results=[], at=time.time(),
-                    home=home)
+                    home=home, paused=False)
     threading.Thread(target=_run, args=(phase, jid, body), daemon=True).start()
     return 200, {"started": True, "id": jid}
 
@@ -739,13 +751,23 @@ def handle_status(jid: int) -> dict:
             return {"state": "gone"}
         return {"state": _JOB["state"], "phase": _JOB["phase"], "message": _JOB["message"],
                 "progress": _JOB["progress"], "lists": list(_JOB["lists"]),
-                "results": list(_JOB["results"])}
+                "results": list(_JOB["results"]), "paused": bool(_JOB.get("paused"))}
+
+
+def handle_pause(jid: int, on: bool) -> dict:
+    """POST /easyform/bulk/pause?id=N&on=1|0 — 일시정지/계속."""
+    with _LOCK:
+        live = jid == _JOB["id"] and _JOB["state"] == "running"
+    if live:
+        (_PAUSE.set if on else _PAUSE.clear)()
+    return {"ok": True, "paused": on and live}
 
 
 def handle_cancel(jid: int) -> dict:
-    """POST /easyform/bulk/cancel — ESC 와 같다(지금 하던 칸까지만 하고 멈춤)."""
+    """POST /easyform/bulk/cancel — [정지]. 지금 하던 명세서까지만 닫고 멈춘다."""
     with _LOCK:
         live = jid == _JOB["id"] and _JOB["state"] == "running"
     if live:
         _ABORT.set()
+        _PAUSE.clear()
     return {"ok": True}

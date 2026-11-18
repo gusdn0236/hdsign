@@ -758,6 +758,15 @@ class _PingHandler(BaseHTTPRequestHandler):
                 bbody = {}
             self._send_json(*easyform_bulk.handle_start(bbody))
             return
+        if parsed.path == "/easyform/bulk/pause":
+            import easyform_bulk
+            q = parse_qs(parsed.query)
+            try:
+                bid = int((q.get("id") or ["0"])[0] or 0)
+            except ValueError:
+                bid = 0
+            self._send_json(200, easyform_bulk.handle_pause(bid, (q.get("on") or ["1"])[0] == "1"))
+            return
         if parsed.path == "/easyform/bulk/cancel":
             import easyform_bulk
             try:

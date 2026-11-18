@@ -10,7 +10,8 @@
  *   - 첫 줄 품목이 '아크릴5T' 처럼 흔한 말이면 여러 명세서에 다 나와서 무게가 0 에 가깝다(IDF).
  * 배정: 점수 높은 짝부터 — 명세서 1건은 주문 1건에만.
  */
-import type { EfListRow } from './easyformClient';
+import type { EfListRow, EasyformPulledRow } from './easyformClient';
+import { extractOrderNos, orderNoCore } from './easyformClient';
 
 export interface EfOrder {
   id: number;
@@ -28,6 +29,11 @@ export interface EfCandidate {
   client: number; // 0~1
   days: number; // 날짜 차이(일)
   title: number; // 0~1
+  // 읽은 뒤 내용으로 다시 매긴 점수(rescoreByContent) — 규격↔지시서 도형 일치, 비고 주문번호
+  final?: number;
+  dimHit?: number;
+  dimN?: number;
+  remark?: 'own' | 'other' | '';
 }
 
 export interface EfMatch {
@@ -35,6 +41,31 @@ export interface EfMatch {
   best: EfCandidate | null;
   others: EfCandidate[]; // 다음 후보들(사람이 바꿔볼 수 있게)
   sure: boolean; // 거래처 맞고 날짜 가깝고 2등과 차이 큼
+  // 합친 명세서 — 같은 이지폼 명세서를 같이 쓰는 다른 주문 id(같은 거래처 지시서 여러 장을 명세서 1장으로 끊은 경우)
+  mergedWith?: number[];
+}
+
+/**
+ * 합친 명세서 허용 — 같은 거래처 지시서 여러 장을 명세서 1장으로 끊는 경우가 있다(사용자 2026-11-18).
+ * 1:1 배정 뒤 짝이 없는(또는 납기 근처에 없는) 지시서는, 다른 지시서가 가져간 명세서라도
+ * 같은 거래처·납기 ±1일이면 같이 쓰게 한다. 그리고 같은 명세서를 쓰는 주문끼리 mergedWith 로 묶는다.
+ */
+function shareLeftovers<T extends { id: number; best: EfCandidate | null; cands: EfCandidate[] }>(list: T[]): void {
+  for (const p of list) {
+    if (p.best && p.best.days <= 3) continue;
+    const taken = new Set(list.filter((x) => x !== p && x.best).map((x) => x.best!.key));
+    const c = p.cands.find((x) => taken.has(x.key) && x.client >= 0.85 && x.days <= 1);
+    if (c) p.best = c;
+  }
+}
+
+export function markMerged(ms: EfMatch[]): EfMatch[] {
+  const byKey = new Map<string, number[]>();
+  ms.forEach((m) => m.best && byKey.set(m.best.key, [...(byKey.get(m.best.key) || []), m.order.id]));
+  return ms.map((m) => {
+    const ids = m.best ? (byKey.get(m.best.key) || []).filter((id) => id !== m.order.id) : [];
+    return { ...m, mergedWith: ids.length ? ids : undefined, sure: ids.length ? false : m.sure };
+  });
 }
 
 export const efRowKey = (r: EfListRow) => `${r.biz}:${r.idx}`;
@@ -119,9 +150,15 @@ function toTime(s: string | null | undefined): number | null {
   return Date.UTC(+m[1], +m[2] - 1, +m[3]);
 }
 
-/** 지시서 날짜(납기·등록일) ↔ 명세서 날짜(발행·작성) 중 가장 가까운 차이(일). 못 읽으면 999. */
+/**
+ * 날짜 차이(일). 이지폼은 **발행일 = 납기**로 쓰는 게 보통(실측 정답 50건: 같은 날 37, ±3일 44) →
+ * 납기가 있으면 '납기 ↔ 발행일'만 본다. 납기가 없을 때만 등록일 ↔ 발행·작성일 중 가까운 쪽. 못 읽으면 999.
+ */
 export function dayGap(o: EfOrder, r: EfListRow): number {
-  const os = [toTime(o.dueDate), toTime(o.createdAt)].filter((x): x is number => x != null);
+  const due = toTime(o.dueDate);
+  const issued = toTime(r.date);
+  if (due != null && issued != null) return Math.round(Math.abs(due - issued) / DAY);
+  const os = [toTime(o.createdAt)].filter((x): x is number => x != null);
   const rs = [toTime(r.date), toTime(r.written)].filter((x): x is number => x != null);
   let best = 999;
   for (const a of os) for (const b of rs) best = Math.min(best, Math.abs(a - b) / DAY);
@@ -150,7 +187,8 @@ export function matchOrders(
   const digits = (s: string) => String(s || '').replace(/[^0-9-]/g, '');
   const usedSet = used.map((u) => ({ k: `${u.date}|${digits(u.total)}`, client: u.client }));
   const free = rows.filter(
-    (r) => !usedSet.some((u) => u.k === `${r.date}|${digits(r.total)}` && clientSim(u.client, r.client, alias) >= MIN_CLIENT),
+    (r) => Number(digits(r.total)) > 0 && // 0원·마이너스(반품·정정) 명세서는 후보에서 뺌
+      !usedSet.some((u) => u.k === `${r.date}|${digits(r.total)}` && clientSim(u.client, r.client, alias) >= MIN_CLIENT),
   );
   // 첫 줄 품목 낱말의 흔함(IDF) — '아크릴5t' 처럼 여기저기 나오는 낱말은 무게 ≈ 0.
   const df = new Map<string, number>();
@@ -179,8 +217,8 @@ export function matchOrders(
         }
       }
       if (c < MIN_CLIENT && tw < 0.5) return;
-      const dateScore = Math.exp(-days / 6); // 0일 1, 3일 0.6, 7일 0.3, 14일 0.1
-      const score = 3 * c + 1.5 * dateScore + 1.5 * tw;
+      const dateScore = Math.exp(-days / 2); // 0일 1, 1일 .61, 2일 .37, 3일 .22, 7일 .03 — 납기 당일이 확실히 앞
+      const score = 3 * c + 2.5 * dateScore + 1.5 * tw;
       cands.push({ row: r, key: efRowKey(r), score, client: c, days, title: tw });
     });
     cands.sort((a, b) => b.score - a.score || a.days - b.days);
@@ -198,13 +236,17 @@ export function matchOrders(
     bestOf.set(oi, c);
     takenRow.add(c.key);
   }
-  return perOrder.map((p, oi) => {
-    const best = bestOf.get(oi) || null;
-    const others = p.cands.filter((c) => c.key !== best?.key).slice(0, 4);
-    const second = others[0];
-    const sure = !!best && best.client >= 0.85 && best.days <= 7 && (!second || best.score - second.score >= 0.8);
-    return { order: p.order, best, others, sure };
-  });
+  // (읽기 전엔 날짜만으로 합친 명세서를 만들지 않는다 — 아직 안 쓴 명세서를 기존 것에 잘못 붙임. 읽은 뒤 근거로만)
+  const work = perOrder.map((p, oi) => ({ id: oi, best: bestOf.get(oi) || null, cands: p.cands }));
+  return markMerged(
+    perOrder.map((p, oi) => {
+      const best = work[oi].best;
+      const others = p.cands.filter((c) => c.key !== best?.key).slice(0, 4);
+      const second = others[0];
+      const sure = !!best && best.client >= 0.85 && best.days <= 3 && (!second || best.score - second.score >= 0.8);
+      return { order: p.order, best, others, sure };
+    }),
+  );
 }
 
 // ---- 가져온 줄 → 홈페이지 명세서 grid (AutoQuote 의 normEfRows + efRowsToGrid 와 같은 규칙) ----
@@ -254,4 +296,111 @@ export function efRowsToGrid(
         _qtyFixed: true,
       };
     });
+}
+
+
+// ---- 읽은 뒤 내용으로 다시 매기기 (2026-11-18 실데이터 점검) -----------------------------------------
+// 홈페이지 지시서엔 현장명이 없다(제목 거의 비어 있음, PDF 글자도 도형). 그래서 같은 거래처·같은 날 명세서가
+// 여럿이면 거래처·날짜만으론 못 가린다(실측 1등 정답 70%). 대신 지시서 도형 크기(mm, 치수 오버레이 데이터)와
+// 이지폼 규격 칸 숫자('2040*1470', 'h:350')를 맞춰 보면 틀린 7건 중 6건이 가려졌다 → 후보 몇 개를 같이 읽고 다시 매김.
+
+/** 지시서 도형 데이터(/api/public/worksheets/{no}/objects) → 도형 가로·세로 mm 목록(10mm 이상). */
+export function worksheetDims(g: { objects?: { w?: number; h?: number }[]; extent?: { w?: number; h?: number } } | null): number[] {
+  if (!g) return [];
+  const set = new Set<number>();
+  for (const o of g.objects || []) {
+    for (const v of [o.w, o.h]) if (v && v >= 10) set.add(Math.round(v));
+  }
+  for (const v of [g.extent?.w, g.extent?.h]) if (v && v >= 10) set.add(Math.round(v));
+  return [...set];
+}
+
+/** 규격 칸 숫자(20 이상) — '2040*1470*100' → 2040,1470,100 / 'h:350' → 350. */
+export function specNums(rows: EasyformPulledRow[]): number[] {
+  const out: number[] = [];
+  for (const r of rows) for (const m of (r.spec || '').matchAll(/\d{2,5}/g)) if (+m[0] >= 20) out.push(+m[0]);
+  return out;
+}
+
+/**
+ * 같이 읽을 후보 — 1등 + **같은 거래처·납기 ±3일 안** 후보(최대 3개). 그 안에서 규격 치수·비고로 최종 순위.
+ * 1등부터 납기와 3일 넘게 떨어져 있으면(납기 근처에 없음) 점수 비슷한 후보를 대신 본다.
+ */
+export function candidatesToRead(m: EfMatch): EfCandidate[] {
+  if (!m.best) return [];
+  const near = m.best.days <= 3
+    ? m.others.filter((c) => c.client >= 0.85 && c.days <= 3)
+    : m.others.filter((c) => c.client >= 0.85 && c.score >= m.best!.score - 1.5);
+  return [m.best, ...near.slice(0, 2)];
+}
+
+/**
+ * 읽은 후보들을 내용으로 다시 매겨 1:1 로 다시 짝짓는다.
+ *   final = 처음 점수 + 4×(규격 일치율 - 0.5) + (비고에 이 주문번호 +10 / 다른 주문번호만 -4)
+ *   규격 일치율 = (맞은 숫자 + 0.5) / (숫자 수 + 1) — 숫자가 없으면 0.5(중립).
+ * 읽지 않은 후보는 처음 점수 그대로 '다른 후보'에 남는다.
+ */
+export function rescoreByContent(
+  matches: Record<number, EfMatch>,
+  reads: Record<string, { ok: boolean; rows?: EasyformPulledRow[] }>,
+  dimsByOrder: Record<number, number[] | undefined>,
+): Record<number, EfMatch> {
+  const scored: Record<number, EfCandidate[]> = {};
+  const pairs: { id: number; c: EfCandidate }[] = [];
+  for (const [idStr, m] of Object.entries(matches)) {
+    const id = Number(idStr);
+    const own = orderNoCore(m.order.orderNumber);
+    const dims = dimsByOrder[id] || [];
+    const all = [m.best, ...m.others].filter((c): c is EfCandidate => !!c);
+    scored[id] = all.map((c) => {
+      const rd = reads[c.key];
+      if (!rd?.ok) return { ...c, final: c.score };
+      const rows = rd.rows || [];
+      const nums = specNums(rows);
+      const hit = dims.length ? nums.filter((n) => dims.some((d) => Math.abs(n - d) <= Math.max(5, n * 0.03))).length : 0;
+      const dimRate = dims.length && nums.length ? (hit + 0.5) / (nums.length + 1) : 0.5;
+      const nos = extractOrderNos(rows.map((r) => r.remark || '').join(' '));
+      const remark: EfCandidate['remark'] = nos.includes(own) ? 'own' : nos.length ? 'other' : '';
+      const final = c.score + 4 * (dimRate - 0.5) + (remark === 'own' ? 10 : remark === 'other' ? -4 : 0);
+      return { ...c, final, dimHit: dims.length ? hit : undefined, dimN: dims.length ? nums.length : undefined, remark };
+    });
+    scored[id].forEach((c) => pairs.push({ id, c }));
+  }
+  pairs.sort((a, b) => (b.c.final ?? b.c.score) - (a.c.final ?? a.c.score));
+  const taken = new Set<string>();
+  const best = new Map<number, EfCandidate>();
+  for (const { id, c } of pairs) {
+    if (best.has(id) || taken.has(c.key)) continue;
+    // 읽어 둔 후보가 있으면 안 읽은 후보로는 짝짓지 않는다(보여줄 표가 없음) — 읽은 것 우선
+    if (!reads[c.key]?.ok && scored[id].some((x) => reads[x.key]?.ok && !taken.has(x.key))) continue;
+    best.set(id, c);
+    taken.add(c.key);
+  }
+  // 비고에 이 주문번호가 적힌 명세서는 다른 주문이 가져갔어도 이 주문 것(합친 명세서 — 비고에 번호 여러 개)
+  for (const id of Object.keys(scored).map(Number)) {
+    const own = scored[id].find((c) => c.remark === 'own');
+    if (own && best.get(id)?.key !== own.key) best.set(id, own);
+  }
+  // 짝 없는 지시서 — 같은 거래처·납기 ±1일 명세서를 같이 쓰기. 근거(규격 치수 60%+·2개+ 일치)가 있을 때만.
+  const work = Object.keys(scored).map(Number).map((id) => ({
+    id,
+    best: best.get(id) || null,
+    cands: scored[id].filter((c) => reads[c.key]?.ok && (c.dimHit || 0) >= 2 && (c.dimHit || 0) / (c.dimN || 1) >= 0.6),
+  }));
+  shareLeftovers(work);
+  work.forEach((w) => w.best && best.set(w.id, w.best));
+  const out: Record<number, EfMatch> = {};
+  for (const [idStr, m] of Object.entries(matches)) {
+    const id = Number(idStr);
+    const b = best.get(id) || null;
+    const others = scored[id].filter((c) => c.key !== b?.key).sort((x, y) => (y.final ?? y.score) - (x.final ?? x.score));
+    const second = others[0];
+    const sure =
+      !!b &&
+      (b.remark === 'own' ||
+        (b.client >= 0.85 && b.days <= 7 && (!second || (b.final ?? b.score) - (second.final ?? second.score) >= 1.5)));
+    out[id] = { ...m, best: b, others, sure };
+  }
+  for (const m of markMerged(Object.values(out))) out[m.order.id] = m;
+  return out;
 }

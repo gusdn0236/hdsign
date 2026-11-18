@@ -192,7 +192,7 @@
 }
 .efb-ws-thumb {
   position: relative;
-  aspect-ratio: 1 / 1.1;
+  aspect-ratio: 1 / 1;
   background: #fff;
   overflow: hidden;
 }
@@ -631,14 +631,36 @@
   grid-template-columns: 6fr 5fr;
 }
 .efb-dws {
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
   background: #e2e8f0;
   border-right: 1px solid #e2e8f0;
-  padding: 14px;
+  padding: 12px;
 }
-.efb-dws > * {
+/* 지시서를 칸에 꽉 차게(스크롤 없이) */
+.efb-fit {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.efb-fit .react-pdf__Document,
+.efb-fit .react-pdf__Page {
+  display: flex;
+  justify-content: center;
+}
+.efb-fit canvas {
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.18);
   background: #fff;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
+}
+.efb-fit-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.18);
 }
 .efb-dstmt {
   min-height: 0;
@@ -813,4 +835,138 @@
 }
 .efb-yes.on {
   outline: 3px solid rgba(34, 197, 94, 0.35);
+}
+
+/* ── 2026-11-18 2차: 큰 카드 · 일시정지/정지 · 남은 시간 · 아래 드래그 스크롤 ── */
+.efb-ws-meta {
+  font-size: 14.5px;
+  padding: 11px 14px 3px;
+}
+.efb-ws-title {
+  font-size: 13px;
+  padding: 0 14px 13px;
+}
+.efb-ef {
+  font-size: 13.5px;
+  padding: 13px 15px;
+}
+.efb-ef-client {
+  font-size: 15px;
+}
+.efb-ef-total {
+  font-size: 14px;
+}
+.efb-biz {
+  font-size: 11.5px;
+}
+
+.efb-progress {
+  flex-wrap: wrap;
+}
+.efb-progress.is-paused {
+  background: rgba(245, 158, 11, 0.14);
+  color: #fde68a;
+}
+.efb-pausedot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--efb-warn);
+}
+.efb-eta {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.efb-ctl {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 6px;
+}
+.efb-ctl button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.efb-ctl button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.efb-ctl button.is-on {
+  background: var(--efb-accent);
+  border-color: var(--efb-accent);
+}
+.efb-ctl .efb-ctl-stop:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.6);
+}
+.efb-x:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* 지시서가 많을 때 — 아래 좌우 드래그 스크롤 */
+.efb-scrub-row {
+  display: flex;
+  justify-content: center;
+  padding: 0 80px 14px;
+}
+.efb-scrub {
+  --efb-p: 0%;
+  width: min(960px, 100%);
+  height: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--efb-accent-2) 0 var(--efb-p), var(--efb-line) var(--efb-p) 100%);
+  outline: none;
+  cursor: pointer;
+}
+.efb-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 44px;
+  height: 18px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--efb-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+}
+.efb-scrub::-moz-range-thumb {
+  width: 40px;
+  height: 14px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--efb-accent);
+  cursor: grab;
+}
+.efb-scrub:active::-webkit-slider-thumb {
+  cursor: grabbing;
+}
+.efb-alt {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: #92400e;
+  background: #fef3c7;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.efb-merged {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5b21b6;
+  background: #ede9fe;
+  padding: 1px 7px;
+  border-radius: 999px;
 }
