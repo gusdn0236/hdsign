@@ -34,6 +34,8 @@ export interface EfCandidate {
   dimHit?: number;
   dimN?: number;
   remark?: 'own' | 'other' | '';
+  clueHit?: number; // 사람이 넣은 단서 중 맞은 수
+  clueN?: number;
 }
 
 export interface EfMatch {
@@ -181,6 +183,7 @@ export function matchOrders(
   orders: EfOrder[],
   rows: EfListRow[],
   used: { date: string; total: string; client: string }[],
+  cluesByOrder: Record<number, string[]> = {},
 ): EfMatch[] {
   const alias = loadAlias();
   // 이미 다른 주문에 가져온 명세서(발행일·합계·거래처 같음)는 뺀다.
@@ -218,7 +221,10 @@ export function matchOrders(
       }
       if (c < MIN_CLIENT && tw < 0.5) return;
       const dateScore = Math.exp(-days / 2); // 0일 1, 1일 .61, 2일 .37, 3일 .22, 7일 .03 — 납기 당일이 확실히 앞
-      const score = 3 * c + 2.5 * dateScore + 1.5 * tw;
+      // 사람이 넣은 단서가 목록의 첫 줄 품목에 있으면 미리 앞으로(전체 품목은 읽은 뒤 rescore 에서)
+      const cl = cluesByOrder[o.id] || [];
+      const pre = cl.length ? clueHits(cl, [{ item: r.firstItem }]).hit / cl.length : 0;
+      const score = 3 * c + 2.5 * dateScore + 1.5 * tw + 2 * pre;
       cands.push({ row: r, key: efRowKey(r), score, client: c, days, title: tw });
     });
     cands.sort((a, b) => b.score - a.score || a.days - b.days);
@@ -326,8 +332,10 @@ export function specNums(rows: EasyformPulledRow[]): number[] {
  * 같이 읽을 후보 — 1등 + **같은 거래처·납기 ±3일 안** 후보(최대 3개). 그 안에서 규격 치수·비고로 최종 순위.
  * 1등부터 납기와 3일 넘게 떨어져 있으면(납기 근처에 없음) 점수 비슷한 후보를 대신 본다.
  */
-export function candidatesToRead(m: EfMatch): EfCandidate[] {
+export function candidatesToRead(m: EfMatch, hasClues = false): EfCandidate[] {
   if (!m.best) return [];
+  // 단서를 넣은 지시서 — 단서로 가려낼 수 있으니 같은 거래처 납기 ±5일까지 조금 넓게 최대 4개
+  if (hasClues) return [m.best, ...m.others.filter((c) => c.client >= 0.85 && c.days <= 5).slice(0, 3)];
   const near = m.best.days <= 3
     ? m.others.filter((c) => c.client >= 0.85 && c.days <= 3)
     : m.others.filter((c) => c.client >= 0.85 && c.score >= m.best!.score - 1.5);
@@ -344,6 +352,7 @@ export function rescoreByContent(
   matches: Record<number, EfMatch>,
   reads: Record<string, { ok: boolean; rows?: EasyformPulledRow[] }>,
   dimsByOrder: Record<number, number[] | undefined>,
+  cluesByOrder: Record<number, string[]> = {},
 ): Record<number, EfMatch> {
   const scored: Record<number, EfCandidate[]> = {};
   const pairs: { id: number; c: EfCandidate }[] = [];
@@ -361,8 +370,20 @@ export function rescoreByContent(
       const dimRate = dims.length && nums.length ? (hit + 0.5) / (nums.length + 1) : 0.5;
       const nos = extractOrderNos(rows.map((r) => r.remark || '').join(' '));
       const remark: EfCandidate['remark'] = nos.includes(own) ? 'own' : nos.length ? 'other' : '';
-      const final = c.score + 4 * (dimRate - 0.5) + (remark === 'own' ? 10 : remark === 'other' ? -4 : 0);
-      return { ...c, final, dimHit: dims.length ? hit : undefined, dimN: dims.length ? nums.length : undefined, remark };
+      // 사람이 넣은 단서 — 다 맞으면 +7, 일부면 비율만큼, 하나도 없으면 -2
+      const cl = cluesByOrder[id] || [];
+      const ch = cl.length ? clueHits(cl, rows).hit : 0;
+      const clueTerm = cl.length ? 5 * (ch / cl.length) + (ch === cl.length ? 2 : 0) - (ch === 0 ? 2 : 0) : 0;
+      const final = c.score + 4 * (dimRate - 0.5) + clueTerm + (remark === 'own' ? 10 : remark === 'other' ? -4 : 0);
+      return {
+        ...c,
+        final,
+        dimHit: dims.length ? hit : undefined,
+        dimN: dims.length ? nums.length : undefined,
+        remark,
+        clueHit: cl.length ? ch : undefined,
+        clueN: cl.length ? cl.length : undefined,
+      };
     });
     scored[id].forEach((c) => pairs.push({ id, c }));
   }
@@ -398,9 +419,50 @@ export function rescoreByContent(
     const sure =
       !!b &&
       (b.remark === 'own' ||
+        (!!b.clueN && b.clueHit === b.clueN && (!second || (second.clueHit || 0) < b.clueN)) ||
         (b.client >= 0.85 && b.days <= 7 && (!second || (b.final ?? b.score) - (second.final ?? second.score) >= 1.5)));
     out[id] = { ...m, best: b, others, sure };
   }
   for (const m of markMerged(Object.values(out))) out[m.order.id] = m;
   return out;
+}
+
+
+// ---- 사람이 넣은 단서(키워드·사이즈) -------------------------------------------------------------
+/** 입력 글자 → 단서들. 띄어쓰기·쉼표·줄바꿈으로 나눔. 'H:350'·'2400*600' 같은 사이즈는 한 덩어리. */
+export function splitClues(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of (text || '').split(/[,\n\s]+/)) {
+    const c = raw.trim();
+    if (c && !out.some((o) => o.toLowerCase() === c.toLowerCase())) out.push(c);
+  }
+  return out;
+}
+
+const normC = (s: string) => (s || '').replace(/\s+/g, '').toLowerCase();
+
+/**
+ * 단서가 명세서 줄들에 몇 개 있나.
+ *  - 사이즈('2400*600', 'h350', '1200') = 그 숫자들이 모두 규격 칸 숫자에 있음(±3%·±5mm)
+ *  - 글자 = 품목코드·품목·규격·비고 칸에 들어 있음(또는 3글자 넘는 칸이 단서 안에 — clueMatch 와 같은 규칙)
+ */
+export function clueHits(
+  clues: string[],
+  rows: { item_code?: string; item?: string; spec?: string; remark?: string }[],
+): { hit: number; n: number } {
+  const cells = rows.flatMap((r) => [r.item_code, r.item, r.spec, r.remark]).map((x) => normC(x || '')).filter(Boolean);
+  const specNumsAll = rows.flatMap((r) => [...(r.spec || '').matchAll(/\d{2,5}/g)].map((m) => +m[0]));
+  let hit = 0;
+  for (const raw of clues) {
+    const c = normC(raw);
+    if (!c) continue;
+    const nums = [...c.matchAll(/\d{2,5}/g)].map((m) => +m[0]);
+    const isSize = nums.length > 0 && /^[a-z:]*\d+([*x×]\d+)*(mm)?$/.test(c);
+    if (isSize) {
+      if (nums.every((n) => specNumsAll.some((d) => Math.abs(d - n) <= Math.max(5, n * 0.03)))) hit++;
+    } else if (cells.some((x) => x.includes(c) || (x.length >= 3 && c.includes(x)))) {
+      hit++;
+    }
+  }
+  return { hit, n: clues.length };
 }

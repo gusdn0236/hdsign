@@ -28,6 +28,7 @@ import {
   candidatesToRead,
   rescoreByContent,
   markMerged,
+  splitClues,
   worksheetDims,
   type EfMatch,
   type EfCandidate,
@@ -52,7 +53,7 @@ interface Props {
   onSaved: (orderId: number) => void;
 }
 
-type Phase = 'intro' | 'export' | 'read' | 'review' | 'saving' | 'saved';
+type Phase = 'intro' | 'clue' | 'export' | 'read' | 'review' | 'saving' | 'saved';
 type Verdict = 'yes' | 'no';
 
 const won = (s: string | number | undefined) => {
@@ -91,8 +92,11 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[] } | null>(null);
   const [closeAsk, setCloseAsk] = useState(false);
+  // 사람이 넣은 단서(키워드·사이즈) — 지시서별. 넣은 지시서는 단서로 가려내고, 안 넣은 건 지금 방식대로.
+  const [clues, setClues] = useState<Record<number, string[]>>({});
   const jobRef = useRef<{ id: number; stop: boolean } | null>(null);
   const matchRef = useRef<Record<number, EfMatch>>({});
+  const cluesRef = useRef<Record<number, string[]>>({});
   const readsRef = useRef<Record<string, EfBulkResult>>({});
   const dimsRef = useRef<Record<number, number[] | undefined>>({});
   const dimsWait = useRef<Promise<void>>(Promise.resolve());
@@ -102,6 +106,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
 
   const busy = phase === 'export' || phase === 'read' || phase === 'saving' || !!swapping;
   phaseRef.current = phase;
+  cluesRef.current = clues;
   const n = orders.length;
 
   useEffect(() => {
@@ -111,7 +116,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     ro.observe(el);
     setViewW(el.clientWidth);
     return () => ro.disconnect();
-  }, []);
+  }, [phase === 'clue']); // 단서 입력 화면에서 돌아오면 무대가 새로 붙음 → 다시 잰다
 
   useEffect(
     () => () => {
@@ -169,7 +174,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     try {
       const [used, exp] = await Promise.all([getEasyformUsedKeys(token), runJob({ phase: 'export' })]);
       const rows: EfListRow[] = (exp.lists || []).flatMap((l) => l.rows);
-      const ms = matchOrders(orders, rows, used);
+      const ms = matchOrders(orders, rows, used, clues);
       const map: Record<number, EfMatch> = {};
       ms.forEach((m) => (map[m.order.id] = m));
       matchRef.current = map;
@@ -180,10 +185,12 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       // 헷갈리는 지시서(같은 거래처·비슷한 점수 후보)는 후보를 최대 3개 같이 읽는다 → 지시서 수치로 다시 매김
       const seen = new Set<string>();
       const items = ms
-        .flatMap((m) => candidatesToRead(m))
+        .flatMap((m) => candidatesToRead(m, !!clues[m.order.id]?.length))
         .filter((c) => !seen.has(c.key) && seen.add(c.key))
         .map((c) => ({ ...c.row, key: c.key }));
-      dimsWait.current = loadDims(ms.filter((m) => candidatesToRead(m).length > 1).map((m) => m.order as EfBulkOrder));
+      dimsWait.current = loadDims(
+        ms.filter((m) => candidatesToRead(m, !!clues[m.order.id]?.length).length > 1).map((m) => m.order as EfBulkOrder),
+      );
       if (!items.length) {
         setPhase('review');
         setProgress('');
@@ -247,7 +254,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   // 짝 찾은 지시서를 왼쪽부터(각각 오래된 날짜순) 다시 세워 확인 단계로.
   const finishRead = (rs?: EfBulkResult[]) => {
     (rs || []).forEach((x) => (readsRef.current[x.key] = x));
-    const map = rescoreByContent(matchRef.current, readsRef.current, dimsRef.current);
+    const map = rescoreByContent(matchRef.current, readsRef.current, dimsRef.current, cluesRef.current);
     matchRef.current = map;
     setMatches(map);
     const ok = new Set(Object.values(readsRef.current).filter((x) => x.ok).map((x) => x.key));
@@ -398,6 +405,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         if (e.key === 'Escape') setCloseAsk(false);
         return;
       }
+      if (phaseRef.current === 'clue') return;
       if (detail != null) {
         if (e.key === 'Escape') setDetail(null);
         else if (e.key === 'Enter' && !swapping) mark(detail, 'yes');
@@ -508,6 +516,18 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         </div>
       )}
 
+      {phase === 'clue' ? (
+        <ClueEntry
+          orders={orders}
+          pos={pos}
+          setPos={setPos}
+          clues={clues}
+          setClues={setClues}
+          onBack={() => setPhase('intro')}
+          onStart={start}
+        />
+      ) : (
+        <>
       <div className="efb-stage" ref={trackRef} onWheel={onWheel}>
         {n === 0 ? (
           <div className="efb-empty">명세서가 비어 있는 지시서가 없어요.</div>
@@ -551,6 +571,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                         <span className="efb-ws-client">{o.clientCompanyName || '거래처 없음'}</span>
                       </div>
                       <div className="efb-ws-title" title={o.title || ''}>{o.title || orderNoCore(o.orderNumber)}</div>
+                      {clues[o.id]?.length ? <div className="efb-ws-clues">단서 · {clues[o.id].join(' ')}</div> : null}
                     </div>
 
                     {state !== 'idle' && <div className={`efb-arrow efb-arrow--${state}`} aria-hidden="true" />}
@@ -632,7 +653,14 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             <p className="efb-sub">
               주식회사·개인 이지폼 2개를 켜 두세요(최소화해도 돼요). 이지폼에 작성 중인 명세서 창이 열려 있으면 멈춰요.
             </p>
-            <button type="button" className="efb-primary" onClick={start} disabled={!n}>확인</button>
+            <div className="efb-cta-btns">
+              <button type="button" className="efb-secondary" onClick={() => setPhase('clue')} disabled={!n}>
+                ✎ 단서 입력하고 찾기
+              </button>
+              <button type="button" className="efb-primary" onClick={start} disabled={!n}>
+                {Object.keys(clues).length ? `찾기 시작 (단서 ${Object.keys(clues).length}건)` : '바로 찾기'}
+              </button>
+            </div>
           </div>
         )}
         {phase === 'export' && (
@@ -669,6 +697,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           </ul>
         )}
       </footer>
+        </>
+      )}
 
       {closeAsk && (
         <div className="efb-ask" role="dialog" aria-label="닫기 확인" onClick={() => setCloseAsk(false)}>
@@ -764,6 +794,8 @@ function DetailView({
   reasons.push({ t: best.client >= 0.85 ? '거래처 같음' : `거래처 비슷함 (${Math.round(best.client * 100)}%)`, good: best.client >= 0.85 });
   reasons.push({ t: best.days === 0 ? '날짜 같음' : `날짜 ${best.days}일 차이`, good: best.days <= 3 });
   if (best.title >= 0.5) reasons.push({ t: '현장명 일치', good: true });
+  if (best.clueN)
+    reasons.push({ t: `단서 일치 ${best.clueHit}/${best.clueN}`, good: best.clueHit === best.clueN });
   if (match.mergedWith?.length)
     reasons.push({ t: `합친 명세서 — 주문 ${mergedNos.join(', ')} 와(과) 같이 써요`, good: true });
   if (best.dimN) reasons.push({ t: `규격 치수 지시서와 일치 ${best.dimHit}/${best.dimN}`, good: (best.dimHit || 0) / best.dimN >= 0.6 });
@@ -909,6 +941,144 @@ function FitWorksheet({ pdfUrl, thumbUrl, title }: { pdfUrl?: string | null; thu
           />
         </Document>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 단서 입력 — 지시서를 크게 띄워 두고 키워드·사이즈를 치고 Enter 만 누르면 다음 지시서로.
+ * 빈칸 Enter = 건너뛰기, Shift+Enter = 이전, 빈칸 Backspace = 마지막 단서 지우기, Esc = 목록으로.
+ */
+function ClueEntry({
+  orders,
+  pos,
+  setPos,
+  clues,
+  setClues,
+  onBack,
+  onStart,
+}: {
+  orders: EfBulkOrder[];
+  pos: number;
+  setPos: (p: number) => void;
+  clues: Record<number, string[]>;
+  setClues: (f: (prev: Record<number, string[]>) => Record<number, string[]>) => void;
+  onBack: () => void;
+  onStart: () => void;
+}) {
+  const [text, setText] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const n = orders.length;
+  const o = orders[Math.min(pos, n - 1)];
+  const mine = (o && clues[o.id]) || [];
+  useEffect(() => {
+    input.current?.focus();
+    listRef.current?.querySelector('.is-on')?.scrollIntoView({ block: 'nearest' });
+  }, [pos]);
+  if (!o) return null;
+  const setMine = (list: string[]) =>
+    setClues((prev) => {
+      const next = { ...prev };
+      if (list.length) next[o.id] = list;
+      else delete next[o.id];
+      return next;
+    });
+  const go = (d: number) => {
+    setText('');
+    setPos(Math.max(0, Math.min(n - 1, pos + d)));
+  };
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) return go(-1);
+      const add = splitClues(text);
+      if (add.length) setMine([...mine, ...add.filter((c) => !mine.includes(c))]);
+      if (pos < n - 1) go(1);
+      else setText('');
+    } else if (e.key === 'Backspace' && !text && mine.length) {
+      e.preventDefault();
+      setMine(mine.slice(0, -1));
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onBack();
+    }
+  };
+  const done = Object.keys(clues).length;
+  return (
+    <div className="efb-clue">
+      <div className="efb-clue-ws">
+        <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
+      </div>
+      <aside className="efb-clue-side">
+        <div className="efb-clue-head">
+          <span className="efb-clue-pos">
+            <b>{pos + 1}</b> / {n}
+          </span>
+          <span className="efb-clue-done">단서 넣은 지시서 {done}개</span>
+        </div>
+        <div className="efb-clue-order">
+          <b>{o.clientCompanyName || '거래처 없음'}</b>
+          <span>
+            {shortDate(o.dueDate || o.createdAt)}
+            {o.dueDate ? ' 납' : ''} · {orderNoCore(o.orderNumber)}
+          </span>
+        </div>
+        <label className="efb-clue-label" htmlFor="efb-clue-input">
+          이 지시서의 키워드 · 사이즈
+        </label>
+        <input
+          id="efb-clue-input"
+          ref={input}
+          className="efb-clue-input"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKey}
+          placeholder="예: 갈바 채널 2400*600"
+          autoComplete="off"
+        />
+        <div className="efb-clue-chips">
+          {mine.map((c) => (
+            <span key={c} className="efb-clue-chip">
+              {c}
+              <button type="button" onClick={() => setMine(mine.filter((x) => x !== c))} aria-label={`${c} 지우기`}>
+                ✕
+              </button>
+            </span>
+          ))}
+          {!mine.length && <span className="efb-clue-none">단서 없음 — 거래처·납기·지시서 수치로 찾아요</span>}
+        </div>
+        <p className="efb-clue-help">
+          <kbd>Enter</kbd> 다음 지시서 · 빈칸 <kbd>Enter</kbd> 건너뛰기 · <kbd>Shift+Enter</kbd> 이전 · 빈칸{' '}
+          <kbd>Backspace</kbd> 지우기
+        </p>
+        <div className="efb-clue-list" ref={listRef}>
+          {orders.map((x, i) => (
+            <button
+              type="button"
+              key={x.id}
+              className={`efb-clue-row ${i === pos ? 'is-on' : ''}`}
+              onClick={() => {
+                setText('');
+                setPos(i);
+              }}
+            >
+              <span className="efb-clue-row-date">{shortDate(x.dueDate || x.createdAt)}</span>
+              <span className="efb-clue-row-client">{x.clientCompanyName}</span>
+              <span className="efb-clue-row-clues">{(clues[x.id] || []).join(' ')}</span>
+            </button>
+          ))}
+        </div>
+        <div className="efb-clue-btns">
+          <button type="button" className="efb-secondary" onClick={onBack}>
+            목록으로
+          </button>
+          <button type="button" className="efb-primary" onClick={onStart}>
+            입력 끝 · 찾기 시작
+          </button>
+        </div>
+      </aside>
     </div>
   );
 }
