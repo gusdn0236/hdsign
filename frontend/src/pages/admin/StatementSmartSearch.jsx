@@ -167,8 +167,14 @@ export default function StatementSmartSearch({
     <div className="ss">
       <div className="ss-head">
         <span className="ss-title">명세서 검색</span>
-        <span className="ss-hint">
-          거래처·품목코드·규격·작업키워드(품목칸 글자)를 띄어쓰기로 이어서 치고 Enter · 칩을 누르면 종류 변경 · 3년치 전체
+        {/* 검색 카테고리 — 칩과 같은 색 태그로 나열(긴 설명 대신, 사용자 요청 2026-11-18) */}
+        <span className="ss-legend" aria-label="검색 카테고리">
+          <span className="ss-legend-label">검색 카테고리</span>
+          {["code", "client", "text", "spec"].map((t) => (
+            <span key={t} className={`ss-legend-tag ss-chip--${t}`}>
+              {TOKEN_LABEL[t]}
+            </span>
+          ))}
         </span>
       </div>
 
