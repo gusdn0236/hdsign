@@ -50,10 +50,9 @@ function parseExifOrientation(buf, segStart, segEnd) {
 
 // 파일 헤더(앞부분)만 슬라이스해 원본 픽셀 치수 + EXIF orientation 을 읽는다 — 전체 디코드 없이.
 // 치수는 raw(회전 전) 좌표계. orientation 5~8 이면 화면에 보이는 가로·세로가 raw 와 뒤바뀐다.
-// ⚠️ resizeWidth/Height 는 안드로이드 크롬/삼성인터넷(Blink)에서 "EXIF 회전이 적용된(화면)"
-//    좌표계로 해석된다(orientation 먼저, resize 나중). 그래서 raw 치수를 그대로 넘기면 세로
-//    사진(orientation 6/8)이 가로 박스로 찌그러진다. 호출부는 반드시 orientation 으로 화면
-//    치수를 구해 넘겨야 한다.
+// ⚠️ resizeWidth/Height 가 raw 좌표인지 화면(회전 후) 좌표인지는 브라우저·버전마다 다르다.
+//    둘 다 지정하면 해석이 어긋나는 기기에서 세로사진이 찌그러진다 → compressImage 는
+//    resizeWidth 하나만 넘겨 비율 계산을 브라우저에 맡긴다(orientation 은 참고용).
 async function readRawMeta(file) {
     let buf;
     try {
@@ -131,24 +130,38 @@ export async function compressImage(file) {
     const raw = await readRawMeta(file);
 
     if (raw) {
-        // orientation 5~8 은 화면에서 가로·세로가 raw 와 뒤바뀐다. Blink 는 resize 를 화면
-        // 좌표계로 적용하므로, raw 가 아니라 "화면(회전 후)" 치수로 목표를 잡아야 비율이 보존된다.
-        const swap = raw.orientation >= 5 && raw.orientation <= 8;
-        const dispW = swap ? raw.height : raw.width;
-        const dispH = swap ? raw.width : raw.height;
+        // ⚠️ resize 를 EXIF 회전 "전"(raw) 좌표로 적용하느냐 "후"(화면) 좌표로 적용하느냐가
+        //    브라우저·버전마다 다르다(2026-06 수정은 '화면 좌표'로 가정 → 그 가정이 틀린 안드로이드
+        //    기기에서 세로사진이 여전히 찌그러짐, 2026-11). 그래서 가로·세로를 둘 다 지정하지 않고
+        //    resizeWidth 하나만 준다 — 그러면 높이는 브라우저가 "자기 좌표계"에서 비율대로 계산하므로
+        //    어느 해석이든 절대 찌그러지지 않는다.
+        //    폭으로는 짧은 변 기준값을 준다: 브라우저 폭이 짧은 변이면 정확히 목표 크기, 긴 변이면
+        //    비율은 맞되 조금 작게 나온다 → 그 경우만 이제 좌표계를 알았으니 긴 변 기준으로 재디코드.
+        const longest = Math.max(raw.width, raw.height);
+        const shortest = Math.min(raw.width, raw.height);
         // 빠른 경로: 헤더로 치수를 알았으니 디코드와 동시에 축소. OOM 시 더 작게 재시도.
         for (const cap of DIM_STEPS) {
-            const { w, h } = targetDims(dispW, dispH, cap);
+            const scale = longest > cap ? cap / longest : 1;
+            const wantLong = Math.max(1, Math.round(longest * scale));
+            const wantShort = Math.max(1, Math.round(shortest * scale));
+            const decode = (resizeWidth) => createImageBitmap(file, {
+                imageOrientation: 'from-image',
+                resizeWidth,
+                resizeQuality: 'high',
+            });
             let bitmap;
             try {
-                bitmap = await createImageBitmap(file, {
-                    imageOrientation: 'from-image',
-                    resizeWidth: w,
-                    resizeHeight: h,
-                    resizeQuality: 'high',
-                });
+                bitmap = await decode(wantShort);
             } catch {
                 continue; // 이 치수 디코드 실패 → 다음 단계로 더 작게
+            }
+            // 결과의 긴 변이 목표보다 작음 = 브라우저 좌표계의 폭이 긴 변이었다 → 긴 변 기준 재디코드.
+            if (Math.max(bitmap.width, bitmap.height) < wantLong - 1) {
+                try {
+                    const bigger = await decode(wantLong);
+                    bitmap.close?.();
+                    bitmap = bigger;
+                } catch { /* 작은 것(비율은 정상) 그대로 사용 */ }
             }
             try {
                 const out = await encode(bitmap, file);
