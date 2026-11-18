@@ -346,7 +346,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         <div className="efb-progress">
           <span className="efb-spin" aria-hidden="true" />
           <span>{progress || '이지폼 작업 중'}</span>
-          <span className="efb-progress-hint">작업 중엔 마우스·키보드가 잠겨요 · ESC 로 멈춤</span>
+          <span className="efb-progress-hint">이지폼은 숨은 채로 작업해요 · 그동안 이지폼은 만지지 마세요 · ESC 로 멈춤</span>
         </div>
       )}
       {error && (
@@ -445,7 +445,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
               총 <b>{n}개</b> 명세서를 이지폼에서 찾아볼게요
             </p>
             <p className="efb-sub">
-              주식회사·개인 이지폼 2개를 켜 두세요. 이지폼에 다른 창(작성 중인 명세서 등)이 열려 있으면 멈춰요.
+              주식회사·개인 이지폼 2개를 켜 두세요(최소화해도 돼요). 이지폼에 작성 중인 명세서 창이 열려 있으면 멈춰요.
             </p>
             <button type="button" className="efb-primary" onClick={start} disabled={!n}>확인</button>
           </div>

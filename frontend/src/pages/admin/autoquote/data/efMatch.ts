@@ -239,6 +239,7 @@ export function efRowsToGrid(
       비고: r.remark || '',
     }))
     // 이지폼은 빈 수량을 '0' 으로 보여준다 → 단가 없는 줄(제목줄)의 0 은 빈칸, 다 빈 줄(표 끝)은 버림.
+    .map((r) => (/^0+$/.test(r.단가.trim()) ? { ...r, 단가: '' } : r)) // 제목·메모 줄의 단가 '0' 은 빈칸
     .map((r) => (!r.단가 && /^0+$/.test(r.수량.trim()) ? { ...r, 수량: '' } : r))
     .filter((r) => Object.values(r).some((v) => (v || '').trim()))
     .map((r) => {
