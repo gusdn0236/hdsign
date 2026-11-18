@@ -579,14 +579,25 @@ def _read_form(form) -> list:
     return rows
 
 
-def _read_items(items: list, progress, on_result) -> None:
-    by_biz: dict = {}
-    for it in items:
-        by_biz.setdefault(it.get("biz"), []).append(it)
+def _read_items(items: list, progress, on_result, keep_order: bool = False) -> None:
+    """keep_order=True: 웹이 보낸 순서 그대로(= 화면 카드 순서 — 키워드 넣은 지시서 먼저, 오래된 날짜순) 읽는다.
+    연속된 같은 이지폼 묶음마다 목록 맨 위로 맞춘 뒤 ↓/↑ 로 오간다. False: 이지폼별로 목록 위→아래(가장 빠름)."""
+    runs: list = []
+    if keep_order:
+        for it in items:
+            if runs and runs[-1][0] == it.get("biz"):
+                runs[-1][1].append(it)
+            else:
+                runs.append((it.get("biz"), [it]))
+    else:
+        by_biz: dict = {}
+        for it in items:
+            by_biz.setdefault(it.get("biz"), []).append(it)
+        runs = [(b, sorted(v, key=lambda x: int(x.get("idx") or 0))) for b, v in by_biz.items()]
     mains = {m["biz"]: m for m in _mains()}
     done = 0
     total_n = len(items)
-    for biz, its in by_biz.items():
+    for biz, its in runs:
         m = mains.get(biz)
         if not m:
             for it in its:
@@ -623,7 +634,7 @@ def _read_items(items: list, progress, on_result) -> None:
             if not closed or _popups(main):
                 raise Stop(f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
 
-        for it in sorted(its, key=lambda x: int(x.get("idx") or 0)):
+        for it in its:
             _pause_point(progress)
             if _aborted():
                 raise Stop("정지했어요.")
@@ -708,7 +719,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
             msg = " · ".join(f"{x['name']} {len(x['rows'])}건" for x in lists)
         else:
             items = [x for x in (body.get("items") or []) if isinstance(x, dict)][:300]
-            _read_items(items, progress, on_result)
+            _read_items(items, progress, on_result, keep_order=bool(body.get("keepOrder")))
             msg = "읽기를 마쳤어요."
     except Stop as e:
         ok, msg = False, str(e)

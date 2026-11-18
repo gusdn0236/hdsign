@@ -92,6 +92,9 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[] } | null>(null);
   const [closeAsk, setCloseAsk] = useState(false);
+  // 지금 이지폼에서 찾는 중인 지시서 — 화면이 그 카드로 따라간다(사람이 방금 넘겨 봤으면 4초간 안 따라감)
+  const [searchingId, setSearchingId] = useState<number | null>(null);
+  const manualAt = useRef(0);
   // 같은 이지폼 명세서를 다른 지시서도 쓸 때(다른 지시서에서 [맞아요] 했거나 홈페이지에 이미 저장됨) — 합칠지 묻는다.
   // merge = 합친 명세서로 묶어 저장, separate = 이 지시서에만 따로.
   const [mergeChoice, setMergeChoice] = useState<Record<number, 'merge' | 'separate'>>({});
@@ -132,7 +135,16 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     [],
   );
 
-  const go = useCallback((d: number) => setPos((p) => Math.max(0, Math.min(n - 1, p + d))), [n]);
+  const go = useCallback(
+    (d: number) => {
+      manualAt.current = Date.now();
+      setPos((p) => Math.max(0, Math.min(n - 1, p + d)));
+    },
+    [n],
+  );
+  // 키워드 넣은 지시서 맨 앞 → 오래된 날짜순 (키워드 입력을 마치고 나올 때·찾기 시작할 때 다시 세움)
+  const sortKwFirst = (list: EfBulkOrder[], cl: Record<number, string[]>) =>
+    [...list].sort((a, b) => Number(!cl[a.id]?.length) - Number(!cl[b.id]?.length) || byDate(a, b));
   // 비교창 — 다음·이전 지시서를 미리 받아 둬서 넘기자마자 뜨게
   useEffect(() => {
     if (detail == null) return;
@@ -179,6 +191,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       setError('이 PC 에서 워처가 꺼져 있거나 이지폼 자동화를 쓸 수 없어요. 워처를 켜고 다시 해주세요.');
       return;
     }
+    setOrders((prev) => sortKwFirst(prev, clues));
+    setPos(0);
     setPhase('export');
     setProgress('이지폼에서 명세서 목록을 뽑고 있어요');
     try {
@@ -189,15 +203,42 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       ms.forEach((m) => (map[m.order.id] = m));
       matchRef.current = map;
       setMatches(map);
-      // 짝 찾은 지시서 먼저(왼쪽부터), 각각 오래된 날짜순
-      setOrders((prev) => [...prev].sort((a, b) => Number(!!map[b.id]?.best) - Number(!!map[a.id]?.best) || byDate(a, b)));
+      // 카드 순서 = 키워드 넣은 지시서 먼저 → 짝 찾은 지시서 → 각각 오래된 날짜순. 이지폼 순회도 이 순서 그대로.
+      const kwFirst = (o: EfBulkOrder) => (clues[o.id]?.length ? 0 : 1);
+      const sorted = [...orders].sort(
+        (a, b) => kwFirst(a) - kwFirst(b) || Number(!!map[b.id]?.best) - Number(!!map[a.id]?.best) || byDate(a, b),
+      );
+      setOrders(sorted);
       setPos(0);
+      const msSorted = sorted.map((o) => map[o.id]).filter(Boolean);
       // 헷갈리는 지시서(같은 거래처·비슷한 점수 후보)는 후보를 최대 3개 같이 읽는다 → 지시서 수치로 다시 매김
+      // 읽기 순서: ① 키워드 넣은 지시서의 후보 먼저 → ② 키워드 없는 지시서(사용자가 ①까지 보고 정지·저장할 수 있게)
       const seen = new Set<string>();
-      const items = ms
-        .flatMap((m) => candidatesToRead(m, !!clues[m.order.id]?.length))
-        .filter((c) => !seen.has(c.key) && seen.add(c.key))
-        .map((c) => ({ ...c.row, key: c.key }));
+      const owner: string[] = []; // items 순서대로 그 후보를 읽는 지시서 id(화면 따라가기용)
+      const ownerId: number[] = [];
+      const pick = (list: EfMatch[]) =>
+        list.flatMap((m) =>
+          candidatesToRead(m, !!clues[m.order.id]?.length)
+            .filter((c) => !seen.has(c.key) && seen.add(c.key))
+            .map((c) => {
+              owner.push(c.key);
+              ownerId.push(m.order.id);
+              return { ...c.row, key: c.key };
+            }),
+        );
+      const kwItems = pick(msSorted.filter((m) => clues[m.order.id]?.length));
+      const restItems = pick(msSorted.filter((m) => !clues[m.order.id]?.length));
+      const items = [...kwItems, ...restItems];
+      // 다음에 읽을 후보의 지시서로 화면을 넘긴다(사람이 방금 직접 넘겨 봤으면 잠깐 안 따라감)
+      const follow = (doneN: number) => {
+        const id = ownerId[Math.min(doneN, ownerId.length - 1)];
+        if (id == null) return;
+        setSearchingId(doneN >= ownerId.length ? null : id);
+        if (Date.now() - manualAt.current < 4000) return;
+        const i = sorted.findIndex((o) => o.id === id);
+        if (i >= 0) setPos(i);
+      };
+      follow(0);
       dimsWait.current = loadDims(
         ms.filter((m) => candidatesToRead(m, !!clues[m.order.id]?.length).length > 1).map((m) => m.order as EfBulkOrder),
       );
@@ -209,22 +250,36 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       setPhase('read');
       setProgress(`후보 명세서 ${items.length}건을 이지폼에서 읽고 있어요`);
       setEta(etaText(items.length * SEC_PER_READ));
-      // 남은 시간 — 지금까지 1건당 걸린 시간(일시정지 시간 뺌) × 남은 건수
+      // 남은 시간 — 지금까지 1건당 걸린 시간(일시정지 시간 뺌) × 남은 건수(두 단계 합쳐서)
       const t0 = Date.now();
       let pausedMs = 0;
       let lastTick = t0;
-      const fin = await runJob({ phase: 'read', items }, (s) => {
+      let doneBefore = 0;
+      const tick = (s: Awaited<ReturnType<typeof pollEfBulk>>) => {
         applyResults(s.results);
         const now = Date.now();
         if (s.paused) pausedMs += now - lastTick;
         lastTick = now;
-        const done = s.results?.length || 0;
+        const done = doneBefore + (s.results?.length || 0);
         const per = done ? (now - t0 - pausedMs) / 1000 / done : SEC_PER_READ;
         setEta(s.paused ? '' : etaText(per * (items.length - done)));
-      });
-      applyResults(fin.results);
+        follow(done);
+      };
+      if (kwItems.length) {
+        const f1 = await runJob({ phase: 'read', items: kwItems, keepOrder: true }, tick);
+        applyResults(f1.results);
+        doneBefore = kwItems.length;
+        // 키워드 지시서는 여기서 바로 최종 순위 — 사용자가 이걸 보고 정지·저장해도 되게
+        await dimsWait.current;
+        rescoreNow();
+        if (restItems.length) setProgress(`키워드 넣은 지시서는 다 찾았어요 · 나머지 ${restItems.length}건 읽는 중`);
+      }
+      if (restItems.length) {
+        const f2 = await runJob({ phase: 'read', items: restItems, keepOrder: true }, tick);
+        applyResults(f2.results);
+      }
       await dimsWait.current;
-      finishRead(fin.results);
+      finishRead();
     } catch (e) {
       const st = (e as { status?: { results?: EfBulkResult[] } }).status;
       applyResults(st?.results);
@@ -238,6 +293,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       setProgress('');
     } finally {
       setEta('');
+      setSearchingId(null);
       setPauseWanted(false);
       setPausedNow(false);
     }
@@ -262,6 +318,13 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
 
   // 읽기 끝 — 읽은 명세서 내용(규격↔지시서 수치, 비고 주문번호)으로 짝을 다시 정하고,
   // 짝 찾은 지시서를 왼쪽부터(각각 오래된 날짜순) 다시 세워 확인 단계로.
+  // 지금까지 읽은 것으로 다시 매기기(읽는 중에도) — 키워드 지시서 1단계가 끝났을 때
+  const rescoreNow = () => {
+    const map = rescoreByContent(matchRef.current, readsRef.current, dimsRef.current, cluesRef.current);
+    matchRef.current = map;
+    setMatches(map);
+  };
+
   const finishRead = (rs?: EfBulkResult[]) => {
     (rs || []).forEach((x) => (readsRef.current[x.key] = x));
     const map = rescoreByContent(matchRef.current, readsRef.current, dimsRef.current, cluesRef.current);
@@ -269,7 +332,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     setMatches(map);
     const ok = new Set(Object.values(readsRef.current).filter((x) => x.ok).map((x) => x.key));
     const rank = (o: EfBulkOrder) => (map[o.id]?.best && ok.has(map[o.id].best!.key) ? 0 : map[o.id]?.best ? 1 : 2);
-    setOrders((prev) => [...prev].sort((a, b) => rank(a) - rank(b) || byDate(a, b)));
+    const kw = (o: EfBulkOrder) => (cluesRef.current[o.id]?.length ? 0 : 1); // 키워드 넣은 지시서가 맨 왼쪽
+    setOrders((prev) => [...prev].sort((a, b) => kw(a) - kw(b) || rank(a) - rank(b) || byDate(a, b)));
     setPos(0);
     setPhase('review');
     setProgress('');
@@ -574,7 +638,11 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           setPos={setPos}
           clues={clues}
           setClues={setClues}
-          onBack={() => setPhase('intro')}
+          onBack={() => {
+            setOrders((prev) => sortKwFirst(prev, clues));
+            setPos(0);
+            setPhase('intro');
+          }}
           onStart={start}
         />
       ) : (
@@ -600,9 +668,12 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                 return (
                   <div
                     key={o.id}
-                    className={`efb-col ${i === pos ? 'is-active' : ''} ${v ? `is-${v}` : ''} ${savedIds.has(o.id) ? 'is-saved' : ''}`}
+                    className={`efb-col ${i === pos ? 'is-active' : ''} ${v ? `is-${v}` : ''} ${savedIds.has(o.id) ? 'is-saved' : ''} ${phase === 'read' && searchingId === o.id ? 'is-searching' : ''}`}
                     style={{ width: CARD_W, marginRight: GAP, ...(dist > 4 ? { opacity: 0 } : {}) }}
-                    onClick={() => setPos(i)}
+                    onClick={() => {
+                      manualAt.current = Date.now();
+                      setPos(i);
+                    }}
                   >
                     <div className="efb-ws">
                       <div className="efb-ws-thumb">
@@ -689,7 +760,10 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             min={0}
             max={n - 1}
             value={pos}
-            onChange={(e) => setPos(Number(e.target.value))}
+            onChange={(e) => {
+              manualAt.current = Date.now();
+              setPos(Number(e.target.value));
+            }}
             aria-label="지시서 넘기기"
             style={{ ['--efb-p' as string]: `${n > 1 ? (pos / (n - 1)) * 100 : 0}%` }}
           />

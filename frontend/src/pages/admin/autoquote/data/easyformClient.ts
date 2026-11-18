@@ -304,7 +304,7 @@ export interface EfBulkStatus {
 }
 
 export async function startEfBulk(
-  body: { phase: 'export'; year?: number } | { phase: 'read'; items: (EfListRow & { key: string })[] },
+  body: { phase: 'export'; year?: number } | { phase: 'read'; items: (EfListRow & { key: string })[]; keepOrder?: boolean },
 ): Promise<{ started: boolean; id?: number; message?: string }> {
   const res = await fetch(`${AGENT_URL}/easyform/bulk`, {
     method: 'POST',
