@@ -713,6 +713,15 @@ class _PingHandler(BaseHTTPRequestHandler):
         elif self.path == "/easyform/probe":
             # 이지폼 자동기입 feature-detect — 관리자 명세서작성 모달이 호출.
             self._send_json(200, easyform.handle_probe())
+        elif self.path.startswith("/easyform/bulk"):
+            # 이지폼 일괄 가져오기(명세서 탭) — 진행/결과 폴링
+            import easyform_bulk
+            from urllib.parse import urlparse as _bu, parse_qs as _bq
+            try:
+                bid = int((_bq(_bu(self.path).query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                bid = 0
+            self._send_json(200, easyform_bulk.handle_status(bid))
         elif self.path.startswith("/easyform/pull"):
             # 이지폼 → 홈페이지 가져오기 상태 폴링(웹 명세서작성 [이지폼에서 가져오기]).
             from urllib.parse import urlparse as _up, parse_qs as _pq
@@ -738,6 +747,24 @@ class _PingHandler(BaseHTTPRequestHandler):
             except Exception:
                 pbody = {}
             self._send_json(*easyform.handle_pull_start(pbody))
+            return
+        if parsed.path == "/easyform/bulk":
+            import easyform_bulk
+            try:
+                n = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(n) if n > 0 else b""
+                bbody = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                bbody = {}
+            self._send_json(*easyform_bulk.handle_start(bbody))
+            return
+        if parsed.path == "/easyform/bulk/cancel":
+            import easyform_bulk
+            try:
+                bid = int((parse_qs(parsed.query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                bid = 0
+            self._send_json(200, easyform_bulk.handle_cancel(bid))
             return
         if parsed.path == "/easyform/pull/cancel":
             try:

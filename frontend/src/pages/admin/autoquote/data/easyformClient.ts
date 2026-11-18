@@ -266,3 +266,70 @@ export async function cancelEasyformPull(id: number): Promise<void> {
     /* 워처가 꺼졌으면 무시 */
   }
 }
+
+// ---- 이지폼 일괄 가져오기(명세서 탭) ------------------------------------------------
+// export: 떠 있는 이지폼(주식회사·개인) 각각에서 거래명세서 목록(올해)을 엑셀(csv)로 뽑아 목록으로.
+// read  : 웹이 짝지은 명세서만 목록에서 열어 품목 표를 읽기. 읽기 전용 — 이지폼엔 아무것도 안 씀.
+
+/** 이지폼 목록 CSV 한 줄 = 명세서 1건(품목은 첫 줄만). */
+export interface EfListRow {
+  biz: 'corp' | 'personal';
+  bizName: string;
+  idx: number; // 목록(기간으로 조회·역순) 맨 위에서 몇 번째 — 열 때 씀
+  bizNo: string;
+  client: string;
+  date: string; // 발행일자 YYYY.MM.DD
+  firstItem: string;
+  total: string; // 합계(숫자)
+  written: string; // 작성일자 YYYY.MM.DD
+}
+
+export interface EfBulkResult {
+  key: string;
+  ok: boolean;
+  date?: string;
+  total?: string;
+  rows?: EasyformPulledRow[];
+  message?: string;
+}
+
+export interface EfBulkStatus {
+  state: 'running' | 'done' | 'error' | 'idle' | 'gone';
+  phase?: 'export' | 'read';
+  message?: string;
+  progress?: string;
+  lists?: { biz: 'corp' | 'personal'; name: string; rows: EfListRow[] }[];
+  results?: EfBulkResult[];
+}
+
+export async function startEfBulk(
+  body: { phase: 'export'; year?: number } | { phase: 'read'; items: (EfListRow & { key: string })[] },
+): Promise<{ started: boolean; id?: number; message?: string }> {
+  const res = await fetch(`${AGENT_URL}/easyform/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
+    cache: 'no-store',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`이지폼 작업 요청 실패 (${res.status}). 워처를 최신으로 다시 켜주세요.`);
+  return res.json();
+}
+
+export async function pollEfBulk(id: number): Promise<EfBulkStatus> {
+  const res = await fetch(`${AGENT_URL}/easyform/bulk?id=${id}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`이지폼 작업 상태 확인 실패 (${res.status}).`);
+  return res.json();
+}
+
+export async function cancelEfBulk(id: number): Promise<void> {
+  try {
+    await fetch(`${AGENT_URL}/easyform/bulk/cancel?id=${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-HDSign-Field': '1' },
+      cache: 'no-store',
+      body: '{}',
+    });
+  } catch {
+    /* 워처가 꺼졌으면 무시 */
+  }
+}

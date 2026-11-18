@@ -12,6 +12,8 @@ import "./OrderAdmin.css";
 
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
 const AutoQuote = lazy(() => import("./autoquote/AutoQuote.tsx"));
+// 명세서 탭 [이지폼에서 가져오기] — 비어 있는 명세서를 이지폼에서 찾아 일괄 입력. 누를 때만 로드.
+const EasyformBulkImport = lazy(() => import("./autoquote/EasyformBulkImport.tsx"));
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
@@ -244,6 +246,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   // 자동견적 명세서작성 모달 — 열린 주문 id(없으면 닫힘). 별도 탭이 아니라 OrderAdmin 안 모달로 띄운다.
   const [estimateOrderId, setEstimateOrderId] = useState(null);
+  // 명세서 탭 [이지폼에서 가져오기] 화면 열림
+  const [efBulkOpen, setEfBulkOpen] = useState(false);
   // 명세서 작성중 표시이름 — 이 PC(localStorage)에만 저장. 잠금 소유자 식별용 기기ID 도 이 PC 고유.
   const [editorName, setEditorName] = useState(loadEditorName);
   const [nameDraft, setNameDraft] = useState(loadEditorName);
@@ -986,6 +990,18 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
     return [...base].sort(byNew);
   }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort]);
+
+  // [이지폼에서 가져오기] 대상 — 명세서 탭에 불러온 지시서 중 홈페이지 명세서가 비어 있는 주문 카드.
+  // 이지폼 목록은 올해(1/1~12/31)만 뽑으므로 작년 12월 중순 이전 건은 뺀다. 날짜(납기, 없으면 등록일) 오래된 순.
+  const efBulkOrders = useMemo(() => {
+    if (!isStatementView) return [];
+    const y = new Date().getFullYear();
+    const from = new Date(y - 1, 11, 15).getTime();
+    const dateOf = (o) => new Date(o.dueDate || o.createdAt || 0).getTime();
+    return statusFilteredOrders
+      .filter((o) => o.requestType === "ORDER" && !o.hasEstimate && o.worksheetPdfUrl && dateOf(o) >= from)
+      .sort((a, b) => dateOf(a) - dateOf(b) || new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  }, [isStatementView, statusFilteredOrders]);
 
   const runStmtSearch = async (toks, seq) => {
     const pick = (type) => toks.filter((t) => t.type === type).map((t) => t.value);
@@ -2182,6 +2198,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 {stmtResult ? "명세서 검색 결과 — 3년 보관분 전체" : "명세서 — 최신 업로드순"}
               </span>
               <span className="order-card-group-count">{statementOrders.length}건</span>
+              {isOrderPage && (
+                <button
+                  type="button"
+                  className="statement-efbulk-btn"
+                  onClick={() => setEfBulkOpen(true)}
+                  title="홈페이지 명세서가 비어 있는 지시서를 이지폼에서 찾아 한꺼번에 채웁니다"
+                >
+                  📥 이지폼에서 가져오기
+                  {efBulkOrders.length > 0 && <b>{efBulkOrders.length}</b>}
+                </button>
+              )}
               {/* 이 컴퓨터의 표시이름 — 명세서를 작성하면 다른 PC 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이
                   뜬다. 관리자 계정은 공유라 PC 마다 이 이름을 따로 설정(이 PC localStorage 에만 저장). */}
               <span className="statement-myname">
@@ -3153,6 +3180,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             </div>
           </div>
         </div>
+      )}
+
+      {efBulkOpen && (
+        <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
+          <EasyformBulkImport
+            orders={efBulkOrders}
+            token={token}
+            onClose={() => setEfBulkOpen(false)}
+            onSaved={(id) => markEasyformDone(id)}
+          />
+        </Suspense>
       )}
 
       {/* 자동견적 명세서작성 모달 — 별도 탭 대신 여기서 전체화면 오버레이로. ✕ 또는 저장 후 닫기. */}

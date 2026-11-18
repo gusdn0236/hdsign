@@ -48,6 +48,15 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "app": "hdsign_easyform_agent"})
         elif self.path == "/easyform/probe":
             self._json(200, easyform.handle_probe())
+        elif self.path.startswith("/easyform/bulk"):
+            # 이지폼 일괄 가져오기(명세서 탭) — 진행/결과 폴링
+            import easyform_bulk
+            from urllib.parse import urlparse as _bu, parse_qs as _bq
+            try:
+                bid = int((_bq(_bu(self.path).query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                bid = 0
+            self._json(200, easyform_bulk.handle_status(bid))
         elif self.path.startswith("/easyform/pull"):
             try:
                 pid = int((parse_qs(urlparse(self.path).query).get("id") or ["0"])[0] or 0)
@@ -70,6 +79,24 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pbody = {}
             self._json(*easyform.handle_pull_start(pbody))
+            return
+        if parsed.path == "/easyform/bulk":
+            import easyform_bulk
+            try:
+                n = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(n) if n > 0 else b""
+                bbody = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                bbody = {}
+            self._json(*easyform_bulk.handle_start(bbody))
+            return
+        if parsed.path == "/easyform/bulk/cancel":
+            import easyform_bulk
+            try:
+                bid = int((parse_qs(parsed.query).get("id") or ["0"])[0] or 0)
+            except ValueError:
+                bid = 0
+            self._json(200, easyform_bulk.handle_cancel(bid))
             return
         if parsed.path == "/easyform/pull/cancel":
             try:

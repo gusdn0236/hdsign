@@ -3273,3 +3273,37 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   cursor: pointer;
 }
 .ss-recent-del:hover { background: #fee2e2; color: #dc2626; }
+
+/* 명세서 탭 [📥 이지폼에서 가져오기] */
+.statement-efbulk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #c4b5fd;
+  border-radius: 8px;
+  background: #f5f3ff;
+  color: #5b21b6;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.statement-efbulk-btn:hover {
+  background: #ede9fe;
+  border-color: #8b5cf6;
+}
+.statement-efbulk-btn b {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}

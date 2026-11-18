@@ -613,6 +613,39 @@ public class AdminOrderController {
         return ResponseEntity.ok(Map.of("groups", groups));
     }
 
+    // 이미 홈페이지에 가져온 이지폼 명세서들의 지문 — 명세서 탭 [이지폼에서 가져오기](일괄)가
+    // 이지폼 목록에서 이 명세서들을 후보에서 뺀다(같은 명세서를 두 주문에 붙이지 않게).
+    // 결과 = [{date, total, client(거래처명), orderId}]. 저장 JSON 글자검색 1번.
+    @GetMapping("/estimate/easyform-keys")
+    public ResponseEntity<?> easyformKeys() {
+        List<Object[]> raw = new ArrayList<>();
+        jdbcTemplate.query("SELECT order_id, grid_json FROM autoquote_estimate WHERE grid_json LIKE '%\"efKey\"%'", rs -> {
+            try {
+                String key = OM.readTree(rs.getString("grid_json")).path("easyformSync").path("efKey").asText("");
+                String[] p = key.split("\\|");
+                if (p.length == 3) raw.add(new Object[]{rs.getLong("order_id"), p[1], p[2]});
+            } catch (Exception ignored) {
+                // 깨진 JSON 은 건너뜀
+            }
+        });
+        // 지문의 거래처 = 그 명세서를 가진(대표) 주문의 거래처 → 주문을 한 번에 읽어 거래처명으로.
+        Map<Long, String> clientOf = new java.util.HashMap<>();
+        for (Order o : orderRepository.findAllById(raw.stream().map(r -> (Long) r[0]).toList())) {
+            clientOf.put(o.getId(), o.getClient() != null && o.getClient().getCompanyName() != null
+                    ? o.getClient().getCompanyName() : "");
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object[] r : raw) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("orderId", r[0]);
+            m.put("date", r[1]);
+            m.put("total", r[2]);
+            m.put("client", clientOf.getOrDefault((Long) r[0], ""));
+            out.add(m);
+        }
+        return ResponseEntity.ok(Map.of("keys", out));
+    }
+
     /** 이지폼 명세서 지문 '거래처id|YYYY.MM.DD|합계숫자'. 발행일·합계가 없으면 null. */
     private static String efKey(Order order, String date, String total) {
         String d = date == null ? "" : date.trim();

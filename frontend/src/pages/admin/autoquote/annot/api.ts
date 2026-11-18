@@ -604,3 +604,17 @@ export async function refreshSalesAnalytics(token: string | null | undefined): P
   if (!res.ok) throw new Error(`매출분석 새로고침 실패 (${res.status})`);
   return res.json();
 }
+
+/** 이미 홈페이지에 가져온 이지폼 명세서 지문들(발행일·합계·거래처명) — 일괄 가져오기에서 후보 제외용. 실패하면 빈 목록. */
+export async function getEasyformUsedKeys(
+  token: string | null | undefined,
+): Promise<{ orderId: number; date: string; total: string; client: string }[]> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-keys`, { headers: authHeaders(token) });
+    if (!res.ok) return [];
+    const j = await res.json();
+    return Array.isArray(j?.keys) ? j.keys : [];
+  } catch {
+    return [];
+  }
+}
