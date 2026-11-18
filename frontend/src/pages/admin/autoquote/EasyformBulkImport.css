@@ -970,3 +970,95 @@
   padding: 1px 7px;
   border-radius: 999px;
 }
+
+/* 중간 저장 · 닫기 확인 */
+.efb-savedtag {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--efb-yes);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.efb-col.is-saved .efb-ws {
+  border-color: var(--efb-yes);
+}
+.efb-col.is-saved .efb-ef--ok {
+  border-color: var(--efb-yes);
+  background: #f0fdf4;
+}
+.t-saved b {
+  color: #86efac;
+}
+.efb-faillist--foot {
+  position: absolute;
+  right: 22px;
+  bottom: 8px;
+  max-width: 420px;
+}
+.efb-saved-note {
+  margin-right: auto;
+  align-self: center;
+  font-size: 13px;
+  color: #15803d;
+  font-weight: 600;
+}
+.efb-ask {
+  position: fixed;
+  inset: 0;
+  z-index: 1470;
+  background: rgba(5, 10, 16, 0.6);
+  display: grid;
+  place-items: center;
+  animation: efb-fade 0.15s ease;
+}
+.efb-askbox {
+  width: min(460px, 92vw);
+  background: var(--efb-panel);
+  border: 1px solid var(--efb-line);
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.efb-ask-title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.efb-ask-sub {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: var(--efb-mute);
+  line-height: 1.55;
+}
+.efb-ask-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.efb-ask-btns .efb-primary {
+  min-width: 0;
+  height: 40px;
+  font-size: 14px;
+}
+.efb-ask-cancel,
+.efb-ask-plain {
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid var(--efb-line);
+  background: transparent;
+  color: var(--efb-text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.efb-ask-cancel:hover,
+.efb-ask-plain:hover {
+  background: rgba(255, 255, 255, 0.06);
+}

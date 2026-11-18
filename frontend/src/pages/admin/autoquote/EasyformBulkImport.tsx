@@ -86,7 +86,11 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [verdict, setVerdict] = useState<Record<number, Verdict>>({});
   const [detail, setDetail] = useState<number | null>(null); // 열린 비교창의 주문 id
   const [swapping, setSwapping] = useState('');
-  const [saveResult, setSaveResult] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[] } | null>(null);
+  // 중간 저장 — 확인하다가 체크한 것만 먼저 저장(화면은 그대로, 계속 확인 가능). 저장한 주문은 다시 안 저장.
+  const [savedIds, setSavedIds] = useState<Set<number>>(() => new Set());
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[] } | null>(null);
+  const [closeAsk, setCloseAsk] = useState(false);
   const jobRef = useRef<{ id: number; stop: boolean } | null>(null);
   const matchRef = useRef<Record<number, EfMatch>>({});
   const readsRef = useRef<Record<string, EfBulkResult>>({});
@@ -324,10 +328,13 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     setDetail(null);
   };
 
-  const yesList = orders.filter((o) => verdict[o.id] === 'yes' && matches[o.id]?.best && reads[matches[o.id].best!.key]?.ok);
+  const yesList = orders.filter(
+    (o) => verdict[o.id] === 'yes' && !savedIds.has(o.id) && matches[o.id]?.best && reads[matches[o.id].best!.key]?.ok,
+  );
 
   const save = async () => {
-    setPhase('saving');
+    if (saving || !yesList.length) return;
+    setSaving(true);
     setError('');
     let ok = 0;
     const fail: { order: EfBulkOrder; msg: string }[] = [];
@@ -357,6 +364,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             rememberClientAlias(o.clientCompanyName, m.best!.row.client);
             onSaved(o.id);
           });
+          setSavedIds((prev) => new Set([...prev, ...g.map((o) => o.id)]));
           ok += g.length;
         } catch (e) {
           g.forEach((o) => fail.push({ order: o, msg: (e as Error).message }));
@@ -364,14 +372,32 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       }
     };
     await Promise.all([worker(), worker(), worker(), worker(), worker()]);
-    setSaveResult({ ok, fail });
-    setPhase('saved');
+    setSaveMsg({ ok, fail });
+    setSaving(false);
+  };
+
+  // 닫기 — 저장 안 한 체크가 있거나 이지폼 작업 중이면 먼저 묻는다.
+  const running = phase === 'export' || phase === 'read';
+  const requestClose = () => {
+    if (saving) return;
+    if (yesList.length || running) setCloseAsk(true);
+    else onClose();
+  };
+  const closeNow = async (withSave: boolean) => {
+    setCloseAsk(false);
+    if (withSave) await save();
+    if (jobRef.current) cancelEfBulk(jobRef.current.id);
+    onClose();
   };
 
   // 키보드 — ←/→ 넘기기, 비교창: Enter 맞아요 · X 아니에요 · Esc 닫기
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (closeAsk) {
+        if (e.key === 'Escape') setCloseAsk(false);
+        return;
+      }
       if (detail != null) {
         if (e.key === 'Escape') setDetail(null);
         else if (e.key === 'Enter' && !swapping) mark(detail, 'yes');
@@ -387,8 +413,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       }
       if (e.key === 'ArrowLeft') go(-1);
       else if (e.key === 'ArrowRight') go(1);
-      else if (e.key === 'Escape' && !busy) onClose();
-      else if (e.key === 'Enter' && phase === 'review') {
+      else if (e.key === 'Escape') requestClose();
+      else if (e.key === 'Enter' && (phase === 'review' || phase === 'read')) {
         const o = orders[pos];
         const m = o && matches[o.id];
         if (m?.best && reads[m.best.key]?.ok) setDetail(o.id);
@@ -440,7 +466,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             ['지시서 확인', phase === 'intro'],
             ['이지폼에서 찾기', phase === 'export' || phase === 'read'],
             ['맞는지 확인', phase === 'review'],
-            ['저장', phase === 'saving' || phase === 'saved'],
+            ['저장', saving],
           ].map(([label, on], i) => (
             <li key={i} className={on ? 'on' : ''}>
               <b>{i + 1}</b>
@@ -448,7 +474,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             </li>
           ))}
         </ol>
-        <button type="button" className="efb-x" onClick={onClose} disabled={busy} title={busy ? '작업 중엔 [정지]를 먼저 눌러주세요' : '닫기 (Esc)'}>
+        <button type="button" className="efb-x" onClick={requestClose} disabled={saving} title="닫기">
           ✕
         </button>
       </header>
@@ -503,7 +529,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                 return (
                   <div
                     key={o.id}
-                    className={`efb-col ${i === pos ? 'is-active' : ''} ${v ? `is-${v}` : ''}`}
+                    className={`efb-col ${i === pos ? 'is-active' : ''} ${v ? `is-${v}` : ''} ${savedIds.has(o.id) ? 'is-saved' : ''}`}
                     style={{ width: CARD_W, marginRight: GAP, ...(dist > 4 ? { opacity: 0 } : {}) }}
                     onClick={() => setPos(i)}
                   >
@@ -514,7 +540,11 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                           thumbnailUrl={o.worksheetThumbnailUrl || null}
                           fallback={<div className="efb-ws-empty">{o.title || '지시서'}</div>}
                         />
-                        {v && <span className={`efb-mark efb-mark--${v}`}>{v === 'yes' ? '✓' : '✕'}</span>}
+                        {savedIds.has(o.id) ? (
+                          <span className="efb-savedtag">저장됨</span>
+                        ) : (
+                          v && <span className={`efb-mark efb-mark--${v}`}>{v === 'yes' ? '✓' : '✕'}</span>
+                        )}
                       </div>
                       <div className="efb-ws-meta">
                         <span className="efb-ws-date">{shortDate(o.dueDate || o.createdAt)}{o.dueDate ? ' 납' : ''}</span>
@@ -536,10 +566,9 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                         onClick={(e) => {
                           e.stopPropagation();
                           setPos(i);
-                          if (phase === 'review') setDetail(o.id);
+                          setDetail(o.id);
                         }}
-                        disabled={phase !== 'review'}
-                        title={phase === 'review' ? '눌러서 지시서와 나란히 보기' : '다 읽은 뒤에 확인할 수 있어요'}
+                        title="눌러서 지시서와 나란히 보기"
                       >
                         <span className="efb-ef-top">
                           <span className={`efb-biz efb-biz--${m.best.row.biz}`}>{bizLabel(m.best.row.biz)}</span>
@@ -606,47 +635,65 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             <button type="button" className="efb-primary" onClick={start} disabled={!n}>확인</button>
           </div>
         )}
-        {(phase === 'export' || phase === 'read') && (
+        {phase === 'export' && (
           <div className="efb-cta">
             <p className="efb-lead">이지폼에서 찾고 있어요 · 찾은 명세서가 지시서 아래에 나타나요</p>
           </div>
         )}
-        {phase === 'review' && (
+        {(phase === 'read' || phase === 'review') && (
           <div className="efb-cta efb-cta--row">
             <div className="efb-tally">
               <span className="t-yes">맞음 <b>{stats.yes}</b></span>
               <span className="t-no">아님 <b>{stats.no}</b></span>
               <span className="t-left">남음 <b>{stats.left}</b></span>
+              {savedIds.size > 0 && <span className="t-saved">저장됨 <b>{savedIds.size}</b></span>}
               {stats.none > 0 && <span className="t-none">못 찾음 {stats.none}</span>}
             </div>
-            <p className="efb-sub">명세서를 눌러 지시서와 비교하세요 · ←/→ 넘기기 · Enter 열기</p>
-            <button type="button" className="efb-primary" onClick={save} disabled={!yesList.length}>
-              {yesList.length ? `${yesList.length}건 홈페이지에 저장` : '맞는 명세서를 체크하세요'}
+            <p className="efb-sub">
+              {saveMsg
+                ? `${saveMsg.ok}건 저장했어요${saveMsg.fail.length ? ` · ${saveMsg.fail.length}건 실패` : ''} · 계속 확인할 수 있어요`
+                : phase === 'read'
+                  ? '읽힌 명세서부터 눌러서 확인할 수 있어요 · 체크한 것만 먼저 저장해도 돼요'
+                  : '명세서를 눌러 지시서와 비교하세요 · ←/→ 넘기기 · 체크한 것만 먼저 저장해도 돼요'}
+            </p>
+            <button type="button" className="efb-primary" onClick={save} disabled={!yesList.length || saving}>
+              {saving ? '저장하는 중…' : yesList.length ? `체크한 ${yesList.length}건 저장` : '맞는 명세서를 체크하세요'}
             </button>
           </div>
         )}
-        {phase === 'saving' && (
-          <div className="efb-cta">
-            <p className="efb-lead"><span className="efb-spin" /> {yesList.length}건 저장하는 중…</p>
-          </div>
-        )}
-        {phase === 'saved' && saveResult && (
-          <div className="efb-cta efb-cta--row">
-            <p className="efb-lead">
-              <b>{saveResult.ok}건</b>을 홈페이지 명세서에 넣었어요
-              {saveResult.fail.length > 0 && <span className="efb-failnote"> · {saveResult.fail.length}건 실패</span>}
-            </p>
-            {saveResult.fail.length > 0 && (
-              <ul className="efb-faillist">
-                {saveResult.fail.map((f) => (
-                  <li key={f.order.id}>{orderNoCore(f.order.orderNumber)} {f.order.clientCompanyName} — {f.msg}</li>
-                ))}
-              </ul>
-            )}
-            <button type="button" className="efb-primary" onClick={onClose}>닫기</button>
-          </div>
+        {saveMsg && saveMsg.fail.length > 0 && (
+          <ul className="efb-faillist efb-faillist--foot">
+            {saveMsg.fail.map((f) => (
+              <li key={f.order.id}>{orderNoCore(f.order.orderNumber)} {f.order.clientCompanyName} — {f.msg}</li>
+            ))}
+          </ul>
         )}
       </footer>
+
+      {closeAsk && (
+        <div className="efb-ask" role="dialog" aria-label="닫기 확인" onClick={() => setCloseAsk(false)}>
+          <div className="efb-askbox" onClick={(e) => e.stopPropagation()}>
+            <p className="efb-ask-title">
+              {yesList.length ? `저장 안 한 체크가 ${yesList.length}건 있어요` : '이지폼에서 아직 찾는 중이에요'}
+            </p>
+            <p className="efb-ask-sub">
+              {running ? '닫으면 이지폼 작업도 멈춰요(지금 읽던 명세서까지 닫고). ' : ''}
+              {yesList.length ? '체크한 것만 홈페이지에 저장하고 닫을 수 있어요.' : ''}
+            </p>
+            <div className="efb-ask-btns">
+              <button type="button" className="efb-ask-cancel" onClick={() => setCloseAsk(false)}>취소</button>
+              <button type="button" className="efb-ask-plain" onClick={() => closeNow(false)}>
+                {yesList.length ? '저장 안 하고 닫기' : '멈추고 닫기'}
+              </button>
+              {yesList.length > 0 && (
+                <button type="button" className="efb-primary" onClick={() => closeNow(true)}>
+                  {yesList.length}건 저장하고 닫기
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {detailOrder && matches[detailOrder.id]?.best && (
         <DetailView
@@ -655,6 +702,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           read={reads[matches[detailOrder.id].best!.key]}
           reads={reads}
           verdict={verdict[detailOrder.id]}
+          saved={savedIds.has(detailOrder.id)}
           index={orders.findIndex((o) => o.id === detailOrder.id)}
           total={n}
           swapping={swapping}
@@ -688,6 +736,7 @@ function DetailView({
   onUse,
   onNav,
   mergedNos,
+  saved,
 }: {
   order: EfBulkOrder;
   match: EfMatch;
@@ -702,6 +751,7 @@ function DetailView({
   onUse: (c: EfCandidate) => void;
   onNav: (d: number) => void;
   mergedNos: string[];
+  saved: boolean;
 }) {
   const best = match.best!;
   const rows = (read?.rows || []).map((r) => r);
@@ -803,10 +853,11 @@ function DetailView({
               </div>
             )}
             <div className="efb-dfoot">
-              <button type="button" className={`efb-no ${verdict === 'no' ? 'on' : ''}`} onClick={() => onMark('no')} disabled={!!swapping}>
+              {saved && <span className="efb-saved-note">이미 홈페이지에 저장했어요</span>}
+              <button type="button" className={`efb-no ${verdict === 'no' ? 'on' : ''}`} onClick={() => onMark('no')} disabled={!!swapping || saved}>
                 ✕ 아니에요 <kbd>X</kbd>
               </button>
-              <button type="button" className={`efb-yes ${verdict === 'yes' ? 'on' : ''}`} onClick={() => onMark('yes')} disabled={!!swapping}>
+              <button type="button" className={`efb-yes ${verdict === 'yes' ? 'on' : ''}`} onClick={() => onMark('yes')} disabled={!!swapping || saved}>
                 ✓ 맞아요 <kbd>Enter</kbd>
               </button>
             </div>
