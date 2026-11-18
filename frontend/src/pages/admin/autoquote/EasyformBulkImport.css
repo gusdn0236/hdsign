@@ -1283,3 +1283,42 @@
   opacity: 0;
   pointer-events: none;
 }
+/* 키워드·사이즈 맞은 칸 = 초록, 그 줄 = 연한 초록 (기존 명세서 찾기와 같은 색) */
+.efb-table tr.has-hit td {
+  background: #f0fdf4;
+}
+.efb-table td.hit {
+  background: #dcfce7 !important;
+  color: #15803d;
+  font-weight: 600;
+}
+.efb-hitcount {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.5px;
+  color: #475569;
+}
+.efb-hitcount b {
+  color: #15803d;
+  font-size: 14px;
+}
+.efb-hitcount span {
+  color: #94a3b8;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.efb-other-used {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6d28d9;
+  background: #ede9fe;
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.efb-ask-sub b {
+  color: #fff;
+}

@@ -28,12 +28,13 @@ import {
   candidatesToRead,
   rescoreByContent,
   markMerged,
+  cellMatches,
   worksheetDims,
   type EfMatch,
   type EfCandidate,
   type EfOrder,
 } from './data/efMatch';
-import { BASE_URL, getEasyformUsedKeys, syncEstimateFromEasyform } from './annot/api';
+import { BASE_URL, getEasyformUsedKeys, syncEstimateFromEasyform, findEasyformMatch } from './annot/api';
 import './EasyformBulkImport.css';
 
 // JS(memo) 컴포넌트라 props 타입이 추론되지 않음 → 느슨하게.
@@ -91,6 +92,10 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[] } | null>(null);
   const [closeAsk, setCloseAsk] = useState(false);
+  // 같은 이지폼 명세서를 다른 지시서도 쓸 때(다른 지시서에서 [맞아요] 했거나 홈페이지에 이미 저장됨) — 합칠지 묻는다.
+  // merge = 합친 명세서로 묶어 저장, separate = 이 지시서에만 따로.
+  const [mergeChoice, setMergeChoice] = useState<Record<number, 'merge' | 'separate'>>({});
+  const [mergeAsk, setMergeAsk] = useState<{ orderId: number; nos: string[]; loading: boolean } | null>(null);
   // 사람이 넣은 단서(키워드·사이즈) — 지시서별. 넣은 지시서는 단서로 가려내고, 안 넣은 건 지금 방식대로.
   const [clues, setClues] = useState<Record<number, string[]>>({});
   const jobRef = useRef<{ id: number; stop: boolean } | null>(null);
@@ -323,7 +328,33 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     }
   };
 
-  const mark = (orderId: number, v: Verdict) => {
+  // 이 지시서의 명세서를 같이 쓰는 다른 주문 — 이번에 [맞아요] 한 지시서 + 홈페이지에 이미 저장된 주문
+  const sharersOf = (orderId: number) => {
+    const key = matches[orderId]?.best?.key;
+    if (!key) return { session: [] as EfBulkOrder[], saved: false };
+    const session = orders.filter(
+      (o) => o.id !== orderId && matches[o.id]?.best?.key === key && (verdict[o.id] === 'yes' || savedIds.has(o.id)),
+    );
+    return { session, saved: !!matches[orderId].best!.usedBy?.length };
+  };
+  const mark = (orderId: number, v: Verdict, choice?: 'merge' | 'separate') => {
+    if (v === 'yes' && !choice && !mergeChoice[orderId]) {
+      const sh = sharersOf(orderId);
+      if (sh.session.length || sh.saved) {
+        const nos = sh.session.map((o) => orderNoCore(o.orderNumber));
+        setMergeAsk({ orderId, nos, loading: sh.saved });
+        if (sh.saved) {
+          const m = matches[orderId];
+          const rd = reads[m.best!.key];
+          findEasyformMatch(token, orderId, rd?.date || m.best!.row.date, rd?.total || m.best!.row.total).then((gs) => {
+            const more = gs.flatMap((g) => g.orders.map((o) => orderNoCore(o.orderNumber)));
+            setMergeAsk((a) => (a && a.orderId === orderId ? { ...a, nos: [...new Set([...a.nos, ...more])], loading: false } : a));
+          });
+        }
+        return;
+      }
+    }
+    if (choice) setMergeChoice((prev) => ({ ...prev, [orderId]: choice }));
     setVerdict((prev) => ({ ...prev, [orderId]: v }));
     // 다음 아직 안 본(읽힌 명세서가 있는) 지시서로 이동
     const idx = orders.findIndex((o) => o.id === orderId);
@@ -351,9 +382,10 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     let ok = 0;
     const fail: { order: EfBulkOrder; msg: string }[] = [];
     // 같은 이지폼 명세서를 [맞아요] 한 지시서끼리 묶는다 → 합친 명세서 1장(대표 = 납기 빠른 주문), 매출은 한 번만.
+    // '따로'를 고른 지시서는 혼자, 나머지는 같은 명세서끼리 묶는다.
     const groups = new Map<string, EfBulkOrder[]>();
     for (const o of [...yesList].sort(byDate)) {
-      const k = matches[o.id].best!.key;
+      const k = mergeChoice[o.id] === 'separate' ? `solo:${o.id}` : matches[o.id].best!.key;
       groups.set(k, [...(groups.get(k) || []), o]);
     }
     const queue = [...groups.values()];
@@ -364,13 +396,23 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         try {
           const grid = efRowsToGrid(rd.rows || []);
           const sum = grid.reduce((a, x) => a + (Number(x.공급가액) || 0), 0);
+          const efDate = rd.date || m.best!.row.date;
+          const efTotal = rd.total || m.best!.row.total;
+          // '합친 명세서로 묶기'를 고른 지시서가 있으면, 이 명세서를 이미 쓰는 홈페이지 주문(앞서 저장한 것 포함)과 같이 묶는다.
+          // 기존 묶음의 대표가 계속 대표(먼저), 매출은 한 번만.
+          let existing: string[] = [];
+          if (g.some((o) => mergeChoice[o.id] === 'merge')) {
+            const gs = await findEasyformMatch(token, g[0].id, efDate, efTotal);
+            existing = gs.flatMap((x) => x.orders.map((o) => orderNoCore(o.orderNumber)));
+          }
+          const nos = [...new Set([...existing, ...g.map((o) => orderNoCore(o.orderNumber))])];
           await syncEstimateFromEasyform(token, {
-            orderNumbers: g.map((o) => orderNoCore(o.orderNumber)),
+            orderNumbers: nos,
             grid,
             total: sum,
             source: 'batch',
-            efDate: rd.date || m.best!.row.date,
-            efTotal: rd.total || m.best!.row.total,
+            efDate,
+            efTotal,
           });
           g.forEach((o) => {
             rememberClientAlias(o.clientCompanyName, m.best!.row.client);
@@ -408,6 +450,10 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
       if (closeAsk) {
         if (e.key === 'Escape') setCloseAsk(false);
+        return;
+      }
+      if (mergeAsk) {
+        if (e.key === 'Escape') setMergeAsk(null);
         return;
       }
       if (phaseRef.current === 'clue') return;
@@ -599,7 +645,11 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                         <span className="efb-ef-top">
                           <span className={`efb-biz efb-biz--${m.best.row.biz}`}>{bizLabel(m.best.row.biz)}</span>
                           <span className="efb-ef-date">{shortDate(rd.date || m.best.row.date)}</span>
-                          {m.mergedWith?.length ? (
+                          {m.best.usedBy?.length && !m.mergedWith?.length ? (
+                            <span className="efb-merged" title="이 명세서는 홈페이지의 다른 주문에 이미 저장돼 있어요 — 맞아요를 누르면 합칠지 물어봐요">
+                              이미 저장된 명세서
+                            </span>
+                          ) : m.mergedWith?.length ? (
                             <span
                               className="efb-merged"
                               title={`이 명세서를 같이 쓰는 지시서: ${m.mergedWith
@@ -705,6 +755,50 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         </>
       )}
 
+      {mergeAsk && (
+        <div className="efb-ask" role="dialog" aria-label="합친 명세서 확인" onClick={() => setMergeAsk(null)}>
+          <div className="efb-askbox" onClick={(e) => e.stopPropagation()}>
+            <p className="efb-ask-title">다른 지시서도 쓰는 명세서예요</p>
+            <p className="efb-ask-sub">
+              이 이지폼 명세서는{' '}
+              {mergeAsk.nos.length ? <b>주문 {mergeAsk.nos.join(', ')}</b> : mergeAsk.loading ? '다른 주문' : '다른 지시서'}
+              {mergeAsk.loading ? ' …' : ''}에도 쓰였어요.
+              <br />
+              한 명세서에 지시서 여러 장을 같이 끊은 거라면 <b>합친 명세서</b>로 묶으세요. 명세서 1장을 같이 쓰고 매출은 한 번만
+              잡혀요.
+            </p>
+            <div className="efb-ask-btns">
+              <button type="button" className="efb-ask-cancel" onClick={() => setMergeAsk(null)}>
+                취소
+              </button>
+              <button
+                type="button"
+                className="efb-ask-plain"
+                onClick={() => {
+                  const id = mergeAsk.orderId;
+                  setMergeAsk(null);
+                  mark(id, 'yes', 'separate');
+                }}
+              >
+                이 지시서에만 따로
+              </button>
+              <button
+                type="button"
+                className="efb-primary"
+                autoFocus
+                onClick={() => {
+                  const id = mergeAsk.orderId;
+                  setMergeAsk(null);
+                  mark(id, 'yes', 'merge');
+                }}
+              >
+                합친 명세서로 묶기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {closeAsk && (
         <div className="efb-ask" role="dialog" aria-label="닫기 확인" onClick={() => setCloseAsk(false)}>
           <div className="efb-askbox" onClick={(e) => e.stopPropagation()}>
@@ -738,6 +832,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           reads={reads}
           verdict={verdict[detailOrder.id]}
           saved={savedIds.has(detailOrder.id)}
+          keywords={clues[detailOrder.id] || []}
+          dims={dimsRef.current[detailOrder.id]}
           index={orders.findIndex((o) => o.id === detailOrder.id)}
           total={n}
           swapping={swapping}
@@ -772,6 +868,8 @@ function DetailView({
   onNav,
   mergedNos,
   saved,
+  keywords,
+  dims,
 }: {
   order: EfBulkOrder;
   match: EfMatch;
@@ -787,10 +885,20 @@ function DetailView({
   onNav: (d: number) => void;
   mergedNos: string[];
   saved: boolean;
+  keywords: string[];
+  dims?: number[];
 }) {
   const best = match.best!;
   const rows = (read?.rows || []).map((r) => r);
   const grid = efRowsToGrid(rows);
+  // 키워드·사이즈(·지시서 수치)와 맞은 칸 = 초록, 맞은 칸 있는 줄 = 연한 초록 (기존 명세서 찾기와 같은 모양)
+  const hitRows = grid.map((g) => ({
+    code: cellMatches(g.품목코드, keywords, false),
+    item: cellMatches(g.품목, keywords, false),
+    spec: cellMatches(g.규격, keywords, true, dims),
+  }));
+  const filledCells = grid.reduce((a, g) => a + [g.품목코드, g.품목, g.규격].filter((x) => (x || '').trim()).length, 0);
+  const hitCells = hitRows.reduce((a, h) => a + Number(h.code) + Number(h.item) + Number(h.spec), 0);
   const nos = extractOrderNos(rows.map((r) => r.remark || '').join(' '));
   const own = orderNoCore(order.orderNumber);
   const reasons: { t: string; good: boolean }[] = [];
@@ -833,6 +941,12 @@ function DetailView({
                 <span key={i} className={r.good ? 'good' : 'warn'}>{r.good ? '✓' : '!'} {r.t}</span>
               ))}
             </div>
+            {(keywords.length > 0 || (dims && dims.length > 0)) && (
+              <div className="efb-hitcount">
+                맞은 칸 <b>{hitCells}</b> / 전체 {filledCells}칸
+                <span>{keywords.length ? `키워드 ${keywords.join(', ')}` : ''}{keywords.length && dims?.length ? ' · ' : ''}{dims?.length ? '규격은 지시서 수치와도 비교' : ''}</span>
+              </div>
+            )}
             <div className="efb-table-wrap">
               <table className="efb-table">
                 <thead>
@@ -846,16 +960,19 @@ function DetailView({
                   </tr>
                 </thead>
                 <tbody>
-                  {grid.map((g, i) => (
-                    <tr key={i}>
-                      <td>{g.품목코드}</td>
-                      <td className="efb-td-item">{g.품목}</td>
-                      <td>{g.규격}</td>
-                      <td className="num">{g.수량}</td>
-                      <td className="num">{won(g.단가)}</td>
-                      <td className="num">{won(g.공급가액)}</td>
-                    </tr>
-                  ))}
+                  {grid.map((g, i) => {
+                    const h = hitRows[i];
+                    return (
+                      <tr key={i} className={h.code || h.item || h.spec ? 'has-hit' : undefined}>
+                        <td className={h.code ? 'hit' : undefined}>{g.품목코드}</td>
+                        <td className={`efb-td-item${h.item ? ' hit' : ''}`}>{g.품목}</td>
+                        <td className={h.spec ? 'hit' : undefined}>{g.규격}</td>
+                        <td className="num">{g.수량}</td>
+                        <td className="num">{won(g.단가)}</td>
+                        <td className="num">{won(g.공급가액)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -881,6 +998,7 @@ function DetailView({
                           <b>{c.row.client}</b>
                           <span className="efb-other-item">{c.row.firstItem}</span>
                           <span>{won(c.row.total)}원</span>
+                          {c.usedBy?.length ? <span className="efb-other-used">이미 저장됨 · 고르면 같이 쓰기</span> : null}
                           {reads[c.key]?.ok && <span className="efb-other-read">읽음</span>}
                         </>
                       )}

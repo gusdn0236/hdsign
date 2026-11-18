@@ -36,6 +36,17 @@ export interface EfCandidate {
   remark?: 'own' | 'other' | '';
   clueHit?: number; // 사람이 넣은 단서 중 맞은 수
   clueN?: number;
+  // 이미 홈페이지의 다른 주문에 저장된 이지폼 명세서(주문 id) — 고르면 그 주문과 합친 명세서로 저장
+  usedBy?: number[];
+}
+
+/** 이 후보를 이 지시서 짝으로 볼 근거가 있나(이미 다른 주문에 저장된 명세서를 같이 쓸 때 필요). */
+function hasEvidence(c: EfCandidate): boolean {
+  return (
+    c.remark === 'own' ||
+    (!!c.clueN && c.clueHit === c.clueN) ||
+    ((c.dimHit || 0) >= 2 && (c.dimHit || 0) / (c.dimN || 1) >= 0.6)
+  );
 }
 
 export interface EfMatch {
@@ -182,17 +193,20 @@ const MIN_CLIENT = 0.5;
 export function matchOrders(
   orders: EfOrder[],
   rows: EfListRow[],
-  used: { date: string; total: string; client: string }[],
+  used: { date: string; total: string; client: string; orderId?: number }[],
   cluesByOrder: Record<number, string[]> = {},
 ): EfMatch[] {
   const alias = loadAlias();
   // 이미 다른 주문에 가져온 명세서(발행일·합계·거래처 같음)는 뺀다.
   const digits = (s: string) => String(s || '').replace(/[^0-9-]/g, '');
-  const usedSet = used.map((u) => ({ k: `${u.date}|${digits(u.total)}`, client: u.client }));
-  const free = rows.filter(
-    (r) => Number(digits(r.total)) > 0 && // 0원·마이너스(반품·정정) 명세서는 후보에서 뺌
-      !usedSet.some((u) => u.k === `${r.date}|${digits(r.total)}` && clientSim(u.client, r.client, alias) >= MIN_CLIENT),
-  );
+  // 이미 다른 주문에 가져온 명세서 — 빼지 않고 점수만 낮춰 둔다(같은 거래처 지시서 여러 장을 명세서 1장으로
+  // 끊는 경우 그 명세서를 다른 지시서도 같이 쓸 수 있게). 고르면 저장 때 그 주문과 합친 명세서로.
+  const usedSet = used.map((u) => ({ k: `${u.date}|${digits(u.total)}`, client: u.client, id: u.orderId }));
+  const usedByOf = (r: EfListRow) =>
+    usedSet
+      .filter((u) => u.k === `${r.date}|${digits(r.total)}` && clientSim(u.client, r.client, alias) >= MIN_CLIENT)
+      .map((u) => u.id ?? -1);
+  const free = rows.filter((r) => Number(digits(r.total)) > 0); // 0원·마이너스(반품·정정) 명세서는 후보에서 뺌
   // 첫 줄 품목 낱말의 흔함(IDF) — '아크릴5t' 처럼 여기저기 나오는 낱말은 무게 ≈ 0.
   const df = new Map<string, number>();
   const rowToks = free.map((r) => {
@@ -224,11 +238,15 @@ export function matchOrders(
       // 사람이 넣은 단서가 목록의 첫 줄 품목에 있으면 미리 앞으로(전체 품목은 읽은 뒤 rescore 에서)
       const cl = cluesByOrder[o.id] || [];
       const pre = cl.length ? clueHits(cl, [{ item: r.firstItem }]).hit / cl.length : 0;
-      const score = 3 * c + 2.5 * dateScore + 1.5 * tw + 2 * pre;
-      cands.push({ row: r, key: efRowKey(r), score, client: c, days, title: tw });
+      const usedBy = usedByOf(r);
+      const score = 3 * c + 2.5 * dateScore + 1.5 * tw + 2 * pre - (usedBy.length ? 2 : 0);
+      cands.push({ row: r, key: efRowKey(r), score, client: c, days, title: tw, usedBy: usedBy.length ? usedBy : undefined });
     });
     cands.sort((a, b) => b.score - a.score || a.days - b.days);
-    return { order: o, cands: cands.slice(0, 6) };
+    // 위 6개 + 같은 거래처·납기 ±1일인 '이미 저장된 명세서'는 순위 밖이어도 후보에 남긴다(합친 명세서용)
+    const top = cands.slice(0, 6);
+    cands.slice(6).forEach((c) => c.usedBy && c.client >= 0.85 && c.days <= 1 && top.push(c));
+    return { order: o, cands: top };
   });
 
   // 배정 — 모든 (주문, 명세서) 짝을 점수순으로, 명세서·주문 각각 한 번만.
@@ -239,6 +257,7 @@ export function matchOrders(
   const bestOf = new Map<number, EfCandidate>();
   for (const { oi, c } of pairs) {
     if (bestOf.has(oi) || takenRow.has(c.key)) continue;
+    if (c.usedBy) continue; // 이미 저장된 명세서는 읽고 근거가 있을 때만(rescore) 짝으로
     bestOf.set(oi, c);
     takenRow.add(c.key);
   }
@@ -247,7 +266,8 @@ export function matchOrders(
   return markMerged(
     perOrder.map((p, oi) => {
       const best = work[oi].best;
-      const others = p.cands.filter((c) => c.key !== best?.key).slice(0, 4);
+      const rest = p.cands.filter((c) => c.key !== best?.key);
+      const others = [...rest.slice(0, 4), ...rest.slice(4).filter((c) => c.usedBy)];
       const second = others[0];
       const sure = !!best && best.client >= 0.85 && best.days <= 3 && (!second || best.score - second.score >= 0.8);
       return { order: p.order, best, others, sure };
@@ -333,6 +353,12 @@ export function specNums(rows: EasyformPulledRow[]): number[] {
  * 1등부터 납기와 3일 넘게 떨어져 있으면(납기 근처에 없음) 점수 비슷한 후보를 대신 본다.
  */
 export function candidatesToRead(m: EfMatch, hasClues = false): EfCandidate[] {
+  const usedNear = m.others.filter((c) => c.usedBy && c.client >= 0.85 && c.days <= 1).slice(0, 2);
+  if (!m.best) return usedNear;
+  return [...new Map([...candidatesToReadInner(m, hasClues), ...usedNear].map((c) => [c.key, c])).values()];
+}
+
+function candidatesToReadInner(m: EfMatch, hasClues: boolean): EfCandidate[] {
   if (!m.best) return [];
   // 단서를 넣은 지시서 — 단서로 가려낼 수 있으니 같은 거래처 납기 ±5일까지 조금 넓게 최대 4개
   if (hasClues) return [m.best, ...m.others.filter((c) => c.client >= 0.85 && c.days <= 5).slice(0, 3)];
@@ -374,8 +400,8 @@ export function rescoreByContent(
       const cl = cluesByOrder[id] || [];
       const ch = cl.length ? clueHits(cl, rows).hit : 0;
       const clueTerm = cl.length ? 5 * (ch / cl.length) + (ch === cl.length ? 2 : 0) - (ch === 0 ? 2 : 0) : 0;
-      const final = c.score + 4 * (dimRate - 0.5) + clueTerm + (remark === 'own' ? 10 : remark === 'other' ? -4 : 0);
-      return {
+      let final = c.score + 4 * (dimRate - 0.5) + clueTerm + (remark === 'own' ? 10 : remark === 'other' ? -4 : 0);
+      const next = {
         ...c,
         final,
         dimHit: dims.length ? hit : undefined,
@@ -384,6 +410,8 @@ export function rescoreByContent(
         clueHit: cl.length ? ch : undefined,
         clueN: cl.length ? cl.length : undefined,
       };
+      if (c.usedBy && hasEvidence(next)) final += 2; // 근거 있으면 '이미 저장됨' 감점 취소
+      return { ...next, final };
     });
     scored[id].forEach((c) => pairs.push({ id, c }));
   }
@@ -392,6 +420,7 @@ export function rescoreByContent(
   const best = new Map<number, EfCandidate>();
   for (const { id, c } of pairs) {
     if (best.has(id) || taken.has(c.key)) continue;
+    if (c.usedBy && !hasEvidence(c)) continue; // 이미 저장된 명세서는 근거 있을 때만
     // 읽어 둔 후보가 있으면 안 읽은 후보로는 짝짓지 않는다(보여줄 표가 없음) — 읽은 것 우선
     if (!reads[c.key]?.ok && scored[id].some((x) => reads[x.key]?.ok && !taken.has(x.key))) continue;
     best.set(id, c);
@@ -465,4 +494,33 @@ export function clueHits(
     }
   }
   return { hit, n: clues.length };
+}
+
+/**
+ * 비교창 표 칸 초록 칠하기 — 이 칸이 키워드·사이즈(또는 지시서 수치)와 맞나. (기존 명세서 찾기의 맞은 칸 초록과 같은 규칙)
+ *  - 글자 키워드: 칸에 들어 있음(또는 3글자 넘는 칸이 키워드 안에)
+ *  - 사이즈 키워드('2400*600', 'h350'): 규격 칸 숫자에 그 숫자들이 모두 있음(±3%·±5mm)
+ *  - 지시서 수치(dims): 규격 칸 숫자 절반 이상이 지시서 도형 크기와 맞음
+ */
+export function cellMatches(text: string, clues: string[], isSpec: boolean, dims?: number[]): boolean {
+  const t = normC(text);
+  if (!t) return false;
+  const close = (a: number, b: number) => Math.abs(a - b) <= Math.max(5, a * 0.03);
+  const own = [...(text || '').matchAll(/\d{2,5}/g)].map((m) => +m[0]);
+  for (const raw of clues) {
+    const c = normC(raw);
+    if (!c) continue;
+    const nums = [...c.matchAll(/\d{2,5}/g)].map((m) => +m[0]);
+    const isSize = nums.length > 0 && /^[a-z:]*\d+([*x×]\d+)*(mm)?$/.test(c);
+    if (isSize) {
+      if (isSpec && nums.every((n) => own.some((d) => close(n, d)))) return true;
+    } else if (t.includes(c) || (t.length >= 3 && c.includes(t))) {
+      return true;
+    }
+  }
+  if (isSpec && dims?.length) {
+    const ns = own.filter((n) => n >= 20);
+    if (ns.length && ns.filter((n) => dims.some((d) => close(n, d))).length * 2 >= ns.length) return true;
+  }
+  return false;
 }
