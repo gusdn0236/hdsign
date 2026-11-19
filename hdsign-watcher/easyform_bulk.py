@@ -738,6 +738,12 @@ def _has_content(r: dict) -> bool:
         (r.get("unit_price") or "").strip() not in ("", "0")
 
 
+def _same_num(k: str, old: str, new: str) -> bool:
+    """수량·단가 빈칸 ↔ '0' 은 같은 값 — 이지폼은 칸을 편집하면 빈 숫자칸을 0 으로 보여줌(원래도 빈 수량은 0 표시).
+    실측 2026-11-19: 38행(제목줄, 단가 빈칸) 비고만 적었는데 단가가 '0' 으로 읽혀 저장을 멈췄던 일."""
+    return k in ("qty", "unit_price") and {(old or "").strip(), (new or "").strip()} <= {"", "0"}
+
+
 def _rows_same_except(before: list, after: list, row: int, want: str) -> str:
     """바뀐 칸 검사 — 문제 없으면 '', 있으면 무엇이 바뀌었는지."""
     if len(after) < len(before):
@@ -752,7 +758,7 @@ def _rows_same_except(before: list, after: list, row: int, want: str) -> str:
                 continue
             if v == old:
                 continue
-            if k in ("qty", "unit_price") and not _has_content(bf) and {old.strip(), v.strip()} <= {"", "0"}:
+            if _same_num(k, old, v):
                 continue
             return f"{i + 1}행 {k} 가 '{old}'→'{v}' 로 바뀌었어요"
     return ""
@@ -958,7 +964,7 @@ def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
         if k == "remark":
             if v != want:
                 return {"ok": False, "message": f"비고가 '{v}'(으)로 들어가서 저장 안 했어요"}
-        elif v != before.get(k, ""):
+        elif v != before.get(k, "") and not _same_num(k, before.get(k, ""), v):
             return {"ok": False, "message": f"{row + 1}행 {k} 가 바뀌어서 저장 안 했어요"}
     res = _save_with_yes(main, form)
     if res.get("ok"):
