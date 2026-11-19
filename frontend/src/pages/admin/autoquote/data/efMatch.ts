@@ -334,11 +334,47 @@ export function efRowsToGrid(
 export function worksheetDims(g: { objects?: { w?: number; h?: number }[]; extent?: { w?: number; h?: number } } | null): number[] {
   if (!g) return [];
   const set = new Set<number>();
-  for (const o of g.objects || []) {
+  const objs = g.objects || [];
+  const big = Math.max(0, ...objs.map((o) => Math.max(o.w || 0, o.h || 0)));
+  const min = Math.max(10, big * DIM_MIN_FRAC); // 글자 획·작은 장식 빼기
+  for (const o of objs) {
+    if (Math.max(o.w || 0, o.h || 0) < min) continue;
     for (const v of [o.w, o.h]) if (v && v >= 10) set.add(Math.round(v));
   }
   for (const v of [g.extent?.w, g.extent?.h]) if (v && v >= 10) set.add(Math.round(v));
   return [...set];
+}
+
+// 지시서 도형 수치는 글자 획·작은 장식까지 다 들어가 수백 개가 되기도 한다(261113-18: 도형 1047개 → 10~311mm 가
+// 1mm 간격으로 빽빽). 그러면 규격 칸의 아무 숫자나 '맞음'이 된다 → 증거로 안 쳐야 한다.
+//  ① 작은 도형(가장 큰 도형의 DIM_MIN_FRAC 미만) 빼고 ② 그 숫자 근처가 빽빽하면(아무 숫자나 맞을 구간) 비교에서 뺀다.
+export const DIM_MIN_FRAC = Number((globalThis as { __DIM_MIN_FRAC?: number }).__DIM_MIN_FRAC ?? 0.02);
+export const DIM_MAX_COVER = Number((globalThis as { __DIM_MAX_COVER?: number }).__DIM_MAX_COVER ?? 0.5);
+const dimClose = (n: number, d: number) => Math.abs(n - d) <= Math.max(5, n * 0.03);
+/** 규격 숫자 n 이 지시서 수치와 맞나 — 'yes'·'no', 근처가 빽빽해 아무 숫자나 맞는 구간이면 'noise'(증거 아님). */
+export function dimMatch(n: number, dims: number[]): 'yes' | 'no' | 'noise' {
+  // n 의 0.75~1.33배 구간에서 아무 숫자를 골라도 맞을 확률(덮인 비율)
+  let cov = 0;
+  const STEPS = 40;
+  for (let i = 0; i <= STEPS; i++) {
+    const x = n * 0.75 * Math.pow(1.333 / 0.75, i / STEPS);
+    if (dims.some((d) => dimClose(x, d))) cov++;
+  }
+  if (cov / (STEPS + 1) > DIM_MAX_COVER) return 'noise';
+  return dims.some((d) => dimClose(n, d)) ? 'yes' : 'no';
+}
+/** 규격 숫자들 ↔ 지시서 수치 — 증거로 쓸 수 있는 숫자 수(n)와 그중 맞은 수(hit). */
+export function dimHits(nums: number[], dims: number[]): { hit: number; n: number } {
+  let hit = 0;
+  let n = 0;
+  if (!dims.length) return { hit, n };
+  for (const x of nums) {
+    const r = dimMatch(x, dims);
+    if (r === 'noise') continue;
+    n++;
+    if (r === 'yes') hit++;
+  }
+  return { hit, n };
 }
 
 /** 규격 칸 숫자(20 이상) — '2040*1470*100' → 2040,1470,100 / 'h:350' → 350. */
@@ -392,8 +428,9 @@ export function rescoreByContent(
       if (!rd?.ok) return { ...c, final: c.score };
       const rows = rd.rows || [];
       const nums = specNums(rows);
-      const hit = dims.length ? nums.filter((n) => dims.some((d) => Math.abs(n - d) <= Math.max(5, n * 0.03))).length : 0;
-      const dimRate = dims.length && nums.length ? (hit + 0.5) / (nums.length + 1) : 0.5;
+      const dh = dimHits(nums, dims); // 빽빽한 구간 숫자는 빼고(증거 아님)
+      const hit = dh.hit;
+      const dimRate = dh.n ? (hit + 0.5) / (dh.n + 1) : 0.5;
       const nos = extractOrderNos(rows.map((r) => r.remark || '').join(' '));
       const remark: EfCandidate['remark'] = nos.includes(own) ? 'own' : nos.length ? 'other' : '';
       // 사람이 넣은 단서 — 다 맞으면 +7, 일부면 비율만큼, 하나도 없으면 -2
@@ -404,8 +441,8 @@ export function rescoreByContent(
       const next = {
         ...c,
         final,
-        dimHit: dims.length ? hit : undefined,
-        dimN: dims.length ? nums.length : undefined,
+        dimHit: dh.n ? hit : undefined,
+        dimN: dh.n ? dh.n : undefined,
         remark,
         clueHit: cl.length ? ch : undefined,
         clueN: cl.length ? cl.length : undefined,
@@ -500,7 +537,7 @@ export function clueHits(
  * 비교창 표 칸 초록 칠하기 — 이 칸이 키워드·사이즈(또는 지시서 수치)와 맞나. (기존 명세서 찾기의 맞은 칸 초록과 같은 규칙)
  *  - 글자 키워드: 칸에 들어 있음(또는 3글자 넘는 칸이 키워드 안에)
  *  - 사이즈 키워드('2400*600', 'h350'): 규격 칸 숫자에 그 숫자들이 모두 있음(±3%·±5mm)
- *  - 지시서 수치(dims): 규격 칸 숫자 절반 이상이 지시서 도형 크기와 맞음
+ *  - 지시서 수치(dims): 규격 칸 숫자(빽빽한 구간 빼고) 절반 이상이 지시서 도형 크기와 맞음
  */
 export function cellMatches(text: string, clues: string[], isSpec: boolean, dims?: number[]): boolean {
   const t = normC(text);
@@ -519,8 +556,9 @@ export function cellMatches(text: string, clues: string[], isSpec: boolean, dims
     }
   }
   if (isSpec && dims?.length) {
-    const ns = own.filter((n) => n >= 20);
-    if (ns.length && ns.filter((n) => dims.some((d) => close(n, d))).length * 2 >= ns.length) return true;
+    // 빽빽한 구간(아무 숫자나 맞음) 숫자는 빼고, 남은 숫자 절반 이상이 맞아야 초록
+    const dh = dimHits(own.filter((n) => n >= 20), dims);
+    if (dh.n && dh.hit * 2 >= dh.n) return true;
   }
   return false;
 }

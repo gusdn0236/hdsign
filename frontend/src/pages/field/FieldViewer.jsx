@@ -839,6 +839,26 @@ export default function FieldViewer() {
                                 className={`fv-card${selectedIndex === idx ? ' selected' : ''}`}
                                 onClick={() => setSelectedIndex(idx)}
                             >
+                                {/* 위: 거래처·납기·번호(카드 전체폭) / 아래: 큰 썸네일 | 버튼 세로(FS·폴더·카톡) */}
+                                <div className="fv-card-head">
+                                    <div className="fv-card-header">
+                                        <div className="fv-card-company">{it.companyName || '거래처 미상'}</div>
+                                        {dueBadge && (
+                                            <span className={`fv-badge ${dueBadge.kind}`}>{dueBadge.text}</span>
+                                        )}
+                                    </div>
+                                    {it.title && (
+                                        <div className="fv-card-title" title={it.title}>
+                                            {it.title}
+                                        </div>
+                                    )}
+                                    <div className="fv-card-meta">
+                                        {it.dueDate && (
+                                            <span className="fv-card-due">납기 {formatShortDate(it.dueDate)}{it.dueTime ? ` ${it.dueTime}` : ''}</span>
+                                        )}
+                                        <span className="fv-card-no">{it.orderNumber}</span>
+                                    </div>
+                                </div>
                                 <div className="fv-card-thumb">
                                     <span
                                         className={`fv-fs-dot ${fsOpenable ? 'ok' : 'warn'}`}
@@ -867,23 +887,6 @@ export default function FieldViewer() {
                                     )}
                                 </div>
                                 <div className="fv-card-body">
-                                    <div className="fv-card-header">
-                                        <div className="fv-card-company">{it.companyName || '거래처 미상'}</div>
-                                        {dueBadge && (
-                                            <span className={`fv-badge ${dueBadge.kind}`}>{dueBadge.text}</span>
-                                        )}
-                                    </div>
-                                    {it.title && (
-                                        <div className="fv-card-title" title={it.title}>
-                                            {it.title}
-                                        </div>
-                                    )}
-                                    <div className="fv-card-meta">
-                                        {it.dueDate && (
-                                            <span className="fv-card-due">납기 {formatShortDate(it.dueDate)}{it.dueTime ? ` ${it.dueTime}` : ''}</span>
-                                        )}
-                                        <span className="fv-card-no">{it.orderNumber}</span>
-                                    </div>
                                     <div className="fv-card-actions">
                                         {/* FS·폴더 버튼 — 마우스 클릭(e.detail>0)은 곧바로 실행하고,
                                             키보드 활성화(버튼에 Tab 포커스 후 Enter/Space → e.detail===0)는

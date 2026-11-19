@@ -976,6 +976,9 @@
   position: absolute;
   top: 8px;
   right: 8px;
+  width: auto; /* .efb-ws-thumb > * { width:100% } 에 늘어나 왼쪽이 잘리던 것 */
+  white-space: nowrap;
+  z-index: 4; /* 썸네일 배지(z 3) 위 */
   padding: 3px 9px;
   border-radius: 999px;
   background: var(--efb-yes);
