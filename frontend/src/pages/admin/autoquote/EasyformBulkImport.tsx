@@ -110,6 +110,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const phaseRef = useRef<Phase>('intro');
   const trackRef = useRef<HTMLDivElement>(null);
   const [viewW, setViewW] = useState(1200);
+  const [viewH, setViewH] = useState(700);
 
   const busy = phase === 'export' || phase === 'read' || phase === 'saving' || !!swapping;
   phaseRef.current = phase;
@@ -119,9 +120,13 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   useEffect(() => {
     const el = trackRef.current;
     if (!el) return undefined;
-    const ro = new ResizeObserver(() => setViewW(el.clientWidth));
+    const ro = new ResizeObserver(() => {
+      setViewW(el.clientWidth);
+      setViewH(el.clientHeight);
+    });
     ro.observe(el);
     setViewW(el.clientWidth);
+    setViewH(el.clientHeight);
     return () => ro.disconnect();
   }, [phase === 'clue']); // 단서 입력 화면에서 돌아오면 무대가 새로 붙음 → 다시 잰다
 
@@ -572,7 +577,9 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     return { found, none, yes, no, left: Math.max(0, found - yes - no) };
   }, [orders, matches, reads, verdict]);
 
-  const CARD_W = 300;
+  // 지시서 카드 = 가운데 화면을 거의 채우게 — 무대 높이에서 아래 정보·화살표·명세서 카드 자리(~240px)를 빼고,
+  // 폭은 화면의 62% 까지. 작은 화면에서도 300px 아래로는 안 줄인다.
+  const CARD_W = Math.round(Math.max(300, Math.min(viewW * 0.62, viewH - 240)));
   const GAP = 34;
   const offset = viewW / 2 - CARD_W / 2 - pos * (CARD_W + GAP);
   const detailOrder = detail != null ? orders.find((o) => o.id === detail) : null;

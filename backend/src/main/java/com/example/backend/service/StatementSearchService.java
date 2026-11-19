@@ -52,6 +52,13 @@ public class StatementSearchService {
 
     public Result search(List<String> codes, List<String> specs, List<String> texts,
                          List<String> clients, String requestType) {
+        return search(codes, specs, texts, clients, requestType, null);
+    }
+
+    /** orders = 주문번호 조각(OR·부분일치, '주문-' 접두어 없이 '261113-18'·'261113' 도 됨). */
+    public Result search(List<String> codes, List<String> specs, List<String> texts,
+                         List<String> clients, String requestType, List<String> orders) {
+        List<String> os = normOrderNos(orders);
         List<String> cs = clean(codes, true);
         List<String> ts = clean(texts, true);
         List<double[]> sps = new ArrayList<>();
@@ -75,6 +82,15 @@ public class StatementSearchService {
         if (requestType != null && !requestType.isBlank()) {
             sql.append(" AND o.request_type = ?");
             args.add(requestType.trim());
+        }
+        if (!os.isEmpty()) {
+            sql.append(" AND (");
+            for (int i = 0; i < os.size(); i++) {
+                if (i > 0) sql.append(" OR ");
+                sql.append("o.order_number LIKE ? ESCAPE '!'");
+                args.add("%" + like(os.get(i)) + "%");
+            }
+            sql.append(")");
         }
         if (!cl.isEmpty()) {
             sql.append(" AND (");
@@ -131,6 +147,18 @@ public class StatementSearchService {
         }, args.toArray());
         if (read[0] >= PREFILTER_LIMIT) truncated[0] = true;
         return new Result(out, truncated[0]);
+    }
+
+    /** 주문번호 칩 정리 — 공백 제거, '주문-'·'견적-' 접두어 떼기(부분일치라 없어도 찾힘). */
+    public static List<String> normOrderNos(List<String> orders) {
+        List<String> out = new ArrayList<>();
+        if (orders == null) return out;
+        for (String o : orders) {
+            if (o == null) continue;
+            String v = o.replaceAll("\\s+", "").replaceFirst("^(주문|견적)-", "");
+            if (!v.isEmpty() && !out.contains(v)) out.add(v);
+        }
+        return out;
     }
 
     // ② 행 단위 정확 판정.

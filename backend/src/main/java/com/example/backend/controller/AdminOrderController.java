@@ -188,11 +188,45 @@ public class AdminOrderController {
             @RequestParam(required = false) List<String> spec,
             @RequestParam(required = false) List<String> text,
             @RequestParam(required = false) List<String> client,
-            @RequestParam(required = false) String requestType
+            @RequestParam(required = false) String requestType,
+            @RequestParam(required = false) List<String> order
     ) {
         long t0 = System.currentTimeMillis();
+        List<String> os = com.example.backend.service.StatementSearchService.normOrderNos(order);
+        boolean noRowTerms = (code == null || code.isEmpty()) && (spec == null || spec.isEmpty()) && (text == null || text.isEmpty());
+        if (!os.isEmpty() && noRowTerms) {
+            // 주문번호(+거래처)만 — 명세서 유무와 상관없이 그 번호의 지시서 카드(3년 보관분 전체).
+            List<String> cl = client == null ? List.of() : client.stream()
+                    .filter(c -> c != null && !c.isBlank()).map(c -> c.trim().toUpperCase(java.util.Locale.ROOT)).toList();
+            Map<Long, Order> found = new LinkedHashMap<>();
+            for (String part : os) {
+                for (Order o : orderRepository.findTop300ByOrderNumberContainingOrderByCreatedAtDesc(part)) {
+                    if (requestType != null && !requestType.isBlank()
+                            && (o.getRequestType() == null || !o.getRequestType().name().equals(requestType.trim()))) continue;
+                    if (!cl.isEmpty()) {
+                        String name = o.getClient() == null || o.getClient().getCompanyName() == null
+                                ? "" : o.getClient().getCompanyName().toUpperCase(java.util.Locale.ROOT);
+                        if (cl.stream().noneMatch(name::contains)) continue;
+                    }
+                    found.putIfAbsent(o.getId(), o);
+                }
+            }
+            List<Order> list = new ArrayList<>(found.values());
+            list.sort((a, b) -> {
+                if (a.getCreatedAt() == null || b.getCreatedAt() == null) return 0;
+                return b.getCreatedAt().compareTo(a.getCreatedAt());
+            });
+            boolean trunc = list.size() > 300;
+            if (trunc) list = new ArrayList<>(list.subList(0, 300));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("items", toResponsesWithEstimates(list));
+            body.put("matches", new LinkedHashMap<>());
+            body.put("truncated", trunc);
+            body.put("tookMs", System.currentTimeMillis() - t0);
+            return ResponseEntity.ok(body);
+        }
         com.example.backend.service.StatementSearchService.Result r =
-                statementSearchService.search(code, spec, text, client, requestType);
+                statementSearchService.search(code, spec, text, client, requestType, os);
         List<Long> ids = r.matches().stream().map(com.example.backend.service.StatementSearchService.Match::orderId).toList();
         Map<Long, Order> byId = new HashMap<>();
         if (!ids.isEmpty()) for (Order o : orderRepository.findByIdIn(ids)) byId.put(o.getId(), o);

@@ -57,6 +57,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     // 같은 prefix 의 모든 번호를 가져와 Java 에서 max 계산. 하루 최대 ~수십 건이라 비용 미미.
     List<Order> findByOrderNumberStartingWith(String prefix);
 
+    // 명세서 탭 똑똑한 검색 — 주문번호 칩만 있을 때(부분일치, 최신 등록순 300건).
+    List<Order> findTop300ByOrderNumberContainingOrderByCreatedAtDesc(String part);
+
     // 백필 — worksheetPdfUrl 은 있는데 worksheetThumbnailUrl 이 비어있는 주문.
     // admin POST /backfill-worksheet-thumbnails 에서 페이지 단위로 처리.
     List<Order> findByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNullOrderByCreatedAtDesc(

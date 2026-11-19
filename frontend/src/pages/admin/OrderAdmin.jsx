@@ -1008,7 +1008,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     const codes = pick("code");
     const specs = pick("spec");
     const texts = pick("text");
-    if (codes.length + specs.length + texts.length === 0) {
+    if (codes.length + specs.length + texts.length + pick("order").length === 0) {
       setStmtResult(null);
       return;
     }
@@ -1018,6 +1018,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       codes.forEach((v) => qs.append("code", v));
       specs.forEach((v) => qs.append("spec", v));
       texts.forEach((v) => qs.append("text", v));
+      pick("order").forEach((v) => qs.append("order", v)); // 주문번호(부분일치)
       // 거래처도 서버에서 같이 거른다 — 화면에서만 거르면 '최신 300건'이 다른 거래처로 차서 빠질 수 있음.
       pick("client").forEach((v) => qs.append("client", v));
       qs.set("requestType", requestType);

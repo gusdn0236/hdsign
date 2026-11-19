@@ -3198,6 +3198,7 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
 .ss-chip--code { background: #e6f4f1; color: #005f73; }
 .ss-chip--spec { background: #fff4e5; color: #b45309; }
 .ss-chip--text { background: #f4f4f5; color: #3f3f46; }
+.ss-chip--order { background: #fdf2f8; color: #be185d; }
 .ss-spin {
   width: 14px;
   height: 14px;
@@ -3260,6 +3261,7 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
 .ss-pop-type--code { background: #e6f4f1; color: #005f73; }
 .ss-pop-type--spec { background: #fff4e5; color: #b45309; }
 .ss-pop-type--text { background: #f4f4f5; color: #3f3f46; }
+.ss-pop-type--order { background: #fdf2f8; color: #be185d; }
 .ss-mini { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
 .ss-sum {
   display: flex;

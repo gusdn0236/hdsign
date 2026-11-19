@@ -9,8 +9,10 @@ import { ITEM_CODES, normCode, matchCodes } from "./autoquote/itemCodes";
  * 토큰 = {type: 'client'|'code'|'spec'|'text', value}
  */
 
-const TOKEN_TYPES = ["client", "code", "spec", "text"];
-const TOKEN_LABEL = { client: "거래처", code: "품목코드", spec: "규격", text: "작업키워드" };
+const TOKEN_TYPES = ["client", "code", "spec", "text", "order"];
+const TOKEN_LABEL = { client: "거래처", code: "품목코드", spec: "규격", text: "작업키워드", order: "주문번호" };
+// 주문번호 — '261113-18'·'주문-261113-18'(접두어 없어도 됨)
+const ORDER_RE = /^(?:주문-|견적-)?\d{6}-\d{1,3}$/;
 
 // 규격 — '500*100'·'500x100' 같은 숫자×숫자, 또는 'h:140'·'H140'·'w:500'·'가로500'·'높이 120'·'Ø50' 처럼
 // 치수 표시가 붙은 숫자 하나(규격 칸에 그 숫자가 들어간 줄 — 백엔드 parseSpec 이 숫자 하나도 지원).
@@ -25,6 +27,7 @@ function classify(word, clientIndex) {
   const w = word.trim();
   if (!w) return null;
   if (clientIndex.has(squeeze(w))) return { type: "client", value: clientIndex.get(squeeze(w)) };
+  if (ORDER_RE.test(w)) return { type: "order", value: w.replace(/^(주문|견적)-/, "") };
   if (CODE_SET.has(normCode(w))) return { type: "code", value: w };
   if (SPEC_RE.test(w)) return { type: "spec", value: w.replace(/\s+/g, "") };
   return { type: "text", value: w };
@@ -128,6 +131,7 @@ export default function StatementSmartSearch({
       .slice(0, 4)
       .forEach((n) => out.push({ type: "client", value: n }));
     matchCodes(q).slice(0, 4).forEach((c) => out.push({ type: "code", value: c }));
+    if (ORDER_RE.test(q)) out.push({ type: "order", value: q.replace(/^(주문|견적)-/, "") });
     if (SPEC_RE.test(q)) out.push({ type: "spec", value: q.replace(/\s+/g, "") });
     out.push({ type: "text", value: q });
     return out.filter((t) => !hasToken(t));
@@ -172,7 +176,7 @@ export default function StatementSmartSearch({
         {/* 검색 카테고리 — 칩과 같은 색 태그로 나열(긴 설명 대신, 사용자 요청 2026-11-18) */}
         <span className="ss-legend" aria-label="검색 카테고리">
           <span className="ss-legend-label">검색 카테고리</span>
-          {["code", "client", "text", "spec"].map((t) => (
+          {["code", "client", "text", "spec", "order"].map((t) => (
             <span key={t} className={`ss-legend-tag ss-chip--${t}`}>
               {TOKEN_LABEL[t]}
             </span>
