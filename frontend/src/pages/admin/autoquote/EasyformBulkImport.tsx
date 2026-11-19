@@ -799,13 +799,35 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                     {state === 'none' && (() => {
                       // 키워드가 하나도 안 맞음 = 아직 명세서가 안 끊긴 것으로 봄. 읽어 둔 후보는 [그래도 후보 보기]로.
                       const readOthers = m?.noClueHit ? m.others.filter((c) => reads[c.key]?.ok) : [];
+                      // [다시 검색하기] — 처음 그 키워드 입력 화면으로(넣은 키워드는 그대로, 이 지시서에 맞춰서)
+                      const again = (
+                        <button
+                          type="button"
+                          className="efb-primary efb-ef-peek"
+                          disabled={busy}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDetail(null);
+                            setPos(i);
+                            setPhase('clue');
+                          }}
+                        >
+                          🔍 다시 검색하기
+                        </button>
+                      );
                       if (!readOthers.length)
-                        return <div className="efb-ef efb-ef--none">비슷한 명세서를<br />이지폼에서 못 찾았어요</div>;
+                        return (
+                          <div className="efb-ef efb-ef--none">
+                            비슷한 명세서를<br />이지폼에서 못 찾았어요
+                            {again}
+                          </div>
+                        );
                       return (
                         <div className="efb-ef efb-ef--none">
                           키워드에 맞는 명세서가 없어요
                           <br />
                           <small>아직 명세서를 안 끊은 것 같아요</small>
+                          {again}
                           <button
                             type="button"
                             className="efb-secondary efb-ef-peek"
