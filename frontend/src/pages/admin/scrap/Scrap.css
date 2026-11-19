@@ -831,3 +831,20 @@
   font-weight: 700;
   flex-shrink: 0;
 }
+
+/* 단가찾아보기 크게 보기 — 지시서(왼쪽, 크게) | 명세서(오른쪽, 좁게) 좌우 배치. 서랍 참고 창은 위아래 그대로. */
+.pf-detail .sv {
+  flex-direction: row;
+}
+.pf-detail .sv-ws {
+  flex: 1 1 64%;
+  min-width: 0;
+  min-height: 0;
+}
+.pf-detail .sv-grid {
+  flex: 0 0 36%;
+  min-width: 300px;
+  max-width: 520px;
+  min-height: 0;
+  border-left: 1px solid var(--efb-line);
+}
