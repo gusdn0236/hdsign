@@ -2202,15 +2202,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </span>
               <span className="order-card-group-count">{statementOrders.length}건</span>
               {isOrderPage && (
-                <button
-                  type="button"
-                  className="statement-efbulk-btn"
-                  onClick={() => setEfBulkOpen(true)}
-                  title="홈페이지 명세서가 비어 있는 지시서를 이지폼에서 찾아 한꺼번에 채웁니다"
-                >
-                  📥 이지폼에서 가져오기
-                  {efBulkOrders.length > 0 && <b>{efBulkOrders.length}</b>}
-                </button>
+                <>
+                  {/* 명세서작성 화면 [📥 이지폼 불러오기] 와 같은 모양. 여러 건 찾기라 '열어 둔 명세서 가져오기' 메뉴는 없음. */}
+                  <span className="statement-efbulk-hint">이지폼에 이미 명세서가 있는지 검색해요.</span>
+                  <button
+                    type="button"
+                    className={"statement-efbulk-btn" + (efBulkOpen ? " on" : "")}
+                    onClick={() => setEfBulkOpen(true)}
+                    title="홈페이지 명세서가 비어 있는 지시서를 이지폼에서 찾아 한꺼번에 채웁니다"
+                  >
+                    📥 이지폼 불러오기
+                    {efBulkOrders.length > 0 && <b>{efBulkOrders.length}</b>}
+                  </button>
+                </>
               )}
               {/* 이 컴퓨터의 표시이름 — 명세서를 작성하면 다른 PC 화면에 "ㅇㅇㅇ님 작성중" 으로 이 이름이
                   뜬다. 관리자 계정은 공유라 PC 마다 이 이름을 따로 설정(이 PC localStorage 에만 저장). */}

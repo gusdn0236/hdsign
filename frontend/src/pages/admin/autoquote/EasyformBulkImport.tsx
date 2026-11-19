@@ -1745,9 +1745,6 @@ function ClueEntry({
             {o.dueDate ? ' 납' : ''} · {orderNoCore(o.orderNumber)}
           </span>
         </div>
-        <label className="efb-clue-label" htmlFor="efb-clue-input">
-          이 지시서의 키워드 · 사이즈
-        </label>
         <input
           id="efb-clue-input"
           ref={input}
@@ -1759,7 +1756,8 @@ function ClueEntry({
           }}
           onBlur={() => setDelArmed(false)}
           onKeyDown={onKey}
-          placeholder={mine.length ? '키워드 더 넣기 · 빈칸 Enter = 다음' : '한 단어씩 치고 Enter — 예: 갈바 ⏎ 2400*600 ⏎'}
+          placeholder="키워드를 입력하세요."
+          aria-label="키워드"
           autoComplete="off"
         />
         <div className="efb-clue-chips">
@@ -1775,12 +1773,7 @@ function ClueEntry({
               </button>
             </span>
           ))}
-          {!mine.length && <span className="efb-clue-none">키워드 없음 — 거래처·납기·지시서 수치로 찾아요</span>}
         </div>
-        <p className="efb-clue-help">
-          키워드 치고 <kbd>Enter</kbd> = 하나씩 추가 · 빈칸 <kbd>Enter</kbd> = 다음 지시서 · <kbd>Shift+Enter</kbd> = 이전 ·
-          빈칸 <kbd>Backspace</kbd> 두 번 = 지우기
-        </p>
         <div className="efb-clue-list" ref={listRef}>
           {orders.map((x, i) => (
             <button

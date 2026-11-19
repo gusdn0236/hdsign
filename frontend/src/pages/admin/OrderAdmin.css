@@ -3312,38 +3312,51 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
 }
 .ss-recent-del:hover { background: #fee2e2; color: #dc2626; }
 
-/* 명세서 탭 [📥 이지폼에서 가져오기] */
+/* 명세서 탭 [📥 이지폼 불러오기] — 명세서작성 화면 .aq-calcbtn 과 같은 모양(청록 외곽선) */
+.statement-efbulk-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #94a3b8;
+  white-space: nowrap;
+}
 .statement-efbulk-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 10px;
-  height: 30px;
-  padding: 0 12px;
-  border: 1px solid #c4b5fd;
-  border-radius: 8px;
-  background: #f5f3ff;
-  color: #5b21b6;
-  font-size: 13px;
-  font-weight: 600;
+  margin-left: 8px;
+  padding: 5px 11px;
+  border: 1px solid #0a7d8c;
+  border-radius: 7px;
+  background: #fff;
+  color: #0a7d8c;
+  font-size: 12px;
+  font-weight: 700;
   font-family: inherit;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
 }
 .statement-efbulk-btn:hover {
-  background: #ede9fe;
-  border-color: #8b5cf6;
+  background: #ecf8f9;
+}
+.statement-efbulk-btn.on {
+  background: #0a7d8c;
+  color: #fff;
 }
 .statement-efbulk-btn b {
-  min-width: 20px;
-  height: 18px;
+  min-width: 18px;
+  height: 17px;
   padding: 0 5px;
   border-radius: 999px;
-  background: #7c3aed;
+  background: #0a7d8c;
   color: #fff;
   font-size: 11px;
-  line-height: 18px;
+  line-height: 17px;
   text-align: center;
+}
+.statement-efbulk-btn.on b {
+  background: #fff;
+  color: #0a7d8c;
 }
 /* 명세서 검색 — 검색 카테고리 색 태그(칩과 같은 색) */
 .ss-legend { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; }
