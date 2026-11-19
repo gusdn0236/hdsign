@@ -43,6 +43,25 @@
   line-height: 18px;
   text-align: center;
 }
+.scr-fold-tab {
+  position: absolute;
+  top: 40%;
+  left: 100%;
+  width: 24px;
+  height: 64px;
+  border: 1px solid #26364a;
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+  background: #111a24;
+  color: #cbd5e1;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.18);
+}
+.scr-fold-tab:hover {
+  color: #fff;
+  background: #172230;
+}
 .scr-fold {
   width: 28px;
   height: 26px;

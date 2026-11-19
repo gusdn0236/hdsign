@@ -168,10 +168,11 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
           <span className="scr-title">
             📌 스크랩 {items.length > 0 && <b>{items.length}</b>}
           </span>
-          <button type="button" className="scr-fold" onClick={() => scrap.setCollapsed(true)} title="접기">
-            «
-          </button>
         </div>
+        {/* 접기 — 접었을 때 여는 손잡이와 같은 높이(화면 40%)에, 서랍 오른쪽 가장자리 바깥으로 */}
+        <button type="button" className="scr-fold-tab" onClick={() => scrap.setCollapsed(true)} title="스크랩 접기">
+          «
+        </button>
         <div className="scr-list">
           {items.length === 0 ? (
             <div className="scr-none">비어 있어요</div>
