@@ -758,6 +758,35 @@ def _rows_same_except(before: list, after: list, row: int, want: str) -> str:
     return ""
 
 
+def _row_cells(grid, row: int) -> dict:
+    """row(0부터) 줄의 칸 좌표(표 기준) {열이름: (x, y)}. 보이는 칸을 넘으면 표 보기를 내려 마지막 칸에 맞춘다."""
+    ref = ef.EF_GRID_REF
+    cells = [[(c[0] - ref[0], c[1] - ref[1]) for c in r] for r in ef.EF_CELLS]
+    cap = len(cells)
+    _u.SendMessageW(grid, 0x0115, 6, None)  # SB_TOP
+    time.sleep(0.08)
+    if row < cap:
+        rc = cells[row]
+    else:
+        for _ in range(row - cap + 1):
+            _u.SendMessageW(grid, 0x0115, 1, None)  # SB_LINEDOWN — 보기만
+            time.sleep(0.05)
+        rc = cells[-1]
+    return {col: rc[i] for i, col in enumerate(ef.EF_COLS)}
+
+
+def _read_row(grid, cells: dict) -> "dict | None":
+    """한 줄 6칸(품목코드·품목·규격·수량·단가·비고)만 읽기."""
+    out = {}
+    for col in _PULL_COLS:
+        x, y = cells[col]
+        v = _cell_text(grid, x, y, 0.4)
+        if v is None:
+            return None
+        out[col] = v
+    return out
+
+
 def _remark_cell(grid, row: int):
     """row(0부터) 줄의 비고·품목 칸 좌표(표 기준). 보이는 칸을 넘으면 표 보기를 내려 마지막 칸에 맞춘다."""
     ref = ef.EF_GRID_REF
@@ -779,6 +808,8 @@ def _stamp_form(main, form, it: dict) -> dict:
     """열린 명세서 1장 — 비고에 주문번호 적고 저장. 결과 {ok, message, row}."""
     nos = [n for n in (it.get("nos") or []) if n]
     text = ", ".join(nos)
+    if isinstance(it.get("row"), int) and "item" in it and "remark" in it:
+        return _stamp_row_fast(main, form, it, nos, text)
     rows = _read_form(form)
     if any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
         return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
@@ -836,6 +867,76 @@ def _stamp_form(main, form, it: dict) -> dict:
     if _popups(main):
         raise Stop("저장 뒤에 이지폼 창이 또 떠서 멈췄어요. 이지폼을 직접 확인해주세요.")
     return {"ok": True, "message": "", "row": row, "remark": want}
+
+
+def _save_with_yes(main, form) -> dict:
+    """[저장] → '동일한 고유번호… 갱신?' Yes. 예상 밖이면 아무것도 안 누르고 Stop."""
+    save = _named(form, "TBitBtn", "저장")
+    if not save or not _u.IsWindowEnabled(save):
+        return {"ok": False, "message": "이지폼 [저장] 버튼을 못 찾아서 저장 안 했어요"}
+    _u.PostMessageW(save, 0x00F5, 0, 0)  # BM_CLICK — Post(뜨는 확인창에 안 막히게)
+    ask = _wait(lambda: _popups(main), 4.0, 0.05)
+    if not ask or len(ask) != 1 or ask[0][1] != "TMessageForm":
+        raise Stop("저장을 눌렀는데 예상한 확인창이 안 떠서 멈췄어요. 이지폼을 직접 확인해주세요.")
+    h = ask[0][0]
+    btns = sorted(_txt(x).replace("&", "") for x in _kids(h, "TButton"))
+    yes = _named(h, "TButton", "Yes")
+    if btns != ["No", "Yes"] or not yes:
+        raise Stop(f"저장 확인창이 예상과 달라서({', '.join(btns)}) 아무것도 안 눌렀어요. 이지폼을 직접 확인해주세요.")
+    _u.PostMessageW(yes, 0x00F5, 0, 0)
+    _wait(lambda: not _u.IsWindow(h) or not _shown(h), 3.0, 0.05)
+    time.sleep(0.6)
+    if _popups(main):
+        raise Stop("저장 뒤에 이지폼 창이 또 떠서 멈췄어요. 이지폼을 직접 확인해주세요.")
+    return {"ok": True, "message": ""}
+
+
+def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
+    """빠른 길 — 웹이 준 줄(row)·품목(item)·기존 비고(remark)로 그 줄만 확인하고 적는다.
+    전: 그 줄 품목·비고가 웹이 읽은 것과 같아야 씀 / 후: 그 줄 6칸을 다시 읽어 비고만 바뀌었어야 저장."""
+    row = it["row"]
+    base = (it.get("remark") or "").strip()
+    if all(n in base for n in nos):
+        return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
+    want = f"{base} {text}".strip() if base else text
+    grid = next(iter(_kids(form, "TAdvStringGrid")), None)
+    if not grid:
+        return {"ok": False, "message": "명세서 표를 못 찾아서 안 적었어요"}
+    cells = _row_cells(grid, row)
+    before = _read_row(grid, cells)
+    if before is None or before.get("item", "") != (it.get("item") or "") or before.get("remark", "") != base:
+        return {"ok": False, "message": f"{row + 1}행이 홈페이지에서 본 것과 달라서 안 적었어요"}
+    rx, ry = cells["remark"]
+    ix, iy = cells["item"]
+    _click(grid, "비고", rx, ry)
+    gl, gt, _r, _b = _rect(grid)
+
+    def _at(e):
+        l, t, r, b = _rect(e)
+        return l - 2 <= gl + rx <= r + 2 and t - 2 <= gt + ry <= b + 2
+
+    edit = _wait(lambda: next((e for e in _kids(grid, "TAdvInplaceEdit") if _at(e)), None), 1.0, 0.03)
+    if not edit:
+        return {"ok": False, "message": "비고 편집칸이 안 떠서 안 적었어요"}
+    _u.SendMessageW(edit, 0x000C, 0, ctypes.c_wchar_p(want))  # WM_SETTEXT
+    time.sleep(0.12)
+    _click(grid, "품목", ix, iy)  # 같은 줄 다른 칸 = 비고 확정
+    time.sleep(0.3)
+    if _popups(main):
+        raise Stop("비고를 적다가 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
+    after = _read_row(grid, _row_cells(grid, row))
+    if after is None:
+        return {"ok": False, "message": "적은 뒤 그 줄을 다시 못 읽어서 저장 안 했어요"}
+    for k, v in after.items():
+        if k == "remark":
+            if v != want:
+                return {"ok": False, "message": f"비고가 '{v}'(으)로 들어가서 저장 안 했어요"}
+        elif v != before.get(k, ""):
+            return {"ok": False, "message": f"{row + 1}행 {k} 가 바뀌어서 저장 안 했어요"}
+    res = _save_with_yes(main, form)
+    if res.get("ok"):
+        res.update(row=row, remark=want)
+    return res
 
 
 def _stamp_items(items: list, progress, on_result) -> None:

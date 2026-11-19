@@ -4236,6 +4236,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               {/* 화면엔 품목코드·품목·규격·수량·단가·공급가액(+번호). 월일·세액·비고는 숨김 —
                   저장(buildGrid)·이지폼 매크로에서는 9칸 모두 채운다. */}
               <colgroup>
+                {/* 합친 명세서 띠 — 칸을 따로 둬서 번호 동그라미·글자를 안 가림 */}
+                {linkOwner && <col style={{ width: 6 }} />}
                 <col style={{ width: 24 }} />
                 <col style={{ width: 58 }} />
                 <col />
@@ -4246,6 +4248,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               </colgroup>
               <thead>
                 <tr>
+                  {linkOwner && <th className="aq-band" aria-label="지시서 구간" />}
                   <th></th>
                   <th>품목코드</th>
                   <th>품목</th>
@@ -4266,7 +4269,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                     <Fragment key={i}>
                     {lkStart && (
                       <tr className={'lk-div' + (lk === ownCore ? ' mine' : '')}>
-                        <td colSpan={7}>
+                        <td colSpan={linkOwner ? 8 : 7}>
                           ▼ {lk === ownCore ? '이 지시서' : '다른 지시서'} · {lk}
                         </td>
                       </tr>
@@ -4286,6 +4289,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                       }
                       style={isOcrTgt ? { background: hexToRgba(pinColor(i), 0.28) } : undefined}
                     >
+                      {linkOwner && (
+                        <td
+                          className={'aq-band' + (lk === ownCore ? ' mine' : '')}
+                          title={lk ? (lk === ownCore ? `이 지시서(${lk}) 구간` : `다른 지시서(${lk}) 구간`) : undefined}
+                        />
+                      )}
                       <td
                         className="rn"
                         // 다른 행의 동그라미를 이 칸 동그라미로 끌어다 놓으면 그 자리로 옮기고 사이 행은 한 칸씩 밀린다(행 재정렬).

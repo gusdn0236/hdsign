@@ -294,6 +294,8 @@ export interface EfStampItem {
   client?: string;
   nos: string[];
   row?: number;
+  item?: string; // 그 줄 품목(읽었을 때) — 워처가 같은 줄인지 확인
+  remark?: string; // 그 줄 기존 비고(읽었을 때)
 }
 
 export interface EfBulkResult {

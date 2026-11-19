@@ -2824,8 +2824,16 @@
   overflow-wrap: anywhere;
 }
 /* 합친 명세서 — 이 지시서 구간 = 왼쪽 파란 띠, 다른 지시서 구간 = 글자 흐리게, 구간 시작 = 주문번호 줄 */
-.aq-tbl tr.lk-mine > td:first-child {
-  box-shadow: inset 4px 0 0 #2563eb;
+/* 띠 = 따로 둔 좁은 칸(다른 칸을 안 가림). 이 지시서 구간만 파랗게 */
+.aq-tbl th.aq-band,
+.aq-tbl td.aq-band {
+  padding: 0 !important;
+  border-left: 0;
+  border-right: 0;
+  background: transparent;
+}
+.aq-tbl td.aq-band.mine {
+  background: #2563eb;
 }
 .aq-tbl tr.lk-other > td,
 .aq-tbl tr.lk-other input {
