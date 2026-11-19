@@ -435,7 +435,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         if (sh.saved) {
           const m = matches[orderId];
           const rd = reads[m.best!.key];
-          findEasyformMatch(token, orderId, rd?.date || m.best!.row.date, rd?.total || m.best!.row.total).then((gs) => {
+          findEasyformMatch(token, orderId, rd?.date || m.best!.row.date, rd?.total || m.best!.row.total, true).then((gs) => {
             const list = gs.flatMap((g) => g.orders).filter((o) => o.id !== orderId);
             const more = list.map((o) => orderNoCore(o.orderNumber));
             setMergeAsk((a) => (a && a.orderId === orderId ? { ...a, nos: [...new Set([...a.nos, ...more])], loading: false } : a));
@@ -562,7 +562,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           // 기존 묶음의 대표가 계속 대표(먼저), 매출은 한 번만.
           let existing: string[] = [];
           if (g.some((o) => mergeChoice[o.id] === 'merge')) {
-            const gs = await findEasyformMatch(token, g[0].id, efDate, efTotal);
+            const gs = await findEasyformMatch(token, g[0].id, efDate, efTotal, true);
             existing = gs.flatMap((x) => x.orders.map((o) => orderNoCore(o.orderNumber)));
           }
           const nos = [...new Set([...existing, ...g.map((o) => orderNoCore(o.orderNumber))])];
@@ -1365,7 +1365,6 @@ function DetailView({
               <table className="efb-table">
                 <thead>
                   <tr>
-                    {bandOwner && <th className="efb-band" aria-label="지시서 구간" />}
                     <th style={{ width: '15%' }}>품목코드</th>
                     <th>품목</th>
                     <th style={{ width: '17%' }}>규격</th>
@@ -1384,7 +1383,8 @@ function DetailView({
                         className={
                           [
                             h.code || h.item || h.spec ? 'has-hit' : '',
-                            own && own !== ownNo ? 'is-otherband' : '',
+                            // 합친 명세서 — 이 지시서 줄만 또렷하게, 나머지는 흐리게
+                            bandOwner && own !== ownNo && (own != null || bandOwner.includes(ownNo)) ? 'is-otherband' : '',
                             pickMode ? 'is-pickable' : '',
                             pickMode && selA != null && i >= selA && i <= (selB ?? selA) ? 'is-picksel' : '',
                           ]
@@ -1393,12 +1393,6 @@ function DetailView({
                         }
                         onClick={pickMode ? () => clickRow(i) : undefined}
                       >
-                        {bandOwner && (
-                          <td
-                            className={`efb-band${own === ownNo ? ' is-mine' : ''}`}
-                            title={own ? (own === ownNo ? `이 지시서(${own}) 구간` : `다른 지시서(${own}) 구간`) : undefined}
-                          />
-                        )}
                         {/* 키워드로 찾았으면 줄은 연두, 칸 안에서 키워드와 맞은 글자만 굵은 초록. 키워드 없으면 맞은 칸 전체 초록 */}
                         <td className={h.code && !kwMode ? 'hit' : undefined}>{kwMode ? <Hl text={g.품목코드} kw={keywords} spec={false} /> : g.품목코드}</td>
                         <td className={`efb-td-item${h.item && !kwMode ? ' hit' : ''}`}>{kwMode ? <Hl text={g.품목} kw={keywords} spec={false} /> : g.품목}</td>

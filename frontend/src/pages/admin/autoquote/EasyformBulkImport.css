@@ -1493,19 +1493,10 @@
   color: #1d4ed8;
   font-size: 13px;
 }
-/* 비교창 — 합친 명세서 띠(따로 둔 좁은 칸, 다른 칸을 안 가림) */
-.efb-table th.efb-band,
-.efb-table td.efb-band {
-  width: 6px;
-  min-width: 6px;
-  padding: 0 !important;
-  background: transparent !important;
-}
-.efb-table td.efb-band.is-mine {
-  background: #2563eb !important;
-}
-.efb-table tr.is-otherband td:not(.efb-band) {
-  color: #94a3b8;
+/* 비교창 — 합친 명세서: 이 지시서 아닌 줄은 흐리게 */
+.efb-table tr.is-otherband td {
+  color: #b6bfcb;
+  background: #f8fafc;
 }
 
 /* 다른 후보 — 지금 읽는 중(회전+테두리 숨쉬기) / 읽을 차례(점 셋) */

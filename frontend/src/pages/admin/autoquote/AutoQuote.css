@@ -2824,30 +2824,12 @@
   overflow-wrap: anywhere;
 }
 /* 합친 명세서 — 이 지시서 구간 = 왼쪽 파란 띠, 다른 지시서 구간 = 글자 흐리게, 구간 시작 = 주문번호 줄 */
-/* 띠 = 따로 둔 좁은 칸(다른 칸을 안 가림). 이 지시서 구간만 파랗게 */
-.aq-tbl th.aq-band,
-.aq-tbl td.aq-band {
-  padding: 0 !important;
-  border-left: 0;
-  border-right: 0;
-  background: transparent;
-}
-.aq-tbl td.aq-band.mine {
-  background: #2563eb;
-}
+/* 합친 명세서 — 이 지시서 아닌 줄은 흐리게 */
 .aq-tbl tr.lk-other > td,
 .aq-tbl tr.lk-other input {
-  color: #a3adbb;
+  color: #b6bfcb;
 }
-.aq-tbl tr.lk-div > td {
-  padding: 3px 8px;
-  font-size: 11px;
-  color: #64748b;
-  background: #f1f5f9;
-  text-align: left;
-  letter-spacing: 0.02em;
+.aq-tbl tr.lk-other > td {
+  background: #f8fafc;
 }
-.aq-tbl tr.lk-div.mine > td {
-  color: #2563eb;
-  font-weight: 700;
-}
+

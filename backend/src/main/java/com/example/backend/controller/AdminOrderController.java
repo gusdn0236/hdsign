@@ -653,7 +653,9 @@ public class AdminOrderController {
     public ResponseEntity<?> easyformMatch(
             @RequestParam Long orderId,
             @RequestParam String date,
-            @RequestParam String total
+            @RequestParam String total,
+            // true = 이 주문이 이미 든 묶음도 돌려준다(다시 등록할 때 같이 쓰는 다른 지시서를 보여주려고)
+            @RequestParam(defaultValue = "false") boolean includeOwn
     ) {
         Order me = orderRepository.findById(orderId).orElse(null);
         String key = me == null ? null : efKey(me, date, total);
@@ -664,7 +666,7 @@ public class AdminOrderController {
             long primaryId = rs.getLong("order_id");
             List<Long> ids = linkedOrderIds(rs.getString("grid_json"));
             if (ids.isEmpty()) ids = List.of(primaryId);
-            if (ids.contains(orderId)) return; // 이미 이 주문과 같은 묶음
+            if (ids.contains(orderId) && !includeOwn) return; // 이미 이 주문과 같은 묶음
             List<Map<String, Object>> orders = new ArrayList<>();
             for (Long id : ids) {
                 orderRepository.findById(id).ifPresent(o ->

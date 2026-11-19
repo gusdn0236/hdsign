@@ -4233,7 +4233,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   저장(buildGrid)·이지폼 매크로에서는 9칸 모두 채운다. */}
               <colgroup>
                 {/* 합친 명세서 띠 — 칸을 따로 둬서 번호 동그라미·글자를 안 가림 */}
-                {linkOwner && <col style={{ width: 6 }} />}
                 <col style={{ width: 24 }} />
                 <col style={{ width: 58 }} />
                 <col />
@@ -4244,7 +4243,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               </colgroup>
               <thead>
                 <tr>
-                  {linkOwner && <th className="aq-band" aria-label="지시서 구간" />}
                   <th></th>
                   <th>품목코드</th>
                   <th>품목</th>
@@ -4259,21 +4257,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   const p = pins[i];
                   const v = p ? p.vals : {};
                   const isOcrTgt = showTgtRow && i === ocrTarget;
-                  const lk = linkOwner ? linkOwner[i] : null; // 합친 명세서 — 이 행이 어느 지시서 구간인지
-                  const lkStart = !!lk && (i === 0 || linkOwner![i - 1] !== lk);
+                  // 합친 명세서 — 이 지시서 줄만 또렷하게, 나머지(다른 지시서·주인 모를 줄)는 흐리게
+                  const lk = linkOwner ? linkOwner[i] : null;
+                  const lkDim = !!linkOwner && lk !== ownCore && (lk != null || linkOwner.includes(ownCore));
                   return (
                     <Fragment key={i}>
-                    {lkStart && (
-                      <tr className={'lk-div' + (lk === ownCore ? ' mine' : '')}>
-                        <td colSpan={linkOwner ? 8 : 7}>
-                          ▼ {lk === ownCore ? '이 지시서' : '다른 지시서'} · {lk}
-                        </td>
-                      </tr>
-                    )}
                     <tr
                       className={
                         [
-                          lk ? (lk === ownCore ? 'lk-mine' : 'lk-other') : '',
+                          lkDim ? 'lk-other' : '',
                           i === active ? 'cur' : '',
                           isOcrTgt ? 'ocrtgt' : '',
                           dragRow === i ? 'rowdragging' : '',
@@ -4285,12 +4277,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                       }
                       style={isOcrTgt ? { background: hexToRgba(pinColor(i), 0.28) } : undefined}
                     >
-                      {linkOwner && (
-                        <td
-                          className={'aq-band' + (lk === ownCore ? ' mine' : '')}
-                          title={lk ? (lk === ownCore ? `이 지시서(${lk}) 구간` : `다른 지시서(${lk}) 구간`) : undefined}
-                        />
-                      )}
                       <td
                         className="rn"
                         // 다른 행의 동그라미를 이 칸 동그라미로 끌어다 놓으면 그 자리로 옮기고 사이 행은 한 칸씩 밀린다(행 재정렬).

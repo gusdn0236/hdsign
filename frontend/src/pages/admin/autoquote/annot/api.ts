@@ -409,9 +409,10 @@ export async function findEasyformMatch(
   orderId: number | string,
   date: string,
   total: string,
+  includeOwn = false, // true = 이 주문이 이미 든 묶음도(같이 쓰는 다른 지시서 보여주기)
 ): Promise<EasyformMatchGroup[]> {
   try {
-    const q = `orderId=${encodeURIComponent(String(orderId))}&date=${encodeURIComponent(date)}&total=${encodeURIComponent(total)}`;
+    const q = `orderId=${encodeURIComponent(String(orderId))}&date=${encodeURIComponent(date)}&total=${encodeURIComponent(total)}${includeOwn ? '&includeOwn=true' : ''}`;
     const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-match?${q}`, { headers: authHeaders(token) });
     if (!res.ok) return [];
     const j = await res.json();
