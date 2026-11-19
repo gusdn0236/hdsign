@@ -63,6 +63,8 @@ import './AutoQuote.css';
 
 // [이지폼에서 찾기] — 명세서 탭 일괄 가져오기 창을 이 지시서 1건만으로 띄운다.
 // 배포 뒤 옛 청크 404 → 빈 화면 대신 자동 새로고침
+// LED계산·도장비찾아보기 버튼 — 잘 안 써서 숨김(2026-11-19 사용자 요청). 다시 쓰려면 true.
+const SHOW_LED_DOJANG = false;
 const EasyformBulkImport = lazyWithRetry(() => import('./EasyformBulkImport'));
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
@@ -466,6 +468,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [linkedOrders, setLinkedOrders] = useState<{ id: number; orderNumber: string }[]>([]);
   // [이지폼에서 찾기] 창(일괄 가져오기, 이 지시서 1건) — 저장하면 reloadKey 를 올려 명세서를 다시 불러온다.
   const [efBulkOpen, setEfBulkOpen] = useState(false);
+  const [efMenu, setEfMenu] = useState(false); // [이지폼 불러오기 ▾] 드롭다운
+  const efMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!efMenu) return;
+    const close = (e: MouseEvent) => {
+      if (!efMenuRef.current?.contains(e.target as Node)) setEfMenu(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setEfMenu(false);
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', esc);
+    };
+  }, [efMenu]);
   const [reloadKey, setReloadKey] = useState(0);
   // 치수 오버레이 — 3번 모드(mode==='dim')일 때 지시서 위에 오브젝트별/구간 가로세로(mm) 표시.
   const dimMode = mode === 'dim';
@@ -4105,6 +4122,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             {/* 버튼들은 오른쪽 정렬 — 스페이서로 밀고, 버튼끼리 간격은 .aq-h 의 gap(8px)으로 일정하게. */}
             <div className="aq-sp" />
             {/* LED계산 — 도장비찾아보기 왼쪽. 지시서 벡터(실제 외곽선)로 모양 안 LED 개수 계산. */}
+            {SHOW_LED_DOJANG && (
             <button
               type="button"
               className={'aq-lookupbtn aq-led-find' + (ledMode ? ' on' : '')}
@@ -4123,7 +4141,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             >
               💡 LED계산
             </button>
+            )}
             {/* 도장비찾아보기 — 단가찾아보기 왼쪽. 행을 하나 골라 '도장 포함 명세서'만 추려 과거 단가를 본다. */}
+            {SHOW_LED_DOJANG && (
             <button
               type="button"
               className="aq-lookupbtn aq-dojang-find"
@@ -4135,6 +4155,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             >
               🎨 도장비찾아보기
             </button>
+            )}
             {/* 단가찾아보기(둘러보기) — 계산기 버튼 왼쪽. 과거 명세서를 열어 도장 행 강조 + 다중선택 가져오기. */}
             <button
               type="button"
@@ -4156,21 +4177,49 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           </div>
           {/* 이지폼 → 홈페이지 버튼줄 — 헤더 한 줄에 다 넣으면 잘려서 계산기 아래 줄로(오른쪽 정렬). */}
           <div className="aq-h2">
-            {/* 이지폼에서 찾기 — 명세서 탭 [이지폼에서 가져오기] 창을 이 지시서 1건만으로 띄운다. */}
-            <button
-              type="button"
-              className={'aq-calcbtn' + (efBulkOpen ? ' on' : '')}
-              onClick={() => {
-                if (!order) {
-                  cdlg('주문 상세에서 “명세서작성”으로 들어와야 찾을 수 있어요.', [{ label: '확인', sec: true }]);
-                  return;
-                }
-                setEfBulkOpen(true);
-              }}
-              title="이지폼에서 이 지시서의 명세서를 찾아 비교하고 가져오기"
-            >
-              🔍 이지폼에서 찾기
-            </button>
+            {/* [이지폼 불러오기 ▾] — ① 이 지시서 명세서를 이지폼에서 찾아 가져오기 ② 이지폼에 열어 둔 명세서 가져오기 */}
+            <div className="aq-efmenu" ref={efMenuRef}>
+              <button
+                type="button"
+                className={'aq-calcbtn' + (efMenu || efBulkOpen ? ' on' : '')}
+                onClick={() => setEfMenu((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={efMenu}
+                title="이지폼에 있는 명세서를 이 표로 가져와요"
+              >
+                📥 이지폼 불러오기 ▾
+              </button>
+              {efMenu && (
+                <div className="aq-efmenu-list" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setEfMenu(false);
+                      if (!order) {
+                        cdlg('주문 상세에서 “명세서작성”으로 들어와야 찾을 수 있어요.', [{ label: '확인', sec: true }]);
+                        return;
+                      }
+                      setEfBulkOpen(true);
+                    }}
+                  >
+                    <b>🔍 이지폼에서 찾기</b>
+                    <small>이지폼에 이미 작성된 이 지시서의 명세서를 찾아서 가져와요</small>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setEfMenu(false);
+                      void pullFromEasyform();
+                    }}
+                  >
+                    <b>📋 열어 둔 명세서 가져오기</b>
+                    <small>이지폼에 지금 띄워 둔 명세서 1장을 그대로 가져와요</small>
+                  </button>
+                </div>
+              )}
+            </div>
             {efBulkOpen && order && (
               <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
                 <EasyformBulkImport
@@ -4185,14 +4234,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 />
               </Suspense>
             )}
-            <button
-              type="button"
-              className="aq-calcbtn"
-              onClick={() => void pullFromEasyform()}
-              title="이지폼에 열어 둔 상세명세서 1건의 품목코드·품목·규격·수량·단가를 이 표로 가져오기"
-            >
-              📥 이지폼에서 직접가져오기
-            </button>
           </div>
           {/* 도장비 합치기/펼치기 바 — 도장비 행이 2건+ 이거나 이미 합쳐져 있을 때만. */}
           {(dojangAtoms.length >= 2 || dojangSummary) && (
