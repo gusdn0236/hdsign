@@ -252,7 +252,7 @@ export default function PriceFinder({
         .catch(() => my === seq.current && (setHome([]), setHomeErr(true)));
     }
 
-    // ② 예전 이지폼 명세서 — 기존 단가찾아보기(사이즈 비슷한 순 → 최신순), 사진 있는 것만 30건.
+    // ② 예전 이지폼 명세서 — 기존 단가찾아보기(사이즈 비슷한 순 → 최신순), 사진 있는 것만 50건.
     const terms = [...codes, ...texts];
     if (!terms.length) {
       setPast([]);
@@ -272,7 +272,7 @@ export default function PriceFinder({
       const hasFlag = preds.some((p) => p.photo_available !== undefined);
       const withPhoto = hasFlag ? preds.filter((p) => p.photo_available) : preds;
       withPhoto.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || dnum(b.date) - dnum(a.date));
-      setPast(withPhoto.slice(0, 30));
+      setPast(withPhoto.slice(0, 50));
     } catch {
       if (my === seq.current) {
         setPast([]);
