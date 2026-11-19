@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import AdminPasswordModal from './AdminPasswordModal.jsx';
 import { Outlet, Link } from 'react-router-dom';
 import Banner from '../../components/common/Banner';
 import SubNav from '../../components/common/SubNav.jsx';
@@ -13,6 +14,7 @@ import './AdminLayout.css';
 const AdminLayout = () => {
     const { logout, token } = useAuth();
     const isDemo = isDemoToken(token);
+    const [pwOpen, setPwOpen] = useState(false);
 
     const adminMenu = [
         { name: '발주 관리', path: '/admin/orders' },
@@ -40,12 +42,18 @@ const AdminLayout = () => {
                 action={(
                     <div className="admin-banner-actions">
                         <Link to="/" className="admin-banner-home-link">홈페이지</Link>
+                        {!isDemo && (
+                            <button type="button" className="admin-banner-pw-btn" onClick={() => setPwOpen(true)}>
+                                비밀번호 변경
+                            </button>
+                        )}
                         <button type="button" className="admin-banner-logout-btn" onClick={logout}>
                             로그아웃
                         </button>
                     </div>
                 )}
             />
+            {pwOpen && <AdminPasswordModal token={token} onClose={() => setPwOpen(false)} />}
             <SubNav links={adminMenu} />
             <AdminFolderChangeNotice />
             <div className="admin-content">

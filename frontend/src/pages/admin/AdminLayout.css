@@ -46,3 +46,100 @@
     border-color: #2d2d4e;
     transform: translateY(-1px);
 }
+
+.admin-banner-pw-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.38);
+    backdrop-filter: blur(6px);
+}
+
+.admin-banner-pw-btn:hover {
+    background: rgba(255, 255, 255, 0.26);
+}
+
+.admin-pw-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    padding: 16px;
+}
+
+.admin-pw-modal {
+    background: #fff;
+    color: #1a1a2e;
+    border-radius: 14px;
+    padding: 24px;
+    width: 100%;
+    max-width: 380px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+}
+
+.admin-pw-modal h3 {
+    margin: 0 0 16px;
+    font-size: 18px;
+}
+
+.admin-pw-modal label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 12px;
+}
+
+.admin-pw-modal input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 6px;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.admin-pw-error {
+    color: #c62828;
+    font-size: 13px;
+    margin: 4px 0 8px;
+}
+
+.admin-pw-ok {
+    font-size: 14px;
+    margin: 0 0 8px;
+}
+
+.admin-pw-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.admin-pw-actions button {
+    padding: 9px 16px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.admin-pw-actions .admin-pw-primary {
+    background: #1a1a2e;
+    border-color: #1a1a2e;
+    color: #fff;
+}

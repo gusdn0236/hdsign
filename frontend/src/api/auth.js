@@ -14,3 +14,13 @@ export async function loginApi(username, password) {
 
   return res.json();
 }
+export async function changeAdminPasswordApi(token, currentPassword, newPassword) {
+  const res = await fetch(`${BASE_URL}/api/admin/account/password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.message || "비밀번호 변경에 실패했습니다.");
+  return body;
+}
