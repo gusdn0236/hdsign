@@ -1662,3 +1662,15 @@
 .efb-foot .efb-tally b {
   font-size: 15px;
 }
+
+/* 1장 불러오기 — '거래처'의 작성된 명세서 검색 중(크게) */
+.efb-ef--bigwait {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: center;
+  color: #ede9fe;
+}
+.efb-ef--bigwait b {
+  color: #c4b5fd;
+}

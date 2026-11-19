@@ -828,7 +828,18 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
 
                     {state !== 'idle' && <div className={`efb-arrow efb-arrow--${state}`} aria-hidden="true" />}
 
-                    {state === 'wait' && <div className="efb-ef efb-ef--wait"><span className="efb-shimmer" />이지폼에서 찾는 중…</div>}
+                    {state === 'wait' &&
+                      (single ? (
+                        // 명세서 1장(명세서작성에서 연 경우) — 무엇을 찾는지 크게
+                        <div className="efb-ef efb-ef--wait efb-ef--bigwait">
+                          <span className="efb-shimmer" />
+                          <b>‘{o.clientCompanyName || '해당 거래처'}’</b>의 작성된 명세서가
+                          <br />
+                          있는지 검색 중이에요
+                        </div>
+                      ) : (
+                        <div className="efb-ef efb-ef--wait"><span className="efb-shimmer" />이지폼에서 찾는 중…</div>
+                      ))}
                     {state === 'none' && (() => {
                       // 키워드가 하나도 안 맞음 = 아직 명세서가 안 끊긴 것으로 봄. 읽어 둔 후보는 [그래도 후보 보기]로.
                       const readOthers = m?.noClueHit ? m.others.filter((c) => reads[c.key]?.ok) : [];
