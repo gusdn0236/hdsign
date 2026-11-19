@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BASE_URL, lookupPricesMerged, type Prediction } from '../autoquote/annot/api';
+import { BASE_URL, lookupPrices, type Prediction } from '../autoquote/annot/api';
 import { parseInput, suggestTokens, TOKEN_LABEL } from '../StatementSmartSearch.jsx';
 import FitWorksheet from './FitWorksheet';
 import ScrapViewer, { loadViewerData, ZoomBox, type ViewerData } from './ScrapViewer';
@@ -28,7 +28,20 @@ type Tok = { type: 'client' | 'code' | 'spec' | 'text' | 'order'; value: string 
 const KINDS: Tok['type'][] = ['code', 'client', 'text', 'spec'];
 const tokKey = (t: Tok) => `${t.type}:${String(t.value).replace(/\s+/g, '').toLowerCase()}`;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type HomeHit = { o: any; hits: ScrapRow[] };
+type HomeHit = { o: any; hits: ScrapRow[]; hit: string[]; score: number };
+type PastHit = { pr: Prediction; hit: string[]; score: number };
+
+// 정렬 가중치 — 맞은 키워드 종류별 점수 합이 큰 순(거래처 > 품목코드 > 품목(작업키워드) > 규격)
+const W = { client: 8, code: 4, text: 2, spec: 1 } as const;
+const nums = (x?: string) => (String(x || '').match(/\d+(?:\.\d+)?/g) || []).map(Number).filter((n) => n > 0);
+/** 규격 키워드가 이 규격에 얼마나 맞나 — 1 = 숫자 전부 ±3%(최소 5mm), 0.5 = ±10%, 0 = 아님. */
+function specNear(want: string, have?: string): number {
+  const w = nums(want);
+  const h = nums(have);
+  if (!w.length || !h.length) return 0;
+  const ok = (tol: number) => w.every((n) => h.some((d) => Math.abs(d - n) <= Math.max(tol === 0.03 ? 5 : 0, n * tol)));
+  return ok(0.03) ? 1 : ok(0.1) ? 0.5 : 0;
+}
 
 let clientNamesP: Promise<string[]> | null = null;
 function loadClientNames(token: string | null | undefined): Promise<string[]> {
@@ -73,12 +86,14 @@ function pastItem(pr: Prediction, client?: string): Omit<ScrapItem, 'addedAt'> {
 /** 예전 이지폼 명세서 카드 — 화면에 보일 때 근거(사진+명세서)를 받아 사진·거래처를 채운다. */
 function PastCard({
   pr,
+  hit,
   token,
   onOpen,
   onData,
   data,
 }: {
   pr: Prediction;
+  hit: string[];
   token: string | null | undefined;
   onOpen: () => void;
   onData: (d: ViewerData) => void;
@@ -120,6 +135,7 @@ function PastCard({
           </span>
           <i>{won(pr.price)}</i>
         </div>
+        {hit.length > 0 && <div className="pf-card-hit">✓ {hit.join(' · ')}</div>}
       </div>
       <ScrapPin
         item={it}
@@ -153,6 +169,7 @@ function HomeCard({ h, onOpen }: { h: HomeHit; onOpen: () => void }) {
           </div>
         ))}
         {hits.length > 3 && <div className="pf-card-more">외 {hits.length - 3}줄</div>}
+        {h.hit.length > 0 && <div className="pf-card-hit">✓ {h.hit.join(' · ')}</div>}
       </div>
       <ScrapPin item={homeScrap(o, hits)} className="pf-card-pin" />
     </div>
@@ -188,7 +205,7 @@ export default function PriceFinder({
   const [clientNames, setClientNames] = useState<string[]>([]);
   const [home, setHome] = useState<HomeHit[] | null>(null);
   const [homeErr, setHomeErr] = useState(false);
-  const [past, setPast] = useState<Prediction[] | null>(null);
+  const [past, setPast] = useState<PastHit[] | null>(null);
   const [pastErr, setPastErr] = useState('');
   const [pastData, setPastData] = useState<Record<string, ViewerData>>({});
   const [detail, setDetail] = useState<number | null>(null); // 합친 목록(home → past) 안의 위치
@@ -226,59 +243,130 @@ export default function PriceFinder({
     const clients = pick('client');
     const myClient = order?.clientCompanyName || '';
 
-    // ① 홈페이지에 저장된 명세서 — 같은 줄에 키워드가 다 있는 명세서(최신순). 같은 거래처 먼저.
-    if (codes.length + specs.length + texts.length === 0) {
+    const cliHit = (name?: string | null) => clients.some((c) => squeeze(name || '').includes(squeeze(c)));
+
+    // ① 홈페이지에 저장된 명세서 — 키워드마다 따로 찾아 합친 뒤, 맞은 키워드 점수(거래처>품목코드>품목>규격)가
+    //    큰 순. 동점이면 이 지시서 거래처 먼저 → 최신순.
+    const rowToks = toks.filter((t) => t.type === 'code' || t.type === 'text' || t.type === 'spec');
+    if (!rowToks.length) {
       setHome([]);
     } else {
-      const qs = new URLSearchParams();
-      codes.forEach((v) => qs.append('code', v));
-      specs.forEach((v) => qs.append('spec', v));
-      texts.forEach((v) => qs.append('text', v));
-      clients.forEach((v) => qs.append('client', v));
-      qs.set('requestType', 'ORDER');
-      fetch(`${BASE_URL}/api/admin/orders/statement-search?${qs}`, { headers: { Authorization: `Bearer ${token}` } })
-        .then((r) => {
-          if (!r.ok) throw new Error(String(r.status));
-          return r.json();
-        })
-        .then((data) => {
-          if (my !== seq.current) return;
-          const items = (Array.isArray(data.items) ? data.items : []).filter((o) => o.id !== order?.id);
-          const out: HomeHit[] = items.map((o) => ({ o, hits: (data.matches || {})[String(o.id)] || [] }));
-          const mine = (h: HomeHit) => (myClient && h.o.clientCompanyName === myClient ? 0 : 1);
-          out.sort((a, b) => mine(a) - mine(b)); // 같은 거래처 먼저, 그 안은 서버 순서(최신 저장순)
-          setHome(out);
-        })
-        .catch(() => my === seq.current && (setHome([]), setHomeErr(true)));
+      Promise.all(
+        rowToks.map((t) => {
+          const qs = new URLSearchParams();
+          qs.append(t.type, t.value);
+          qs.set('requestType', 'ORDER');
+          return fetch(`${BASE_URL}/api/admin/orders/statement-search?${qs}`, { headers: { Authorization: `Bearer ${token}` } })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => ({ t, d }))
+            .catch(() => ({ t, d: null }));
+        }),
+      ).then((res) => {
+        if (my !== seq.current) return;
+        if (res.every((x) => !x.d)) {
+          setHome([]);
+          setHomeErr(true);
+          return;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const agg = new Map<number, { o: any; rows: ScrapRow[]; toks: Tok[] }>();
+        res.forEach(({ t, d }) => {
+          if (!d) return;
+          (Array.isArray(d.items) ? d.items : []).forEach((o) => {
+            if (o.id === order?.id || (o.requestType && o.requestType !== 'ORDER')) return;
+            let a = agg.get(o.id);
+            if (!a) {
+              a = { o, rows: [], toks: [] };
+              agg.set(o.id, a);
+            }
+            if (!a.toks.includes(t)) a.toks.push(t);
+            ((d.matches || {})[String(o.id)] || []).forEach((r: ScrapRow) => {
+              const k = JSON.stringify([r.품목코드, r.품목, r.규격, r.단가]);
+              if (!a!.rows.some((x) => JSON.stringify([x.품목코드, x.품목, x.규격, x.단가]) === k)) a!.rows.push(r);
+            });
+          });
+        });
+        const out: HomeHit[] = [...agg.values()].map((a) => {
+          let score = a.toks.reduce((sum, t) => sum + W[t.type as keyof typeof W], 0);
+          const hit = a.toks.map((t) => t.value);
+          // 규격 키워드로는 안 걸렸어도 걸린 줄 규격이 가까우면 반점
+          specs.forEach((sv) => {
+            if (hit.includes(sv)) return;
+            if (a.rows.some((r) => specNear(sv, r.규격) > 0)) score += W.spec / 2;
+          });
+          if (clients.length && cliHit(a.o.clientCompanyName)) {
+            score += W.client;
+            hit.unshift(a.o.clientCompanyName);
+          }
+          return { o: a.o, hits: a.rows, hit, score };
+        });
+        const mine = (h: HomeHit) => (myClient && h.o.clientCompanyName === myClient ? 0 : 1);
+        out.sort(
+          (a, b) =>
+            b.score - a.score ||
+            mine(a) - mine(b) ||
+            dnum(String(b.o.dueDate || b.o.createdAt)) - dnum(String(a.o.dueDate || a.o.createdAt)),
+        );
+        setHome(out.slice(0, 60));
+      });
     }
 
-    // ② 예전 이지폼 명세서 — 기존 단가찾아보기(사이즈 비슷한 순 → 최신순), 사진 있는 것만 50건.
-    const terms = [...codes, ...texts];
-    if (!terms.length) {
+    // ② 예전 이지폼 명세서 — 품목코드·품목 키워드마다 기존 단가찾아보기로 찾아 합친 뒤 같은 점수로 정렬.
+    //    품목 글자가 그 키워드를 실제로 품고 있으면 만점, 연관으로만 걸렸으면 반점. 규격은 가까운 정도로.
+    //    거래처 키워드가 있으면 그 거래처 명세서(이력)에 거래처 점수. 사진 있는 것만 50건.
+    const textToks = toks.filter((t) => t.type === 'code' || t.type === 'text');
+    if (!textToks.length) {
       setPast([]);
       return;
     }
-    try {
-      const preds = await lookupPricesMerged(token, clients[0] || myClient, terms, specs[0] || '', '', {
-        fallbackText: texts.join(' '),
-        limit: 100,
-      });
-      if (my !== seq.current) return;
-      if (preds == null) {
-        setPast([]);
-        setPastErr('예전 명세서 자료가 서버에 아직 없어요');
-        return;
-      }
-      const hasFlag = preds.some((p) => p.photo_available !== undefined);
-      const withPhoto = hasFlag ? preds.filter((p) => p.photo_available) : preds;
-      withPhoto.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || dnum(b.date) - dnum(a.date));
-      setPast(withPhoto.slice(0, 50));
-    } catch {
-      if (my === seq.current) {
-        setPast([]);
-        setPastErr('예전 명세서를 찾지 못했어요');
-      }
+    const rankClient = clients[0] || myClient;
+    const lists = await Promise.all(
+      textToks.map((t) =>
+        lookupPrices(token, rankClient, { text: t.value, material: t.value, size: specs[0] || '', qty: '' }, 100)
+          .then((l) => ({ t, l, err: false }))
+          .catch(() => ({ t, l: null as Prediction[] | null, err: true })),
+      ),
+    );
+    if (my !== seq.current) return;
+    if (lists.every((x) => x.l == null)) {
+      setPast([]);
+      setPastErr(lists.some((x) => x.err) ? '예전 명세서를 찾지 못했어요' : '예전 명세서 자료가 서버에 아직 없어요');
+      return;
     }
+    const agg = new Map<string, { pr: Prediction; toks: Tok[] }>();
+    lists.forEach(({ t, l }) =>
+      (l || []).forEach((pr) => {
+        if (pr.photo_available === false) return;
+        const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
+        const a = agg.get(k);
+        if (!a) agg.set(k, { pr, toks: [t] });
+        else {
+          if (!a.toks.includes(t)) a.toks.push(t);
+          if ((pr.score ?? 0) > (a.pr.score ?? 0)) a.pr = pr;
+        }
+      }),
+    );
+    const scored: PastHit[] = [...agg.values()].map(({ pr, toks: ts }) => {
+      let score = 0;
+      const hit: string[] = [];
+      ts.forEach((t) => {
+        const full = squeeze(pr.item).includes(squeeze(t.value));
+        score += W[t.type as keyof typeof W] * (full ? 1 : 0.5);
+        if (full) hit.push(t.value);
+      });
+      specs.forEach((sv) => {
+        const n = specNear(sv, pr.size);
+        score += W.spec * n;
+        if (n === 1) hit.push(sv);
+      });
+      if (clients.length && pr.src === '이력') {
+        score += W.client;
+        hit.unshift(clients[0]);
+      }
+      return { pr, hit, score };
+    });
+    scored.sort((a, b) => b.score - a.score || (b.pr.score ?? 0) - (a.pr.score ?? 0) || dnum(b.pr.date) - dnum(a.pr.date));
+    setPast(scored.slice(0, 50));
   };
 
   useEffect(() => {
@@ -359,7 +447,7 @@ export default function PriceFinder({
   const all = useMemo(() => {
     const a: { item: Omit<ScrapItem, 'addedAt'>; data?: ViewerData | null }[] = [];
     (home || []).forEach((h) => a.push({ item: homeScrap(h.o, h.hits) }));
-    (past || []).forEach((pr) => {
+    (past || []).forEach(({ pr }) => {
       const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
       const d = pastData[k];
       a.push({ item: pastItem(pr, d?.client), data: d || null });
@@ -543,12 +631,13 @@ export default function PriceFinder({
           <div className="pf-none">{pastErr || '없어요'}</div>
         ) : (
           <div className="pf-grid">
-            {past.map((pr, j) => {
+            {past.map(({ pr, hit }, j) => {
               const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
               return (
                 <PastCard
                   key={k}
                   pr={pr}
+                  hit={hit}
                   token={token}
                   data={pastData[k]}
                   onData={(d) => setPastData((m) => ({ ...m, [k]: d }))}
