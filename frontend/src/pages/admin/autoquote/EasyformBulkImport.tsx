@@ -109,6 +109,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [savedWs, setSavedWs] = useState<Record<string, EfBulkOrder>>({});
   // 합친 명세서 — 이 지시서가 명세서 몇 번째 줄부터인지(읽은 줄 번호, 0부터). 저장 때 그 줄 비고에 주문번호를 적는다.
   const [stampRow, setStampRow] = useState<Record<number, number>>({});
+  const [readQueue, setReadQueue] = useState<string[]>([]); // 이번에 이지폼에서 읽을 후보(순서대로) — 아직 안 읽은 것 = 읽는 중/차례
   const [pickFor, setPickFor] = useState<number | null>(null); // 지금 줄을 고르는 지시서 id
   const [zoomWs, setZoomWs] = useState<EfBulkOrder | null>(null); // 합치기 확인창에서 눌러 크게 보는 지시서
   // 사람이 넣은 단서(키워드·사이즈) — 지시서별. 넣은 지시서는 단서로 가려내고, 안 넣은 건 지금 방식대로.
@@ -269,6 +270,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         return;
       }
       setPhase('read');
+      setReadQueue(items.map((x) => x.key));
       setProgress(`후보 명세서 ${items.length}건을 이지폼에서 읽고 있어요`);
       setEta(etaText(items.length * SEC_PER_READ));
       // 남은 시간 — 지금까지 1건당 걸린 시간(일시정지 시간 뺌) × 남은 건수(두 단계 합쳐서)
@@ -1144,6 +1146,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           onClose={() => setDetail(null)}
           onMark={(v) => mark(detailOrder.id, v)}
           stampRow={stampRow[detailOrder.id]}
+          pending={phase === 'read' ? readQueue.filter((k) => !reads[k]) : []}
           onUse={(c) => pickCandidate(detailOrder.id, c)}
           mergedNos={(matches[detailOrder.id].mergedWith || []).map((id) => orderNoCore(orders.find((x) => x.id === id)?.orderNumber))}
           onNav={(d) => {
@@ -1176,6 +1179,7 @@ function DetailView({
   keywords,
   dims,
   stampRow,
+  pending = [],
 }: {
   order: EfBulkOrder;
   match: EfMatch;
@@ -1194,6 +1198,7 @@ function DetailView({
   keywords: string[];
   dims?: number[];
   stampRow?: number;
+  pending?: string[]; // 아직 안 읽은 후보 key(순서대로) — 첫 번째 = 지금 읽는 중
 }) {
   const best = match.best!;
   const rows = (read?.rows || []).map((r) => r);
@@ -1340,13 +1345,20 @@ function DetailView({
             </div>
             {match.others.length > 0 && (
               <div className="efb-others">
-                <div className="efb-others-label">다른 후보</div>
+                <div className="efb-others-label">
+                  다른 후보
+                  {match.others.some((c) => pending.includes(c.key)) && (
+                    <span className="efb-others-reading">
+                      <span className="efb-spin" /> 아직 읽는 중
+                    </span>
+                  )}
+                </div>
                 <div className="efb-others-list">
                   {match.others.map((c) => (
                     <button
                       type="button"
                       key={c.key}
-                      className="efb-other"
+                      className={`efb-other${pending[0] === c.key ? ' is-reading' : pending.includes(c.key) ? ' is-queued' : ''}`}
                       onClick={() => onUse(c)}
                       disabled={!!swapping}
                       title="이 명세서로 바꿔서 보기 (이지폼에서 읽어와요)"
@@ -1360,8 +1372,21 @@ function DetailView({
                           <b>{c.row.client}</b>
                           <span className="efb-other-item">{c.row.firstItem}</span>
                           <span>{won(c.row.total)}원</span>
-                          {c.usedBy?.length ? <span className="efb-other-used">이미 저장됨 · 고르면 같이 쓰기</span> : null}
                           {reads[c.key]?.ok && <span className="efb-other-read">읽음</span>}
+                          {pending[0] === c.key ? (
+                            <span className="efb-other-state is-now">
+                              <span className="efb-spin" /> 지금 읽는 중
+                            </span>
+                          ) : pending.includes(c.key) ? (
+                            <span className="efb-other-state">
+                              <span className="efb-dots" aria-hidden="true">
+                                <i />
+                                <i />
+                                <i />
+                              </span>
+                              읽을 차례
+                            </span>
+                          ) : null}
                         </>
                       )}
                     </button>
