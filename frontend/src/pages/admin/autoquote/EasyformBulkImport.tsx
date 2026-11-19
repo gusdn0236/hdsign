@@ -1314,7 +1314,7 @@ function DetailView({
             <div className="efb-dstmt-head">
               <span className={`efb-biz efb-biz--${best.row.biz}`}>{bizLabel(best.row.biz)} 이지폼</span>
               <span className="efb-dstmt-client">{best.row.client}</span>
-              <span className="efb-dstmt-date">발행 {read?.date || best.row.date}{best.row.written && best.row.written !== best.row.date ? ` · 작성 ${best.row.written}` : ''}</span>
+              <span className="efb-dstmt-date">발행 {read?.date || best.row.date}</span>
               <span className="efb-dstmt-total">{won(read?.total || best.row.total)}원</span>
             </div>
             {pickMode && (

@@ -680,8 +680,9 @@
   font-weight: 700;
 }
 .efb-dstmt-date {
-  color: #475569;
-  font-size: 13px;
+  color: #334155;
+  font-size: 18px;
+  font-weight: 700;
 }
 .efb-dstmt-total {
   margin-left: auto;
