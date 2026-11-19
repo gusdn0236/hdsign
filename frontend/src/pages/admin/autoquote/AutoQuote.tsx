@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
@@ -58,6 +58,9 @@ import DimensionOverlay, { type DimGeom } from './components/DimensionOverlay';
 import LedOverlay from './components/LedOverlay';
 import ZoomPanImage from './components/ZoomPanImage';
 import './AutoQuote.css';
+
+// [이지폼에서 찾기] — 명세서 탭 일괄 가져오기 창을 이 지시서 1건만으로 띄운다.
+const EasyformBulkImport = lazy(() => import('./EasyformBulkImport'));
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
 // 데이터가 fetch(ArrayBuffer) 라 캔버스가 taint 되지 않아 [공유하기] 합성도 막히지 않는다.
@@ -456,6 +459,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [order, setOrder] = useState<OrderContext | null>(null);
   // 합친 명세서 — 이지폼 명세서 1장에 지시서 여러 개(비고 주문번호 2개+)면 그 주문들이 이 명세서를 공유.
   const [linkedOrders, setLinkedOrders] = useState<{ id: number; orderNumber: string }[]>([]);
+  // [이지폼에서 찾기] 창(일괄 가져오기, 이 지시서 1건) — 저장하면 reloadKey 를 올려 명세서를 다시 불러온다.
+  const [efBulkOpen, setEfBulkOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   // 치수 오버레이 — 3번 모드(mode==='dim')일 때 지시서 위에 오브젝트별/구간 가로세로(mm) 표시.
   const dimMode = mode === 'dim';
   // LED 계산 오버레이 — 'LED계산' 버튼으로 켜는 모드. 치수와 같은 지오메트리(points)를 쓴다.
@@ -761,7 +767,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     return () => {
       alive = false;
     };
-  }, [orderIdProp, searchParams, token]);
+  }, [orderIdProp, searchParams, token, reloadKey]);
 
   // ---- 붙여넣기 ---------------------------------------------------------
   useEffect(() => {
@@ -2069,10 +2075,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     }));
   // 단서로 찾기 — 지시서 사진 옆에서 훑은 명세서를 ◀ ▶ 로 넘겨 보는 위치.
   const [cluePos, setCluePos] = useState(0);
-  const [efFindOpen, setEfFindOpen] = useState(false); // [이지폼에서 찾기 ▾] 드롭다운
   // 키워드로 찾기 — 주문번호 찾기 없이 바로: 지시서 보며 키워드 입력 → [품목·규격 훑기] → 넘겨 보며 고르기.
   const openKeywordFind = () => {
-    setEfFindOpen(false);
     setClueList([]);
     setClueDraft('');
     setCluePos(0);
@@ -4111,38 +4115,34 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           </div>
           {/* 이지폼 → 홈페이지 버튼줄 — 헤더 한 줄에 다 넣으면 잘려서 계산기 아래 줄로(오른쪽 정렬). */}
           <div className="aq-h2">
-            {/* 이지폼에서 찾기 ▾ — ① 주문번호로 빠른찾기(비고 훑기) ② 키워드로 찾기(지시서 보며 키워드 → 품목·규격 훑기) */}
-            <div className="aq-findwrap">
-              <button
-                type="button"
-                className={'aq-calcbtn' + (efFindOpen ? ' on' : '')}
-                onClick={() => setEfFindOpen((v) => !v)}
-                title="이지폼 매출처별 조회 목록에서 이 주문의 명세서 찾기"
-              >
-                🔍 이지폼에서 찾기 ▾
-              </button>
-              {efFindOpen && (
-                <>
-                  <div className="aq-findmenu-back" onClick={() => setEfFindOpen(false)} />
-                  <div className="aq-findmenu">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEfFindOpen(false);
-                        void pullFromEasyform(true);
-                      }}
-                    >
-                      <b>⚡ 주문번호로 빠른찾기</b>
-                      <span>비고에 적힌 주문번호 {orderNoCore(order?.orderNumber) || ''} 로 찾아요</span>
-                    </button>
-                    <button type="button" onClick={openKeywordFind}>
-                      <b>🔤 키워드로 찾기</b>
-                      <span>지시서를 보며 키워드를 넣고, 품목·규격으로 찾아요</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* 이지폼에서 찾기 — 명세서 탭 [이지폼에서 가져오기] 창을 이 지시서 1건만으로 띄운다. */}
+            <button
+              type="button"
+              className={'aq-calcbtn' + (efBulkOpen ? ' on' : '')}
+              onClick={() => {
+                if (!order) {
+                  cdlg('주문 상세에서 “명세서작성”으로 들어와야 찾을 수 있어요.', [{ label: '확인', sec: true }]);
+                  return;
+                }
+                setEfBulkOpen(true);
+              }}
+              title="이지폼에서 이 지시서의 명세서를 찾아 비교하고 가져오기"
+            >
+              🔍 이지폼에서 찾기
+            </button>
+            {efBulkOpen && order && (
+              <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
+                <EasyformBulkImport
+                  orders={[order]}
+                  token={token}
+                  onClose={() => setEfBulkOpen(false)}
+                  onSaved={() => {
+                    onEasyformUploaded?.();
+                    setReloadKey((k) => k + 1);
+                  }}
+                />
+              </Suspense>
+            )}
             <button
               type="button"
               className="aq-calcbtn"
