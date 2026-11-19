@@ -214,7 +214,7 @@ export default function StatementSmartSearch({
             onFocus={() => setOpen(true)}
             onBlur={() => setTimeout(() => setOpen(false), 150)}
             onKeyDown={onKeyDown}
-            placeholder={tokens.length ? "" : compact ? "명세서 검색 (거래처·품목코드·규격·키워드)" : "예: 나라광고 아크릴5T 500*100 육바연로고"}
+            placeholder={tokens.length ? "" : compact ? "명세서 검색 (Enter)" : "예: 나라광고 아크릴5T 500*100 육바연로고"}
           />
           {searching && <span className="ss-spin" aria-label="검색 중" />}
           {(tokens.length > 0 || input) && (

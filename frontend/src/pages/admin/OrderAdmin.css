@@ -2743,22 +2743,42 @@
   pointer-events: auto;
 }
 
-/* 명세서 탭 플로팅 = 똑똑한 검색창(compact). 칩이 늘면 줄바꿈되며 아래로 자람. */
+/* 명세서 탭 플로팅 = 똑똑한 검색창(compact) — 크기는 옛 거래처 검색 알약(220px·36px)과 같게.
+   칩이 생기면 그만큼만 옆/아래로 자란다(최대 300px 폭). */
 .order-floating-ss {
-  width: 380px;
-  max-width: calc(100vw - 40px);
-  padding: 8px;
-  background: #fff;
-  border: 1px solid #d4d4d8;
-  border-radius: 14px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  min-width: 220px;
+  max-width: min(300px, calc(100vw - 40px));
 }
 .order-floating-ss .ss {
   margin: 0;
   padding: 0;
   border: 0;
+  background: transparent;
   box-shadow: none;
 }
+.order-floating-ss .ss-box {
+  min-height: 0;
+  gap: 4px;
+  padding: 4px 8px 4px 12px;
+  border-radius: 18px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+}
+.order-floating-ss .ss-box.is-focus {
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16), 0 0 0 3px rgba(0, 95, 115, 0.16);
+}
+.order-floating-ss .ss-icon { font-size: 15px; }
+.order-floating-ss .ss-input {
+  flex: 1 1 100px;
+  min-width: 80px;
+  height: 26px;
+  font-size: 13px;
+}
+.order-floating-ss .ss-chip { font-size: 12px; }
+.order-floating-ss .ss-chip-body { padding: 2px 2px 2px 8px; gap: 4px; }
+.order-floating-ss .ss-chip-type { display: none; }
+.order-floating-ss .ss-chip-x { width: 18px; height: 20px; font-size: 13px; }
+.order-floating-ss .ss-clear { padding: 3px 6px; font-size: 11px; }
+
 .order-floating-search {
   display: inline-flex;
   align-items: center;
