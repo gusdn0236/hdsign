@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
@@ -3586,6 +3586,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         : 'crosshair'
       : undefined;
 
+
+  // 합친 명세서 — 행마다 어느 지시서 구간인지(비고 주문번호 기준). 비고에 합친 주문번호 1개만 적힌 행부터
+  // 다른 주문번호 행 전까지가 그 지시서 몫. 첫 줄에 번호가 다 같이 적힌 명세서(홈페이지 입력)는 구간을 몰라 표시 안 함.
+  const ownCore = orderNoCore(order?.orderNumber);
+  const linkOwner: (string | null)[] | null = (() => {
+    if (linkedOrders.length < 2) return null;
+    const linked = linkedOrders.map((l) => orderNoCore(l.orderNumber));
+    let cur: string | null = null;
+    let any = false;
+    const out = pins.map((p) => {
+      const nos = extractOrderNos(String(p?.vals?.['비고'] ?? '')).filter((n) => linked.includes(n));
+      if (nos.length === 1) {
+        cur = nos[0];
+        any = true;
+      }
+      return cur;
+    });
+    return any ? out : null;
+  })();
+
   return (
     <div className="aq-root">
       <div className="aq-bar">
@@ -4240,11 +4260,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   const p = pins[i];
                   const v = p ? p.vals : {};
                   const isOcrTgt = showTgtRow && i === ocrTarget;
+                  const lk = linkOwner ? linkOwner[i] : null; // 합친 명세서 — 이 행이 어느 지시서 구간인지
+                  const lkStart = !!lk && (i === 0 || linkOwner![i - 1] !== lk);
                   return (
+                    <Fragment key={i}>
+                    {lkStart && (
+                      <tr className={'lk-div' + (lk === ownCore ? ' mine' : '')}>
+                        <td colSpan={7}>
+                          ▼ {lk === ownCore ? '이 지시서' : '다른 지시서'} · {lk}
+                        </td>
+                      </tr>
+                    )}
                     <tr
-                      key={i}
                       className={
                         [
+                          lk ? (lk === ownCore ? 'lk-mine' : 'lk-other') : '',
                           i === active ? 'cur' : '',
                           isOcrTgt ? 'ocrtgt' : '',
                           dragRow === i ? 'rowdragging' : '',
@@ -4386,6 +4416,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                         />
                       </td>
                     </tr>
+                    </Fragment>
                   );
                 })}
               </tbody>

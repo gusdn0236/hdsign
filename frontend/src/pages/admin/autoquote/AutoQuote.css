@@ -2823,3 +2823,23 @@
   font-size: 11.5px;
   overflow-wrap: anywhere;
 }
+/* 합친 명세서 — 이 지시서 구간 = 왼쪽 파란 띠, 다른 지시서 구간 = 글자 흐리게, 구간 시작 = 주문번호 줄 */
+.aq-tbl tr.lk-mine > td:first-child {
+  box-shadow: inset 4px 0 0 #2563eb;
+}
+.aq-tbl tr.lk-other > td,
+.aq-tbl tr.lk-other input {
+  color: #a3adbb;
+}
+.aq-tbl tr.lk-div > td {
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #64748b;
+  background: #f1f5f9;
+  text-align: left;
+  letter-spacing: 0.02em;
+}
+.aq-tbl tr.lk-div.mine > td {
+  color: #2563eb;
+  font-weight: 700;
+}
