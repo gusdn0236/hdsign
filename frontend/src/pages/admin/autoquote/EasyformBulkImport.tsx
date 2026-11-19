@@ -851,15 +851,17 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                       if (!readOthers.length)
                         return (
                           <div className="efb-ef efb-ef--none">
-                            비슷한 명세서를<br />이지폼에서 못 찾았어요
+                            비슷한 명세서를 이지폼에서 못 찾았어요.
+                            <br />
+                            <small>아직 작성되지 않은 것 같아요.</small>
                             {again}
                           </div>
                         );
                       return (
                         <div className="efb-ef efb-ef--none">
-                          키워드에 맞는 명세서가 없어요
+                          비슷한 명세서를 이지폼에서 못 찾았어요.
                           <br />
-                          <small>아직 명세서를 안 끊은 것 같아요</small>
+                          <small>아직 작성되지 않은 것 같아요.</small>
                           {again}
                           <button
                             type="button"
