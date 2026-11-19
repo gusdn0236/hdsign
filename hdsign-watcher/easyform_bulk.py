@@ -176,8 +176,9 @@ def _assert_clean(main, allow=("TfrmListExchange",)) -> None:
         raise Stop(f"이지폼에 '{pops[0][2] or pops[0][1]}' 창이 떠 있어서 멈췄어요. 그 창을 닫고 다시 해주세요.")
     for _h, c, t in _mdi_forms(main):
         if c not in allow:
-            what = "명세서 작성/상세 창" if c == "TfrmExchange" else f"'{t or c}' 창"
-            raise Stop(f"이지폼에 {what}이 열려 있어서 멈췄어요. 그 창을 닫고 다시 해주세요.")
+            if c == "TfrmExchange":
+                raise Stop("작성중인 명세서가 있어서 멈췄어요. 명세서를 닫고 실행해주세요.")
+            raise Stop(f"이지폼에 '{t or c}' 창이 열려 있어서 멈췄어요. 그 창을 닫고 다시 해주세요.")
 
 
 def _aborted() -> bool:
@@ -598,6 +599,28 @@ def _read_form(form) -> list:
     return rows
 
 
+def _close_left_forms(main) -> None:
+    """정지로 멈췄을 때 우리가 열어 둔 명세서(TfrmExchange) 창을 ESC 로 닫는다.
+    순회 전에 _assert_clean 으로 명세서 창이 없음을 확인했으니 지금 떠 있는 건 우리가 연 것(읽기만, 수정 없음).
+    (정지 표시가 켜져 있어 _wait 를 못 쓰므로 직접 기다린다.) 질문창이 뜨면 아무것도 안 누르고 그대로 둔다."""
+    t_end = time.time() + 1.5  # Enter 직후 정지했으면 창이 조금 늦게 뜰 수 있음
+    while time.time() < t_end and not _kids(main, "TfrmExchange"):
+        time.sleep(0.05)
+    for _ in range(3):
+        forms = _kids(main, "TfrmExchange")
+        if not forms or _popups(main):
+            break
+        for form in forms:
+            fgrid = next(iter(_kids(form, "TAdvStringGrid")), None)
+            target = next(iter(_kids(fgrid, "TAdvInplaceEdit")), None) if fgrid else None
+            _key(target or fgrid or form, 0x1B)
+        t_end = time.time() + 1.5
+        while time.time() < t_end and _kids(main, "TfrmExchange") and not _popups(main):
+            time.sleep(0.05)
+    left = _kids(main, "TfrmExchange")
+    logging.info("이지폼 일괄: 정지 — 열려 있던 명세서 창 정리 %s", "완료" if not left else f"실패({len(left)}개 남음)")
+
+
 def _read_items(items: list, progress, on_result, keep_order: bool = False) -> None:
     """keep_order=True: 웹이 보낸 순서 그대로(= 화면 카드 순서 — 키워드 넣은 지시서 먼저, 오래된 날짜순) 읽는다.
     연속된 같은 이지폼 묶음마다 목록 맨 위로 맞춘 뒤 ↓/↑ 로 오간다. False: 이지폼별로 목록 위→아래(가장 빠름)."""
@@ -654,48 +677,53 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
             if not closed or _popups(main):
                 raise Stop(f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
 
-        for it in its:
-            _pause_point(progress)
-            if _aborted():
-                raise Stop("정지했어요.")
-            idx = int(it.get("idx") or 0)
-            want = str(it.get("total") or "")
-            progress(f"이지폼 명세서 읽는 중 {done + 1}/{total_n} · {it.get('date', '')} {it.get('client', '')}")
-            res = {"key": it.get("key"), "ok": False}
-            for attempt in range(4):
-                step = 0x28 if idx >= cur else 0x26
-                for _ in range(abs(idx - cur)):
-                    _key(grid, step)  # ↓(↑) — 너무 빨리 보내면 하나씩 씹힘 → 살짝 간격
-                    time.sleep(0.012)
-                cur = idx
-                time.sleep(0.3)
-                _assert_clean(main)
-                _key(grid, 0x0D)  # Enter = 열기(목록 표에서만)
-                form = _wait(lambda: next((f for f in _kids(main, "TfrmExchange")
-                                           if _form_header(f)[0] and "_" not in _form_header(f)[0]), None), 6.0, 0.06)
-                if not form:
-                    raise Stop(f"{it.get('date', '')} 명세서가 안 열려서 멈췄어요.")
-                # 열린 직후엔 합계가 잠깐 '0' — 목록의 합계가 뜰 때까지(최대 2.5초) 기다린 뒤 비교·읽기.
-                _wait(lambda: _digits(_form_header(form, want)[1]) == _digits(want), 2.5, 0.05)
-                time.sleep(0.15)
-                date, tot = _form_header(form, want)
-                res.update(date=date, total=tot)
-                if date == it.get("date") and _digits(tot) == _digits(want):
-                    res.update(ok=True, rows=_read_form(form), message="")
+        try:
+            for it in its:
+                _pause_point(progress)
+                if _aborted():
+                    raise Stop("정지했어요.")
+                idx = int(it.get("idx") or 0)
+                want = str(it.get("total") or "")
+                progress(f"이지폼 명세서 읽는 중 {done + 1}/{total_n} · {it.get('date', '')} {it.get('client', '')}")
+                res = {"key": it.get("key"), "ok": False}
+                for attempt in range(4):
+                    step = 0x28 if idx >= cur else 0x26
+                    for _ in range(abs(idx - cur)):
+                        _key(grid, step)  # ↓(↑) — 너무 빨리 보내면 하나씩 씹힘 → 살짝 간격
+                        time.sleep(0.012)
+                    cur = idx
+                    time.sleep(0.3)
+                    _assert_clean(main)
+                    _key(grid, 0x0D)  # Enter = 열기(목록 표에서만)
+                    form = _wait(lambda: next((f for f in _kids(main, "TfrmExchange")
+                                               if _form_header(f)[0] and "_" not in _form_header(f)[0]), None), 6.0, 0.06)
+                    if not form:
+                        raise Stop(f"{it.get('date', '')} 명세서가 안 열려서 멈췄어요.")
+                    # 열린 직후엔 합계가 잠깐 '0' — 목록의 합계가 뜰 때까지(최대 2.5초) 기다린 뒤 비교·읽기.
+                    _wait(lambda: _digits(_form_header(form, want)[1]) == _digits(want), 2.5, 0.05)
+                    time.sleep(0.15)
+                    date, tot = _form_header(form, want)
+                    res.update(date=date, total=tot)
+                    if date == it.get("date") and _digits(tot) == _digits(want):
+                        res.update(ok=True, rows=_read_form(form), message="")
+                        close_form(form, date)
+                        break
                     close_form(form, date)
-                    break
-                close_form(form, date)
-                # 줄이 어긋남(↓ 씹힘 등) — 열린 명세서(발행일·합계)가 목록의 몇 번째인지 가까운 곳에서 찾아 맞춘다.
-                near = [k for k, r in enumerate(known)
-                        if r.get("date") == date and _digits(r.get("total")) == _digits(tot)]
-                if not near:
-                    res["message"] = f"목록이 바뀌었어요({date} {tot}원이 열림). 다시 [이지폼에서 가져오기] 해주세요."
-                    break
-                cur = min(near, key=lambda k: abs(k - idx))
-                res["message"] = f"줄을 못 맞췄어요({date} {tot}원이 열림)."
-                logging.info("이지폼 일괄 읽기: %d번째 대신 %d번째가 열림 → 다시 맞춤", idx, cur)
-            on_result(res)
-            done += 1
+                    # 줄이 어긋남(↓ 씹힘 등) — 열린 명세서(발행일·합계)가 목록의 몇 번째인지 가까운 곳에서 찾아 맞춘다.
+                    near = [k for k, r in enumerate(known)
+                            if r.get("date") == date and _digits(r.get("total")) == _digits(tot)]
+                    if not near:
+                        res["message"] = f"목록이 바뀌었어요({date} {tot}원이 열림). 다시 [이지폼에서 가져오기] 해주세요."
+                        break
+                    cur = min(near, key=lambda k: abs(k - idx))
+                    res["message"] = f"줄을 못 맞췄어요({date} {tot}원이 열림)."
+                    logging.info("이지폼 일괄 읽기: %d번째 대신 %d번째가 열림 → 다시 맞춤", idx, cur)
+                on_result(res)
+                done += 1
+        except Stop:
+            if _aborted():
+                _close_left_forms(main)  # [정지]/창 닫기 — 읽다 만 명세서 창을 남기지 않는다
+            raise
 
 
 # ── 작업 상태 + HTTP 핸들러 ────────────────────────────────────────────────────
