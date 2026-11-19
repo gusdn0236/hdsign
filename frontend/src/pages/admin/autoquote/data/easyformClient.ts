@@ -296,6 +296,7 @@ export interface EfStampItem {
   row?: number;
   item?: string; // 그 줄 품목(읽었을 때) — 워처가 같은 줄인지 확인
   remark?: string; // 그 줄 기존 비고(읽었을 때)
+  rowCount?: number; // 명세서 줄 수 — 워처가 비고 칸만 훑어 이미 적혔는지 확인
 }
 
 export interface EfBulkResult {

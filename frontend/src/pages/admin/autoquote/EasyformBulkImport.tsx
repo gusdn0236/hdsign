@@ -32,6 +32,7 @@ import {
   markMerged,
   cellMatches,
   clueHits,
+  bandOwners,
   keywordSpans,
   worksheetDims,
   type EfMatch,
@@ -109,6 +110,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [savedWs, setSavedWs] = useState<Record<string, EfBulkOrder>>({});
   // 합친 명세서 — 이 지시서가 명세서 몇 번째 줄부터인지(읽은 줄 번호, 0부터). 저장 때 그 줄 비고에 주문번호를 적는다.
   const [stampRow, setStampRow] = useState<Record<number, number>>({});
+  const [stampEnd, setStampEnd] = useState<Record<number, number>>({}); // 범위 끝 줄(읽은 줄 번호) — 홈페이지 비고에만 표시
   const [readQueue, setReadQueue] = useState<string[]>([]); // 이번에 이지폼에서 읽을 후보(순서대로) — 아직 안 읽은 것 = 읽는 중/차례
   const [pickFor, setPickFor] = useState<number | null>(null); // 지금 줄을 고르는 지시서 id
   const [zoomWs, setZoomWs] = useState<EfBulkOrder | null>(null); // 합치기 확인창에서 눌러 크게 보는 지시서
@@ -516,20 +518,34 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           const orig = rd.rows || [];
           const base = { key: m.best!.key, biz: m.best!.row.biz, idx: m.best!.row.idx, date: m.best!.row.date, total: m.best!.row.total, client: m.best!.row.client };
           // 워처엔 줄 번호 + 그 줄의 (읽었을 때) 품목·비고를 같이 보낸다 → 워처는 그 줄만 확인하고 적는다(전체 순회 안 함)
-          const at = (row: number, nos: string[]) => ({ ...base, nos, row, item: orig[row]?.item || '', remark: (orig[row]?.remark || '').trim() });
+          const at = (row: number, nos: string[]) => ({
+            ...base,
+            nos,
+            row,
+            item: orig[row]?.item || '',
+            remark: (orig[row]?.remark || '').trim(),
+            rowCount: orig.length,
+          });
           const picked = g.filter((o) => stampRow[o.id] != null && efRows[stampRow[o.id]]);
           for (const o of picked) {
             const no = orderNoCore(o.orderNumber);
-            const r = efRows[stampRow[o.id]];
-            if (!(r.remark || '').includes(no)) {
-              r.remark = `${(r.remark || '').trim()} ${no}`.trim();
-              items.push(at(stampRow[o.id], [no]));
+            const s0 = stampRow[o.id];
+            const e0 = Math.max(s0, stampEnd[o.id] ?? s0);
+            const already = (orig || []).some((x) => (x.remark || '').includes(no));
+            // 홈페이지(비고 칸은 화면에 안 보임): 범위 모든 줄에 번호 → 띠가 정확히 그 범위
+            for (let k = s0; k <= e0 && k < efRows.length; k++) {
+              if (!(efRows[k].remark || '').includes(no)) efRows[k].remark = `${(efRows[k].remark || '').trim()} ${no}`.trim();
             }
+            // 이지폼: 시작 줄 비고에만(이미 어디든 적혀 있으면 안 적음)
+            if (!already) items.push(at(s0, [no]));
           }
           const rest = g.filter((o) => !picked.includes(o)).map((o) => orderNoCore(o.orderNumber));
           const restNos = rest.filter((no) => !efRows.some((r) => (r.remark || '').includes(no)));
           if (restNos.length) {
-            const pickedRows = new Set(picked.map((o) => stampRow[o.id]));
+            const pickedRows = new Set<number>();
+            picked.forEach((o) => {
+              for (let k = stampRow[o.id]; k <= Math.max(stampRow[o.id], stampEnd[o.id] ?? stampRow[o.id]); k++) pickedRows.add(k);
+            });
             const ri = efRows.findIndex((x, k) => !pickedRows.has(k) && has(x) && !(x.remark || '').trim());
             if (ri >= 0) {
               efRows[ri].remark = restNos.join(', ');
@@ -1121,16 +1137,19 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           onClose={() => setDetail(null)}
           onMark={(v) => mark(detailOrder.id, v)}
           stampRow={stampRow[detailOrder.id]}
+          stampEnd={stampEnd[detailOrder.id]}
           pickMode={pickFor === detailOrder.id}
-          onPick={(row) => {
+          onPick={(row, end) => {
             const id = detailOrder.id;
             setPickFor(null);
-            setStampRow((prev) => {
+            const put = (prev: Record<number, number>, v: number | null | undefined) => {
               const next = { ...prev };
-              if (row == null) delete next[id];
-              else next[id] = row;
+              if (v == null) delete next[id];
+              else next[id] = v;
               return next;
-            });
+            };
+            setStampRow((prev) => put(prev, row));
+            setStampEnd((prev) => put(prev, row == null ? null : end));
             mark(id, 'yes', 'merge');
           }}
           onPickCancel={() => setPickFor(null)}
@@ -1167,6 +1186,7 @@ function DetailView({
   keywords,
   dims,
   stampRow,
+  stampEnd,
   pickMode = false,
   onPick,
   onPickCancel,
@@ -1189,8 +1209,9 @@ function DetailView({
   keywords: string[];
   dims?: number[];
   stampRow?: number;
+  stampEnd?: number;
   pickMode?: boolean;
-  onPick?: (row: number | null) => void;
+  onPick?: (row: number | null, end?: number) => void;
   onPickCancel?: () => void;
   pending?: string[]; // 아직 안 읽은 후보 key(순서대로) — 첫 번째 = 지금 읽는 중
 }) {
@@ -1200,42 +1221,50 @@ function DetailView({
   // 화면 줄 → 읽은 줄 번호(빈 줄은 화면에서 빠지므로). 이지폼 비고를 적을 줄 = 읽은 줄 번호.
   const origIdx = rows.map((_, i) => i).filter((i) => efRowsToGrid([rows[i]]).length > 0);
   const ownNo = orderNoCore(order.orderNumber);
-  const [sel, setSel] = useState<number | null>(null); // 고르기 모드 — 고른 화면 줄
+  // 고르기 모드 — 두 번 클릭: 첫 클릭 = 시작 줄, 두 번째 = 끝 줄(화면 줄 번호)
+  const [selA, setSelA] = useState<number | null>(null);
+  const [selB, setSelB] = useState<number | null>(null);
   useEffect(() => {
-    if (!pickMode) setSel(null);
+    if (!pickMode) {
+      setSelA(null);
+      setSelB(null);
+    }
   }, [pickMode]);
   useEffect(() => {
-    if (!pickMode || sel == null) return;
+    if (!pickMode || selA == null) return;
     const h = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
-      e.stopImmediatePropagation(); // 고른 줄만 취소(고르기 자체는 유지)
-      setSel(null);
+      e.stopImmediatePropagation(); // 고른 것만 취소(고르기 자체는 유지)
+      setSelA(null);
+      setSelB(null);
     };
     window.addEventListener('keydown', h, true);
     return () => window.removeEventListener('keydown', h, true);
-  }, [pickMode, sel]);
-  // 띠 미리보기 — 고르는 중이면 고른 줄, 아니면 정해 둔 시작 줄
-  const startRow = pickMode ? (sel != null ? origIdx[sel] : undefined) : stampRow;
+  }, [pickMode, selA]);
+  const clickRow = (i: number) => {
+    if (selA == null || selB != null) {
+      setSelA(i);
+      setSelB(null);
+    } else if (i < selA) {
+      setSelB(selA);
+      setSelA(i);
+    } else setSelB(i);
+  };
+  // 띠 미리보기 범위(읽은 줄 번호) — 고르는 중이면 고른 범위, 아니면 정해 둔 범위
+  const rangeS = pickMode ? (selA != null ? origIdx[selA] : undefined) : stampRow;
+  const rangeE = pickMode ? (selB != null ? origIdx[selB] : rangeS) : stampEnd ?? stampRow;
+  const startRow = rangeS;
   // 합친 명세서 띠 — 비고에 주문번호 1개만 적힌 줄부터 다음 번호 줄 전까지가 그 지시서 몫(명세서작성 화면과 같은 규칙).
   // 저장 전이라도 고른 시작 줄(stampRow)은 이 지시서 번호가 적힌 것처럼 본다.
   const bandOwner = (() => {
-    let cur: string | null = null;
-    let kinds = 0;
-    const seen = new Set<string>();
-    const out = origIdx.map((oi) => {
-      const nos = extractOrderNos(rows[oi]?.remark || '');
-      if (oi === startRow) nos.splice(0, nos.length, ownNo);
-      if (nos.length === 1) {
-        cur = nos[0];
-        if (!seen.has(cur)) {
-          seen.add(cur);
-          kinds++;
-        }
-      }
-      return cur;
-    });
-    return kinds >= 2 || (startRow != null && seen.has(ownNo)) ? out : null;
+    const inRange = (oi: number) => rangeS != null && rangeE != null && oi >= rangeS && oi <= rangeE;
+    const rem = origIdx.map((oi) => (inRange(oi) ? `${rows[oi]?.remark || ''} ${ownNo}` : rows[oi]?.remark || ''));
+    // 범위로 고른 줄은 내 번호만 남기고(한 줄짜리 범위도 '범위'로 보이게 두 번 셈)
+    const one = origIdx.map((oi, k) => (inRange(oi) ? ownNo : rem[k]));
+    const out = bandOwners(one.concat(rangeS != null && rangeS === rangeE ? [ownNo] : [])).slice(0, origIdx.length);
+    const kinds = new Set(out.filter(Boolean));
+    return kinds.size >= 2 || (startRow != null && kinds.has(ownNo)) ? out : null;
   })();
   // 키워드·사이즈(·지시서 수치)와 맞은 칸 = 초록, 맞은 칸 있는 줄 = 연한 초록 (기존 명세서 찾기와 같은 모양)
   const hitRows = grid.map((g) => ({
@@ -1289,7 +1318,7 @@ function DetailView({
             {pickMode && (
               <div className="efb-pickline">
                 <span>
-                  ▶ <b>{ownNo}</b> 지시서가 <b>시작되는 줄</b>을 누르세요
+                  ▶ <b>{ownNo}</b> 지시서 범위 — {selA == null ? <><b>시작 줄</b>을 누르세요</> : selB == null ? <><b>끝 줄</b>을 누르세요 <small>(한 줄이면 같은 줄 한 번 더)</small></> : '아래에서 확인하세요'}
                 </span>
                 <button type="button" className="efb-pickline-btn" onClick={() => onPick?.(null)}>
                   모르겠어요
@@ -1301,7 +1330,8 @@ function DetailView({
             )}
             {!pickMode && stampRow != null && (
               <div className="efb-pickdone">
-                ▶ {origIdx.indexOf(stampRow) + 1}번째 줄부터 이 지시서 — 저장할 때 그 줄 비고에 <b>{ownNo}</b> 를 적어요
+                ▶ {origIdx.indexOf(stampRow) + 1}
+                {stampEnd != null && stampEnd !== stampRow ? `~${origIdx.indexOf(stampEnd) + 1}` : ''}번째 줄이 이 지시서 — 저장할 때 시작 줄 비고에 <b>{ownNo}</b> 를 적어요
               </div>
             )}
             {keywords.length > 0 ? (
@@ -1354,12 +1384,12 @@ function DetailView({
                             h.code || h.item || h.spec ? 'has-hit' : '',
                             own && own !== ownNo ? 'is-otherband' : '',
                             pickMode ? 'is-pickable' : '',
-                            pickMode && sel === i ? 'is-picksel' : '',
+                            pickMode && selA != null && i >= selA && i <= (selB ?? selA) ? 'is-picksel' : '',
                           ]
                             .filter(Boolean)
                             .join(' ') || undefined
                         }
-                        onClick={pickMode ? () => setSel(i) : undefined}
+                        onClick={pickMode ? () => clickRow(i) : undefined}
                       >
                         {bandOwner && (
                           <td
@@ -1433,18 +1463,29 @@ function DetailView({
             )}
             {pickMode ? (
               <div className="efb-dfoot efb-dfoot--pick">
-                {sel == null ? (
-                  <span className="efb-pick-ask">시작 줄을 눌러 주세요</span>
+                {selA == null || selB == null ? (
+                  <span className="efb-pick-ask">{selA == null ? '시작 줄을 눌러 주세요' : `${selA + 1}번째 줄부터 — 끝 줄을 눌러 주세요`}</span>
                 ) : (
                   <>
                     <span className="efb-pick-ask">
-                      <b>{sel + 1}번째 줄</b>({grid[sel].품목 || grid[sel].품목코드 || '빈 품목'})부터 맞나요?
+                      <b>
+                        {selA === selB ? `${selA + 1}번째 줄` : `${selA + 1}~${selB + 1}번째 줄`}
+                      </b>
+                      ({grid[selA].품목 || grid[selA].품목코드 || '빈 품목'}
+                      {selA !== selB ? ` ~ ${grid[selB].품목 || grid[selB].품목코드 || '빈 품목'}` : ''}) 맞나요?
                     </span>
-                    <button type="button" className="efb-pickline-btn" onClick={() => setSel(null)}>
+                    <button
+                      type="button"
+                      className="efb-pickline-btn"
+                      onClick={() => {
+                        setSelA(null);
+                        setSelB(null);
+                      }}
+                    >
                       다시 고르기
                     </button>
-                    <button type="button" className="efb-pick-ok" autoFocus onClick={() => onPick?.(origIdx[sel])}>
-                      맞아요, 여기부터
+                    <button type="button" className="efb-pick-ok" autoFocus onClick={() => onPick?.(origIdx[selA], origIdx[selB])}>
+                      맞아요
                     </button>
                   </>
                 )}

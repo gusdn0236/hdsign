@@ -787,6 +787,27 @@ def _read_row(grid, cells: dict) -> "dict | None":
     return out
 
 
+def _scan_remarks(grid, n: int) -> list:
+    """비고 칸만 위에서부터 n 줄 읽기(다른 칸은 안 건드림). 못 읽은 줄은 ''."""
+    ref = ef.EF_GRID_REF
+    cells = [[(c[0] - ref[0], c[1] - ref[1]) for c in r] for r in ef.EF_CELLS]
+    cap = len(cells)
+    ci = ef.EF_COLS.index("remark")
+    _u.SendMessageW(grid, 0x0115, 6, None)  # SB_TOP
+    time.sleep(0.08)
+    out = []
+    for r in range(max(0, n)):
+        if r >= cap:
+            _u.SendMessageW(grid, 0x0115, 1, None)  # SB_LINEDOWN — 보기만
+            time.sleep(0.05)
+        x, y = cells[min(r, cap - 1)][ci]
+        v = _cell_text(grid, x, y, 0.3)
+        out.append(v or "")
+    _u.SendMessageW(grid, 0x0115, 6, None)
+    time.sleep(0.05)
+    return out
+
+
 def _remark_cell(grid, row: int):
     """row(0부터) 줄의 비고·품목 칸 좌표(표 기준). 보이는 칸을 넘으면 표 보기를 내려 마지막 칸에 맞춘다."""
     ref = ef.EF_GRID_REF
@@ -902,6 +923,12 @@ def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
     grid = next(iter(_kids(form, "TAdvStringGrid")), None)
     if not grid:
         return {"ok": False, "message": "명세서 표를 못 찾아서 안 적었어요"}
+    # 비고 칸만 훑어서 이미 이 주문번호가 어디든 적혀 있으면 안 적는다
+    n = int(it.get("rowCount") or 0)
+    if n > 0:
+        rems = _scan_remarks(grid, n)
+        if any(all(no in r for no in nos) for r in rems):
+            return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
     cells = _row_cells(grid, row)
     before = _read_row(grid, cells)
     if before is None or before.get("item", "") != (it.get("item") or "") or before.get("remark", "") != base:

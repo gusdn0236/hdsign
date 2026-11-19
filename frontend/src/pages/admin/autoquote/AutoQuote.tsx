@@ -1,4 +1,6 @@
-import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { bandOwners } from './data/efMatch';
+import { lazyWithRetry } from '../../../utils/lazyWithRetry.js';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { pdfjs } from 'react-pdf';
@@ -60,7 +62,8 @@ import ZoomPanImage from './components/ZoomPanImage';
 import './AutoQuote.css';
 
 // [이지폼에서 찾기] — 명세서 탭 일괄 가져오기 창을 이 지시서 1건만으로 띄운다.
-const EasyformBulkImport = lazy(() => import('./EasyformBulkImport'));
+// 배포 뒤 옛 청크 404 → 빈 화면 대신 자동 새로고침
+const EasyformBulkImport = lazyWithRetry(() => import('./EasyformBulkImport'));
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
 // 데이터가 fetch(ArrayBuffer) 라 캔버스가 taint 되지 않아 [공유하기] 합성도 막히지 않는다.
@@ -3593,17 +3596,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const linkOwner: (string | null)[] | null = (() => {
     if (linkedOrders.length < 2) return null;
     const linked = linkedOrders.map((l) => orderNoCore(l.orderNumber));
-    let cur: string | null = null;
-    let any = false;
-    const out = pins.map((p) => {
-      const nos = extractOrderNos(String(p?.vals?.['비고'] ?? '')).filter((n) => linked.includes(n));
-      if (nos.length === 1) {
-        cur = nos[0];
-        any = true;
-      }
-      return cur;
-    });
-    return any ? out : null;
+    const out = bandOwners(pins.map((p) => String(p?.vals?.['비고'] ?? '')), linked);
+    return out.some(Boolean) ? out : null;
   })();
 
   return (

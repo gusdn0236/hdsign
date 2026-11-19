@@ -391,6 +391,29 @@ export function specNums(rows: EasyformPulledRow[]): number[] {
  * 같이 읽을 후보 — 1등 + **같은 거래처·납기 ±3일 안** 후보(최대 3개). 그 안에서 규격 치수·비고로 최종 순위.
  * 1등부터 납기와 3일 넘게 떨어져 있으면(납기 근처에 없음) 점수 비슷한 후보를 대신 본다.
  */
+/**
+ * 합친 명세서 띠 — 줄마다 어느 지시서 몫인지(비고 주문번호 기준).
+ *  - 범위로 고른 지시서: 범위 안 모든 줄 비고(홈페이지)에 번호가 있음(2줄+) → 그 줄들만.
+ *  - 한 줄에만 번호가 있는 지시서(이지폼에서 손으로 적은 시작 표시): 그 줄부터 다음 번호 줄 전까지.
+ * only 가 있으면 그 번호들만 본다. 번호가 없거나 여러 개인 줄은 위 규칙대로 이어받거나 빈칸.
+ */
+export function bandOwners(remarks: string[], only?: string[]): (string | null)[] {
+  const one = remarks.map((r) => {
+    const nos = extractOrderNos(r || '').filter((n) => !only || only.includes(n));
+    return nos.length === 1 ? nos[0] : null;
+  });
+  const count = new Map<string, number>();
+  one.forEach((n) => n && count.set(n, (count.get(n) || 0) + 1));
+  let cur: string | null = null;
+  return one.map((n) => {
+    if (n) {
+      cur = (count.get(n) || 0) === 1 ? n : null; // 범위로 고른 번호는 이어받지 않음
+      return n;
+    }
+    return cur;
+  });
+}
+
 export function candidatesToRead(m: EfMatch, clues: string[] = []): EfCandidate[] {
   const usedNear = m.others.filter((c) => c.usedBy && c.client >= 0.85 && c.days <= 1).slice(0, 2);
   // 키워드가 목록의 첫 줄 품목에 들어 있는 후보 = 가장 유력 → 날짜·순위와 상관없이 맨 먼저 읽는다(최대 4개)

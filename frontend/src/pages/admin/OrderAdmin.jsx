@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import PhotoLightbox from "../../components/common/PhotoLightbox.jsx";
@@ -11,9 +11,11 @@ import StatementSmartSearch from "./StatementSmartSearch.jsx";
 import "./OrderAdmin.css";
 
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
-const AutoQuote = lazy(() => import("./autoquote/AutoQuote.tsx"));
+// 모달 청크도 배포 뒤 옛 해시 404 → 빈 화면 방지(자동 새로고침)
+import { lazyWithRetry } from "../../utils/lazyWithRetry.js";
+const AutoQuote = lazyWithRetry(() => import("./autoquote/AutoQuote.tsx"));
 // 명세서 탭 [이지폼에서 가져오기] — 비어 있는 명세서를 이지폼에서 찾아 일괄 입력. 누를 때만 로드.
-const EasyformBulkImport = lazy(() => import("./autoquote/EasyformBulkImport.tsx"));
+const EasyformBulkImport = lazyWithRetry(() => import("./autoquote/EasyformBulkImport.tsx"));
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
