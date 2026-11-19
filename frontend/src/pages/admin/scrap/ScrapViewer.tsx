@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import { evidence as fetchEvidence, getEstimate, type Evidence } from '../autoquote/annot/api';
 import { ZoomImg } from '../autoquote/LookupResultModal';
 import FitWorksheet from './FitWorksheet';
@@ -15,6 +15,64 @@ export interface ViewerData {
 }
 
 const cache = new Map<string, Promise<ViewerData>>();
+
+/**
+ * 휠 = 커서 기준 확대·축소(1~6배), 드래그 = 이동, 더블클릭 = 원래대로. 안의 내용(지시서 PDF·사진)을 통째로 키운다.
+ * 휠은 바깥 스크롤을 막으려 native non-passive 로 등록.
+ */
+function ZoomBox({ children, resetKey }: { children: ReactNode; resetKey: string }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const t = useRef({ scale: 1, tx: 0, ty: 0 });
+  const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
+  const [, force] = useReducer((x) => x + 1, 0);
+  const apply = (scale: number, tx: number, ty: number) => {
+    t.current = { scale, tx, ty };
+    force();
+  };
+  useEffect(() => apply(1, 0, 0), [resetKey]);
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return undefined;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const cx = e.clientX - r.left - r.width / 2;
+      const cy = e.clientY - r.top - r.height / 2;
+      const { scale, tx, ty } = t.current;
+      const next = Math.max(1, Math.min(6, scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      if (next === 1) return apply(1, 0, 0);
+      const k = next / scale;
+      apply(next, cx - (cx - tx) * k, cy - (cy - ty) * k);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+  const { scale, tx, ty } = t.current;
+  return (
+    <div
+      ref={wrap}
+      className="sv-zoom"
+      onMouseDown={(e) => {
+        if (t.current.scale === 1) return;
+        e.preventDefault();
+        drag.current = { x: e.clientX, y: e.clientY, tx: t.current.tx, ty: t.current.ty };
+      }}
+      onMouseMove={(e) => {
+        if (!drag.current) return;
+        apply(t.current.scale, drag.current.tx + e.clientX - drag.current.x, drag.current.ty + e.clientY - drag.current.y);
+      }}
+      onMouseUp={() => (drag.current = null)}
+      onMouseLeave={() => (drag.current = null)}
+      onDoubleClick={() => apply(1, 0, 0)}
+      style={{ cursor: scale > 1 ? 'grab' : 'zoom-in' }}
+      title="휠: 확대·축소 · 드래그: 이동 · 더블클릭: 원래대로"
+    >
+      <div className="sv-zoom-in" style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 const toNum = (v: unknown) => {
   const n = Number(String(v ?? '').replace(/[^0-9.-]/g, ''));
@@ -142,7 +200,9 @@ export default function ScrapViewer({
     <div className="sv">
       <div className="sv-ws">
         {item.kind === 'home' ? (
-          <FitWorksheet pdfUrl={item.pdfUrl} thumbUrl={item.thumb} title={item.client} />
+          <ZoomBox resetKey={item.key}>
+            <FitWorksheet pdfUrl={item.pdfUrl} thumbUrl={item.thumb} title={item.client} />
+          </ZoomBox>
         ) : photos.length ? (
           <>
             <ZoomImg src={photos[Math.min(pi, photos.length - 1)]} alt="지시서" />
