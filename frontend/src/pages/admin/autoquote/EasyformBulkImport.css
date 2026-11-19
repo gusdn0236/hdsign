@@ -192,12 +192,17 @@
 }
 .efb-ws-thumb {
   position: relative;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 3; /* 페이지 전체를 맞춰 넣음(FitWorksheet) — 지시서 PDF 는 대부분 가로 */
   background: #fff;
   overflow: hidden;
 }
 .efb-ws-thumb > * {
   width: 100%;
+}
+/* 카드 안 지시서(페이지 전체 맞춤) — 연회색 바탕에 흰 종이가 보이게 */
+.efb-ws-thumb > .efb-fit {
+  height: 100%;
+  background: #e8ecf1;
 }
 .efb-ws-empty {
   display: grid;

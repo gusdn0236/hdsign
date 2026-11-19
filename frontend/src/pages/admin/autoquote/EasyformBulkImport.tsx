@@ -579,7 +579,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
 
   // 지시서 카드 = 가운데 화면을 거의 채우게 — 무대 높이에서 아래 정보·화살표·명세서 카드 자리(~240px)를 빼고,
   // 폭은 화면의 62% 까지. 작은 화면에서도 300px 아래로는 안 줄인다.
-  const CARD_W = Math.round(Math.max(300, Math.min(viewW * 0.62, viewH - 240)));
+  const CARD_W = Math.round(Math.max(300, Math.min(viewW * 0.62, ((viewH - 240) * 4) / 3))); // 칸 = 가로 4:3(지시서 PDF 가 대부분 가로)
   const GAP = 34;
   const offset = viewW / 2 - CARD_W / 2 - pos * (CARD_W + GAP);
   const detailOrder = detail != null ? orders.find((o) => o.id === detail) : null;
@@ -684,11 +684,17 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                   >
                     <div className="efb-ws">
                       <div className="efb-ws-thumb">
-                        <WorksheetThumbnail
-                          pdfUrl={o.worksheetPdfUrl || null}
-                          thumbnailUrl={o.worksheetThumbnailUrl || null}
-                          fallback={<div className="efb-ws-empty">{o.title || '지시서'}</div>}
-                        />
+                        {/* 가운데·양옆 카드 = 페이지 전체를 칸에 맞춰 선명하게(PDF) — 작은 미리보기 사진을 키우면 흐리고,
+                            A4 세로 썸네일 틀은 정사각 칸에서 아래가 잘렸다. 멀리 있는 카드는 가벼운 썸네일 그대로. */}
+                        {dist <= 1 ? (
+                          <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
+                        ) : (
+                          <WorksheetThumbnail
+                            pdfUrl={o.worksheetPdfUrl || null}
+                            thumbnailUrl={o.worksheetThumbnailUrl || null}
+                            fallback={<div className="efb-ws-empty">{o.title || '지시서'}</div>}
+                          />
+                        )}
                         {savedIds.has(o.id) ? (
                           <span className="efb-savedtag">저장됨</span>
                         ) : (
