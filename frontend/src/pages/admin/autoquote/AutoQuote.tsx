@@ -4178,6 +4178,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           {/* 이지폼 → 홈페이지 버튼줄 — 헤더 한 줄에 다 넣으면 잘려서 계산기 아래 줄로(오른쪽 정렬). */}
           <div className="aq-h2">
             {/* [이지폼 불러오기 ▾] — ① 이 지시서 명세서를 이지폼에서 찾아 가져오기 ② 이지폼에 열어 둔 명세서 가져오기 */}
+            <span className="aq-efmenu-hint">이지폼에 이미 명세서가 있는지 검색해요.</span>
             <div className="aq-efmenu" ref={efMenuRef}>
               <button
                 type="button"

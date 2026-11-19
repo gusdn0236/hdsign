@@ -2878,3 +2878,9 @@
   color: #64748b;
   line-height: 1.4;
 }
+.aq-efmenu-hint {
+  align-self: center;
+  font-size: 12px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
