@@ -539,7 +539,14 @@
 .pf-body.pf-body-nows {
   grid-template-columns: 1fr;
 }
+.pf .efb-clue-ws {
+  position: relative; /* 휠 확대 상자(.sv-zoom) 기준 */
+}
+.pf .efb-clue-ws > .sv-zoom {
+  inset: 18px;
+}
 .pf-myws {
+  position: relative;
   min-height: 0;
   padding: 14px;
   background: #0b1219;

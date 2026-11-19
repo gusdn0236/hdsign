@@ -20,7 +20,7 @@ const cache = new Map<string, Promise<ViewerData>>();
  * 휠 = 커서 기준 확대·축소(1~6배), 드래그 = 이동, 더블클릭 = 원래대로. 안의 내용(지시서 PDF·사진)을 통째로 키운다.
  * 휠은 바깥 스크롤을 막으려 native non-passive 로 등록.
  */
-function ZoomBox({ children, resetKey }: { children: ReactNode; resetKey: string }) {
+export function ZoomBox({ children, resetKey }: { children: ReactNode; resetKey: string }) {
   const wrap = useRef<HTMLDivElement>(null);
   const t = useRef({ scale: 1, tx: 0, ty: 0 });
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);

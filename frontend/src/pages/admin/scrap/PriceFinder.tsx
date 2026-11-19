@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { BASE_URL, lookupPricesMerged, type Prediction } from '../autoquote/annot/api';
 import { parseInput } from '../StatementSmartSearch.jsx';
 import FitWorksheet from './FitWorksheet';
-import ScrapViewer, { loadViewerData, type ViewerData } from './ScrapViewer';
+import ScrapViewer, { loadViewerData, ZoomBox, type ViewerData } from './ScrapViewer';
 import { ScrapPin } from './ScrapDrawer';
 import { homeScrap, pastKey, scrap, tinyThumb, type ScrapItem, type ScrapRow } from './scrapStore';
 import './Scrap.css';
@@ -511,7 +511,9 @@ export default function PriceFinder({
         <div className={`efb-clue ${hasWs ? '' : 'pf-clue-nows'}`}>
           {hasWs && (
             <div className="efb-clue-ws">
-              <FitWorksheet pdfUrl={order!.worksheetPdfUrl} thumbUrl={order!.worksheetThumbnailUrl} title={order!.title} />
+              <ZoomBox resetKey={String(order!.id ?? '')}>
+                <FitWorksheet pdfUrl={order!.worksheetPdfUrl} thumbUrl={order!.worksheetThumbnailUrl} title={order!.title} />
+              </ZoomBox>
             </div>
           )}
           {clueSide}
@@ -520,7 +522,9 @@ export default function PriceFinder({
         <div className={`pf-body ${hasWs ? '' : 'pf-body-nows'}`}>
           {hasWs && (
             <div className="pf-myws">
-              <FitWorksheet pdfUrl={order!.worksheetPdfUrl} thumbUrl={order!.worksheetThumbnailUrl} title={order!.title} />
+              <ZoomBox resetKey={String(order!.id ?? '')}>
+                <FitWorksheet pdfUrl={order!.worksheetPdfUrl} thumbUrl={order!.worksheetThumbnailUrl} title={order!.title} />
+              </ZoomBox>
             </div>
           )}
           <div className="pf-main">
