@@ -726,6 +726,178 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
             raise
 
 
+# ── 3) 비고에 주문번호 적고 저장 ──────────────────────────────────────────────
+# ⚠ 워처가 이지폼에 '저장'하는 유일한 곳(사용자 승인 2026-11-19 — 다른 이지폼 자동화는 여전히 저장 금지).
+# 실측(테스트 명세서 11/19 (주)에이치디사인):
+#   비고 칸 클릭 → 편집칸(TAdvInplaceEdit) WM_SETTEXT → 같은 줄 품목 칸 클릭 = 칸 확정
+#   [저장](TBitBtn) → TMessageForm 'Information' [Yes]/[No]("동일한 고유번호… 갱신하려면 Yes") → Yes = 저장, 추가 창 없음
+#   저장 전 ESC = 묻지 않고 변경 버림(그래서 검사에 걸리면 ESC 로 안전하게 빠진다)
+# 바뀌어도 되는 것 = 고른 줄 비고 + 빈 줄의 수량·단가 ''↔'0'(이지폼이 편집 뒤 빈 줄에 0 을 채워 보임). 그 밖에 바뀌면 저장 안 함.
+def _has_content(r: dict) -> bool:
+    return any((r.get(k) or "").strip() for k in ("item_code", "item", "spec")) or \
+        (r.get("unit_price") or "").strip() not in ("", "0")
+
+
+def _rows_same_except(before: list, after: list, row: int, want: str) -> str:
+    """바뀐 칸 검사 — 문제 없으면 '', 있으면 무엇이 바뀌었는지."""
+    if len(after) < len(before):
+        return f"줄 수가 줄었어요({len(before)}→{len(after)})"
+    for i, a in enumerate(after):
+        bf = before[i] if i < len(before) else {k: "" for k in a}
+        for k, v in a.items():
+            old = bf.get(k, "")
+            if i == row and k == "remark":
+                if v != want:
+                    return f"{i + 1}행 비고가 '{v}'(으)로 들어갔어요"
+                continue
+            if v == old:
+                continue
+            if k in ("qty", "unit_price") and not _has_content(bf) and {old.strip(), v.strip()} <= {"", "0"}:
+                continue
+            return f"{i + 1}행 {k} 가 '{old}'→'{v}' 로 바뀌었어요"
+    return ""
+
+
+def _remark_cell(grid, row: int):
+    """row(0부터) 줄의 비고·품목 칸 좌표(표 기준). 보이는 칸을 넘으면 표 보기를 내려 마지막 칸에 맞춘다."""
+    ref = ef.EF_GRID_REF
+    cells = [[(c[0] - ref[0], c[1] - ref[1]) for c in r] for r in ef.EF_CELLS]
+    cap = len(cells)
+    _u.SendMessageW(grid, 0x0115, 6, None)  # SB_TOP
+    time.sleep(0.08)
+    if row < cap:
+        rc = cells[row]
+    else:
+        for _ in range(row - cap + 1):
+            _u.SendMessageW(grid, 0x0115, 1, None)  # SB_LINEDOWN — 보기만
+            time.sleep(0.05)
+        rc = cells[-1]
+    return rc[ef.EF_COLS.index("remark")], rc[ef.EF_COLS.index("item")]
+
+
+def _stamp_form(main, form, it: dict) -> dict:
+    """열린 명세서 1장 — 비고에 주문번호 적고 저장. 결과 {ok, message, row}."""
+    nos = [n for n in (it.get("nos") or []) if n]
+    text = ", ".join(nos)
+    rows = _read_form(form)
+    if any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
+        return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
+    row = it.get("row")
+    if isinstance(row, int) and 0 <= row < len(rows):
+        base = (rows[row].get("remark") or "").strip()
+    else:
+        cand = [i for i, r in enumerate(rows) if _has_content(r) and not (r.get("remark") or "").strip()]
+        if not cand:
+            return {"ok": False, "message": "빈 비고 칸이 없어서 안 적었어요"}
+        row, base = cand[0], ""
+    want = f"{base} {text}".strip() if base else text
+    grid = next(iter(_kids(form, "TAdvStringGrid")), None)
+    (rx, ry), (ix, iy) = _remark_cell(grid, row)
+    # 그 칸이 맞는 줄인지 — 품목·비고가 읽은 것과 같아야 쓴다
+    got_item = _cell_text(grid, ix, iy, 0.5)
+    got_rmk = _cell_text(grid, rx, ry, 0.5)
+    if got_item is None or got_rmk is None or got_item != (rows[row].get("item") or "") or got_rmk != base:
+        return {"ok": False, "message": f"{row + 1}행 칸을 못 맞춰서 안 적었어요"}
+    gl, gt, _r, _b = _rect(grid)
+
+    def _at(e):
+        l, t, r, b = _rect(e)
+        return l - 2 <= gl + rx <= r + 2 and t - 2 <= gt + ry <= b + 2
+
+    edit = next((e for e in _kids(grid, "TAdvInplaceEdit") if _at(e)), None)
+    if not edit:
+        return {"ok": False, "message": "비고 편집칸이 안 떠서 안 적었어요"}
+    _u.SendMessageW(edit, 0x000C, 0, ctypes.c_wchar_p(want))  # WM_SETTEXT
+    time.sleep(0.15)
+    _click(grid, "품목", ix, iy)  # 같은 줄 다른 칸 = 비고 확정
+    time.sleep(0.35)
+    if _popups(main):
+        raise Stop("비고를 적다가 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
+    after = _read_form(form)
+    bad = _rows_same_except(rows, after, row, want)
+    if bad:
+        # 저장 전 ESC = 변경 버림(실측) → 아무것도 안 바뀐 채 닫힌다
+        return {"ok": False, "message": f"비고 말고 다른 칸이 바뀌어서 저장 안 했어요 — {bad}"}
+    save = _named(form, "TBitBtn", "저장")
+    if not save or not _u.IsWindowEnabled(save):
+        return {"ok": False, "message": "이지폼 [저장] 버튼을 못 찾아서 저장 안 했어요"}
+    _u.PostMessageW(save, 0x00F5, 0, 0)  # BM_CLICK — Post(뜨는 확인창에 안 막히게)
+    ask = _wait(lambda: _popups(main), 4.0, 0.05)
+    if not ask or len(ask) != 1 or ask[0][1] != "TMessageForm":
+        raise Stop("저장을 눌렀는데 예상한 확인창이 안 떠서 멈췄어요. 이지폼을 직접 확인해주세요.")
+    h = ask[0][0]
+    btns = sorted(_txt(x).replace("&", "") for x in _kids(h, "TButton"))
+    yes = _named(h, "TButton", "Yes")
+    if btns != ["No", "Yes"] or not yes:
+        raise Stop(f"저장 확인창이 예상과 달라서({', '.join(btns)}) 아무것도 안 눌렀어요. 이지폼을 직접 확인해주세요.")
+    _u.PostMessageW(yes, 0x00F5, 0, 0)  # '동일한 고유번호… 갱신?' → Yes
+    _wait(lambda: not _u.IsWindow(h) or not _shown(h), 3.0, 0.05)
+    time.sleep(0.8)
+    if _popups(main):
+        raise Stop("저장 뒤에 이지폼 창이 또 떠서 멈췄어요. 이지폼을 직접 확인해주세요.")
+    return {"ok": True, "message": "", "row": row, "remark": want}
+
+
+def _stamp_items(items: list, progress, on_result) -> None:
+    """items: [{key, biz, idx, date, total, nos:[주문번호], row?}] — 목록에서 그 명세서를 열어 비고에 적고 저장."""
+    mains = {m["biz"]: m for m in _mains()}
+    for n, it in enumerate(items):
+        _pause_point(progress)
+        if _aborted():
+            raise Stop("정지했어요.")
+        m = mains.get(it.get("biz"))
+        res = {"key": it.get("key"), "ok": False}
+        if not m:
+            res["message"] = "이지폼이 꺼져 있어요."
+            on_result(res)
+            continue
+        main = m["hwnd"]
+        progress(f"이지폼 비고에 주문번호 적는 중 {n + 1}/{len(items)} · {it.get('date', '')} {it.get('client', '')}")
+        _assert_clean(main)
+        lst = _open_list(main)
+        _sheet, grid = _ensure_period_tab(lst)
+        _assert_clean(main)
+        if not grid:
+            raise Stop("목록 창의 '기간으로 조회' 표를 못 찾았어요.")
+        _u.SendMessageW(grid, 0x0115, 6, None)
+        time.sleep(0.15)
+        _click(grid, "목록 표", 200, 30)
+        time.sleep(0.25)
+        _key(grid, 0x24)
+        for _ in range(80):
+            _key(grid, 0x21)
+        time.sleep(0.3)
+        for _ in range(int(it.get("idx") or 0)):
+            _key(grid, 0x28)
+            time.sleep(0.012)
+        time.sleep(0.3)
+        _assert_clean(main)
+        _key(grid, 0x0D)
+        form = _wait(lambda: next((f for f in _kids(main, "TfrmExchange")
+                                   if _form_header(f)[0] and "_" not in _form_header(f)[0]), None), 6.0, 0.06)
+        if not form:
+            raise Stop(f"{it.get('date', '')} 명세서가 안 열려서 멈췄어요.")
+        want_total = str(it.get("total") or "")
+        _wait(lambda: _digits(_form_header(form, want_total)[1]) == _digits(want_total), 2.5, 0.05)
+        date, tot = _form_header(form, want_total)
+        try:
+            if date != it.get("date") or _digits(tot) != _digits(want_total):
+                res["message"] = f"목록이 바뀌어서 다른 명세서({date} {tot}원)가 열렸어요 — 안 적었어요"
+            else:
+                res.update(_stamp_form(main, form, it))
+        finally:
+            # 저장했으면 그냥 닫힘, 저장 안 했으면 ESC = 변경 버림(실측). 확인창이 떠 있으면 아무것도 안 누름.
+            if _kids(main, "TfrmExchange") and not _popups(main):
+                fgrid = next(iter(_kids(form, "TAdvStringGrid")), None)
+                target = next(iter(_kids(fgrid, "TAdvInplaceEdit")), None) if fgrid else None
+                _key(target or fgrid or form, 0x1B)
+                if not _wait(lambda: not _kids(main, "TfrmExchange"), 2.0, 0.05) and fgrid and not _popups(main):
+                    _key(fgrid, 0x1B)
+                    _wait(lambda: not _kids(main, "TfrmExchange"), 2.5, 0.05)
+        logging.info("이지폼 비고 적기 %s: %s", it.get("key"), res)
+        on_result(res)
+
+
 # ── 작업 상태 + HTTP 핸들러 ────────────────────────────────────────────────────
 def _run(phase: str, jid: int, body: dict) -> None:
     def progress(msg: str):
@@ -765,6 +937,10 @@ def _run(phase: str, jid: int, body: dict) -> None:
                     if _JOB["id"] == jid:
                         _JOB["lists"] = list(lists)
             msg = " · ".join(f"{x['name']} {len(x['rows'])}건" for x in lists)
+        elif phase == "stamp":
+            items = [x for x in (body.get("items") or []) if isinstance(x, dict)][:100]
+            _stamp_items(items, progress, on_result)
+            msg = "비고 적기를 마쳤어요."
         else:
             items = [x for x in (body.get("items") or []) if isinstance(x, dict)][:300]
             _read_items(items, progress, on_result, keep_order=bool(body.get("keepOrder")))
@@ -787,7 +963,7 @@ def handle_start(body: "dict | None") -> "tuple[int, dict]":
     if not ef.EASYFORM_AVAILABLE:
         return 200, {"started": False, "message": "이 PC 에서는 이지폼 자동화를 쓸 수 없어요."}
     body = body if isinstance(body, dict) else {}
-    phase = "read" if body.get("phase") == "read" else "export"
+    phase = body.get("phase") if body.get("phase") in ("read", "stamp") else "export"
     with _LOCK:
         if _JOB["state"] == "running":
             return 200, {"started": False, "message": "이미 이지폼 작업이 진행 중이에요."}

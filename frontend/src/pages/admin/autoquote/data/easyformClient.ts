@@ -284,9 +284,22 @@ export interface EfListRow {
   written: string; // 작성일자 YYYY.MM.DD
 }
 
+/** 이지폼 명세서 비고에 주문번호 적기(워처가 그 명세서를 열어 그 칸만 적고 저장). row 없으면 첫 빈 비고 칸. */
+export interface EfStampItem {
+  key: string;
+  biz: string;
+  idx: number;
+  date: string;
+  total: string;
+  client?: string;
+  nos: string[];
+  row?: number;
+}
+
 export interface EfBulkResult {
   key: string;
   ok: boolean;
+  skipped?: boolean; // 비고 적기 — 이미 적혀 있어서 안 건드림
   date?: string;
   total?: string;
   rows?: EasyformPulledRow[];
@@ -295,7 +308,7 @@ export interface EfBulkResult {
 
 export interface EfBulkStatus {
   state: 'running' | 'done' | 'error' | 'idle' | 'gone';
-  phase?: 'export' | 'read';
+  phase?: 'export' | 'read' | 'stamp';
   message?: string;
   progress?: string;
   lists?: { biz: 'corp' | 'personal'; name: string; rows: EfListRow[] }[];
@@ -304,7 +317,10 @@ export interface EfBulkStatus {
 }
 
 export async function startEfBulk(
-  body: { phase: 'export'; year?: number } | { phase: 'read'; items: (EfListRow & { key: string })[]; keepOrder?: boolean },
+  body:
+    | { phase: 'export'; year?: number }
+    | { phase: 'read'; items: (EfListRow & { key: string })[]; keepOrder?: boolean }
+    | { phase: 'stamp'; items: EfStampItem[] },
 ): Promise<{ started: boolean; id?: number; message?: string }> {
   const res = await fetch(`${AGENT_URL}/easyform/bulk`, {
     method: 'POST',

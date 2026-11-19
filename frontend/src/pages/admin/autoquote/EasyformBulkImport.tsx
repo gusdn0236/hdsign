@@ -20,6 +20,8 @@ import {
   orderNoCore,
   type EfListRow,
   type EfBulkResult,
+  type EfStampItem,
+  type EasyformPulledRow,
 } from './data/easyformClient';
 import {
   matchOrders,
@@ -94,7 +96,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   // 중간 저장 — 확인하다가 체크한 것만 먼저 저장(화면은 그대로, 계속 확인 가능). 저장한 주문은 다시 안 저장.
   const [savedIds, setSavedIds] = useState<Set<number>>(() => new Set());
   const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[] } | null>(null);
+  const [saveMsg, setSaveMsg] = useState<{ ok: number; fail: { order: EfBulkOrder; msg: string }[]; stampMsg?: string } | null>(null);
   const [closeAsk, setCloseAsk] = useState(false);
   // 지금 이지폼에서 찾는 중인 지시서 — 화면이 그 카드로 따라간다(사람이 방금 넘겨 봤으면 4초간 안 따라감)
   const [searchingId, setSearchingId] = useState<number | null>(null);
@@ -105,6 +107,9 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [mergeAsk, setMergeAsk] = useState<{ orderId: number; nos: string[]; loading: boolean; others: number[] } | null>(null);
   // 합치기 확인창 — 홈페이지에 이미 등록된 주문의 지시서(사진 보여주기용, 주문번호 핵심 → 지시서 정보)
   const [savedWs, setSavedWs] = useState<Record<string, EfBulkOrder>>({});
+  // 합친 명세서 — 이 지시서가 명세서 몇 번째 줄부터인지(읽은 줄 번호, 0부터). 저장 때 그 줄 비고에 주문번호를 적는다.
+  const [stampRow, setStampRow] = useState<Record<number, number>>({});
+  const [pickFor, setPickFor] = useState<number | null>(null); // 지금 줄을 고르는 지시서 id
   const [zoomWs, setZoomWs] = useState<EfBulkOrder | null>(null); // 합치기 확인창에서 눌러 크게 보는 지시서
   // 사람이 넣은 단서(키워드·사이즈) — 지시서별. 넣은 지시서는 단서로 가려내고, 안 넣은 건 지금 방식대로.
   const [cluesState, setClues] = useState<Record<number, string[]>>({});
@@ -493,12 +498,34 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       groups.set(k, [...(groups.get(k) || []), o]);
     }
     const queue = [...groups.values()];
+    const stamps: EfStampItem[] = []; // 저장 끝나면 이지폼 비고에 적을 것
     const worker = async () => {
       for (let g = queue.shift(); g; g = queue.shift()) {
         const m = matches[g[0].id];
         const rd = reads[m.best!.key];
         try {
-          const grid = efRowsToGrid(rd.rows || []);
+          // 비고에 주문번호 — 줄을 고른 지시서는 그 줄에, 나머지는 첫 빈 비고 칸에 같이(워처와 같은 규칙).
+          // 홈페이지 명세서에도 같은 비고를 넣어 둔다(합친 명세서 구간 표시가 바로 맞게).
+          const efRows = (rd.rows || []).map((r) => ({ ...r }));
+          const has = (r: EasyformPulledRow) =>
+            !!((r.item_code || '').trim() || (r.item || '').trim() || (r.spec || '').trim()) || !['', '0'].includes((r.unit_price || '').trim());
+          const items: EfStampItem[] = [];
+          const base = { key: m.best!.key, biz: m.best!.row.biz, idx: m.best!.row.idx, date: m.best!.row.date, total: m.best!.row.total, client: m.best!.row.client };
+          const picked = g.filter((o) => stampRow[o.id] != null && efRows[stampRow[o.id]]);
+          for (const o of picked) {
+            const no = orderNoCore(o.orderNumber);
+            const r = efRows[stampRow[o.id]];
+            if (!(r.remark || '').includes(no)) r.remark = `${(r.remark || '').trim()} ${no}`.trim();
+            items.push({ ...base, nos: [no], row: stampRow[o.id] });
+          }
+          const rest = g.filter((o) => !picked.includes(o)).map((o) => orderNoCore(o.orderNumber));
+          const restNos = rest.filter((no) => !efRows.some((r) => (r.remark || '').includes(no)));
+          if (restNos.length) {
+            const r = efRows.find((x) => has(x) && !(x.remark || '').trim());
+            if (r) r.remark = restNos.join(', ');
+            items.push({ ...base, nos: restNos });
+          }
+          const grid = efRowsToGrid(efRows);
           const sum = grid.reduce((a, x) => a + (Number(x.공급가액) || 0), 0);
           const efDate = rd.date || m.best!.row.date;
           const efTotal = rd.total || m.best!.row.total;
@@ -524,13 +551,31 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           });
           setSavedIds((prev) => new Set([...prev, ...g.map((o) => o.id)]));
           ok += g.length;
+          stamps.push(...items);
         } catch (e) {
           g.forEach((o) => fail.push({ order: o, msg: (e as Error).message }));
         }
       }
     };
     await Promise.all([worker(), worker(), worker(), worker(), worker()]);
-    setSaveMsg({ ok, fail });
+    // 이지폼 명세서 비고에 주문번호 적기 — 줄을 고른 것 먼저(그 줄이 차야 자동 줄이 겹치지 않음)
+    let stampMsg = '';
+    if (stamps.length) {
+      stamps.sort((a, b) => Number(b.row != null) - Number(a.row != null));
+      setProgress(`이지폼 비고에 주문번호 적는 중 (${stamps.length}건)`);
+      try {
+        const st = await runJob({ phase: 'stamp', items: stamps });
+        if (st.phase && st.phase !== 'stamp') throw new Error('워처가 예전 버전이에요. 워처를 다시 켜주세요.');
+        const rs = st.results || [];
+        const done = rs.filter((r) => r.ok && !r.skipped).length;
+        const bad = rs.filter((r) => !r.ok);
+        stampMsg = `이지폼 비고 ${done}건 적음` + (bad.length ? ` · ${bad.length}건 못 적음(${bad.map((r) => r.message).join(' / ')})` : '');
+      } catch (e) {
+        stampMsg = `이지폼 비고 못 적음 — ${(e as Error).message}`;
+      }
+      setProgress('');
+    }
+    setSaveMsg({ ok, fail, stampMsg });
     setSaving(false);
   };
 
@@ -561,6 +606,14 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         return;
       }
       if (phaseRef.current === 'clue') return;
+      // 합치기 줄 고르는 중 — Enter/X 로 판정되지 않게 막고, Esc 만 고르기 취소(줄 확인창은 자기 버튼으로)
+      if (pickFor != null) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setPickFor(null);
+        }
+        return;
+      }
       if (detail != null) {
         if (e.key === 'Escape') setDetail(null);
         else if (e.key === 'Enter' && !swapping) mark(detail, 'yes');
@@ -880,7 +933,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             </div>
             <p className="efb-sub">
               {saveMsg
-                ? `${saveMsg.ok}건 저장했어요${saveMsg.fail.length ? ` · ${saveMsg.fail.length}건 실패` : ''} · 계속 확인할 수 있어요`
+                ? `${saveMsg.ok}건 저장했어요${saveMsg.fail.length ? ` · ${saveMsg.fail.length}건 실패` : ''}${saveMsg.stampMsg ? ` · ${saveMsg.stampMsg}` : ''} · 계속 확인할 수 있어요`
                 : phase === 'read'
                   ? '읽힌 명세서부터 눌러서 확인할 수 있어요 · 체크한 것만 먼저 저장해도 돼요'
                   : '명세서를 눌러 지시서와 비교하세요 · ←/→ 넘기기 · 체크한 것만 먼저 저장해도 돼요'}
@@ -927,6 +980,12 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         const choose = (c: 'merge' | 'separate') => {
           const id = mergeAsk.orderId;
           setMergeAsk(null);
+          if (c === 'merge') {
+            // 합치기 — 이 지시서가 명세서 몇 번째 줄부터인지 먼저 고른다(비교창에서 줄 클릭 → 확인).
+            setPickFor(id);
+            setDetail(id);
+            return;
+          }
           mark(id, 'yes', c);
         };
         return (
@@ -1024,6 +1083,20 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           swapping={swapping}
           onClose={() => setDetail(null)}
           onMark={(v) => mark(detailOrder.id, v)}
+          pickMode={pickFor === detailOrder.id}
+          stampRow={stampRow[detailOrder.id]}
+          onPickRow={(row) => {
+            const id = detailOrder.id;
+            setPickFor(null);
+            setStampRow((prev) => {
+              const next = { ...prev };
+              if (row == null) delete next[id];
+              else next[id] = row;
+              return next;
+            });
+            mark(id, 'yes', 'merge');
+          }}
+          onPickCancel={() => setPickFor(null)}
           onUse={(c) => pickCandidate(detailOrder.id, c)}
           mergedNos={(matches[detailOrder.id].mergedWith || []).map((id) => orderNoCore(orders.find((x) => x.id === id)?.orderNumber))}
           onNav={(d) => {
@@ -1055,6 +1128,10 @@ function DetailView({
   saved,
   keywords,
   dims,
+  pickMode = false,
+  stampRow,
+  onPickRow,
+  onPickCancel,
 }: {
   order: EfBulkOrder;
   match: EfMatch;
@@ -1072,10 +1149,18 @@ function DetailView({
   saved: boolean;
   keywords: string[];
   dims?: number[];
+  pickMode?: boolean;
+  stampRow?: number;
+  onPickRow?: (row: number | null) => void;
+  onPickCancel?: () => void;
 }) {
   const best = match.best!;
   const rows = (read?.rows || []).map((r) => r);
   const grid = efRowsToGrid(rows);
+  // 화면 줄 → 읽은 줄 번호(빈 줄은 화면에서 빠지므로). 이지폼 비고를 적을 줄 = 읽은 줄 번호.
+  const origIdx = rows.map((_, i) => i).filter((i) => efRowsToGrid([rows[i]]).length > 0);
+  const [pickAsk, setPickAsk] = useState<number | null>(null); // 확인창에 띄운 화면 줄
+  const ownNo = orderNoCore(order.orderNumber);
   // 키워드·사이즈(·지시서 수치)와 맞은 칸 = 초록, 맞은 칸 있는 줄 = 연한 초록 (기존 명세서 찾기와 같은 모양)
   const hitRows = grid.map((g) => ({
     code: cellMatches(g.품목코드, keywords, false),
@@ -1102,8 +1187,46 @@ function DetailView({
     reasons.push({ t: `합친 명세서 — 주문 ${mergedNos.join(', ')} 와(과) 같이 써요`, good: true });
   if (best.dimN) reasons.push({ t: `규격 치수 지시서와 일치 ${best.dimHit}/${best.dimN}`, good: (best.dimHit || 0) / best.dimN >= 0.6 });
 
+  const askRow = pickAsk != null ? grid[pickAsk] : null;
+  const askBase = pickAsk != null ? (rows[origIdx[pickAsk]]?.remark || '').trim() : '';
   return (
     <div className="efb-detail" role="dialog" aria-label="지시서와 명세서 비교" onClick={onClose}>
+      {askRow && (
+        <div className="efb-ask" role="dialog" aria-label="줄 확인" onClick={(e) => { e.stopPropagation(); setPickAsk(null); }}>
+          <div className="efb-askbox" onClick={(e) => e.stopPropagation()}>
+            <p className="efb-ask-title">이 지시서({ownNo})는 {pickAsk! + 1}번째 줄부터인가요?</p>
+            <p className="efb-ask-sub">
+              {pickAsk! + 1}행: <b>{askRow.품목 || askRow.품목코드 || '(빈 품목)'}</b>
+              {askRow.규격 ? ` · ${askRow.규격}` : ''}
+              <br />
+              이지폼 명세서 {pickAsk! + 1}행 비고에 <b>{ownNo}</b> 를 적어요.
+              {askBase ? (
+                <>
+                  <br />
+                  기존 비고 '<b>{askBase}</b>' 뒤에 덧붙여요.
+                </>
+              ) : null}
+            </p>
+            <div className="efb-ask-btns">
+              <button type="button" className="efb-ask-cancel" onClick={() => setPickAsk(null)}>
+                다시 고르기
+              </button>
+              <button
+                type="button"
+                className="efb-primary"
+                autoFocus
+                onClick={() => {
+                  const r = origIdx[pickAsk!];
+                  setPickAsk(null);
+                  onPickRow?.(r);
+                }}
+              >
+                맞아요, 여기부터
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="efb-dbox" onClick={(e) => e.stopPropagation()}>
         <div className="efb-dhead">
           <button type="button" className="efb-dnav" onClick={() => onNav(-1)} disabled={index <= 0} aria-label="이전 지시서">‹</button>
@@ -1125,6 +1248,24 @@ function DetailView({
               <span className="efb-dstmt-date">발행 {read?.date || best.row.date}{best.row.written && best.row.written !== best.row.date ? ` · 작성 ${best.row.written}` : ''}</span>
               <span className="efb-dstmt-total">{won(read?.total || best.row.total)}원</span>
             </div>
+            {pickMode && (
+              <div className="efb-pickbar">
+                <b>이 지시서({ownNo})는 명세서 몇 번째 줄부터인가요?</b> 줄을 눌러 주세요 — 저장할 때 그 줄 비고에 주문번호를 적어요.
+                <span className="efb-pickbar-btns">
+                  <button type="button" className="efb-ask-plain" onClick={() => onPickRow?.(null)}>
+                    모르겠어요 · 첫 빈 비고에 적기
+                  </button>
+                  <button type="button" className="efb-ask-cancel" onClick={() => onPickCancel?.()}>
+                    취소
+                  </button>
+                </span>
+              </div>
+            )}
+            {!pickMode && stampRow != null && (
+              <div className="efb-pickdone">
+                ▶ {origIdx.indexOf(stampRow) + 1}번째 줄부터 이 지시서 — 저장할 때 그 줄 비고에 <b>{ownNo}</b> 를 적어요
+              </div>
+            )}
             {keywords.length > 0 ? (
               // 키워드로 찾은 지시서 — 내가 넣은 키워드가 이 명세서에 있나만 크게(초록 = 있음, 빨강 = 없음)
               <div className="efb-kwchips">
@@ -1165,8 +1306,18 @@ function DetailView({
                 <tbody>
                   {grid.map((g, i) => {
                     const h = hitRows[i];
+                    const isStart = stampRow != null && origIdx[i] === stampRow;
                     return (
-                      <tr key={i} className={h.code || h.item || h.spec ? 'has-hit' : undefined}>
+                      <tr
+                        key={i}
+                        className={
+                          [h.code || h.item || h.spec ? 'has-hit' : '', pickMode ? 'is-pickable' : '', isStart ? 'is-stamp' : '']
+                            .filter(Boolean)
+                            .join(' ') || undefined
+                        }
+                        onClick={pickMode ? () => setPickAsk(i) : undefined}
+                        title={pickMode ? '이 줄부터 이 지시서' : isStart ? `여기부터 ${ownNo} — 저장할 때 이지폼 비고에 적어요` : undefined}
+                      >
                         {/* 키워드로 찾았으면 줄은 연두, 칸 안에서 키워드와 맞은 글자만 굵은 초록. 키워드 없으면 맞은 칸 전체 초록 */}
                         <td className={h.code && !kwMode ? 'hit' : undefined}>{kwMode ? <Hl text={g.품목코드} kw={keywords} spec={false} /> : g.품목코드}</td>
                         <td className={`efb-td-item${h.item && !kwMode ? ' hit' : ''}`}>{kwMode ? <Hl text={g.품목} kw={keywords} spec={false} /> : g.품목}</td>

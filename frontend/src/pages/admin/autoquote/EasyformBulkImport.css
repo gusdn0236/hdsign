@@ -1486,3 +1486,40 @@
   min-height: 0;
   background: #fff;
 }
+/* 합치기 — 이 지시서가 몇 번째 줄부터인지 고르기 */
+.efb-pickbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 2px solid #3b82f6;
+  color: #1e3a8a;
+  font-size: 13px;
+}
+.efb-pickbar b {
+  font-size: 14px;
+}
+.efb-pickbar-btns {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.efb-pickdone {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+}
+.efb-table tr.is-pickable {
+  cursor: pointer;
+}
+.efb-table tr.is-pickable:hover td {
+  background: #dbeafe !important;
+}
+.efb-table tr.is-stamp > td:first-child {
+  box-shadow: inset 4px 0 0 #2563eb;
+}
