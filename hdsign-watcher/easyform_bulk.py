@@ -329,6 +329,24 @@ def _period_grid(lst):
     return sheet, (grids[0] if grids else None)
 
 
+def _ensure_period_tab(lst):
+    """'기간으로 조회' 탭이 앞에 없으면(매출처별 조회 등) 그 탭으로 바꾼다 — 클릭 없이 TCM_SETCURFOCUS.
+    델파이는 안 보이는 탭의 페이지 창을 안 만들어 두므로 탭을 바꿔야 표가 생긴다. 실측: 탭 3개, 0번 = 기간으로 조회."""
+    sheet, grid = _period_grid(lst)
+    if grid:
+        return sheet, grid
+    pcs = [h for h in _kids(lst, "TPageControl") if _u.GetParent(h) == lst]
+    for pc in pcs:
+        n = _u.SendMessageW(pc, 0x1304, 0, 0)  # TCM_GETITEMCOUNT
+        for i in [0] + list(range(1, n)):
+            _u.SendMessageW(pc, 0x1330, i, 0)  # TCM_SETCURFOCUS — 탭 누른 것과 같이 바뀜 알림까지 보냄
+            got = _wait(lambda: _period_grid(lst)[1], 2.0)
+            if got:
+                time.sleep(0.4)
+                return _period_grid(lst)
+    return None, None
+
+
 def _count_text(lst) -> str:
     for p in _kids(lst, "TPanel"):
         t = _txt(p)
@@ -360,7 +378,8 @@ def _export_one(m: dict, year: int, progress) -> list:
     _assert_clean(main)
     lst = _open_list(main)
     _assert_clean(main)
-    sheet, grid = _period_grid(lst)
+    sheet, grid = _ensure_period_tab(lst)
+    _assert_clean(main)  # 탭 바꾸다 다른 창이 뜨면 멈춤
     if not grid:
         raise Stop(f"{label} 이지폼 목록 창에서 '기간으로 조회' 탭을 못 찾았어요. 그 탭을 한 번 눌러두고 다시 해주세요.")
     # 기간 — 왼쪽 칸 = 시작, 오른쪽 칸 = 끝. 글자만 바꾼다(WM_SETTEXT).
@@ -607,7 +626,8 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
         main = m["hwnd"]
         _assert_clean(main)
         lst = _open_list(main)
-        _sheet, grid = _period_grid(lst)
+        _sheet, grid = _ensure_period_tab(lst)
+        _assert_clean(main)
         if not grid:
             raise Stop("목록 창의 '기간으로 조회' 표를 못 찾았어요.")
         # 맨 위로 — 표 보기 맨 위 + 첫 줄 클릭(거래처명 칸) + Home + PageUp 여러 번

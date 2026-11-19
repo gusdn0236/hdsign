@@ -138,7 +138,7 @@ export default function StatementSmartSearch({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastWord, clientNames, tokens]);
 
-  const showRecent = open && !input.trim() && recent && recent.length > 0;
+  const showRecent = false; // 최근 검색 목록 — 안 씀(사용자 요청 2026-11-19)
   const showSuggest = open && suggestions.length > 0;
 
   const pickSuggestion = (s) => {
