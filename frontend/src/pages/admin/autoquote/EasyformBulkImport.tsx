@@ -795,6 +795,14 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                 else if (!m.best) state = 'none';
                 else if (!rd) state = phase === 'read' ? 'wait' : 'unread';
                 else state = rd.ok ? 'ok' : 'fail';
+                // 읽는 중에는 확실한 것만 미리 보여준다 — 비고에 이 주문번호 / 키워드 전부·거의 다 맞음 /
+                // (키워드 없을 때) 규격 치수가 지시서와 거의 맞음. 아니면 다 읽고 다시 매길 때까지 '검색 중'.
+                if (state === 'ok' && phase === 'read' && m?.best) {
+                  const cl = clues[o.id] || [];
+                  const kwOk = cl.length > 0 && clueHits(cl, rd.rows || []).hit >= Math.max(1, Math.ceil(cl.length * 0.75));
+                  const dimOk = !cl.length && !!m.best.dimN && (m.best.dimHit || 0) / m.best.dimN >= 0.6;
+                  if (!sure && !kwOk && !dimOk) state = 'wait';
+                }
                 return (
                   <div
                     key={o.id}
