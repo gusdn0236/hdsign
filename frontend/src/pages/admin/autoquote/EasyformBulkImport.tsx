@@ -51,6 +51,8 @@ interface Props {
   token: string | null | undefined;
   onClose: () => void;
   onSaved: (orderId: number) => void;
+  /** 지시서 1건(명세서 상세카드)에서 연 경우 — 선택 화면 없이 바로 키워드 입력 화면, 키워드 없이 찾기 = 바로 찾기 */
+  single?: boolean;
 }
 
 type Phase = 'intro' | 'clue' | 'export' | 'read' | 'review' | 'saving' | 'saved';
@@ -71,14 +73,14 @@ const byDate = (a: EfBulkOrder, b: EfBulkOrder) => dateOf(a) - dateOf(b) || a.id
 const etaText = (sec: number) => (sec < 60 ? `약 ${Math.max(5, Math.round(sec / 5) * 5)}초 남음` : `약 ${Math.round(sec / 60)}분 남음`);
 const SEC_PER_READ = 6; // 첫 결과 전 추정(실측 6건 38초)
 
-export default function EasyformBulkImport({ orders: ordersProp, token, onClose, onSaved }: Props) {
+export default function EasyformBulkImport({ orders: ordersProp, token, onClose, onSaved, single = false }: Props) {
   // 열 때의 목록으로 고정 — 저장하면서 부모 목록이 줄어들어도 화면이 흔들리지 않게.
   // 오래된 날짜순. 찾고 나면 '찾은 것 먼저(왼쪽) → 각각 오래된 날짜순'으로 다시 줄 세운다.
   const [orders, setOrders] = useState(() => [...ordersProp].sort(byDate));
   const [eta, setEta] = useState('');
   const [pauseWanted, setPauseWanted] = useState(false);
   const [pausedNow, setPausedNow] = useState(false);
-  const [phase, setPhase] = useState<Phase>('intro');
+  const [phase, setPhase] = useState<Phase>(single ? 'clue' : 'intro');
   const [pos, setPos] = useState(0);
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -100,7 +102,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const [mergeChoice, setMergeChoice] = useState<Record<number, 'merge' | 'separate'>>({});
   const [mergeAsk, setMergeAsk] = useState<{ orderId: number; nos: string[]; loading: boolean; others: number[] } | null>(null);
   // 사람이 넣은 단서(키워드·사이즈) — 지시서별. 넣은 지시서는 단서로 가려내고, 안 넣은 건 지금 방식대로.
-  const [clues, setClues] = useState<Record<number, string[]>>({});
+  const [cluesState, setClues] = useState<Record<number, string[]>>({});
+  const clues = cluesState;
   const jobRef = useRef<{ id: number; stop: boolean } | null>(null);
   const matchRef = useRef<Record<number, EfMatch>>({});
   const cluesRef = useRef<Record<number, string[]>>({});
@@ -189,7 +192,10 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     });
   };
 
-  const start = async () => {
+  // cluesArg = 키워드 화면에서 칸에 쳐 두고 Enter 안 누른 글자까지 합친 키워드(상태 반영 전이라 직접 넘김)
+  const start = async (cluesArg?: Record<number, string[]>) => {
+    const clues = cluesArg ?? cluesState;
+    if (cluesArg) setClues(cluesArg);
     setError('');
     const probe = await probeEasyformAgent();
     if (!probe?.easyform) {
@@ -294,7 +300,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         await dimsWait.current;
         finishRead(st?.results);
       }
-      else setPhase('intro');
+      else setPhase(single ? 'clue' : 'intro');
       setProgress('');
     } finally {
       setEta('');
@@ -646,11 +652,13 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           clues={clues}
           setClues={setClues}
           onBack={() => {
+            if (single) return requestClose(); // 1건 = 선택 화면 없음 → ESC 는 창 닫기
             setOrders((prev) => sortKwFirst(prev, clues));
             setPos(0);
             setPhase('intro');
           }}
-          onStart={start}
+          onStart={(c) => void start(c)}
+          single={single}
         />
       ) : (
         <>
@@ -796,7 +804,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
               <button type="button" className={hasClues ? 'efb-secondary' : 'efb-primary'} onClick={() => setPhase('clue')} disabled={!n}>
                 ✎ 키워드 입력하고 찾기
               </button>
-              <button type="button" className={hasClues ? 'efb-primary' : 'efb-secondary'} onClick={start} disabled={!n}>
+              <button type="button" className={hasClues ? 'efb-primary' : 'efb-secondary'} onClick={() => void start()} disabled={!n}>
                 {Object.keys(clues).length ? `찾기 시작 (키워드 ${Object.keys(clues).length}건)` : '바로 찾기'}
               </button>
             </div>
@@ -1235,6 +1243,7 @@ function ClueEntry({
   setClues,
   onBack,
   onStart,
+  single = false,
 }: {
   orders: EfBulkOrder[];
   pos: number;
@@ -1242,7 +1251,8 @@ function ClueEntry({
   clues: Record<number, string[]>;
   setClues: (f: (prev: Record<number, string[]>) => Record<number, string[]>) => void;
   onBack: () => void;
-  onStart: () => void;
+  onStart: (clues: Record<number, string[]>) => void;
+  single?: boolean;
 }) {
   const [text, setText] = useState('');
   const [delArmed, setDelArmed] = useState(false); // 빈칸 Backspace 1번 = 지울 준비, 2번 = 지움(키워드로 찾기와 같음)
@@ -1270,6 +1280,14 @@ function ClueEntry({
     setPos(Math.max(0, Math.min(n - 1, pos + d)));
   };
   const norm = (x: string) => x.replace(/\s+/g, '').toLowerCase();
+  // 찾기 — 칸에 쳐 두고 Enter 안 누른 글자도 키워드로 넣는다. 키워드가 하나도 없으면 = 바로 찾기.
+  const startNow = () => {
+    const w = text.trim();
+    const next = { ...clues };
+    if (w && !mine.some((c) => norm(c) === norm(w))) next[o.id] = [...mine, w];
+    setText('');
+    onStart(next);
+  };
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return; // 한글 조합 중 Enter 는 글자 확정용(칩 2개 방지)
     if (e.key !== 'Backspace') setDelArmed(false);
@@ -1283,6 +1301,8 @@ function ClueEntry({
         setText('');
       } else if (pos < n - 1) {
         go(1); // 빈칸 Enter = 다음 지시서
+      } else if (single) {
+        startNow(); // 1건일 때 빈칸 Enter = 찾기
       }
     } else if (e.key === 'Backspace' && !text && mine.length) {
       e.preventDefault();
@@ -1370,11 +1390,13 @@ function ClueEntry({
           ))}
         </div>
         <div className="efb-clue-btns">
-          <button type="button" className="efb-secondary" onClick={onBack}>
-            목록으로
-          </button>
-          <button type="button" className="efb-primary" onClick={onStart}>
-            입력 끝 · 찾기 시작
+          {!single && (
+            <button type="button" className="efb-secondary" onClick={onBack}>
+              목록으로
+            </button>
+          )}
+          <button type="button" className="efb-primary" onClick={startNow}>
+            {single ? (mine.length || text.trim() ? '찾기' : '바로 찾기') : '입력 끝 · 찾기 시작'}
           </button>
         </div>
       </aside>

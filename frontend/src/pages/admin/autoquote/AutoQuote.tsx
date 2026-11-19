@@ -4134,6 +4134,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
                 <EasyformBulkImport
                   orders={[order]}
+                  single
                   token={token}
                   onClose={() => setEfBulkOpen(false)}
                   onSaved={() => {
