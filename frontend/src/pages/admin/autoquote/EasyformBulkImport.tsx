@@ -29,6 +29,8 @@ import {
   rescoreByContent,
   markMerged,
   cellMatches,
+  clueHits,
+  keywordSpans,
   worksheetDims,
   type EfMatch,
   type EfCandidate,
@@ -1038,8 +1040,12 @@ function DetailView({
   const hitRows = grid.map((g) => ({
     code: cellMatches(g.품목코드, keywords, false),
     item: cellMatches(g.품목, keywords, false),
-    spec: cellMatches(g.규격, keywords, true, dims),
+    // 키워드를 넣었으면 키워드와 맞은 칸만 초록(지시서 도형 수치로는 안 칠함 — 숫자가 많아 엉뚱한 칸도 맞음)
+    spec: cellMatches(g.규격, keywords, true, keywords.length ? undefined : dims),
   }));
+  // 키워드마다 이 명세서에 있나 — 칩 초록(있음)/빨강(없음)
+  const kwHits = keywords.map((k) => ({ k, hit: clueHits([k], rows).hit > 0 }));
+  const kwMode = keywords.length > 0;
   const filledCells = grid.reduce((a, g) => a + [g.품목코드, g.품목, g.규격].filter((x) => (x || '').trim()).length, 0);
   const hitCells = hitRows.reduce((a, h) => a + Number(h.code) + Number(h.item) + Number(h.spec), 0);
   const nos = extractOrderNos(rows.map((r) => r.remark || '').join(' '));
@@ -1079,12 +1085,26 @@ function DetailView({
               <span className="efb-dstmt-date">발행 {read?.date || best.row.date}{best.row.written && best.row.written !== best.row.date ? ` · 작성 ${best.row.written}` : ''}</span>
               <span className="efb-dstmt-total">{won(read?.total || best.row.total)}원</span>
             </div>
-            <div className="efb-reasons">
-              {reasons.map((r, i) => (
-                <span key={i} className={r.good ? 'good' : 'warn'}>{r.good ? '✓' : '!'} {r.t}</span>
-              ))}
-            </div>
-            {(keywords.length > 0 || (dims && dims.length > 0)) && (
+            {keywords.length > 0 ? (
+              // 키워드로 찾은 지시서 — 내가 넣은 키워드가 이 명세서에 있나만 크게(초록 = 있음, 빨강 = 없음)
+              <div className="efb-kwchips">
+                {kwHits.map(({ k, hit }) => (
+                  <span key={k} className={hit ? 'is-hit' : 'is-miss'}>{hit ? '✓' : '✕'} {k}</span>
+                ))}
+                {reasons
+                  .filter((r) => r.t.startsWith('비고') || r.t.startsWith('합친'))
+                  .map((r, i) => (
+                    <span key={`r${i}`} className={r.good ? 'is-note' : 'is-warn'}>{r.t}</span>
+                  ))}
+              </div>
+            ) : (
+              <div className="efb-reasons">
+                {reasons.map((r, i) => (
+                  <span key={i} className={r.good ? 'good' : 'warn'}>{r.good ? '✓' : '!'} {r.t}</span>
+                ))}
+              </div>
+            )}
+            {!keywords.length && dims && dims.length > 0 && (
               <div className="efb-hitcount">
                 맞은 칸 <b>{hitCells}</b> / 전체 {filledCells}칸
                 <span>{keywords.length ? `키워드 ${keywords.join(', ')}` : ''}{keywords.length && dims?.length ? ' · ' : ''}{dims?.length ? '규격은 지시서 수치와도 비교' : ''}</span>
@@ -1107,9 +1127,10 @@ function DetailView({
                     const h = hitRows[i];
                     return (
                       <tr key={i} className={h.code || h.item || h.spec ? 'has-hit' : undefined}>
-                        <td className={h.code ? 'hit' : undefined}>{g.품목코드}</td>
-                        <td className={`efb-td-item${h.item ? ' hit' : ''}`}>{g.품목}</td>
-                        <td className={h.spec ? 'hit' : undefined}>{g.규격}</td>
+                        {/* 키워드로 찾았으면 줄은 연두, 칸 안에서 키워드와 맞은 글자만 굵은 초록. 키워드 없으면 맞은 칸 전체 초록 */}
+                        <td className={h.code && !kwMode ? 'hit' : undefined}>{kwMode ? <Hl text={g.품목코드} kw={keywords} spec={false} /> : g.품목코드}</td>
+                        <td className={`efb-td-item${h.item && !kwMode ? ' hit' : ''}`}>{kwMode ? <Hl text={g.품목} kw={keywords} spec={false} /> : g.품목}</td>
+                        <td className={h.spec && !kwMode ? 'hit' : undefined}>{kwMode ? <Hl text={g.규격} kw={keywords} spec /> : g.규격}</td>
                         <td className="num">{g.수량}</td>
                         <td className="num">{won(g.단가)}</td>
                         <td className="num">{won(g.공급가액)}</td>
@@ -1167,6 +1188,22 @@ function DetailView({
 }
 
 /** 비교창 지시서 — 칸에 꽉 차게(스크롤 없이) 가로·세로 중 맞는 쪽에 맞춰 PDF 1쪽을 그린다. */
+/** 칸 글자 — 키워드와 맞은 부분만 굵은 초록(<b className="efb-kw">). */
+function Hl({ text, kw, spec }: { text: string; kw: string[]; spec: boolean }) {
+  const t = text || '';
+  const spans = keywordSpans(t, kw, spec);
+  if (!spans.length) return <>{t}</>;
+  const out: React.ReactNode[] = [];
+  let at = 0;
+  spans.forEach(([a, b], i) => {
+    if (a > at) out.push(t.slice(at, a));
+    out.push(<b key={i} className="efb-kw">{t.slice(a, b)}</b>);
+    at = b;
+  });
+  if (at < t.length) out.push(t.slice(at));
+  return <>{out}</>;
+}
+
 function FitWorksheet({ pdfUrl, thumbUrl, title }: { pdfUrl?: string | null; thumbUrl?: string | null; title?: string | null }) {
   // 넘기자마자 보이게: ① 미리 만들어 둔 미리보기 사진(JPEG)을 즉시 ② 선명한 PDF 가 다 그려지면 그 위로 바꿔 끼움.
   // 크기는 미리보기 사진 비율로 먼저 정해 PDF 를 두 번 그리지 않는다.

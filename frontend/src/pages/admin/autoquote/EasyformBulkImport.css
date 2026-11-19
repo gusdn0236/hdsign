@@ -1404,3 +1404,41 @@
   padding: 6px 12px;
   font-size: 12px;
 }
+/* 비교창 — 내가 넣은 키워드 칩: 이 명세서에 있으면 초록, 없으면 빨강 */
+.efb-kwchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.efb-kwchips span {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.efb-kwchips .is-hit {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #86efac;
+}
+.efb-kwchips .is-miss {
+  background: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+.efb-kwchips .is-note {
+  font-weight: 500;
+  background: #e0f2fe;
+  color: #075985;
+}
+.efb-kwchips .is-warn {
+  font-weight: 500;
+  background: #fef3c7;
+  color: #92400e;
+}
+/* 키워드로 찾은 비교창 — 칸 안에서 키워드와 맞은 글자만 굵은 초록 (줄은 has-hit 연두) */
+.efb-table .efb-kw {
+  color: #15803d;
+  font-weight: 800;
+}

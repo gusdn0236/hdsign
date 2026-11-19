@@ -554,6 +554,49 @@ export function clueHits(
  *  - 사이즈 키워드('2400*600', 'h350'): 규격 칸 숫자에 그 숫자들이 모두 있음(±3%·±5mm)
  *  - 지시서 수치(dims): 규격 칸 숫자(빽빽한 구간 빼고) 절반 이상이 지시서 도형 크기와 맞음
  */
+/**
+ * 비교창 — 칸 글자에서 키워드와 맞은 부분의 [시작, 끝) 구간들(굵은 초록으로 칠할 곳).
+ *  - 글자 키워드: 칸 안에 그 글자(띄어쓰기·대소문자 무시)가 나오는 곳. 칸 전체가 키워드 안에 들어 있으면 칸 전체.
+ *  - 사이즈 키워드(규격 칸만): 키워드 숫자와 ±5mm·±3% 로 맞는 숫자(소수점 포함) — 키워드 숫자가 모두 칸에 있을 때만.
+ */
+export function keywordSpans(text: string, clues: string[], isSpec: boolean): [number, number][] {
+  const src = text || '';
+  const out: [number, number][] = [];
+  const close = (a: number, b: number) => Math.abs(a - b) <= Math.max(5, a * 0.03);
+  const numTok = [...src.matchAll(/\d{2,5}(?:\.\d+)?/g)].map((m) => ({ v: parseFloat(m[0]), s: m.index!, e: m.index! + m[0].length }));
+  // 띄어쓰기 뺀 글자 → 원래 위치
+  const pos: number[] = [];
+  let flat = '';
+  for (let i = 0; i < src.length; i++) if (!/\s/.test(src[i])) { flat += src[i].toLowerCase(); pos.push(i); }
+  for (const raw of clues) {
+    const c = normC(raw);
+    if (!c) continue;
+    const nums = sizeNums(c);
+    if (nums.length > 0 && SIZE_RE.test(c)) {
+      if (!isSpec || !nums.every((n) => numTok.some((t) => close(n, t.v)))) continue;
+      numTok.filter((t) => nums.some((n) => close(n, t.v))).forEach((t) => out.push([t.s, t.e]));
+      continue;
+    }
+    let from = 0;
+    let found = false;
+    for (let k = flat.indexOf(c, from); k >= 0; k = flat.indexOf(c, from)) {
+      out.push([pos[k], pos[k + c.length - 1] + 1]);
+      found = true;
+      from = k + c.length;
+    }
+    if (!found && flat.length >= 3 && c.includes(flat)) out.push([0, src.length]);
+  }
+  // 겹치는 구간 합치기
+  out.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const r of out) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1]]);
+  }
+  return merged;
+}
+
 export function cellMatches(text: string, clues: string[], isSpec: boolean, dims?: number[]): boolean {
   const t = normC(text);
   if (!t) return false;
