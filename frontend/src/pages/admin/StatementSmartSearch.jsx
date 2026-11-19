@@ -10,7 +10,7 @@ import { ITEM_CODES, normCode, matchCodes } from "./autoquote/itemCodes";
  */
 
 const TOKEN_TYPES = ["client", "code", "spec", "text", "order"];
-const TOKEN_LABEL = { client: "거래처", code: "품목코드", spec: "규격", text: "작업키워드", order: "주문번호" };
+export const TOKEN_LABEL = { client: "거래처", code: "품목코드", spec: "규격", text: "작업키워드", order: "주문번호" };
 // 주문번호 — '261113-18'·'주문-261113-18'(접두어 없어도 됨)
 const ORDER_RE = /^(?:주문-|견적-)?\d{6}-\d{1,3}$/;
 
@@ -76,6 +76,23 @@ export function parseInput(line, clientIndex) {
     if (t) out.push(t);
     i += 1;
   }
+  return out;
+}
+
+/** 치고 있는 한 단어 → 종류 붙은 추천 목록(거래처·품목코드·주문번호·규격·작업키워드). 단가찾아보기도 같이 씀. */
+export function suggestTokens(q, clientNames) {
+  q = String(q || "").trim();
+  if (!q) return [];
+  const sq = squeeze(q);
+  const out = [];
+  (clientNames || [])
+    .filter((n) => squeeze(n).includes(sq))
+    .slice(0, 4)
+    .forEach((n) => out.push({ type: "client", value: n }));
+  matchCodes(q).slice(0, 4).forEach((c) => out.push({ type: "code", value: c }));
+  if (ORDER_RE.test(q)) out.push({ type: "order", value: q.replace(/^(주문|견적)-/, "") });
+  if (SPEC_RE.test(q)) out.push({ type: "spec", value: q.replace(/\s+/g, "") });
+  out.push({ type: "text", value: q });
   return out;
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BASE_URL, lookupPricesMerged, type Prediction } from '../autoquote/annot/api';
-import { parseInput } from '../StatementSmartSearch.jsx';
+import { parseInput, suggestTokens, TOKEN_LABEL } from '../StatementSmartSearch.jsx';
 import FitWorksheet from './FitWorksheet';
 import ScrapViewer, { loadViewerData, ZoomBox, type ViewerData } from './ScrapViewer';
 import { ScrapPin } from './ScrapDrawer';
@@ -24,6 +24,9 @@ export interface FinderOrder {
 }
 
 type Tok = { type: 'client' | 'code' | 'spec' | 'text' | 'order'; value: string };
+// 단가찾아보기에서 쓰는 카테고리(주문번호는 안 씀) — 검색창 위 색깔 라벨·칩 종류 바꾸기 순서
+const KINDS: Tok['type'][] = ['code', 'client', 'text', 'spec'];
+const tokKey = (t: Tok) => `${t.type}:${String(t.value).replace(/\s+/g, '').toLowerCase()}`;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HomeHit = { o: any; hits: ScrapRow[] };
 
@@ -171,8 +174,15 @@ export default function PriceFinder({
   embedded?: boolean;
   onClose?: () => void;
 }) {
-  const [kw, setKw] = useState<string[]>(() => (initial || []).map((x) => x.trim()).filter(Boolean));
+  const [kw, setKw] = useState<Tok[]>(() =>
+    (initial || [])
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .flatMap((x) => (parseInput(x, new Map()) as Tok[]).filter((t) => t.type !== 'order')),
+  );
   const [text, setText] = useState('');
+  const [sugOpen, setSugOpen] = useState(false);
+  const [hi, setHi] = useState(-1);
   const [delArmed, setDelArmed] = useState(false);
   const [phase, setPhase] = useState<'clue' | 'result'>('clue');
   const [clientNames, setClientNames] = useState<string[]>([]);
@@ -199,7 +209,7 @@ export default function PriceFinder({
     return m;
   }, [clientNames]);
 
-  const run = async (list: string[]) => {
+  const run = async (list: Tok[]) => {
     const my = ++seq.current;
     setPhase('result');
     setDetail(null);
@@ -208,7 +218,7 @@ export default function PriceFinder({
     setPast(null);
     setPastErr('');
     setPastData({});
-    const toks: Tok[] = list.flatMap((k) => parseInput(k, clientIndex) as Tok[]);
+    const toks: Tok[] = list;
     const pick = (t: Tok['type']) => toks.filter((x) => x.type === t).map((x) => x.value);
     const codes = pick('code');
     const specs = pick('spec');
@@ -276,12 +286,41 @@ export default function PriceFinder({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const norm = (x: string) => x.replace(/\s+/g, '').toLowerCase();
+  // 키워드 더하기 — 같은 종류·같은 글자면 안 넣음
+  const merge = (base: Tok[], add: Tok[]) => {
+    const next = [...base];
+    add.forEach((t) => {
+      if (t.type !== 'order' && !next.some((x) => tokKey(x) === tokKey(t))) next.push(t);
+    });
+    return next;
+  };
+  const addTokens = (add: Tok[]) => {
+    setKw((prev) => merge(prev, add));
+    setText('');
+    setHi(-1);
+  };
+  // 치는 동안 아래에 종류 추천(똑똑한 검색창과 같음) — 마지막 단어 기준
+  const lastWord = text.split(/\s+/).pop() || '';
+  const suggestions = useMemo(
+    () =>
+      (suggestTokens(lastWord, clientNames) as Tok[]).filter(
+        (t) => t.type !== 'order' && !kw.some((x) => tokKey(x) === tokKey(t)),
+      ),
+    [lastWord, clientNames, kw],
+  );
+  const showSuggest = sugOpen && suggestions.length > 0;
+  const pickSuggestion = (t: Tok) => {
+    const head = text.trim().split(/\s+/).slice(0, -1).join(' ');
+    addTokens([...(parseInput(head, clientIndex) as Tok[]), t]);
+    input.current?.focus();
+  };
+  const cycleType = (i: number) =>
+    setKw((prev) => prev.map((x, j) => (j === i ? { ...x, type: KINDS[(KINDS.indexOf(x.type) + 1) % KINDS.length] } : x)));
   const startNow = () => {
-    const w = text.trim();
-    const next = w && !kw.some((c) => norm(c) === norm(w)) ? [...kw, w] : kw;
+    const next = text.trim() ? merge(kw, parseInput(text, clientIndex) as Tok[]) : kw;
     setKw(next);
     setText('');
+    setSugOpen(false);
     if (!next.length) {
       input.current?.focus();
       return;
@@ -291,13 +330,21 @@ export default function PriceFinder({
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key !== 'Backspace') setDelArmed(false);
-    if (e.key === 'Enter') {
+    if (e.key === 'ArrowDown' && showSuggest) {
       e.preventDefault();
-      const w = text.trim();
-      if (w) {
-        if (!kw.some((c) => norm(c) === norm(w))) setKw([...kw, w]);
-        setText('');
-      } else startNow();
+      setHi((h) => Math.min(suggestions.length - 1, h + 1));
+    } else if (e.key === 'ArrowUp' && showSuggest) {
+      e.preventDefault();
+      setHi((h) => Math.max(-1, h - 1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (showSuggest && hi >= 0 && suggestions[hi]) pickSuggestion(suggestions[hi]);
+      else if (text.trim()) addTokens(parseInput(text, clientIndex) as Tok[]);
+      else startNow();
+    } else if (e.key === 'Escape' && showSuggest) {
+      e.preventDefault();
+      e.stopPropagation();
+      setSugOpen(false);
     } else if (e.key === 'Backspace' && !text && kw.length) {
       e.preventDefault();
       if (!delArmed) setDelArmed(true);
@@ -323,6 +370,7 @@ export default function PriceFinder({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return; // 추천 목록 닫기 Esc 등 — 입력칸이 이미 처리함
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
         if (e.key !== 'Escape') return;
@@ -356,9 +404,10 @@ export default function PriceFinder({
       </span>
       {phase === 'result' && (
         <button type="button" className="pf-kwbar" onClick={() => setPhase('clue')} title="키워드 고치기">
-          {kw.map((k) => (
-            <span key={k} className="efb-clue-chip">
-              {k}
+          {kw.map((t) => (
+            <span key={tokKey(t)} className={`pf-chip pf-chip--${t.type}`}>
+              <span className="pf-chip-type">{TOKEN_LABEL[t.type]}</span>
+              {t.value}
             </span>
           ))}
           <span className="pf-kwedit">✎ 키워드 고치기</span>
@@ -380,25 +429,72 @@ export default function PriceFinder({
           {order.orderNumber ? <span>{order.orderNumber}</span> : null}
         </div>
       )}
-      <input
-        ref={input}
-        className="efb-clue-input"
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value);
-          setDelArmed(false);
-        }}
-        onBlur={() => setDelArmed(false)}
-        onKeyDown={onKey}
-        placeholder="키워드를 입력하세요."
-        aria-label="키워드"
-        autoComplete="off"
-      />
+      {/* 검색 카테고리 — 칩과 같은 색 라벨 */}
+      <div className="pf-legend" aria-label="검색 카테고리">
+        {KINDS.map((k) => (
+          <span key={k} className={`pf-chip pf-chip--${k} pf-legend-tag`}>
+            {TOKEN_LABEL[k]}
+          </span>
+        ))}
+      </div>
+      <div className="pf-inputwrap">
+        <input
+          ref={input}
+          className="efb-clue-input"
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            setDelArmed(false);
+            setHi(-1);
+            setSugOpen(true);
+          }}
+          onFocus={() => setSugOpen(true)}
+          onBlur={() => {
+            setDelArmed(false);
+            setTimeout(() => setSugOpen(false), 150);
+          }}
+          onKeyDown={onKey}
+          placeholder="키워드를 입력하세요."
+          aria-label="키워드"
+          autoComplete="off"
+        />
+        {showSuggest && (
+          <ul className="pf-pop" onMouseDown={(e) => e.preventDefault()}>
+            {suggestions.map((t, k) => (
+              <li
+                key={tokKey(t)}
+                className={k === hi ? 'is-hi' : ''}
+                onMouseEnter={() => setHi(k)}
+                onClick={() => pickSuggestion(t)}
+              >
+                <span className={`pf-chip pf-chip--${t.type} pf-pop-type`}>{TOKEN_LABEL[t.type]}</span>
+                {t.value}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       <div className="efb-clue-chips">
-        {kw.map((c, i) => (
-          <span key={c} className={`efb-clue-chip ${delArmed && i === kw.length - 1 ? 'is-armed' : ''}`}>
-            {c}
-            <button type="button" onClick={() => setKw(kw.filter((x) => x !== c))} aria-label={`${c} 지우기`}>
+        {kw.map((t, i) => (
+          <span
+            key={tokKey(t)}
+            className={`pf-chip pf-chip--${t.type} ${delArmed && i === kw.length - 1 ? 'is-armed' : ''}`}
+          >
+            <button
+              type="button"
+              className="pf-chip-body"
+              onClick={() => cycleType(i)}
+              title={`${TOKEN_LABEL[t.type]} — 누르면 종류 바꾸기`}
+            >
+              <span className="pf-chip-type">{TOKEN_LABEL[t.type]}</span>
+              {t.value}
+            </button>
+            <button
+              type="button"
+              className="pf-chip-x"
+              onClick={() => setKw(kw.filter((_, j) => j !== i))}
+              aria-label={`${t.value} 지우기`}
+            >
               ✕
             </button>
           </span>
