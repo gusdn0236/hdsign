@@ -86,6 +86,7 @@ export default function StatementSmartSearch({
   onRemoveRecent,   // (index) => void — 최근 검색 한 줄 삭제
   sort,
   onSort,
+  compact = false,  // 스크롤 내리면 뜨는 플로팅 검색창 — 제목·단가요약 없이 입력칸만(칩은 위 검색창과 공유)
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -164,7 +165,8 @@ export default function StatementSmartSearch({
   };
 
   return (
-    <div className="ss">
+    <div className={`ss${compact ? " ss--compact" : ""}`}>
+      {!compact && (
       <div className="ss-head">
         <span className="ss-title">명세서 검색</span>
         {/* 검색 카테고리 — 칩과 같은 색 태그로 나열(긴 설명 대신, 사용자 요청 2026-11-18) */}
@@ -177,6 +179,7 @@ export default function StatementSmartSearch({
           ))}
         </span>
       </div>
+      )}
 
       <div className="ss-box-wrap">
         <div
@@ -211,7 +214,7 @@ export default function StatementSmartSearch({
             onFocus={() => setOpen(true)}
             onBlur={() => setTimeout(() => setOpen(false), 150)}
             onKeyDown={onKeyDown}
-            placeholder={tokens.length ? "" : "예: 나라광고 아크릴5T 500*100 육바연로고"}
+            placeholder={tokens.length ? "" : compact ? "명세서 검색 (거래처·품목코드·규격·키워드)" : "예: 나라광고 아크릴5T 500*100 육바연로고"}
           />
           {searching && <span className="ss-spin" aria-label="검색 중" />}
           {(tokens.length > 0 || input) && (
@@ -265,7 +268,7 @@ export default function StatementSmartSearch({
         )}
       </div>
 
-      {result && <PriceSummary result={result} sort={sort} onSort={onSort} />}
+      {result && !compact && <PriceSummary result={result} sort={sort} onSort={onSort} />}
     </div>
   );
 }

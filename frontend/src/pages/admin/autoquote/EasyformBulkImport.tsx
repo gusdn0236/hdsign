@@ -774,7 +774,9 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         <div className="efb-count">
           <b>{n ? pos + 1 : 0}</b> / {n}
         </div>
-        {phase === 'intro' && (
+        {phase === 'intro' && (() => {
+          const hasClues = Object.keys(clues).length > 0;
+          return (
           <div className="efb-cta">
             <p className="efb-lead">
               총 <b>{n}개</b> 명세서를 이지폼에서 찾아볼게요
@@ -783,15 +785,17 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
               주식회사·개인 이지폼 2개를 켜 두세요(최소화해도 돼요). 이지폼에 작성 중인 명세서 창이 열려 있으면 멈춰요.
             </p>
             <div className="efb-cta-btns">
-              <button type="button" className="efb-secondary" onClick={() => setPhase('clue')} disabled={!n}>
+              {/* 키워드 입력 = 색칠(주 버튼), 바로 찾기 = 색 없음. 키워드를 넣고 돌아오면 [찾기 시작]이 주 버튼. */}
+              <button type="button" className={hasClues ? 'efb-secondary' : 'efb-primary'} onClick={() => setPhase('clue')} disabled={!n}>
                 ✎ 키워드 입력하고 찾기
               </button>
-              <button type="button" className="efb-primary" onClick={start} disabled={!n}>
+              <button type="button" className={hasClues ? 'efb-primary' : 'efb-secondary'} onClick={start} disabled={!n}>
                 {Object.keys(clues).length ? `찾기 시작 (키워드 ${Object.keys(clues).length}건)` : '바로 찾기'}
               </button>
             </div>
           </div>
-        )}
+          );
+        })()}
         {phase === 'export' && (
           <div className="efb-cta">
             <p className="efb-lead">이지폼에서 찾고 있어요 · 찾은 명세서가 지시서 아래에 나타나요</p>

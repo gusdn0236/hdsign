@@ -3030,6 +3030,29 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         className={`order-floating-dock ${showFloatingDock ? "is-visible" : ""}`}
         aria-hidden={!showFloatingDock}
       >
+        {isStatementView ? (
+          // 명세서 탭 — 위 똑똑한 검색창과 같은 것(칩 공유). 어느 쪽에 쳐도 같이 바뀐다.
+          <div className="order-floating-ss">
+            <StatementSmartSearch
+              compact
+              clientNames={stmtClientNames}
+              tokens={stmtTokens}
+              onTokens={setStmtTokens}
+              searching={stmtSearching}
+              result={stmtResult}
+              recent={stmtRecent}
+              onRemoveRecent={(k) =>
+                setStmtRecent((prev) => {
+                  const next = prev.filter((_, j) => j !== k);
+                  try { localStorage.setItem("hd.stmtRecent", JSON.stringify(next)); } catch { /* 저장 불가 무시 */ }
+                  return next;
+                })
+              }
+              sort={stmtSort}
+              onSort={setStmtSort}
+            />
+          </div>
+        ) : (
         <div className="order-floating-search">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="7" cy="7" r="4.5" />
@@ -3062,6 +3085,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             </button>
           )}
         </div>
+        )}
         <button
           type="button"
           className="order-floating-top"

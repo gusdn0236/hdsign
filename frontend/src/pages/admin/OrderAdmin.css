@@ -2743,6 +2743,22 @@
   pointer-events: auto;
 }
 
+/* 명세서 탭 플로팅 = 똑똑한 검색창(compact). 칩이 늘면 줄바꿈되며 아래로 자람. */
+.order-floating-ss {
+  width: 380px;
+  max-width: calc(100vw - 40px);
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #d4d4d8;
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+}
+.order-floating-ss .ss {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
 .order-floating-search {
   display: inline-flex;
   align-items: center;
