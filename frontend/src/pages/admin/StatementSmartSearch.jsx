@@ -38,7 +38,7 @@ function classify(word, clientIndex) {
  *  - 거래처 이름이 띄어쓰기를 포함하면(예: '나라 광고') 이어지는 단어를 묶어 먼저 맞춰 보고
  *  - '500 100' 처럼 숫자 두 개가 붙어 있으면 규격 하나로 묶는다.
  */
-function parseInput(line, clientIndex) {
+export function parseInput(line, clientIndex) {
   const words = String(line || "").trim().split(/\s+/).filter(Boolean);
   const out = [];
   let i = 0;

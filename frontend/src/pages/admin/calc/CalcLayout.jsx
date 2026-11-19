@@ -8,7 +8,8 @@ import AcrylGadaCalc  from './AcrylGadaCalc.jsx'
 import GomuCalc       from './GomuCalc.jsx'
 import GoldSilverCalc from './GoldSilverCalc.jsx'
 import QuickUpload    from './QuickUpload.jsx'
-import PriceLookup     from './PriceLookup.tsx'
+import PriceFinder     from '../scrap/PriceFinder.tsx'
+import { useAuth }     from '../../../context/AuthContext'
 import './Calc.css'
 
 /**
@@ -20,12 +21,14 @@ import './Calc.css'
  */
 export default function CalcLayout() {
     const { prices } = usePrices()
+    const { token } = useAuth()
     if (!prices) return <div className="calc-shell"><p>로드 중...</p></div>
 
     return (
         <div className="calc-shell">
             <main className="calc-main">
-                <PriceLookup />
+                {/* 단가찾아보기 — 명세서작성과 같은 새 화면(키워드 → 홈페이지 명세서 먼저 → 예전 이지폼 명세서, 📌 스크랩) */}
+                <PriceFinder token={token} embedded />
 
                 <AcrylCalc prices={prices} />
                 <AcrylGadaCalc prices={prices} />

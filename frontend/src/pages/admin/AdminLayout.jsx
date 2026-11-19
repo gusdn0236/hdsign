@@ -9,6 +9,7 @@ import AdminFolderChangeNotice from './AdminFolderChangeNotice.jsx';
 import DemoBanner from '../../components/common/DemoBanner.jsx';
 import DemoButtonLock from '../../components/common/DemoButtonLock.jsx';
 import { isDemoToken } from '../../utils/demoGuard';
+import ScrapDrawer from './scrap/ScrapDrawer.tsx';
 import './AdminLayout.css';
 
 const AdminLayout = () => {
@@ -32,7 +33,9 @@ const AdminLayout = () => {
     ];
 
     return (
-        <div>
+        <div className="admin-shell">
+            {/* 왼쪽 스크랩 서랍 — 관리자 화면 어디서든 떠 있음(이 PC 에만 저장) */}
+            <ScrapDrawer token={token} />
             {isDemo && <DemoBanner />}
             {isDemo && <DemoButtonLock />}
             <Banner

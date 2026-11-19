@@ -61,7 +61,7 @@ export interface PickedRow {
  * 지시서 사진 뷰어 — 마우스 휠로 커서 기준 확대·축소(1~6배), 드래그로 이동, 더블클릭 초기화.
  * 사진(src)이 바뀌면 배율·위치를 리셋한다. 모달 스크롤을 막으려 휠은 native non-passive 로 등록.
  */
-function ZoomImg({ src, alt }: { src: string; alt: string }) {
+export function ZoomImg({ src, alt }: { src: string; alt: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const t = useRef({ scale: 1, tx: 0, ty: 0 }); // 현재 변환(휠 핸들러가 최신값을 읽도록 ref)
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);

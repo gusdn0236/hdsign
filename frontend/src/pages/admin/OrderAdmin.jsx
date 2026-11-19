@@ -8,6 +8,8 @@ import KakaoShareButton from "../../components/common/KakaoShareButton.jsx";
 import { safeFileName } from "../../utils/shareImage.js";
 import { fetchCompletedPages, fetchCompletedPage, appendUnique, oldestLoadedDate } from "../../utils/completedPages.js";
 import StatementSmartSearch from "./StatementSmartSearch.jsx";
+import { ScrapPin } from "./scrap/ScrapDrawer.tsx";
+import { homeScrap } from "./scrap/scrapStore.ts";
 import "./OrderAdmin.css";
 
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
@@ -2273,8 +2275,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   ? statementOrders.map((o) => {
                       const hits = stmtResult.matches[String(o.id)] || [];
                       return (
-                        <div key={o.id} className="stmt-hit-wrap">
+                        <div key={o.id} className="stmt-hit-wrap stmt-pin-wrap">
                           {renderOrderCard(o)}
+                          {o.hasEstimate && <ScrapPin item={homeScrap(o, hits)} />}
                           {hits.length > 0 && (
                             <ul className="stmt-hit-rows" title="검색에 걸린 명세서 행">
                               {hits.slice(0, 3).map((h, k) => (
@@ -2289,7 +2292,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                         </div>
                       );
                     })
-                  : statementOrders.map(renderOrderCard)}
+                  : statementOrders.map((o) => (
+                      // 📌 스크랩 — 홈페이지 명세서가 있는 카드만(왼쪽 서랍에 담김)
+                      <div key={o.id} className="stmt-pin-wrap">
+                        {renderOrderCard(o)}
+                        {o.hasEstimate && <ScrapPin item={homeScrap(o)} />}
+                      </div>
+                    ))}
               </div>
             )}
             {!loading && trashMoreBlock}

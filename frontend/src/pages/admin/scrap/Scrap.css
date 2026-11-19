@@ -1,0 +1,692 @@
+/* 스크랩 서랍(왼쪽 고정) + 참고 창 + 새 단가찾아보기.
+   서랍 폭 = --scrap-w (ScrapDrawer 가 html 에 넣음). 관리자 화면·전체화면 창이 그만큼 비켜 선다. */
+
+html.has-scrap .admin-shell {
+  padding-left: var(--scrap-w, 0px);
+}
+html.has-scrap .aq-modal-overlay,
+html.has-scrap .aq-modal-loading,
+html.has-scrap .efb:not(.pf-embedded) {
+  left: var(--scrap-w, 0px);
+}
+
+/* ── 서랍 ── */
+.scr {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 2200;
+  width: var(--scrap-w, 220px);
+  display: flex;
+  flex-direction: column;
+  background: #111a24;
+  border-right: 1px solid #26364a;
+  color: #e8eef5;
+  font-size: 13px;
+  box-shadow: 2px 0 14px rgba(0, 0, 0, 0.18);
+}
+.scr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 8px 12px;
+  border-bottom: 1px solid #26364a;
+}
+.scr-title {
+  font-weight: 700;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.scr-title b,
+.scr-open b {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #0a9396;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.scr-fold {
+  width: 28px;
+  height: 26px;
+  border: 1px solid #26364a;
+  border-radius: 6px;
+  background: transparent;
+  color: #8a9bb0;
+  cursor: pointer;
+  font-size: 14px;
+}
+.scr-fold:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+.scr-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.scr-none {
+  margin-top: 30px;
+  text-align: center;
+  color: #5b6b80;
+  font-size: 12.5px;
+}
+.scr-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #26364a;
+  border-radius: 9px;
+  background: #172230;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.12s, transform 0.12s;
+}
+.scr-card:hover {
+  border-color: #3b5470;
+}
+.scr-card.is-on {
+  border-color: #0a9396;
+  box-shadow: 0 0 0 2px rgba(10, 147, 150, 0.35);
+}
+.scr-card.is-over {
+  border-color: #f0c000;
+  transform: translateY(2px);
+}
+.scr-thumb {
+  position: relative;
+  height: 92px;
+  background: #0b1219;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+.scr-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.scr-kind {
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  color: #fff;
+}
+.scr-kind--home {
+  background: rgba(10, 147, 150, 0.9);
+}
+.scr-kind--past {
+  background: rgba(139, 92, 246, 0.9);
+}
+.scr-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px 7px;
+  min-width: 0;
+}
+.scr-info b {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scr-date {
+  color: #8a9bb0;
+  font-size: 11.5px;
+}
+.scr-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.scr-row i {
+  font-style: normal;
+  font-weight: 700;
+  color: #7dd3d8;
+  flex-shrink: 0;
+}
+.scr-del {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15, 22, 32, 0.8);
+  color: #cbd5e1;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.scr-card:hover .scr-del,
+.scr-del:focus-visible {
+  opacity: 1;
+}
+.scr-del:hover {
+  background: #dc2626;
+  color: #fff;
+}
+.scr-foot {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid #26364a;
+}
+.scr-clear {
+  flex: 1;
+  height: 28px;
+  border: 1px solid #26364a;
+  border-radius: 6px;
+  background: transparent;
+  color: #8a9bb0;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.scr-clear:hover {
+  color: #fff;
+}
+.scr-clear.is-danger {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+}
+.scr.is-closed {
+  width: var(--scrap-w, 34px);
+}
+.scr-open {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.scr-open:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.scr-vert {
+  writing-mode: vertical-rl;
+  letter-spacing: 2px;
+  font-weight: 700;
+}
+
+/* ── 참고 창 ── */
+.scr-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: var(--scrap-w, 220px);
+  z-index: 2150;
+  display: flex;
+  flex-direction: column;
+  background: #0f1620;
+  color: #e8eef5;
+  border-right: 1px solid #26364a;
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.35);
+}
+.scr-panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid #26364a;
+}
+.scr-panel-head b {
+  font-size: 15px;
+}
+.scr-panel-head span {
+  color: #8a9bb0;
+  font-size: 12.5px;
+}
+.scr-panel-x {
+  margin-left: auto;
+  width: 30px;
+  height: 28px;
+  border: 1px solid #26364a;
+  border-radius: 7px;
+  background: transparent;
+  color: #e8eef5;
+  cursor: pointer;
+}
+.scr-panel-x:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.scr-panel-grip {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+.scr-panel-grip:hover {
+  background: rgba(10, 147, 150, 0.35);
+}
+
+/* ── 지시서 + 명세서 보기 (참고 창·단가찾아보기 크게 보기) ── */
+.sv {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sv-ws {
+  position: relative;
+  flex: 1 1 55%;
+  min-height: 160px;
+  padding: 10px;
+  background: #0b1219;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.sv-ws > .efb-fit {
+  width: 100%;
+  height: 100%;
+}
+.sv-gal {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(15, 22, 32, 0.85);
+  font-size: 12px;
+}
+.sv-gal button {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 6px;
+}
+.sv-grid {
+  flex: 0 1 45%;
+  min-height: 120px;
+  overflow: auto;
+  background: #fff;
+  color: #1f2733;
+}
+.sv-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+  color: #8a9bb0;
+  font-size: 13px;
+}
+.sv-grid .sv-empty {
+  color: #94a3b8;
+}
+.sv-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.sv-tbl th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 700;
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+.sv-tbl td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #eef2f6;
+  vertical-align: top;
+}
+.sv-tbl .p {
+  text-align: right;
+  white-space: nowrap;
+}
+.sv-tbl tr.is-hit td {
+  background: #dcfce7;
+  font-weight: 700;
+}
+.sv-spin {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #0a9396;
+  border-radius: 50%;
+  animation: sv-spin 0.8s linear infinite;
+}
+@keyframes sv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 📌 담기 버튼 ── */
+.scr-pin {
+  height: 28px;
+  min-width: 30px;
+  padding: 0 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.92);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.85;
+}
+.scr-pin:hover {
+  opacity: 1;
+  filter: none;
+  border-color: #0a9396;
+}
+.scr-pin.is-on {
+  filter: none;
+  opacity: 1;
+  border-color: #0a9396;
+  background: #0a9396;
+  color: #fff;
+}
+
+/* 명세서 탭 카드에 붙는 📌 */
+.stmt-pin-wrap {
+  position: relative;
+}
+.stmt-pin-wrap > .scr-pin {
+  position: absolute;
+  right: 10px;
+  top: 44px;
+  z-index: 3;
+}
+
+/* ── 새 단가찾아보기 ── */
+.pf {
+  z-index: 1600;
+}
+.pf.pf-embedded {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  height: 640px;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.pf-top {
+  gap: 14px;
+}
+.pf-top .efb-x {
+  margin-left: auto;
+}
+.pf-kwbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px dashed transparent;
+  border-radius: 10px;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+.pf-kwbar:hover {
+  border-color: #3b5470;
+}
+.pf-kwedit {
+  color: #8a9bb0;
+  font-size: 12.5px;
+  margin-left: 4px;
+}
+.pf-clue-nows {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+.pf-clue-nows .efb-clue-side {
+  width: min(520px, 100%);
+  border-left: 0;
+  background: transparent;
+  padding-top: 60px;
+}
+.pf-spacer {
+  flex: 1;
+}
+.pf-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 30%) 1fr;
+}
+.pf-body.pf-body-nows {
+  grid-template-columns: 1fr;
+}
+.pf-myws {
+  min-height: 0;
+  padding: 14px;
+  background: #0b1219;
+  border-right: 1px solid var(--efb-line);
+}
+.pf-myws > .efb-fit {
+  width: 100%;
+  height: 100%;
+}
+.pf-main {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+}
+.pf-results {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 16px 20px 30px;
+}
+.pf-results section + section {
+  margin-top: 22px;
+}
+.pf-results h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #e8eef5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pf-results h4 b {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(10, 147, 150, 0.3);
+  color: #7dd3d8;
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+.pf-pending,
+.pf-none {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 4px;
+  color: #8a9bb0;
+  font-size: 13px;
+}
+.pf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.pf-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--efb-line);
+  border-radius: 10px;
+  background: var(--efb-panel);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.12s, transform 0.12s;
+}
+.pf-card:hover {
+  border-color: #0a9396;
+  transform: translateY(-1px);
+}
+.pf-card-img {
+  height: 140px;
+  background: #0b1219;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+}
+.pf-card-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.pf-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px 10px;
+  min-width: 0;
+}
+.pf-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+.pf-card-top b {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-card-top span {
+  color: #8a9bb0;
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+.pf-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+.pf-card-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-card-row i {
+  font-style: normal;
+  font-weight: 700;
+  color: #7dd3d8;
+  flex-shrink: 0;
+}
+.pf-card-more {
+  font-size: 11px;
+  color: #8a9bb0;
+}
+.pf-card-pin {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+.pf-detail {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--efb-bg);
+}
+.pf-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--efb-line);
+}
+.pf-detail-head > b {
+  font-size: 15px;
+}
+.pf-detail-head > span {
+  color: #8a9bb0;
+  font-size: 12.5px;
+}
+.pf-detail-nav {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pf-detail-nav .efb-x:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pf-detail-pin {
+  height: 34px;
+  padding: 0 14px;
+}
+
+@media (max-width: 899px) {
+  .scr,
+  .scr-panel {
+    display: none;
+  }
+  html.has-scrap .admin-shell,
+  html.has-scrap .aq-modal-overlay,
+  html.has-scrap .aq-modal-loading,
+  html.has-scrap .efb:not(.pf-embedded) {
+    padding-left: 0;
+    left: 0;
+  }
+}

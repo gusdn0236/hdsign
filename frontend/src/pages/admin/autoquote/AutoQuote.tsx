@@ -66,6 +66,8 @@ import './AutoQuote.css';
 // LED계산·도장비찾아보기 버튼 — 잘 안 써서 숨김(2026-11-19 사용자 요청). 다시 쓰려면 true.
 const SHOW_LED_DOJANG = false;
 const EasyformBulkImport = lazyWithRetry(() => import('./EasyformBulkImport'));
+// 새 단가찾아보기(키워드 → 홈페이지 명세서 먼저 → 예전 이지폼 명세서, 📌 스크랩)
+const PriceFinder = lazyWithRetry(() => import('../scrap/PriceFinder'));
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
 // 데이터가 fetch(ArrayBuffer) 라 캔버스가 taint 되지 않아 [공유하기] 합성도 막히지 않는다.
@@ -468,6 +470,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [linkedOrders, setLinkedOrders] = useState<{ id: number; orderNumber: string }[]>([]);
   // [이지폼에서 찾기] 창(일괄 가져오기, 이 지시서 1건) — 저장하면 reloadKey 를 올려 명세서를 다시 불러온다.
   const [efBulkOpen, setEfBulkOpen] = useState(false);
+  // 단가찾아보기 화면 — initial = 미리 넣을 키워드(행에서 열면 그 행 품목코드·규격), auto = 바로 찾기
+  const [finder, setFinder] = useState<{ initial: string[]; auto: boolean } | null>(null);
   const [efMenu, setEfMenu] = useState(false); // [이지폼 불러오기 ▾] 드롭다운
   const efMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -2622,6 +2626,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const openLookup = async (row?: number, painting = false) => {
     const tgt = row != null ? row : active;
     if (tgt == null) return;
+    if (!painting) {
+      // 표 행에서 연 단가찾아보기 — 그 행 품목코드·규격을 키워드로 넣고 바로 찾는다(새 화면).
+      const v = pins[tgt]?.vals || {};
+      const seed = [v['품목코드'] || v['품목'] || '', v['규격'] || ''].map((x) => x.trim()).filter(Boolean);
+      setFinder({ initial: seed, auto: seed.length > 0 });
+      return;
+    }
     priceTargetRef.current = row != null ? row : null; // 표 행이면 그 행 단가에 적용
     setLkTargetRow(tgt); // 작성중보기에서 노란색으로 강조할 '작성 중이던 행'
     const p = pins[tgt];
@@ -2778,6 +2789,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 헤더 [🔎 단가찾아보기] 글로벌 버튼 — 빈 검색 모달을 열고 검색창에 바로 입력받는다.
   // (특정 행/코드로 시드하지 않음 — 사용자가 품목코드를 쳐서 찾는다. 거래처 컨텍스트만 유지.)
   const openLookupBrowse = () => {
+    setFinder({ initial: [], auto: false }); // 새 단가찾아보기 — 키워드 입력 화면부터
+  };
+  // (옛 둘러보기 모달 — 이제 안 씀. 도장비찾아보기는 아직 옛 모달을 쓴다.)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const openLookupBrowseOld = () => {
     priceTargetRef.current = null;
     setLkTargetRow(null);
     const client = order?.clientCompanyName || '';
@@ -4162,7 +4178,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               type="button"
               className="aq-lookupbtn"
               onClick={openLookupBrowse}
-              title="과거 명세서에서 단가 찾아 가져오기 (도장 행 강조·다중선택)"
+              title="키워드로 홈페이지·이지폼 명세서를 찾아 📌 스크랩"
             >
               🔎 단가찾아보기
             </button>
@@ -4222,6 +4238,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 </div>
               )}
             </div>
+            {finder && (
+              <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
+                <PriceFinder
+                  token={token}
+                  order={order}
+                  initial={finder.initial}
+                  autoRun={finder.auto}
+                  onClose={() => setFinder(null)}
+                />
+              </Suspense>
+            )}
             {efBulkOpen && order && (
               <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
                 <EasyformBulkImport
