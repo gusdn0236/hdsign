@@ -103,14 +103,39 @@
 }
 /* 합친 명세서 안내 — 여러 주문이 명세서 1장 공유. */
 .aq-linked {
-  margin: 0 0 6px;
-  padding: 6px 10px;
-  border-radius: 6px;
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
   background: #eef6ff;
-  border: 1px solid #bfdbfe;
+  border: 2px solid #93c5fd;
   color: #1e40af;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
+}
+.aq-linked-sub {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d4ed8;
+}
+.aq-linked-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.aq-linked-go {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.aq-linked-go:hover {
+  background: #1d4ed8;
 }
 /* 이지폼 찾기 — 주문번호로 못 찾았을 때 단서로 고르기. */
 .aq-clue {

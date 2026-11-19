@@ -394,9 +394,11 @@ interface AutoQuoteProps {
   onCleared?: () => void;
   /** 이지폼 입력(확정) 시 호출 — 부모가 목록 카드의 '명세서작성완료' 배지를 즉시 점등(작업중·작업완료 양쪽). */
   onEasyformUploaded?: () => void;
+  /** 합친 명세서 — 같은 명세서를 쓰는 다른 지시서의 명세서작성으로 옮겨가기(부모가 열린 주문을 바꿈). */
+  onOpenOrder?: (orderId: number) => void;
 }
 
-export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCleared, onEasyformUploaded }: AutoQuoteProps = {}) {
+export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCleared, onEasyformUploaded, onOpenOrder }: AutoQuoteProps = {}) {
   const { token } = useAuth();
   const [searchParams] = useSearchParams();
 
@@ -4054,11 +4056,34 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
 
         {/* 우측 이지폼 grid */}
         <div className="aq-side">
-          {linkedOrders.length > 1 && (
-            <div className="aq-linked">
-              🔗 합친 명세서 — 주문 {linkedOrders.map((l) => orderNoCore(l.orderNumber)).join(' + ')} 이(가) 이 명세서 1장을 같이 씁니다
-            </div>
-          )}
+          {linkedOrders.length > 1 && (() => {
+            const others = linkedOrders.filter((l) => l.id !== order?.id);
+            return (
+              <div className="aq-linked">
+                <div className="aq-linked-title">
+                  🔗 합친 명세서 — 이 명세서를 쓰는 지시서가 <b>{others.length}개</b> 더 있어요
+                </div>
+                <div className="aq-linked-sub">
+                  주문 {linkedOrders.map((l) => orderNoCore(l.orderNumber)).join(' + ')} 이(가) 이 명세서 1장을 같이 씁니다
+                </div>
+                {onOpenOrder && others.length > 0 && (
+                  <div className="aq-linked-btns">
+                    {others.map((l) => (
+                      <button
+                        type="button"
+                        key={l.id}
+                        className="aq-linked-go"
+                        onClick={() => onOpenOrder(l.id)}
+                        title="그 지시서의 명세서작성으로 옮겨가요"
+                      >
+                        {orderNoCore(l.orderNumber)} 지시서로 가기 →
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="aq-h">
             <b>견적 (이지폼)</b>
             {/* 버튼들은 오른쪽 정렬 — 스페이서로 밀고, 버튼끼리 간격은 .aq-h 의 gap(8px)으로 일정하게. */}

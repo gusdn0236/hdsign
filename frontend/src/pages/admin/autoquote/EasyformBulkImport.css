@@ -1442,3 +1442,47 @@
   color: #15803d;
   font-weight: 800;
 }
+/* 합치기 확인창 — 지시서 눌러 크게 보기 */
+.efb-merge-thumb--zoom {
+  cursor: zoom-in;
+}
+.efb-merge-thumb--zoom:hover {
+  outline: 2px solid #38bdf8;
+  outline-offset: -2px;
+}
+.efb-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 1480;
+  background: rgba(5, 10, 16, 0.8);
+  display: grid;
+  place-items: center;
+  animation: efb-fade 0.15s ease;
+}
+.efb-zoom-box {
+  width: min(1200px, 94vw);
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: #0f1620;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.efb-zoom-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  color: #fff;
+  font-size: 14px;
+}
+.efb-zoom-head span {
+  flex: 1;
+  color: var(--efb-mute);
+  font-size: 13px;
+}
+.efb-zoom-ws {
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+}

@@ -103,6 +103,9 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   // merge = 합친 명세서로 묶어 저장, separate = 이 지시서에만 따로.
   const [mergeChoice, setMergeChoice] = useState<Record<number, 'merge' | 'separate'>>({});
   const [mergeAsk, setMergeAsk] = useState<{ orderId: number; nos: string[]; loading: boolean; others: number[] } | null>(null);
+  // 합치기 확인창 — 홈페이지에 이미 등록된 주문의 지시서(사진 보여주기용, 주문번호 핵심 → 지시서 정보)
+  const [savedWs, setSavedWs] = useState<Record<string, EfBulkOrder>>({});
+  const [zoomWs, setZoomWs] = useState<EfBulkOrder | null>(null); // 합치기 확인창에서 눌러 크게 보는 지시서
   // 사람이 넣은 단서(키워드·사이즈) — 지시서별. 넣은 지시서는 단서로 가려내고, 안 넣은 건 지금 방식대로.
   const [cluesState, setClues] = useState<Record<number, string[]>>({});
   const clues = cluesState;
@@ -424,8 +427,32 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           const m = matches[orderId];
           const rd = reads[m.best!.key];
           findEasyformMatch(token, orderId, rd?.date || m.best!.row.date, rd?.total || m.best!.row.total).then((gs) => {
-            const more = gs.flatMap((g) => g.orders.map((o) => orderNoCore(o.orderNumber)));
+            const list = gs.flatMap((g) => g.orders).filter((o) => o.id !== orderId);
+            const more = list.map((o) => orderNoCore(o.orderNumber));
             setMergeAsk((a) => (a && a.orderId === orderId ? { ...a, nos: [...new Set([...a.nos, ...more])], loading: false } : a));
+            // 이미 등록된 주문의 지시서 사진 — 공개 지시서 정보(PDF·썸네일 주소)를 받아 카드에 띄운다
+            list.forEach((o) => {
+              const core = orderNoCore(o.orderNumber);
+              if (savedWs[core]) return;
+              fetch(`${BASE_URL}/api/public/worksheets/${encodeURIComponent(o.orderNumber)}`)
+                .then((r) => (r.ok ? r.json() : null))
+                .then((j) => {
+                  if (!j) return;
+                  setSavedWs((prev) => ({
+                    ...prev,
+                    [core]: {
+                      id: o.id,
+                      orderNumber: o.orderNumber,
+                      title: j.title ?? null,
+                      dueDate: j.dueDate ?? null,
+                      clientCompanyName: j.companyName ?? null,
+                      worksheetPdfUrl: j.worksheetPdfUrl ?? null,
+                      worksheetThumbnailUrl: j.worksheetThumbnailUrl ?? null,
+                    } as EfBulkOrder,
+                  }));
+                })
+                .catch(() => {});
+            });
           });
         }
         return;
@@ -881,7 +908,14 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
         const card = (o: EfBulkOrder | undefined, label: string) =>
           o ? (
             <div className="efb-merge-ws" key={o.id}>
-              <div className="efb-merge-thumb">
+              <div
+                className="efb-merge-thumb efb-merge-thumb--zoom"
+                role="button"
+                tabIndex={0}
+                title="눌러서 크게 보기"
+                onClick={() => setZoomWs(o)}
+                onKeyDown={(e) => e.key === 'Enter' && setZoomWs(o)}
+              >
                 <WorksheetThumbnail pdfUrl={o.worksheetPdfUrl || null} thumbnailUrl={o.worksheetThumbnailUrl || null} />
               </div>
               <div className="efb-merge-cap">
@@ -919,14 +953,18 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
               <div className="efb-merge-row">
                 {card(me, '이 지시서')}
                 {peers.map((p) => card(p, '같은 명세서 지시서'))}
-                {savedNos.map((no) => (
+                {savedNos.map((no) =>
+                  savedWs[no] ? (
+                    card(savedWs[no], '이미 등록된 지시서')
+                  ) : (
                   <div className="efb-merge-ws efb-merge-ws--saved" key={no}>
                     <div className="efb-merge-thumb efb-merge-thumb--empty">이미 등록됨</div>
                     <div className="efb-merge-cap">
                       <b>이미 등록된 지시서</b> · {no}
                     </div>
                   </div>
-                ))}
+                  ),
+                )}
               </div>
               <div className="efb-ask-btns">
                 <button type="button" className="efb-ask-cancel" onClick={() => setMergeAsk(null)}>
@@ -943,6 +981,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           </div>
         );
       })()}
+
+      {zoomWs && <WsZoom order={zoomWs} onClose={() => setZoomWs(null)} />}
 
       {closeAsk && (
         <div className="efb-ask" role="dialog" aria-label="닫기 확인" onClick={() => setCloseAsk(false)}>
@@ -1202,6 +1242,37 @@ function Hl({ text, kw, spec }: { text: string; kw: string[]; spec: boolean }) {
   });
   if (at < t.length) out.push(t.slice(at));
   return <>{out}</>;
+}
+
+/** 합치기 확인창에서 지시서를 눌렀을 때 — 화면 가득 크게. Esc·바깥·✕ 로 닫음(아래 확인창은 그대로). */
+function WsZoom({ order, onClose }: { order: EfBulkOrder; onClose: () => void }) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // 확인창까지 닫히지 않게(창 쪽 Esc 처리보다 먼저 받음)
+      onClose();
+    };
+    window.addEventListener('keydown', h, true);
+    return () => window.removeEventListener('keydown', h, true);
+  }, [onClose]);
+  return (
+    <div className="efb-zoom" role="dialog" aria-label="지시서 크게 보기" onClick={onClose}>
+      <div className="efb-zoom-box" onClick={(e) => e.stopPropagation()}>
+        <div className="efb-zoom-head">
+          <b>{order.clientCompanyName || ''}</b>
+          <span>
+            {order.title || ''} · {orderNoCore(order.orderNumber)}
+            {order.dueDate ? ` · ${shortDate(order.dueDate)} 납` : ''}
+          </span>
+          <button type="button" className="efb-x efb-x--light" onClick={onClose} aria-label="닫기">✕</button>
+        </div>
+        <div className="efb-zoom-ws">
+          <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function FitWorksheet({ pdfUrl, thumbUrl, title }: { pdfUrl?: string | null; thumbUrl?: string | null; title?: string | null }) {

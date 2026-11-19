@@ -3223,8 +3223,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         <div className="aq-modal-overlay" role="dialog" aria-modal="true">
           <Suspense fallback={<div className="aq-modal-loading">명세서 작성기를 불러오는 중…</div>}>
             <AutoQuote
+              key={estimateOrderId}
               orderId={estimateOrderId}
               onClose={() => setEstimateOrderId(null)}
+              onOpenOrder={(id) => setEstimateOrderId(id)}
               onSaved={() => markEstimateSaved(estimateOrderId)}
               onCleared={() => markEstimateCleared(estimateOrderId)}
               onEasyformUploaded={() => markEasyformDone(estimateOrderId)}
