@@ -506,6 +506,10 @@ export function splitClues(text: string): string[] {
 }
 
 const normC = (s: string) => (s || '').replace(/\s+/g, '').toLowerCase();
+// 사이즈 숫자 — 소수점까지 읽는다(153.5). 키워드·이지폼 어느 쪽에 소수점이 있어도 ±5mm·±3% 로 맞춰 보므로
+// 153 ↔ 153.5 는 서로 찾아진다(사용자 지시 2026-11-19).
+const sizeNums = (s: string) => [...(s || '').matchAll(/\d{2,5}(?:\.\d+)?/g)].map((m) => parseFloat(m[0]));
+const SIZE_RE = /^[a-z:]*\d+(\.\d+)?([*x×]\d+(\.\d+)?)*(mm)?$/;
 
 /**
  * 단서가 명세서 줄들에 몇 개 있나.
@@ -517,13 +521,13 @@ export function clueHits(
   rows: { item_code?: string; item?: string; spec?: string; remark?: string }[],
 ): { hit: number; n: number } {
   const cells = rows.flatMap((r) => [r.item_code, r.item, r.spec, r.remark]).map((x) => normC(x || '')).filter(Boolean);
-  const specNumsAll = rows.flatMap((r) => [...(r.spec || '').matchAll(/\d{2,5}/g)].map((m) => +m[0]));
+  const specNumsAll = rows.flatMap((r) => sizeNums(r.spec || ''));
   let hit = 0;
   for (const raw of clues) {
     const c = normC(raw);
     if (!c) continue;
-    const nums = [...c.matchAll(/\d{2,5}/g)].map((m) => +m[0]);
-    const isSize = nums.length > 0 && /^[a-z:]*\d+([*x×]\d+)*(mm)?$/.test(c);
+    const nums = sizeNums(c);
+    const isSize = nums.length > 0 && SIZE_RE.test(c);
     if (isSize) {
       if (nums.every((n) => specNumsAll.some((d) => Math.abs(d - n) <= Math.max(5, n * 0.03)))) hit++;
     } else if (cells.some((x) => x.includes(c) || (x.length >= 3 && c.includes(x)))) {
@@ -543,12 +547,12 @@ export function cellMatches(text: string, clues: string[], isSpec: boolean, dims
   const t = normC(text);
   if (!t) return false;
   const close = (a: number, b: number) => Math.abs(a - b) <= Math.max(5, a * 0.03);
-  const own = [...(text || '').matchAll(/\d{2,5}/g)].map((m) => +m[0]);
+  const own = sizeNums(text || '');
   for (const raw of clues) {
     const c = normC(raw);
     if (!c) continue;
-    const nums = [...c.matchAll(/\d{2,5}/g)].map((m) => +m[0]);
-    const isSize = nums.length > 0 && /^[a-z:]*\d+([*x×]\d+)*(mm)?$/.test(c);
+    const nums = sizeNums(c);
+    const isSize = nums.length > 0 && SIZE_RE.test(c);
     if (isSize) {
       if (isSpec && nums.every((n) => own.some((d) => close(n, d)))) return true;
     } else if (t.includes(c) || (t.length >= 3 && c.includes(t))) {
