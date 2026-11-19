@@ -714,7 +714,31 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                     {state !== 'idle' && <div className={`efb-arrow efb-arrow--${state}`} aria-hidden="true" />}
 
                     {state === 'wait' && <div className="efb-ef efb-ef--wait"><span className="efb-shimmer" />이지폼에서 찾는 중…</div>}
-                    {state === 'none' && <div className="efb-ef efb-ef--none">비슷한 명세서를<br />이지폼에서 못 찾았어요</div>}
+                    {state === 'none' && (() => {
+                      // 키워드가 하나도 안 맞음 = 아직 명세서가 안 끊긴 것으로 봄. 읽어 둔 후보는 [그래도 후보 보기]로.
+                      const readOthers = m?.noClueHit ? m.others.filter((c) => reads[c.key]?.ok) : [];
+                      if (!readOthers.length)
+                        return <div className="efb-ef efb-ef--none">비슷한 명세서를<br />이지폼에서 못 찾았어요</div>;
+                      return (
+                        <div className="efb-ef efb-ef--none">
+                          키워드에 맞는 명세서가 없어요
+                          <br />
+                          <small>아직 명세서를 안 끊은 것 같아요</small>
+                          <button
+                            type="button"
+                            className="efb-secondary efb-ef-peek"
+                            disabled={busy}
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await pickCandidate(o.id, readOthers[0]);
+                              setDetail(o.id);
+                            }}
+                          >
+                            그래도 후보 {readOthers.length}개 보기
+                          </button>
+                        </div>
+                      );
+                    })()}
                     {state === 'unread' && <div className="efb-ef efb-ef--none">읽지 못했어요<br /><small>(작업이 중간에 멈춤)</small></div>}
                     {state === 'fail' && <div className="efb-ef efb-ef--none">{rd?.message || '읽지 못했어요'}</div>}
                     {state === 'ok' && m?.best && (

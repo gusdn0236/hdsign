@@ -1397,3 +1397,10 @@
   white-space: nowrap;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
+/* 키워드 하나도 안 맞음 카드 — [그래도 후보 보기] */
+.efb-ef-peek {
+  display: block;
+  margin: 10px auto 0;
+  padding: 6px 12px;
+  font-size: 12px;
+}

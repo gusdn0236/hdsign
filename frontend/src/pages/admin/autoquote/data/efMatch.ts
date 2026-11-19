@@ -56,6 +56,9 @@ export interface EfMatch {
   sure: boolean; // 거래처 맞고 날짜 가깝고 2등과 차이 큼
   // 합친 명세서 — 같은 이지폼 명세서를 같이 쓰는 다른 주문 id(같은 거래처 지시서 여러 장을 명세서 1장으로 끊은 경우)
   mergedWith?: number[];
+  // 키워드를 넣었는데 읽은 명세서 중 키워드가 하나도 안 맞음 → 1등을 안 고른다(아직 명세서가 안 끊긴 것으로 봄).
+  // 후보는 others 에 그대로 남아 사람이 [그래도 후보 보기]로 골라 볼 수 있다.
+  noClueHit?: boolean;
 }
 
 /**
@@ -455,8 +458,13 @@ export function rescoreByContent(
   pairs.sort((a, b) => (b.c.final ?? b.c.score) - (a.c.final ?? a.c.score));
   const taken = new Set<string>();
   const best = new Map<number, EfCandidate>();
+  // 키워드 넣은 지시서 — 읽은 명세서는 키워드가 1개라도 맞거나 비고에 이 주문번호가 있어야 1등이 될 수 있다.
+  // (도형 수치는 지시서마다 숫자가 많아 엉뚱한 명세서가 맞기 쉽다 → 키워드가 다 빗나가면 '아직 명세서 없음')
+  const clueOk = (id: number, c: EfCandidate) =>
+    !(cluesByOrder[id] || []).length || !reads[c.key]?.ok || c.remark === 'own' || (c.clueHit || 0) > 0;
   for (const { id, c } of pairs) {
     if (best.has(id) || taken.has(c.key)) continue;
+    if (!clueOk(id, c)) continue;
     if (c.usedBy && !hasEvidence(c)) continue; // 이미 저장된 명세서는 근거 있을 때만
     // 읽어 둔 후보가 있으면 안 읽은 후보로는 짝짓지 않는다(보여줄 표가 없음) — 읽은 것 우선
     if (!reads[c.key]?.ok && scored[id].some((x) => reads[x.key]?.ok && !taken.has(x.key))) continue;
@@ -472,7 +480,9 @@ export function rescoreByContent(
   const work = Object.keys(scored).map(Number).map((id) => ({
     id,
     best: best.get(id) || null,
-    cands: scored[id].filter((c) => reads[c.key]?.ok && (c.dimHit || 0) >= 2 && (c.dimHit || 0) / (c.dimN || 1) >= 0.6),
+    cands: scored[id].filter(
+      (c) => reads[c.key]?.ok && clueOk(id, c) && (c.dimHit || 0) >= 2 && (c.dimHit || 0) / (c.dimN || 1) >= 0.6,
+    ),
   }));
   shareLeftovers(work);
   work.forEach((w) => w.best && best.set(w.id, w.best));
@@ -487,7 +497,8 @@ export function rescoreByContent(
       (b.remark === 'own' ||
         (!!b.clueN && b.clueHit === b.clueN && (!second || (second.clueHit || 0) < b.clueN)) ||
         (b.client >= 0.85 && b.days <= 7 && (!second || (b.final ?? b.score) - (second.final ?? second.score) >= 1.5)));
-    out[id] = { ...m, best: b, others, sure };
+    const noClueHit = !b && !!(cluesByOrder[id] || []).length && scored[id].some((c) => reads[c.key]?.ok);
+    out[id] = { ...m, best: b, others, sure, noClueHit: noClueHit || undefined };
   }
   for (const m of markMerged(Object.values(out))) out[m.order.id] = m;
   return out;
