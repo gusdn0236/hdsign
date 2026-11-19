@@ -1044,7 +1044,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           mark(id, 'yes', c);
         };
         return (
-          <div className="efb-ask" role="dialog" aria-label="두 지시서 합치기 확인" onClick={() => setMergeAsk(null)}>
+          <div className="efb-ask" role="dialog" aria-label="지시서 합치기 확인" onClick={() => setMergeAsk(null)}>
             <div className="efb-askbox efb-askbox--wide" onClick={(e) => e.stopPropagation()}>
               <p className="efb-ask-title">같은 현장에 들어간 지시서인가요?</p>
               <p className="efb-ask-sub">
@@ -1061,7 +1061,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                   ''
                 )}
                 .<br />
-                같은 현장이라 명세서 한 장으로 끊은 거라면 <b>두 지시서를 합치세요</b> — 명세서 1장을 같이 쓰고 매출은 한 번만
+                같은 현장이라 명세서 한 장으로 끊은 거라면 <b>지시서를 합치세요</b> — 명세서 1장을 같이 쓰고 매출은 한 번만
                 잡혀요.
               </p>
               <div className="efb-merge-row">
@@ -1088,7 +1088,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                   다른 현장 — 따로 두기
                 </button>
                 <button type="button" className="efb-primary" autoFocus onClick={() => choose('merge')}>
-                  같은 현장 — 두 지시서 합치기
+                  같은 현장 — 지시서 합치기
                 </button>
               </div>
             </div>
