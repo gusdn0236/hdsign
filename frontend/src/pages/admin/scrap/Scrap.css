@@ -848,3 +848,38 @@
   min-height: 0;
   border-left: 1px solid var(--efb-line);
 }
+
+/* 과거 지시서 사진(이지폼 예전 명세서) — 칸 안에 통째로 맞춰서(끝까지 보이게). 단가계산기 탭엔 AutoQuote.css 가 없어 여기서 직접. */
+.sv-ws .lk-zoom {
+  position: absolute;
+  inset: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+}
+.sv-ws .lk-zoom img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  transform-origin: center center;
+}
+
+/* 홈페이지 지시서(PDF·미리보기 사진)도 칸을 넘지 않게 — 비율 유지한 채 끝까지 보이게 */
+.sv-ws .efb-fit,
+.pf-myws .efb-fit,
+.pf .efb-clue-ws .efb-fit {
+  overflow: hidden;
+}
+.sv-ws .efb-fit canvas,
+.sv-ws .efb-fit-img,
+.pf-myws .efb-fit canvas,
+.pf-myws .efb-fit-img {
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain;
+}
