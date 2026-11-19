@@ -452,8 +452,9 @@
 .efb-foot {
   position: relative;
   border-top: 1px solid var(--efb-line);
-  padding: 16px 22px 20px;
-  min-height: 96px;
+  padding: 8px 22px 9px; /* 낮게 — 가운데 지시서·명세서 칸에 세로 공간 더 */
+  min-height: 56px;
+  align-items: center;
   display: flex;
   justify-content: center;
 }
@@ -1646,4 +1647,18 @@
 }
 .efb-pick-ok:hover {
   background: #1d4ed8;
+}
+
+/* 하단 띠 안 버튼·글자 — 낮게 */
+.efb-foot .efb-primary,
+.efb-foot .efb-secondary {
+  height: 38px;
+  font-size: 14px;
+}
+.efb-foot .efb-cta--row {
+  gap: 14px;
+  align-items: center;
+}
+.efb-foot .efb-tally b {
+  font-size: 15px;
 }

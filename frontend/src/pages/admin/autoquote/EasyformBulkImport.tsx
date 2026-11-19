@@ -706,11 +706,11 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
   const detailOrder = detail != null ? orders.find((o) => o.id === detail) : null;
 
   return (
-    <div className="efb" role="dialog" aria-label="이지폼에서 가져오기">
+    <div className="efb" role="dialog" aria-label="이지폼 불러오기">
       <header className="efb-top">
         <div className="efb-title">
           <span className="efb-title-icon" aria-hidden="true">📥</span>
-          이지폼에서 가져오기
+          이지폼 불러오기
         </div>
         <ol className="efb-steps">
           {[
@@ -1278,6 +1278,13 @@ function DetailView({
   // 키워드마다 이 명세서에 있나 — 칩 초록(있음)/빨강(없음)
   const kwHits = keywords.map((k) => ({ k, hit: clueHits([k], rows).hit > 0 }));
   const kwMode = keywords.length > 0;
+  // 발행일 = 납기일이면 키워드 칩 옆에 초록 라벨 하나 더(다르면 안 띄움)
+  const ymd = (d?: string | null) => {
+    const m = String(d || '').match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+    return m ? `${m[1]}${m[2].padStart(2, '0')}${m[3].padStart(2, '0')}` : '';
+  };
+  const issueYmd = ymd(read?.date || best.row.date);
+  const sameDue = !!issueYmd && issueYmd === ymd(order.dueDate);
   const filledCells = grid.reduce((a, g) => a + [g.품목코드, g.품목, g.규격].filter((x) => (x || '').trim()).length, 0);
   const hitCells = hitRows.reduce((a, h) => a + Number(h.code) + Number(h.item) + Number(h.spec), 0);
   const nos = extractOrderNos(rows.map((r) => r.remark || '').join(' '));
@@ -1342,6 +1349,7 @@ function DetailView({
                 {kwHits.map(({ k, hit }) => (
                   <span key={k} className={hit ? 'is-hit' : 'is-miss'}>{hit ? '✓' : '✕'} {k}</span>
                 ))}
+                {sameDue && <span className="is-hit">✓ 발행일 = 납기일</span>}
                 {reasons
                   .filter((r) => r.t.startsWith('비고') || r.t.startsWith('합친'))
                   .map((r, i) => (
