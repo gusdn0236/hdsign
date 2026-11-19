@@ -4157,6 +4157,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             </button>
             )}
             {/* 단가찾아보기(둘러보기) — 계산기 버튼 왼쪽. 과거 명세서를 열어 도장 행 강조 + 다중선택 가져오기. */}
+            <span className="aq-efmenu-hint">과거 단가를 찾아볼게요.</span>
             <button
               type="button"
               className="aq-lookupbtn"
