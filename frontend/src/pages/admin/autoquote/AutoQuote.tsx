@@ -4194,50 +4194,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           </div>
           {/* 이지폼 → 홈페이지 버튼줄 — 헤더 한 줄에 다 넣으면 잘려서 계산기 아래 줄로(오른쪽 정렬). */}
           <div className="aq-h2">
-            {/* [이지폼 불러오기 ▾] — ① 이 지시서 명세서를 이지폼에서 찾아 가져오기 ② 이지폼에 열어 둔 명세서 가져오기 */}
+            {/* [이지폼 불러오기] — 이 지시서 명세서를 이지폼에서 찾아 가져오기(드롭다운 없이 바로) */}
             <span className="aq-efmenu-hint">이지폼에 이미 명세서가 있는지 검색해요.</span>
-            <div className="aq-efmenu" ref={efMenuRef}>
-              <button
-                type="button"
-                className={'aq-calcbtn' + (efMenu || efBulkOpen ? ' on' : '')}
-                onClick={() => setEfMenu((v) => !v)}
-                aria-haspopup="menu"
-                aria-expanded={efMenu}
-                title="이지폼에 있는 명세서를 이 표로 가져와요"
-              >
-                📥 이지폼 불러오기 ▾
-              </button>
-              {efMenu && (
-                <div className="aq-efmenu-list" role="menu">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setEfMenu(false);
-                      if (!order) {
-                        cdlg('주문 상세에서 “명세서작성”으로 들어와야 찾을 수 있어요.', [{ label: '확인', sec: true }]);
-                        return;
-                      }
-                      setEfBulkOpen(true);
-                    }}
-                  >
-                    <b>🔍 이지폼에서 찾기</b>
-                    <small>이지폼에 이미 작성된 이 지시서의 명세서를 찾아서 가져와요</small>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setEfMenu(false);
-                      void pullFromEasyform();
-                    }}
-                  >
-                    <b>📋 열어 둔 명세서 가져오기</b>
-                    <small>이지폼에 지금 띄워 둔 명세서 1장을 그대로 가져와요</small>
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              className={'aq-calcbtn' + (efBulkOpen ? ' on' : '')}
+              onClick={() => {
+                if (!order) {
+                  cdlg('주문 상세에서 “명세서작성”으로 들어와야 찾을 수 있어요.', [{ label: '확인', sec: true }]);
+                  return;
+                }
+                setEfBulkOpen(true);
+              }}
+              title="이지폼에 이미 작성된 이 지시서의 명세서를 찾아서 가져와요"
+            >
+              📥 이지폼 불러오기
+            </button>
             {finder && (
               <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
                 <PriceFinder
