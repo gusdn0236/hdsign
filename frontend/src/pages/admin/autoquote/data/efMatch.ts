@@ -391,10 +391,17 @@ export function specNums(rows: EasyformPulledRow[]): number[] {
  * 같이 읽을 후보 — 1등 + **같은 거래처·납기 ±3일 안** 후보(최대 3개). 그 안에서 규격 치수·비고로 최종 순위.
  * 1등부터 납기와 3일 넘게 떨어져 있으면(납기 근처에 없음) 점수 비슷한 후보를 대신 본다.
  */
-export function candidatesToRead(m: EfMatch, hasClues = false): EfCandidate[] {
+export function candidatesToRead(m: EfMatch, clues: string[] = []): EfCandidate[] {
   const usedNear = m.others.filter((c) => c.usedBy && c.client >= 0.85 && c.days <= 1).slice(0, 2);
-  if (!m.best) return usedNear;
-  return [...new Map([...candidatesToReadInner(m, hasClues), ...usedNear].map((c) => [c.key, c])).values()];
+  // 키워드가 목록의 첫 줄 품목에 들어 있는 후보 = 가장 유력 → 날짜·순위와 상관없이 맨 먼저 읽는다(최대 4개)
+  const kwFirst = clues.length
+    ? [m.best, ...m.others]
+        .filter((c): c is EfCandidate => !!c && clueHits(clues, [{ item: c.row.firstItem }]).hit > 0)
+        .sort((a, b) => clueHits(clues, [{ item: b.row.firstItem }]).hit - clueHits(clues, [{ item: a.row.firstItem }]).hit || b.score - a.score)
+        .slice(0, 4)
+    : [];
+  if (!m.best) return [...new Map([...kwFirst, ...usedNear].map((c) => [c.key, c])).values()];
+  return [...new Map([...kwFirst, ...candidatesToReadInner(m, clues.length > 0), ...usedNear].map((c) => [c.key, c])).values()];
 }
 
 function candidatesToReadInner(m: EfMatch, hasClues: boolean): EfCandidate[] {

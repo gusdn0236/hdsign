@@ -239,7 +239,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       const ownerId: number[] = [];
       const pick = (list: EfMatch[]) =>
         list.flatMap((m) =>
-          candidatesToRead(m, !!clues[m.order.id]?.length)
+          candidatesToRead(m, clues[m.order.id] || [])
             .filter((c) => !seen.has(c.key) && seen.add(c.key))
             .map((c) => {
               owner.push(c.key);
@@ -261,7 +261,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       };
       follow(0);
       dimsWait.current = loadDims(
-        ms.filter((m) => candidatesToRead(m, !!clues[m.order.id]?.length).length > 1).map((m) => m.order as EfBulkOrder),
+        ms.filter((m) => candidatesToRead(m, clues[m.order.id] || []).length > 1).map((m) => m.order as EfBulkOrder),
       );
       if (!items.length) {
         setPhase('review');
