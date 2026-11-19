@@ -382,6 +382,7 @@ export async function syncEstimateFromEasyform(
     source: 'pull' | 'fill' | 'batch';
     efDate?: string; // 이지폼 명세서 발행일 — 같은 명세서 알아보기(지문)
     efTotal?: string; // 이지폼 명세서 합계
+    keepLinked?: boolean; // false = '따로 저장' — 기존 합친 명세서 묶음을 푼다(기본: 같은 명세서면 묶음 유지)
   },
 ): Promise<EasyformSyncResult> {
   const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-sync${editorNameQuery()}`, {

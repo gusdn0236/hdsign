@@ -545,6 +545,34 @@ public class AdminOrderController {
                     "message", nums.isEmpty() ? "주문번호가 없습니다." : "홈페이지에서 주문을 못 찾았습니다.",
                     "notFound", notFound));
         }
+        // 이미 합친 명세서 묶음에 든 주문을 '같은 이지폼 명세서'(거래처|발행일|합계)로 다시 저장하면 묶음을 유지한다
+        // (기존 묶음 주문 + 이번 주문, 대표는 그대로). 예: 이지폼 비고엔 시작 줄 번호 하나만 있어서 가져오기가
+        // 주문 1개로 저장하면 예전엔 묶음이 풀렸다. '따로 저장'(keepLinked=false)일 때만 묶음을 푼다.
+        if (body.path("keepLinked").asBoolean(true)) {
+            String reqKey = efKey(orders.get(0), body.path("efDate").asText(""), body.path("efTotal").asText(""));
+            for (Order o : new ArrayList<>(orders)) {
+                AutoQuoteEstimate e0 = estimateRepository.findByOrderId(o.getId()).orElse(null);
+                Long t = sharedTarget(e0);
+                AutoQuoteEstimate head = t != null ? estimateRepository.findByOrderId(t).orElse(null) : e0;
+                if (head == null) continue;
+                List<Long> ids = linkedOrderIds(head.getGridJson());
+                if (ids.size() < 2) continue;
+                String oldKey = syncedEfKey(head.getGridJson());
+                if (reqKey != null && oldKey != null && !reqKey.equals(oldKey)) continue; // 다른 명세서 → 새로 묶음
+                List<Order> merged = new ArrayList<>();
+                for (Long lid : ids) {
+                    orderRepository.findById(lid).ifPresent(x -> {
+                        if (merged.stream().noneMatch(m -> m.getId().equals(x.getId()))) merged.add(x);
+                    });
+                }
+                for (Order x : orders) {
+                    if (merged.stream().noneMatch(m -> m.getId().equals(x.getId()))) merged.add(x);
+                }
+                orders.clear();
+                orders.addAll(merged);
+                break;
+            }
+        }
         Order primary = orders.get(0);
         AutoQuoteEstimate est = estimateRepository.findByOrderId(primary.getId())
                 .orElseGet(() -> AutoQuoteEstimate.builder().orderId(primary.getId()).build());
@@ -713,6 +741,17 @@ public class AdminOrderController {
         try {
             JsonNode n = OM.readTree(est.getGridJson()).path("sharedWith");
             return n.canConvertToLong() ? n.asLong() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 저장본에 남은 이지폼 명세서 지문(easyformSync.efKey). 없으면 null. */
+    private static String syncedEfKey(String gridJson) {
+        if (gridJson == null) return null;
+        try {
+            String k = OM.readTree(gridJson).path("easyformSync").path("efKey").asText("");
+            return k.isEmpty() ? null : k;
         } catch (Exception e) {
             return null;
         }

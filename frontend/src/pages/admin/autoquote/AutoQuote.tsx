@@ -1962,7 +1962,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             `<div style="font-size:12px;color:#6b7785;margin-top:6px">묶으면 두 주문이 명세서 1장을 같이 쓰고, 매출은 한 번만 잡혀요.</div>`,
           [
             { label: `합친 명세서로 묶기 (${merged.join(' + ')})`, fn: () => onEasyformPulledInner(raw, merged, meta, true) },
-            { label: '이 주문에만 따로 저장', sec: true, fn: () => onEasyformPulledInner(raw, foundNos, meta, confirmed) },
+            { label: '이 주문에만 따로 저장', sec: true, fn: () => onEasyformPulledInner(raw, foundNos, meta, confirmed, true) },
             { label: '취소', sec: true },
           ],
         );
@@ -1976,6 +1976,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     foundNos: string[],
     meta?: EfMeta,
     directSync = false,
+    separate = false, // '이 주문에만 따로 저장' — 기존 합친 명세서 묶음을 푼다
   ) => {
     const own = orderNoCore(order?.orderNumber);
     if (!foundNos.length && !own) {
@@ -1999,6 +2000,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           source: 'pull',
           efDate: meta?.date,
           efTotal: meta?.total,
+          keepLinked: !separate,
         });
         const linkedLabel = res.linked.map((l) => orderNoCore(l.orderNumber)).join(' + ');
         if (applyHere) {
