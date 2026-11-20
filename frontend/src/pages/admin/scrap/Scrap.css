@@ -916,3 +916,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 손잡이로 서랍 밀기/끌어오기 — 손 놓은 뒤 스르륵 */
+html.scrap-anim .scr,
+html.scrap-anim .scr-panel {
+  transition: transform 0.2s ease, left 0.2s ease;
+}
+.scr.is-sliding .scr-fold-tab {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.scrap-anim .scr,
+  html.scrap-anim .scr-panel {
+    transition: none;
+  }
+}

@@ -91,9 +91,29 @@ function Card({
   );
 }
 
-function Panel({ it, token }: { it: ScrapItem; token: string | null | undefined }) {
+const PANEL_MIN = 320;
+const SLIDE_MID = (W_OPEN + W_CLOSED) / 2; // 손을 놓을 때 서랍이 이만큼보다 덜 보이면 접힘, 더 보이면 펼침
+
+/** 참고 창. 손잡이를 끌면 폭 조절 — 최소 폭보다 더 왼쪽으로 밀면 스크랩 서랍이 같이 화면 밖으로 밀려나고,
+ *  접힌 상태에서 화면 절반 너머로 끌어 오면 서랍이 따라 들어온다. 손을 놓을 때 서랍이 절반 넘게 보이면 펼침,
+ *  아니면 접힘(사용자 요청 2026-11-20). dw = 지금 서랍이 보이는 폭. */
+function Panel({
+  it,
+  token,
+  collapsed,
+  dw,
+  onSlide,
+  onRelease,
+}: {
+  it: ScrapItem;
+  token: string | null | undefined;
+  collapsed: boolean;
+  dw: number;
+  onSlide: (dw: number | null) => void;
+  onRelease: (dw: number) => void;
+}) {
   const [w, setW] = useState(loadPanelWidth);
-  const drag = useRef<{ x: number; w: number } | null>(null);
+  const drag = useRef<{ x: number; r: number; dw: number; w: number } | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -104,16 +124,47 @@ function Panel({ it, token }: { it: ScrapItem; token: string | null | undefined 
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
   const onDown = (e: React.PointerEvent) => {
-    drag.current = { x: e.clientX, w };
+    drag.current = { x: e.clientX, r: dw + w, dw, w };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
   const onMove = (e: React.PointerEvent) => {
-    if (!drag.current) return;
-    setW(Math.max(320, Math.min(window.innerWidth - 260, drag.current.w + e.clientX - drag.current.x)));
+    const d = drag.current;
+    if (!d) return;
+    const maxW = window.innerWidth - 260;
+    const r = d.r + e.clientX - d.x; // 참고 창 오른쪽 끝 = 손잡이 위치
+    let nd: number;
+    let nw: number;
+    if (!collapsed) {
+      // 펼친 상태: 최소 폭까지는 폭만, 그보다 왼쪽이면 서랍이 같이 밀려남(0 = 완전히 화면 밖).
+      if (r - W_OPEN >= PANEL_MIN) {
+        nd = W_OPEN;
+        nw = Math.min(maxW, r - W_OPEN);
+      } else {
+        nw = PANEL_MIN;
+        nd = Math.max(0, r - PANEL_MIN);
+      }
+    } else {
+      // 접힌 상태: 화면 절반까지는 폭만, 그 너머로 끌면 서랍이 따라 들어옴.
+      const t = window.innerWidth / 2;
+      if (r <= t) {
+        nd = W_CLOSED;
+        nw = Math.max(PANEL_MIN, r - W_CLOSED);
+      } else {
+        nd = Math.min(W_OPEN, W_CLOSED + (r - t));
+        nw = Math.min(maxW, Math.max(PANEL_MIN, r - nd));
+      }
+    }
+    d.dw = nd;
+    d.w = nw;
+    setW(nw);
+    onSlide(nd === (collapsed ? W_CLOSED : W_OPEN) ? null : nd);
   };
   const onUp = () => {
-    if (drag.current) savePanelWidth(w);
+    const d = drag.current;
     drag.current = null;
+    if (!d) return;
+    savePanelWidth(d.w);
+    onRelease(d.dw);
   };
   return (
     <div className="scr-panel" style={{ width: w }} role="dialog" aria-label="스크랩 참고">
@@ -141,18 +192,48 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
   const dragFrom = useRef<number | null>(null);
   const [askClear, setAskClear] = useState(false);
   const opened = items.find((x) => x.key === openKey) || null;
+  // 손잡이로 끄는 중(또는 손 놓은 뒤 스르륵 움직이는 중) 서랍이 보이는 폭. null = 평소(접힘/펼침 그대로).
+  const [slide, setSlide] = useState<number | null>(null);
+  const animT = useRef<number | undefined>(undefined);
+  const dw = slide ?? (collapsed ? W_CLOSED : W_OPEN);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    root.style.setProperty('--scrap-w', `${collapsed ? W_CLOSED : W_OPEN}px`);
+    root.style.setProperty('--scrap-w', `${dw}px`);
     root.classList.add('has-scrap');
-    return () => {
+  }, [dw]);
+  useEffect(
+    () => () => {
+      const root = document.documentElement;
       root.style.removeProperty('--scrap-w');
-      root.classList.remove('has-scrap');
-    };
-  }, [collapsed]);
+      root.classList.remove('has-scrap', 'scrap-anim');
+      window.clearTimeout(animT.current);
+    },
+    [],
+  );
 
-  if (collapsed) {
+  /** 손을 놓으면 절반 기준으로 접힘/펼침 쪽으로 스르륵. */
+  const release = (at: number) => {
+    const open = at >= SLIDE_MID;
+    if (at === (collapsed ? W_CLOSED : W_OPEN) && open === !collapsed) {
+      setSlide(null);
+      return;
+    }
+    const root = document.documentElement;
+    root.classList.add('scrap-anim');
+    setSlide(open ? W_OPEN : W_CLOSED);
+    window.clearTimeout(animT.current);
+    animT.current = window.setTimeout(() => {
+      scrap.setCollapsed(!open);
+      setSlide(null);
+      window.setTimeout(() => root.classList.remove('scrap-anim'), 30);
+    }, 220);
+  };
+  const panel = opened && (
+    <Panel key={opened.key} it={opened} token={token} collapsed={collapsed} dw={dw} onSlide={setSlide} onRelease={release} />
+  );
+
+  if (collapsed && slide === null) {
     // 서랍을 접어도 펼쳐 둔 참고 창은 그대로 — ✕ 로 닫을 때만 닫힘(사용자 결정 2026-11-20).
     // 참고 창은 --scrap-w(접힘 34px) 바로 옆에 붙으므로 접으면 왼쪽 공간이 그만큼 넓어진다.
     return (
@@ -164,14 +245,17 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
             {items.length > 0 && <b>{items.length}</b>}
           </button>
         </aside>
-        {opened && <Panel key={opened.key} it={opened} token={token} />}
+        {panel}
       </>
     );
   }
 
   return (
     <>
-      <aside className="scr">
+      <aside
+        className={'scr' + (slide !== null ? ' is-sliding' : '')}
+        style={slide !== null ? { width: W_OPEN, transform: `translateX(${slide - W_OPEN}px)` } : undefined}
+      >
         <div className="scr-head">
           <span className="scr-title">
             📌 스크랩 {items.length > 0 && <b>{items.length}</b>}
@@ -214,7 +298,7 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
           </div>
         )}
       </aside>
-      {opened && <Panel key={opened.key} it={opened} token={token} />}
+      {panel}
     </>
   );
 }
