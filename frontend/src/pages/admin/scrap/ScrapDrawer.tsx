@@ -105,7 +105,7 @@ function Panel({ it, token }: { it: ScrapItem; token: string | null | undefined 
   }, []);
   const onDown = (e: React.PointerEvent) => {
     drag.current = { x: e.clientX, w };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
   const onMove = (e: React.PointerEvent) => {
     if (!drag.current) return;
@@ -128,7 +128,10 @@ function Panel({ it, token }: { it: ScrapItem; token: string | null | undefined 
         </button>
       </div>
       <ScrapViewer token={token} item={it} />
-      <div className="scr-panel-grip" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} title="끌어서 폭 조절" />
+      <div className="scr-panel-grip" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} title="끌어서 폭 조절">
+        {/* 세로 가운데 손잡이 — 끌 수 있는 곳임을 보이게(회색 ‖) */}
+        <span className="scr-panel-handle" aria-hidden="true" />
+      </div>
     </div>
   );
 }
