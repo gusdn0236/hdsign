@@ -4172,10 +4172,10 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         try:
             ok = messagebox.askyesno(
                 "지난 날짜",
-                f"{due.month}월 {due.day}일은 이미 지난 날짜예요.\n"
+                f"입력한 납기날짜({due.month}월 {due.day}일)가 {(date.today() - due).days}일 전이에요.\n"
                 "그래도 진행할까요?\n\n"
                 "(진행하면 이 지시서는 바로 '작업완료'로 들어가요.)",
-                parent=dlg, default="no",
+                parent=dlg, default="yes",
             )
         except Exception:
             return True
@@ -4191,6 +4191,13 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         return bool(ok)
 
     def confirm(_event=None, skip_print=False):
+        # Enter 는 칸과 창 양쪽에 걸려 연달아 두 번 불린다 — 이미 확정됐거나 창이 닫혔으면 무시
+        # (지난 납기 질문이 두 번 뜨는 것 방지).
+        try:
+            if result.get("value") is not None or not dlg.winfo_exists():
+                return
+        except Exception:
+            return
         # 라디오에서 [종이만 인쇄] 를 골랐다면 매칭/납기 검증 없이 종이만 출력하고 끝낸다.
         # 호출 측은 sel.get("order_number") is None + intent=="paper_only" 로 알아챈다.
         if intent_var.get() == "paper_only":
