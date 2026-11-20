@@ -2881,6 +2881,156 @@ def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
+    """납기 월/일 칸을 '마우스로' 누르면 칸 위에 작은 달력을 띄운다(사용자 요청 2026-11-20).
+    날짜를 누르면 월·일 칸에 그대로 들어가고 달력은 닫힌다. 키보드(Tab·자동 포커스)로 들어오면
+    안 뜬다 — 타이핑하는 사람을 방해하지 않게. Esc·바깥 클릭이면 그냥 닫힘.
+    외부 라이브러리(tkcalendar) 없이 tk 기본 위젯만 쓴다(워처 exe 번들 그대로)."""
+    import calendar as _cal
+
+    state: dict = {"pop": None, "prev_grab": None}
+    WD = ["일", "월", "화", "수", "목", "금", "토"]
+
+    def _close(_e=None):
+        pop = state.get("pop")
+        state["pop"] = None
+        if pop is None:
+            return
+        try:
+            pop.grab_release()
+        except Exception:
+            pass
+        try:
+            pop.destroy()
+        except Exception:
+            pass
+        prev = state.get("prev_grab")
+        state["prev_grab"] = None
+        try:
+            if prev is not None and prev.winfo_exists():
+                prev.grab_set()
+        except Exception:
+            pass
+
+    def _current() -> date:
+        try:
+            m = int((month_var.get() or "").strip())
+            d = int((day_var.get() or "").strip())
+            return resolve_new_due_date_md("", m, d)
+        except Exception:
+            return date.today()
+
+    def _open(_e=None):
+        if state.get("pop") is not None:
+            return
+        anchor = month_entry
+        top = anchor.winfo_toplevel()
+        pop = tk.Toplevel(top)
+        pop.overrideredirect(True)
+        try:
+            pop.attributes("-topmost", True)
+        except Exception:
+            pass
+        pop.configure(bg="#cbd5e1")
+        state["pop"] = pop
+        sel = _current()
+        view = {"y": sel.year, "m": sel.month}
+        body = tk.Frame(pop, bg="white", padx=6, pady=6)
+        body.pack(padx=1, pady=1)
+        head = tk.Frame(body, bg="white")
+        head.pack(fill="x")
+        title = tk.Label(head, text="", bg="white", fg="#0f172a", font=("맑은 고딕", 11, "bold"))
+        grid = tk.Frame(body, bg="white")
+        grid.pack(pady=(4, 0))
+
+        def _pick(dd: date):
+            month_var.set(str(dd.month))
+            day_var.set(str(dd.day))
+            _close()
+            try:
+                day_entry.focus_set()
+                day_entry.icursor("end")
+            except Exception:
+                pass
+
+        def _render():
+            for w in grid.winfo_children():
+                w.destroy()
+            y, m = view["y"], view["m"]
+            title.config(text=f"{y}년 {m}월")
+            for i, wd in enumerate(WD):
+                tk.Label(grid, text=wd, bg="white", width=3,
+                         fg="#dc2626" if i == 0 else ("#2563eb" if i == 6 else "#64748b"),
+                         font=("맑은 고딕", 9)).grid(row=0, column=i)
+            today = date.today()
+            weeks = _cal.Calendar(firstweekday=6).monthdatescalendar(y, m)
+            for r, week in enumerate(weeks, start=1):
+                for c, dd in enumerate(week):
+                    other = dd.month != m
+                    is_sel, is_today = dd == sel, dd == today
+                    bg = "#0f766e" if is_sel else ("#e0f2fe" if is_today else "white")
+                    fg = "white" if is_sel else ("#cbd5e1" if other else
+                                                 ("#dc2626" if c == 0 else ("#2563eb" if c == 6 else "#0f172a")))
+                    b = tk.Label(grid, text=str(dd.day), width=3, bg=bg, fg=fg, cursor="hand2",
+                                 font=("맑은 고딕", 10, "bold" if (is_sel or is_today) else "normal"))
+                    b.grid(row=r, column=c, padx=1, pady=1)
+                    b.bind("<Button-1>", lambda _e, x=dd: _pick(x))
+
+        def _shift(k: int):
+            m = view["m"] + k
+            view["y"] += (m - 1) // 12
+            view["m"] = (m - 1) % 12 + 1
+            _render()
+
+        prev_b = tk.Label(head, text="◀", bg="white", fg="#334155", cursor="hand2", font=("맑은 고딕", 10))
+        next_b = tk.Label(head, text="▶", bg="white", fg="#334155", cursor="hand2", font=("맑은 고딕", 10))
+        prev_b.pack(side="left", padx=4)
+        next_b.pack(side="right", padx=4)
+        title.pack(side="left", expand=True)
+        prev_b.bind("<Button-1>", lambda _e: _shift(-1))
+        next_b.bind("<Button-1>", lambda _e: _shift(1))
+        _render()
+
+        # 칸 바로 위(화면 위로 넘치면 아래)에 띄운다.
+        pop.update_idletasks()
+        pw, ph = pop.winfo_reqwidth(), pop.winfo_reqheight()
+        ax, ay = anchor.winfo_rootx(), anchor.winfo_rooty()
+        y = ay - ph - 4
+        if y < 0:
+            y = ay + anchor.winfo_height() + 4
+        pop.geometry(f"+{max(0, ax - 10)}+{y}")
+
+        # 바깥 클릭 = 닫기. 다이얼로그가 grab 을 쥐고 있으므로 잠시 달력으로 옮겼다가 닫을 때 돌려준다.
+        try:
+            state["prev_grab"] = pop.grab_current()
+            pop.grab_set()
+        except Exception:
+            state["prev_grab"] = None
+
+        def _outside(e):
+            # 날짜 칸 클릭도 여기로 같이 온다(bindtags) — 이미 닫혔으면 무시.
+            if state.get("pop") is not pop:
+                return
+            try:
+                x0, y0 = pop.winfo_rootx(), pop.winfo_rooty()
+                inside = x0 <= e.x_root < x0 + pop.winfo_width() and y0 <= e.y_root < y0 + pop.winfo_height()
+            except Exception:
+                return
+            if not inside:
+                _close()
+
+        pop.bind("<Button-1>", _outside, add="+")
+        pop.bind("<Escape>", _close)
+        try:
+            pop.focus_set()
+        except Exception:
+            pass
+
+    for ent in (month_entry, day_entry):
+        # 마우스 클릭(포커스 이동 뒤)에만 연다 — after_idle 로 Entry 기본 클릭 처리 후에.
+        ent.bind("<Button-1>", lambda _e, w=ent: w.after_idle(_open), add="+")
+
+
 def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                               existing_worksheets: list[dict],
                               qr_order_number: str | None = None,
@@ -3233,6 +3383,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             )
 
         new_month_var.trace_add("write", _maybe_advance_month_to_day)
+        _attach_date_picker(new_month_entry, new_day_entry, new_month_var, new_day_var)
         new_day_var.trace_add("write", _refresh_new_due_preview)
         _refresh_new_due_preview()
 
@@ -3657,6 +3808,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             _refresh_mod_due_preview()
 
         month_var_local.trace_add("write", _maybe_advance_month_to_day_mod)
+        _attach_date_picker(month_e, day_e, month_var_local, day_var_local)
         day_var_local.trace_add("write", _refresh_mod_due_preview)
         _refresh_mod_due_preview()
 
