@@ -1936,6 +1936,77 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 if _EF_PULL["state"] == "waiting":
                     _EF_PULL["state"] = "idle"
 
+    # ── 이지폼 저장 자동반영(easyform_autosync) — "홈페이지에도 반영할까요?" 크게 묻기 ──
+    # 작은 MessageBox 는 놓치기 쉬움(사용자 2026-11-20: 화면에 확실하게 떠야) → 화면 어둡게 + 가운데 큰 카드
+    # + 맨 앞으로 강제. Enter = 예, Esc = 아니오. 답은 holder(ev, ans)로 일하는 스레드에 돌려준다.
+    ask_dim = tk.Toplevel(root)
+    ask_dim.overrideredirect(True)
+    ask_dim.geometry(f"{sw}x{sh}+0+0")
+    ask_dim.configure(bg="#000000")
+    ask_dim.attributes("-alpha", 0.4)
+    ask_dim.attributes("-topmost", True)
+    ask_dim.withdraw()
+    ask = tk.Toplevel(root)
+    ask.overrideredirect(True)
+    ask.attributes("-topmost", True)
+    ask.configure(bg=accent)  # 테두리 색
+    ask_in = tk.Frame(ask, bg="#ffffff", padx=int(34 * s), pady=int(26 * s))
+    ask_in.pack(fill="both", expand=True, padx=int(4 * s), pady=int(4 * s))
+    tk.Label(ask_in, text="🧾  이지폼에 명세서를 저장했어요", font=("맑은 고딕", int(14 * s), "bold"),
+             fg="#374151", bg="#ffffff").pack(anchor="w")
+    ask_client = tk.Label(ask_in, text="", font=("맑은 고딕", int(12 * s)), fg="#6b7280", bg="#ffffff")
+    ask_client.pack(anchor="w", pady=(int(4 * s), 0))
+    tk.Label(ask_in, text="홈페이지에도 반영할까요?", font=("맑은 고딕", int(24 * s), "bold"),
+             fg="#111827", bg="#ffffff").pack(anchor="w", pady=(int(14 * s), int(6 * s)))
+    tk.Label(ask_in, text="[예]를 누르면 명세서를 읽는 동안(2~3초) 마우스가 잠깁니다.",
+             font=("맑은 고딕", int(11 * s)), fg="#6b7280", bg="#ffffff").pack(anchor="w")
+    ask_btns = tk.Frame(ask_in, bg="#ffffff")
+    ask_btns.pack(fill="x", pady=(int(22 * s), 0))
+    ask_state = {"holder": None}
+
+    def ask_answer(ans: bool):
+        h = ask_state["holder"]
+        ask_state["holder"] = None
+        ask.withdraw()
+        ask_dim.withdraw()
+        if h:
+            h["ans"] = ans
+            h["ev"].set()
+
+    ask_yes = tk.Button(ask_btns, text="예, 반영할게요  (Enter)", font=("맑은 고딕", int(15 * s), "bold"),
+                        bg=accent, fg="white", activebackground=accent_dark, activeforeground="white",
+                        relief="flat", bd=0, padx=int(22 * s), pady=int(12 * s), cursor="hand2",
+                        command=lambda: ask_answer(True))
+    ask_yes.pack(side="left", expand=True, fill="x", padx=(0, int(10 * s)))
+    tk.Button(ask_btns, text="아니오  (Esc)", font=("맑은 고딕", int(13 * s)), bg="#e5e7eb", fg="#374151",
+              activebackground="#d1d5db", relief="flat", bd=0, padx=int(18 * s), pady=int(12 * s),
+              cursor="hand2", command=lambda: ask_answer(False)).pack(side="left")
+    ask.bind("<Return>", lambda _e: ask_answer(True))
+    ask.bind("<KP_Enter>", lambda _e: ask_answer(True))
+    ask.bind("<Escape>", lambda _e: ask_answer(False))
+    ask.withdraw()
+
+    def ask_show(holder, client=""):
+        if ask_state["holder"]:  # 앞 질문이 남아 있으면 아니오로 정리
+            old = ask_state["holder"]
+            old["ans"] = False
+            old["ev"].set()
+        ask_state["holder"] = holder
+        ask_client.config(text=client)  # '11월 20일 발행 · 합계 1원'
+        ask_dim.deiconify()
+        ask_dim.lift()
+        ask.update_idletasks()
+        aw, ah = ask.winfo_reqwidth(), ask.winfo_reqheight()
+        ask.geometry(f"{aw}x{ah}+{(sw - aw) // 2}+{(sh - ah) // 2}")
+        ask.deiconify()
+        ask.lift()
+        try:  # (알림음은 안 씀 — 사용자 2026-11-20)
+            ef_force_foreground(ctypes.windll.user32.GetAncestor(ask.winfo_id(), 2))
+        except Exception:
+            pass
+        ask.focus_force()
+        ask_yes.focus_set()
+
     btn.config(command=on_btn)
     done_btn.config(command=hide_overlay)
     win.protocol("WM_DELETE_WINDOW", on_close)
@@ -1988,6 +2059,11 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     else:
                         show_done(ok, msg, ok_text=f"✅ {n}줄을 가져왔어요.\n홈페이지 명세서 화면에서 확인하세요.")
                     logging.info("이지폼 가져오기 %s — %s", "성공" if ok else "실패/중단", msg)
+                elif cmd[0] == "auto_ask":  # 이지폼 저장 자동반영 — "홈페이지에도 반영할까요?"
+                    ask_show(cmd[1], cmd[2] if len(cmd) > 2 else "")
+                elif cmd[0] == "auto_ask_cancel":
+                    if ask_state["holder"] is cmd[1]:
+                        ask_answer(False)
                 elif cmd[0] == "auto_overlay":  # 이지폼 저장 자동반영(easyform_autosync) — 읽는/적는 동안 잠금 안내
                     if not busy["v"]:
                         show_overlay(cmd[1])
@@ -2003,5 +2079,6 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         root.after(120, poll)
 
     root.after(120, poll)
+    globals()["EF_ASK_READY"] = True  # easyform_autosync 가 큰 질문 카드를 쓸 수 있음(없으면 MessageBox)
     threading.Thread(target=_ef_hotkey_watcher, daemon=True).start()
     logging.info("이지폼 '채우기' UI 준비됨(평소 숨김, 스테이징 시 표시). DPI %.2fx", EF_DPI_SCALE)

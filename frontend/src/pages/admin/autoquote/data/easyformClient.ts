@@ -414,8 +414,8 @@ export const claimEfAuto = (id: number) => efAutoPost<{ ok: boolean }>(`claim?id
 /** 제목에 title 글자가 든 브라우저 창을 맨 앞으로(직원은 이지폼을 보고 있으니까). */
 export const frontEfAuto = (title: string) => efAutoPost<{ ok: boolean }>('front', { title }).then((r) => !!r?.ok);
 
-/** 아직 열려 있는 그 이지폼 명세서 비고에 주문번호를 적고 저장. */
-export const stampEfAuto = (id: number, nos: string[]) =>
-  efAutoPost<{ ok: boolean; message?: string; row?: number; remark?: string; skipped?: boolean }>('stamp', { id, nos }).then(
+/** 아직 열려 있는 그 이지폼 명세서 비고에 주문번호를 적고 저장. row = 그 줄에(합친 명세서의 새 지시서 시작 줄), 없으면 첫 빈 비고. */
+export const stampEfAuto = (id: number, nos: string[], row?: number) =>
+  efAutoPost<{ ok: boolean; message?: string; row?: number; remark?: string; skipped?: boolean }>('stamp', { id, nos, row }).then(
     (r) => r || { ok: false, message: '워처가 응답하지 않아요' },
   );

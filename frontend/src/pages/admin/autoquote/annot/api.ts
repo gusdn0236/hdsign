@@ -652,3 +652,17 @@ export interface EasyformCandidateOrder {
   hasEstimate?: boolean;
   deletedAt?: string | null;
 }
+
+/** 주문번호들 → 지시서 카드(3년 보관분 전체). 명세서 탭 똑똑한 검색과 같은 API(주문번호만). */
+export async function findOrdersByNumbers(
+  token: string | null | undefined,
+  nos: string[],
+): Promise<EasyformCandidateOrder[]> {
+  if (!nos.length) return [];
+  const qs = new URLSearchParams();
+  nos.forEach((n) => qs.append('order', n));
+  const res = await fetch(`${BASE_URL}/api/admin/orders/statement-search?${qs}`, { headers: authHeaders(token) });
+  if (!res.ok) throw new Error(`주문을 못 찾았어요 (${res.status})`);
+  const j = await res.json();
+  return Array.isArray(j?.items) ? j.items : [];
+}

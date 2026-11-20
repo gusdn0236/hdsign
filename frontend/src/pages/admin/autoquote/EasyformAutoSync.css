@@ -125,6 +125,35 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 합친 명세서 — 밑에 새로 쓴 줄 */
+.efas-rows tr.is-new td {
+  background: #fef9c3;
+}
+.efas-newtag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #ca8a04;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.efas-same {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--efas-line);
+  font-size: 13px;
+}
+.efas-btn.same {
+  background: var(--efas-soft);
+  border-color: #c4b5fd;
+  color: var(--efas-accent);
+}
+
 /* 지시서 고르기 */
 .efas-pick {
   flex: 1;
@@ -316,6 +345,7 @@
 @media (max-width: 640px) {
   .efas-head,
   .efas-stmt,
+  .efas-same,
   .efas-pick,
   .efas-foot {
     padding-left: 16px;

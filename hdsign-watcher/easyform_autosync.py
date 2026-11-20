@@ -293,8 +293,7 @@ def _handle_save(form, t_click: float) -> None:
         logging.info("이지폼 저장 감지 — %s", why)
         if not ok:
             return
-        if not ef.ef_confirm("이지폼에 명세서를 저장했어요.\n\n홈페이지에도 반영할까요?\n\n"
-                             "[예]를 누르면 명세서를 읽는 동안(2~3초) 마우스가 잠깁니다.", "홈페이지 반영"):
+        if not _ask_reflect(form):
             logging.info("이지폼 저장 자동반영 — 사람이 [아니오]")
             return
         if not bulk._shown(form) or bulk._popups(main):
@@ -312,6 +311,27 @@ def _handle_save(form, t_click: float) -> None:
             _STATE["busy"] = False
 
 
+def _ask_reflect(form) -> bool:
+    """"홈페이지에도 반영할까요?" — 워처 화면이 있으면 큰 카드(화면 어둡게 + 가운데 + 맨 앞, Enter=예/Esc=아니오),
+    없으면(GUI 미설치) Windows 확인창. 10분 답 없으면 아니오."""
+    if getattr(ef, "EF_ASK_READY", False):
+        info = ""
+        try:
+            date, total = bulk._form_header(form)
+            m = ef._re.match(r"\d{4}\.(\d{1,2})\.(\d{1,2})", date or "")
+            info = (f"{int(m.group(1))}월 {int(m.group(2))}일 발행" if m else date) + (f" · 합계 {total}원" if total else "")
+        except Exception:
+            pass
+        holder = {"ev": threading.Event(), "ans": False}
+        ef._EF_UI_QUEUE.put(("auto_ask", holder, info))
+        if holder["ev"].wait(600):
+            return bool(holder["ans"])
+        ef._EF_UI_QUEUE.put(("auto_ask_cancel", holder))
+        return False
+    return ef.ef_confirm("이지폼에 명세서를 저장했어요.\n\n홈페이지에도 반영할까요?\n\n"
+                         "[예]를 누르면 명세서를 읽는 동안(2~3초) 마우스가 잠깁니다.", "홈페이지 반영")
+
+
 def _overlay(text: "str | None") -> None:
     try:
         ef._EF_UI_QUEUE.put(("auto_overlay", text) if text else ("auto_overlay_hide",))
@@ -320,6 +340,13 @@ def _overlay(text: "str | None") -> None:
 
 
 def _read_saved(main, form) -> "dict | None":
+    # 읽기 전에 명세서 창을 기준 위치(이지폼 자동입력과 같은 EF_FORM_HOME)로 — 매번 같은 조건에서 OCR·표 읽기
+    # (사용자 지시 2026-11-20: 창이 잘리거나 엉뚱한 곳에 있어도 거래처명을 똑같이 읽게). 포커스는 안 건드림.
+    try:
+        ef._ef_move_to_screen(form, ef.EF_FORM_HOME[0], ef.EF_FORM_HOME[1])
+        time.sleep(0.25)
+    except Exception:
+        logging.exception("명세서 창 기준 위치 이동 실패(그 자리에서 읽음)")
     date, total = bulk._form_header(form)
     shot = _capture_client(form)  # 거래처명 영역 이미지(OCR 은 읽는 동안 옆에서)
     ocr: dict = {}
@@ -531,7 +558,8 @@ def handle_front(body: dict) -> dict:
 
 
 def handle_stamp(body: dict) -> dict:
-    """POST /easyform/autosync/stamp {id, nos:[주문번호]} — 아직 열려 있는 그 명세서의 비고에 주문번호를 적고 저장.
+    """POST /easyform/autosync/stamp {id, nos:[주문번호], row?} — 아직 열려 있는 그 명세서의 비고에 주문번호를 적고 저장.
+    row 를 주면 그 줄(합친 명세서의 새 지시서 시작 줄), 없으면
     비고 빈 칸 = 내용 있는 첫 줄(일괄 가져오기와 같은 규칙). 예상 밖이면 저장 안 함."""
     if not ef.EASYFORM_AVAILABLE:
         return {"ok": False, "message": "이 PC 에서는 이지폼 자동화를 쓸 수 없어요."}
@@ -560,11 +588,17 @@ def handle_stamp(body: dict) -> dict:
         rows = ev["rows"]
         if any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
             return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
-        cand = [i for i, r in enumerate(rows) if bulk._has_content(r) and not (r.get("remark") or "").strip()]
-        if not cand:
-            return {"ok": False, "message": "이지폼 명세서에 빈 비고 칸이 없어서 안 적었어요."}
-        row = cand[0]
-        it = {"row": row, "item": rows[row].get("item") or "", "remark": "", "rowCount": len(rows), "nos": nos}
+        want_row = (body or {}).get("row")
+        if isinstance(want_row, int) and 0 <= want_row < len(rows):
+            # 합친 명세서 — 밑에 새로 쓴 줄(다른 지시서)의 첫 줄에 그 지시서 번호(기존 비고 뒤에 붙임)
+            row = want_row
+        else:
+            cand = [i for i, r in enumerate(rows) if bulk._has_content(r) and not (r.get("remark") or "").strip()]
+            if not cand:
+                return {"ok": False, "message": "이지폼 명세서에 빈 비고 칸이 없어서 안 적었어요."}
+            row = cand[0]
+        it = {"row": row, "item": rows[row].get("item") or "", "remark": (rows[row].get("remark") or "").strip(),
+              "rowCount": len(rows), "nos": nos}
         _overlay("이지폼 비고에 주문번호를 적는 동안 마우스가 잠깁니다.")
         ef.ef_guard_start()
         try:
