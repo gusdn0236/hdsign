@@ -544,16 +544,55 @@ def handle_events(after: int) -> dict:
     return {"available": bool(ef.EASYFORM_AVAILABLE and _STATE["started"]), "events": evs, "busy": busy}
 
 
-def handle_claim(eid: int) -> dict:
-    """POST /easyform/autosync/claim?id=N — 이 PC 의 홈페이지 탭이 여러 개여도 한 탭만 카드를 띄우게."""
+def handle_claim(eid: int, tab: str = "") -> dict:
+    """POST /easyform/autosync/claim?id=N&tab=T — 이 PC 의 홈페이지 탭이 여러 개여도 한 탭만 카드를 띄우게.
+    release 한 탭(안 보이는 탭)은 같은 건을 다시 못 가져간다(새로 연 탭이 가져가게)."""
     with _LOCK:
         for e in _STATE["events"]:
             if e["id"] == eid:
-                if e["claimed"]:
+                if e["claimed"] or (tab and tab in e.get("noTabs", ())):
                     return {"ok": False}
                 e["claimed"] = True
                 return {"ok": True}
     return {"ok": False}
+
+
+def handle_release(eid: int, tab: str = "") -> dict:
+    """POST /easyform/autosync/release?id=N&tab=T — 카드를 가져간 탭이 브라우저에서 **안 보이는 탭**이라 앞으로
+    못 띄움 → 내려놓고 관리자 페이지를 새 탭으로 연다(새 탭은 저절로 맨 앞 + 이 건을 가져가 카드를 띄움)."""
+    with _LOCK:
+        ev = next((e for e in _STATE["events"] if e["id"] == eid), None)
+        if not ev:
+            return {"ok": False}
+        ev["claimed"] = False
+        ev.setdefault("noTabs", [])
+        if tab:
+            ev["noTabs"].append(tab)
+    logging.info("이지폼 저장 자동반영 — 홈페이지 탭이 안 보여서 관리자 페이지를 새 탭으로 엶")
+    try:
+        webbrowser.open(ADMIN_URL)
+    except Exception:
+        logging.exception("관리자 페이지 열기 실패")
+    return {"ok": True}
+
+
+def handle_back(eid: int) -> dict:
+    """POST /easyform/autosync/back?id=N — 카드에서 다 끝남 → 이지폼 명세서 창을 다시 맨 앞으로(사용감)."""
+    with _LOCK:
+        ev = next((e for e in _STATE["events"] if e["id"] == eid), None)
+    if not ev or not ef.EASYFORM_AVAILABLE:
+        return {"ok": False}
+    form = ev["form"]
+    main = _main_of(form)
+    if not main:
+        return {"ok": False}
+    ok = ef.ef_force_foreground(main)
+    try:
+        if bulk._shown(form):
+            ef._user32.BringWindowToTop(form)
+    except Exception:
+        pass
+    return {"ok": bool(ok)}
 
 
 def handle_front(body: dict) -> dict:

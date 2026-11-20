@@ -96,12 +96,18 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 abody = {}
             act = parsed.path.rsplit("/", 1)[-1]
+            aq = parse_qs(parsed.query)
+            try:
+                aid = int((aq.get("id") or ["0"])[0] or 0)
+            except ValueError:
+                aid = 0
+            atab = (aq.get("tab") or [""])[0][:40]
             if act == "claim":
-                try:
-                    aid = int((parse_qs(parsed.query).get("id") or ["0"])[0] or 0)
-                except ValueError:
-                    aid = 0
-                self._json(200, easyform_autosync.handle_claim(aid))
+                self._json(200, easyform_autosync.handle_claim(aid, atab))
+            elif act == "release":
+                self._json(200, easyform_autosync.handle_release(aid, atab))
+            elif act == "back":
+                self._json(200, easyform_autosync.handle_back(aid))
             elif act == "front":
                 self._json(200, easyform_autosync.handle_front(abody))
             elif act == "stamp":

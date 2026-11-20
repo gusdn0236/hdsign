@@ -409,7 +409,15 @@ async function efAutoPost<T>(path: string, body?: unknown): Promise<T | null> {
 }
 
 /** 이 PC 의 홈페이지 탭이 여러 개여도 한 탭만 카드를 띄우게 — 먼저 가져간 탭이 true. */
-export const claimEfAuto = (id: number) => efAutoPost<{ ok: boolean }>(`claim?id=${id}`).then((r) => !!r?.ok);
+export const claimEfAuto = (id: number, tab: string) =>
+  efAutoPost<{ ok: boolean }>(`claim?id=${id}&tab=${encodeURIComponent(tab)}`).then((r) => !!r?.ok);
+
+/** 이 탭이 브라우저에서 안 보여 앞으로 못 띄움 → 내려놓기. 워처가 관리자 페이지를 새 탭으로 열고, 새 탭이 가져간다. */
+export const releaseEfAuto = (id: number, tab: string) =>
+  efAutoPost<{ ok: boolean }>(`release?id=${id}&tab=${encodeURIComponent(tab)}`).then((r) => !!r?.ok);
+
+/** 카드에서 다 끝남 → 이지폼 명세서 창을 다시 맨 앞으로. */
+export const backEfAuto = (id: number) => efAutoPost<{ ok: boolean }>(`back?id=${id}`).then((r) => !!r?.ok);
 
 /** 제목에 title 글자가 든 브라우저 창을 맨 앞으로(직원은 이지폼을 보고 있으니까). */
 export const frontEfAuto = (title: string) => efAutoPost<{ ok: boolean }>('front', { title }).then((r) => !!r?.ok);

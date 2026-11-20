@@ -17,6 +17,8 @@ const SLOW_MS = 20000; // 워처가 없거나 옛 버전이면
 export default function EasyformAutoSync({ token }: { token: string | null | undefined }) {
   const [queue, setQueue] = useState<EfAutoEvent[]>([]);
   const lastId = useRef(0);
+  // 이 탭 표시 — 안 보이는 탭이 내려놓은 건을 다시 가져가지 않게
+  const tab = useRef(Math.random().toString(36).slice(2, 10));
 
   useEffect(() => {
     if (!token || isDemoToken(token)) return;
@@ -28,7 +30,7 @@ export default function EasyformAutoSync({ token }: { token: string | null | und
       if (r?.events?.length) {
         for (const ev of r.events) {
           lastId.current = Math.max(lastId.current, ev.id);
-          if (await claimEfAuto(ev.id)) setQueue((q) => [...q, ev]);
+          if (await claimEfAuto(ev.id, tab.current)) setQueue((q) => [...q, ev]);
         }
       }
       if (alive) timer = setTimeout(tick, r?.available ? FAST_MS : SLOW_MS);
@@ -48,6 +50,7 @@ export default function EasyformAutoSync({ token }: { token: string | null | und
         key={cur.id}
         ev={cur}
         token={token}
+        tab={tab.current}
         more={queue.length - 1}
         onClose={() => setQueue((q) => q.slice(1))}
       />

@@ -19,7 +19,15 @@ import {
   syncEstimateFromEasyform,
   type EasyformCandidateOrder,
 } from './annot/api';
-import { extractOrderNos, frontEfAuto, orderNoCore, stampEfAuto, type EfAutoEvent } from './data/easyformClient';
+import {
+  backEfAuto,
+  extractOrderNos,
+  frontEfAuto,
+  orderNoCore,
+  releaseEfAuto,
+  stampEfAuto,
+  type EfAutoEvent,
+} from './data/easyformClient';
 import { clientSim, efRowsToGrid, normClient, rememberClientAlias } from './data/efMatch';
 import './EasyformAutoSync.css';
 
@@ -29,6 +37,7 @@ const WorksheetThumbnail = WorksheetThumbnailJs as unknown as ComponentType<any>
 interface Props {
   ev: EfAutoEvent;
   token: string | null | undefined;
+  tab: string; // 이 탭 표시(내려놓기용)
   more: number; // 뒤에 기다리는 저장 수
   onClose: () => void;
 }
@@ -70,7 +79,13 @@ interface Added {
   base: EasyformCandidateOrder; // 원래 지시서(비고 번호의 첫 주문)
 }
 
-export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Props) {
+export default function EasyformAutoSyncModal({ ev, token, tab, more, onClose: drop }: Props) {
+  // 닫을 땐 언제나 이지폼 명세서 창으로 돌아간다(직원은 이지폼에서 일하던 중 — 사용자 2026-11-20)
+  const onClose = useCallback(() => {
+    backEfAuto(ev.id);
+    drop();
+  }, [ev.id, drop]);
+  const [ready, setReady] = useState(false); // 이 탭이 앞으로 나왔음 → 그때부터 반영 시작
   const { token: ctxToken } = useAuth();
   const tk = token || ctxToken;
   const [phase, setPhase] = useState<Phase>(ev.nos.length ? 'check' : 'pick');
@@ -80,6 +95,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null);
   const [added, setAdded] = useState<Added | null>(null);
+  const [other, setOther] = useState(false); // 새 줄 = 다른 지시서 → 고르기 목록 펼침
   const [msg, setMsg] = useState<{ main: string; sub?: string; warn?: string }>({ main: '' });
   const baseRef = useRef<EasyformCandidateOrder | null>(null); // 비고 번호의 (첫) 지시서
 
@@ -96,10 +112,24 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
     const old = document.title;
     const mark = `이지폼 명세서 확인 #${ev.id}`;
     document.title = `🧾 ${mark}`;
-    frontEfAuto(mark);
+    let alive = true;
+    (async () => {
+      const ok = await frontEfAuto(mark);
+      if (!alive) return;
+      if (!ok && document.visibilityState === 'hidden') {
+        // 브라우저에서 안 보이는 탭(다른 탭 뒤) → 앞으로 못 띄움. 내려놓으면 워처가 관리자 페이지를 새 탭으로 열고
+        // 새 탭(저절로 맨 앞)이 이 건을 가져가 카드를 띄운다. 이 탭은 아무것도 반영하지 않고 조용히 빠진다.
+        await releaseEfAuto(ev.id, tab);
+        if (alive) drop();
+        return;
+      }
+      setReady(true);
+    })();
     return () => {
+      alive = false;
       document.title = old;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ev.id]);
 
   /** 반영. stamp = 이지폼 비고에 먼저 적을 것(지시서·번호·줄). 못 적어도 홈페이지 반영은 한다. */
@@ -155,7 +185,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
 
   // ① 비고에 번호 → 홈페이지 저장본과 비교: 밑에 번호 없는 새 줄이 붙었으면 묻고, 아니면 바로 반영.
   useEffect(() => {
-    if (phase !== 'check') return;
+    if (!ready || phase !== 'check') return;
     (async () => {
       try {
         const orders = await findOrdersByNumbers(tk, ev.nos);
@@ -182,11 +212,11 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
       if (!ok) setPhase('pick'); // 홈페이지에서 그 번호를 못 찾음 → 직접 고르기
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [ready]);
 
   // 후보 지시서 — 고르기 화면이나 새 줄 묻기 화면에서
   useEffect(() => {
-    if (phase !== 'pick' && phase !== 'added') return;
+    if (!ready || (phase !== 'pick' && phase !== 'added')) return;
     let alive = true;
     setCands(null);
     getEasyformCandidates(tk, ev.date, days)
@@ -200,12 +230,12 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase === 'pick' || phase === 'added', days]);
+  }, [ready, phase === 'pick' || phase === 'added', days]);
 
   // 다 끝나면 잠깐 보여 주고 닫기
   useEffect(() => {
     if (phase !== 'done' || msg.warn) return;
-    const t = setTimeout(onClose, 3500);
+    const t = setTimeout(onClose, 2500); // 잠깐 보여 주고 이지폼으로 돌아감
     return () => clearTimeout(t);
   }, [phase, msg.warn, onClose]);
 
@@ -249,16 +279,21 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
   };
 
   const busy = phase === 'saving' || phase === 'check';
-  const choosing = phase === 'pick' || phase === 'added';
+  const choosing = phase === 'pick' || (phase === 'added' && other); // 지시서 카드 목록을 보여줄 때
   const baseNo = added ? orderNoCore(added.base.orderNumber) : '';
   const title =
     phase === 'pick'
-      ? '홈페이지 어느 지시서의 명세서인가요?'
+      ? '어느 지시서의 명세서인가요?'
       : phase === 'added'
-        ? `밑에 새로 쓴 ${added?.count}줄은 어느 지시서 내용인가요?`
+        ? `추가한 ${added?.count}줄은 어느 지시서 건가요?`
         : phase === 'done' || phase === 'error'
           ? msg.main
           : '홈페이지에 반영하는 중…';
+  const who = ev.client || added?.base.clientCompanyName || '';
+  const price = (v: string) => (v ? `${Number(v.replace(/,/g, '')).toLocaleString('ko-KR')}원` : '');
+  const sameSave = () => {
+    if (added) save(ev.nos, ev.nos.length === 1 ? { o: added.base, move: true } : undefined);
+  };
 
   return (
     <div className="efas" role="dialog" aria-modal="true" aria-label="이지폼 명세서 홈페이지 반영">
@@ -266,7 +301,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
         <header className="efas-head">
           <div>
             <p className="efas-kicker">
-              이지폼에 저장한 명세서{ev.bizName ? ` · ${ev.bizName.replace(/\(\d{3}-\d{2}-\d{5}\)/, '')}` : ''}
+              이지폼 명세서{who ? ` · ${who}` : ''} · {fmtDay(ev.date)}
               {more > 0 && <span className="efas-more">+{more}건 대기</span>}
             </p>
             <h2 className="efas-title">{title}</h2>
@@ -276,54 +311,69 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
           </button>
         </header>
 
-        <section className="efas-stmt" aria-label="이지폼 명세서">
-          <div className="efas-stmt-meta">
-            <span className="efas-client">{ev.client || '거래처 못 읽음'}</span>
-            <span>{fmtDay(ev.date)} 발행</span>
-            <b>{won(ev.total || sum)}</b>
-            <span className="efas-mute">{grid.length}줄</span>
-            {ev.nos.length > 0 && <span className="efas-mute">비고 번호 {ev.nos.join(', ')}</span>}
-          </div>
-          <div className="efas-rows">
+        {phase === 'added' && added ? (
+          // 추가한 줄만 크게
+          <section className="efas-newbox" aria-label="추가한 줄">
+            <p className="efas-newbox-label">추가한 줄</p>
             <table>
-              <thead>
-                <tr>
-                  <th>품목</th>
-                  <th>규격</th>
-                  <th className="num">수량</th>
-                  <th className="num">단가</th>
-                </tr>
-              </thead>
               <tbody>
-                {grid.map((r, i) => {
-                  const isNew = phase === 'added' && added && i >= added.from;
-                  return (
-                    <tr key={i} className={isNew ? 'is-new' : undefined}>
-                      <td>
-                        {isNew && i === added!.from && <span className="efas-newtag">새 줄</span>}
-                        {r.품목 || r.품목코드}
-                      </td>
-                      <td>{r.규격}</td>
-                      <td className="num">{r.수량}</td>
-                      <td className="num">{r.단가 ? Number(r.단가.replace(/,/g, '')).toLocaleString('ko-KR') : ''}</td>
-                    </tr>
-                  );
-                })}
+                {grid.slice(added.from).map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.품목 || r.품목코드}</td>
+                    <td>{r.규격}</td>
+                    <td className="num">{r.수량}</td>
+                    <td className="num">{price(r.단가)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
-          </div>
-        </section>
+          </section>
+        ) : (
+          <section className="efas-stmt" aria-label="이지폼 명세서">
+            <div className="efas-stmt-meta">
+              <span className="efas-client">{ev.client || '거래처 못 읽음'}</span>
+              <span>{fmtDay(ev.date)}</span>
+              <b>{won(ev.total || sum)}</b>
+            </div>
+            {phase === 'pick' && (
+              <div className="efas-rows">
+                <table>
+                  <tbody>
+                    {grid.map((r, i) => (
+                      <tr key={i}>
+                        <td>{r.품목 || r.품목코드}</td>
+                        <td>{r.규격}</td>
+                        <td className="num">{r.수량}</td>
+                        <td className="num">{price(r.단가)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
 
-        {phase === 'added' && added && (
-          <div className="efas-same">
-            <button
-              type="button"
-              className="efas-btn same"
-              onClick={() => save(ev.nos, ev.nos.length === 1 ? { o: added.base, move: true } : undefined)}
-            >
-              기존 지시서({baseNo}) 내용이에요
+        {phase === 'added' && added && !other && (
+          <div className="efas-choice">
+            <button type="button" className="efas-opt" onClick={sameSave}>
+              <div className="efas-opt-thumb">
+                <WorksheetThumbnail
+                  pdfUrl={added.base.worksheetPdfUrl}
+                  thumbnailUrl={added.base.worksheetThumbnailUrl}
+                  rootMargin="300px 0px"
+                />
+              </div>
+              <b>같은 지시서</b>
+              <span>{baseNo}</span>
             </button>
-            <span className="efas-mute">다른 지시서 내용이면 아래에서 골라주세요 — 새 줄 첫 행 비고에 그 주문번호를 적어요.</span>
+            <button type="button" className="efas-opt other" onClick={() => setOther(true)}>
+              <div className="efas-opt-plus" aria-hidden="true">
+                ＋
+              </div>
+              <b>다른 지시서</b>
+              <span>골라서 함께 반영</span>
+            </button>
           </div>
         )}
 
@@ -331,23 +381,19 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
           <section className="efas-pick">
             <div className="efas-tools">
               <span className="efas-hint">
-                {phase === 'added' ? (
-                  <>
-                    {fmtDay(ev.date)} 앞뒤 {days}일 다른 지시서
-                  </>
-                ) : clientKnown ? (
-                  <>
-                    <b>{ev.client}</b> · {fmtDay(ev.date)} 앞뒤 {days}일 지시서
-                  </>
+                {phase === 'added' || !clientKnown ? (
+                  '비슷한 날짜 지시서'
                 ) : (
-                  <>거래처가 같은 지시서를 못 찾아서 날짜 가까운 순으로 보여드려요</>
+                  <>
+                    <b>{ev.client}</b> 지시서
+                  </>
                 )}
               </span>
               <input
                 className="efas-search"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="거래처·주문번호로 찾기"
+                placeholder="거래처·주문번호 찾기"
                 aria-label="거래처나 주문번호로 지시서 찾기"
               />
             </div>
@@ -355,7 +401,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
               <p className="efas-empty">지시서를 찾는 중…</p>
             ) : visible.length ? (
               <ul className="efas-grid">
-                {visible.slice(0, 24).map(({ o, gap }) => (
+                {visible.slice(0, 24).map(({ o }) => (
                   <li key={o.id}>
                     <button
                       type="button"
@@ -370,32 +416,31 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
                         <span className="efas-cand-client">{o.clientCompanyName || '거래처 없음'}</span>
                         <span className="efas-cand-sub">
                           {orderNoCore(o.orderNumber)} · 납기 {fmtDay(o.dueDate) || '없음'}
-                          {gap === 0 ? '' : ` (${gap}일 차이)`}
                         </span>
                         {o.title && <span className="efas-cand-title">{o.title}</span>}
-                        <span className="efas-badges">
-                          {o.hasEstimate && <i className="b-est">명세서 있음 → 덮어씀</i>}
-                          {o.deletedAt && <i className="b-done">작업완료</i>}
-                        </span>
+                        {(o.hasEstimate || o.deletedAt) && (
+                          <span className="efas-badges">
+                            {o.hasEstimate && <i className="b-est">명세서 있음</i>}
+                            {o.deletedAt && <i className="b-done">완료</i>}
+                          </span>
+                        )}
                       </div>
                     </button>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="efas-empty">
-                {q ? '찾는 지시서가 없어요.' : `${fmtDay(ev.date)} 앞뒤 ${days}일에 지시서가 없어요.`}
-              </p>
+              <p className="efas-empty">{q ? '찾는 지시서가 없어요.' : '지시서가 없어요.'}</p>
             )}
             <div className="efas-wider">
               {!q && hiddenCount > 0 && (
                 <button type="button" onClick={() => setShowAll(true)}>
-                  다른 거래처 지시서도 보기 ({hiddenCount})
+                  다른 거래처도 보기
                 </button>
               )}
               {days < 30 && (
                 <button type="button" onClick={() => setDays(30)}>
-                  날짜 더 넓게(앞뒤 30일)
+                  날짜 넓혀 보기
                 </button>
               )}
             </div>
@@ -413,24 +458,33 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
           </section>
         )}
 
-        {busy && (
-          <div className="efas-busy">
-            {phase === 'check' ? '홈페이지 명세서와 비교하는 중…' : picked ? '이지폼 비고에 주문번호를 적고 홈페이지에 반영하는 중…' : '홈페이지에 반영하는 중…'}
-          </div>
-        )}
+        {busy && <div className="efas-busy">{phase === 'check' ? '확인하는 중…' : '반영하는 중…'}</div>}
 
         <footer className="efas-foot">
-          {choosing ? (
+          {phase === 'added' && !other ? (
+            <button type="button" className="efas-btn ghost" onClick={onClose}>
+              반영 안 함
+            </button>
+          ) : choosing ? (
             <>
-              <button type="button" className="efas-btn ghost" onClick={onClose}>
-                반영 안 함
-              </button>
+              {phase === 'added' ? (
+                <button
+                  type="button"
+                  className="efas-btn ghost"
+                  onClick={() => {
+                    setOther(false);
+                    setPicked(null);
+                  }}
+                >
+                  ← 뒤로
+                </button>
+              ) : (
+                <button type="button" className="efas-btn ghost" onClick={onClose}>
+                  반영 안 함
+                </button>
+              )}
               <button type="button" className="efas-btn primary" disabled={!picked} onClick={confirm}>
-                {picked
-                  ? phase === 'added'
-                    ? `새 줄은 ${orderNoCore(picked.orderNumber)} 지시서예요 — 합쳐서 반영`
-                    : `${orderNoCore(picked.orderNumber)} 지시서가 맞아요`
-                  : '지시서를 골라주세요'}
+                {picked ? `${orderNoCore(picked.orderNumber)} 지시서가 맞아요` : '지시서를 눌러 골라주세요'}
               </button>
             </>
           ) : (
