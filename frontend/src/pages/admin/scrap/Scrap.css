@@ -324,7 +324,7 @@
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 4px;
+  width: 6px;
   transform: translateX(-50%);
   border-radius: 999px;
   background: #94a3b8;
@@ -333,7 +333,7 @@
 }
 .scr-panel-handle:hover::before,
 .scr-panel-handle:active::before {
-  width: 6px;
+  width: 8px;
   background: #e2e8f0;
 }
 
