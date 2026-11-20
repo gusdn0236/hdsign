@@ -1412,8 +1412,9 @@ function DetailView({
                         className={
                           [
                             h.code || h.item || h.spec ? 'has-hit' : '',
-                            // 합친 명세서 — 이 지시서 줄만 또렷하게, 나머지는 흐리게
-                            bandOwner && own !== ownNo && (own != null || bandOwner.includes(ownNo)) ? 'is-otherband' : '',
+                            // 합친 명세서 — 이 지시서 몫이 정해졌을 때만(비고에 이 번호/고른 시작 줄) 나머지 줄 회색.
+                            // 비고에 다른 지시서 번호만 있는 명세서(키워드로 찾은 것 등)는 전체 정상 표시(사용자 지시 2026-11-20).
+                            bandOwner && bandOwner.includes(ownNo) && own !== ownNo ? 'is-otherband' : '',
                             pickMode ? 'is-pickable' : '',
                             pickMode && selA != null && i >= selA && i <= (selB ?? selA) ? 'is-picksel' : '',
                           ]
