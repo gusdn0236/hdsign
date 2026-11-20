@@ -169,16 +169,65 @@ def _mdi_forms(main) -> list:
     return [(h, _cls(h), _txt(h)) for h in _kids(main) if _cls(h).startswith("Tfrm")]
 
 
-def _assert_clean(main, allow=("TfrmListExchange",)) -> None:
-    """우리가 띄운 것 말고 다른 창이 있으면 멈춘다. allow = 있어도 되는 MDI 폼 클래스."""
+def _assert_clean(main, forms_ok: bool = False) -> None:
+    """질문창·경로창이 떠 있으면 멈춘다. 다른 목록 창(발주서 목록 등)은 둬도 된다 — 우리는 화면 좌표가 아니라
+    그 창에 직접 메시지를 보내므로 엉뚱한 클릭이 없다(2026-11-20 실측).
+    forms_ok=False(비고 적고 **저장**하는 단계): 명세서 창이 열려 있으면 멈춘다 — 이지폼은 목록에서 연 명세서를
+    **열려 있던 명세서 창에 덮어 띄운다**(창 1개만 씀, 2026-11-20 실측). 작업자가 고치던 같은 명세서면 그 수정분까지 저장될 수 있음.
+    forms_ok=True(목록 뽑기·읽기): 열려 있어도 진행 — 사람이 다른 명세서를 여는 것과 같은 동작(사용자 결정 2026-11-20).
+    새로작성 중이던 명세서면 이지폼이 저장확인창을 띄우고, 그때는 아무것도 안 누르고 멈춘다(_opened_form)."""
     pops = _popups(main)
     if pops:
         raise Stop(f"이지폼에 '{pops[0][2] or pops[0][1]}' 창이 떠 있어서 멈췄어요. 그 창을 닫고 다시 해주세요.")
     for _h, c, t in _mdi_forms(main):
-        if c not in allow:
-            if c == "TfrmExchange":
-                raise Stop("작성중인 명세서가 있어서 멈췄어요. 명세서를 닫고 실행해주세요.")
+        if c == "TfrmExchange" and not forms_ok:
+            raise Stop("작성중인 명세서가 있어서 멈췄어요. 명세서를 닫고 실행해주세요.")
+        if c == "TfrmSavePath":
             raise Stop(f"이지폼에 '{t or c}' 창이 열려 있어서 멈췄어요. 그 창을 닫고 다시 해주세요.")
+
+
+def _forms(main) -> set:
+    """지금 떠 있는 명세서 창들(사람이 연 것 포함)."""
+    return set(_kids(main, "TfrmExchange"))
+
+
+def _new_form(main, before: set, timeout: float = 6.0):
+    """Enter 뒤 **새로 생긴** 명세서 창만(원래 열려 있던 사람 창은 절대 안 집음)."""
+    return _wait(lambda: next((f for f in _kids(main, "TfrmExchange")
+                               if f not in before and _form_header(f)[0] and "_" not in _form_header(f)[0]), None),
+                 timeout, 0.06)
+
+
+def _headers(main) -> dict:
+    """지금 떠 있는 명세서 창 → (발행일, 첫 금액칸)."""
+    return {f: _form_header(f) for f in _kids(main, "TfrmExchange")}
+
+
+def _opened_form(main, before: dict, date: str, total: str, timeout: float = 6.0):
+    """목록 Enter 뒤 그 명세서가 뜬 창. 이지폼은 명세서 창이 이미 있으면 **그 창에 덮어 띄운다**(2026-11-20 실측)
+    → 새 창이거나, 원래 있던 창의 내용(발행일·금액)이 바뀐 창. 같은 명세서가 이미 떠 있었으면 그 창.
+    저장확인창 등 질문창이 뜨면(새로작성 중이던 명세서) 아무것도 안 누르고 멈춘다."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if _aborted():
+            raise Stop("정지했어요.")
+        if _popups(main):
+            raise Stop("이지폼에 작성중인 명세서가 있어서 저장확인창이 떴어요. 매크로는 아무것도 안 눌렀어요 — "
+                       "이지폼에서 직접 저장(또는 취소)한 뒤 다시 해주세요.")
+        for f, h in _headers(main).items():
+            if not h[0] or "_" in h[0]:
+                continue
+            if f not in before or h != before[f]:
+                return f
+        time.sleep(0.06)
+    for f, h in before.items():  # 같은 명세서가 원래 떠 있었음 → 내용이 안 바뀐 게 정상
+        if _shown(f) and h[0] == date and _digits(_form_header(f, total)[1]) == _digits(total):
+            return f
+    return None
+
+
+def _gone(form) -> bool:
+    return not _shown(form)
 
 
 def _aborted() -> bool:
@@ -376,11 +425,11 @@ def _export_one(m: dict, year: int, progress) -> list:
     main = m["hwnd"]
     label = "주식회사" if m["biz"] == "corp" else "개인"
     progress(f"{label} 이지폼에서 명세서 목록을 뽑고 있어요")
-    _assert_clean(main)
+    _assert_clean(main, forms_ok=True)
     lst = _open_list(main)
-    _assert_clean(main)
+    _assert_clean(main, forms_ok=True)
     sheet, grid = _ensure_period_tab(lst)
-    _assert_clean(main)  # 탭 바꾸다 다른 창이 뜨면 멈춤
+    _assert_clean(main, forms_ok=True)  # 탭 바꾸다 다른 창이 뜨면 멈춤
     if not grid:
         raise Stop(f"{label} 이지폼 목록 창에서 '기간으로 조회' 탭을 못 찾았어요. 그 탭을 한 번 눌러두고 다시 해주세요.")
     # 기간 — 왼쪽 칸 = 시작, 오른쪽 칸 = 끝. 글자만 바꾼다(WM_SETTEXT).
@@ -401,12 +450,12 @@ def _export_one(m: dict, year: int, progress) -> list:
     _click(_named(sheet, "TButton", "조회"), "조회")
     _wait(lambda: _count_text(lst) and _count_text(lst) != before, 3.0)  # 조건 같으면 안 바뀜 → 시간만
     time.sleep(0.6)
-    _assert_clean(main)
+    _assert_clean(main, forms_ok=True)
 
     _click(_named(lst, "TBitBtn", "엑셀(csv)"), "엑셀(csv)")
     dlg = _wait(lambda: next(iter(_kids(main, "TfrmSavePath")), None), 5.0)
     if not dlg:
-        _assert_clean(main)
+        _assert_clean(main, forms_ok=True)
         raise Stop("엑셀(csv) 저장 창이 안 떴어요.")
     edit = next(iter(_kids(dlg, "TEdit")), None)
     path = _txt(edit).strip() if edit else ""
@@ -599,15 +648,19 @@ def _read_form(form) -> list:
     return rows
 
 
-def _close_left_forms(main) -> None:
+def _close_left_forms(main, keep: set) -> None:
     """정지로 멈췄을 때 우리가 열어 둔 명세서(TfrmExchange) 창을 ESC 로 닫는다.
-    순회 전에 _assert_clean 으로 명세서 창이 없음을 확인했으니 지금 떠 있는 건 우리가 연 것(읽기만, 수정 없음).
+    keep = 시작 때 이미 열려 있던 창(사람 것) — 절대 안 건드림. 나머지는 우리가 연 것(읽기만, 수정 없음).
     (정지 표시가 켜져 있어 _wait 를 못 쓰므로 직접 기다린다.) 질문창이 뜨면 아무것도 안 누르고 그대로 둔다."""
+
+    def ours():
+        return [f for f in _kids(main, "TfrmExchange") if f not in keep]
+
     t_end = time.time() + 1.5  # Enter 직후 정지했으면 창이 조금 늦게 뜰 수 있음
-    while time.time() < t_end and not _kids(main, "TfrmExchange"):
+    while time.time() < t_end and not ours():
         time.sleep(0.05)
     for _ in range(3):
-        forms = _kids(main, "TfrmExchange")
+        forms = ours()
         if not forms or _popups(main):
             break
         for form in forms:
@@ -615,9 +668,9 @@ def _close_left_forms(main) -> None:
             target = next(iter(_kids(fgrid, "TAdvInplaceEdit")), None) if fgrid else None
             _key(target or fgrid or form, 0x1B)
         t_end = time.time() + 1.5
-        while time.time() < t_end and _kids(main, "TfrmExchange") and not _popups(main):
+        while time.time() < t_end and ours() and not _popups(main):
             time.sleep(0.05)
-    left = _kids(main, "TfrmExchange")
+    left = ours()
     logging.info("이지폼 일괄: 정지 — 열려 있던 명세서 창 정리 %s", "완료" if not left else f"실패({len(left)}개 남음)")
 
 
@@ -647,10 +700,11 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
                            "message": ("주식회사" if biz == "corp" else "개인") + " 이지폼이 꺼져 있어요."})
             continue
         main = m["hwnd"]
-        _assert_clean(main)
+        _assert_clean(main, forms_ok=True)
+        keep = _forms(main)  # 시작 때 사람이 열어 둔 명세서 — 정지 정리 때도 안 건드림
         lst = _open_list(main)
         _sheet, grid = _ensure_period_tab(lst)
-        _assert_clean(main)
+        _assert_clean(main, forms_ok=True)
         if not grid:
             raise Stop("목록 창의 '기간으로 조회' 표를 못 찾았어요.")
         # 맨 위로 — 표 보기 맨 위 + 첫 줄 클릭(거래처명 칸) + Home + PageUp 여러 번
@@ -670,10 +724,10 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
             fgrid = next(iter(_kids(form, "TAdvStringGrid")), None)
             target = next(iter(_kids(fgrid, "TAdvInplaceEdit")), None) if fgrid else None
             _key(target or fgrid or form, 0x1B)
-            closed = _wait(lambda: not _kids(main, "TfrmExchange"), 1.5, 0.05)
+            closed = _wait(lambda: _gone(form), 1.5, 0.05)
             if not closed and not _popups(main) and fgrid and _shown(fgrid):
                 _key(fgrid, 0x1B)  # 편집칸 ESC 는 편집만 끝낼 수 있음 → 표에 한 번 더
-                closed = _wait(lambda: not _kids(main, "TfrmExchange"), 2.5, 0.05)
+                closed = _wait(lambda: _gone(form), 2.5, 0.05)
             if not closed or _popups(main):
                 raise Stop(f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
 
@@ -693,10 +747,10 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
                         time.sleep(0.012)
                     cur = idx
                     time.sleep(0.3)
-                    _assert_clean(main)
+                    _assert_clean(main, forms_ok=True)
+                    before = _headers(main)
                     _key(grid, 0x0D)  # Enter = 열기(목록 표에서만)
-                    form = _wait(lambda: next((f for f in _kids(main, "TfrmExchange")
-                                               if _form_header(f)[0] and "_" not in _form_header(f)[0]), None), 6.0, 0.06)
+                    form = _opened_form(main, before, it.get("date", ""), want)
                     if not form:
                         raise Stop(f"{it.get('date', '')} 명세서가 안 열려서 멈췄어요.")
                     # 열린 직후엔 합계가 잠깐 '0' — 목록의 합계가 뜰 때까지(최대 2.5초) 기다린 뒤 비교·읽기.
@@ -722,7 +776,7 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
                 done += 1
         except Stop:
             if _aborted():
-                _close_left_forms(main)  # [정지]/창 닫기 — 읽다 만 명세서 창을 남기지 않는다
+                _close_left_forms(main, keep)  # [정지]/창 닫기 — 읽다 만 명세서 창을 남기지 않는다(사람 창은 둠)
             raise
 
 
@@ -1006,12 +1060,12 @@ def _stamp_items(items: list, progress, on_result) -> None:
             time.sleep(0.012)
         time.sleep(0.3)
         _assert_clean(main)
+        before = _forms(main)
         _key(grid, 0x0D)
-        form = _wait(lambda: next((f for f in _kids(main, "TfrmExchange")
-                                   if _form_header(f)[0] and "_" not in _form_header(f)[0]), None), 6.0, 0.06)
+        want_total = str(it.get("total") or "")
+        form = _new_form(main, before)
         if not form:
             raise Stop(f"{it.get('date', '')} 명세서가 안 열려서 멈췄어요.")
-        want_total = str(it.get("total") or "")
         _wait(lambda: _digits(_form_header(form, want_total)[1]) == _digits(want_total), 2.5, 0.05)
         date, tot = _form_header(form, want_total)
         try:
@@ -1021,13 +1075,14 @@ def _stamp_items(items: list, progress, on_result) -> None:
                 res.update(_stamp_form(main, form, it))
         finally:
             # 저장했으면 그냥 닫힘, 저장 안 했으면 ESC = 변경 버림(실측). 확인창이 떠 있으면 아무것도 안 누름.
-            if _kids(main, "TfrmExchange") and not _popups(main):
+            # ESC 는 **우리가 연 창(form)에만** — 사람이 열어 둔 명세서엔 절대 안 보냄.
+            if not _gone(form) and not _popups(main):
                 fgrid = next(iter(_kids(form, "TAdvStringGrid")), None)
                 target = next(iter(_kids(fgrid, "TAdvInplaceEdit")), None) if fgrid else None
                 _key(target or fgrid or form, 0x1B)
-                if not _wait(lambda: not _kids(main, "TfrmExchange"), 2.0, 0.05) and fgrid and not _popups(main):
+                if not _wait(lambda: _gone(form), 2.0, 0.05) and fgrid and not _popups(main):
                     _key(fgrid, 0x1B)
-                    _wait(lambda: not _kids(main, "TfrmExchange"), 2.5, 0.05)
+                    _wait(lambda: _gone(form), 2.5, 0.05)
         logging.info("이지폼 비고 적기 %s: %s", it.get("key"), res)
         on_result(res)
 
