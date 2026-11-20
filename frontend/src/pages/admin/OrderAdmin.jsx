@@ -2370,7 +2370,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             </h3>
             {linkFilter && (
               <div className="stmt-linkfilter">
-                🔗 합친 명세서 묶음만 보는 중 — 지시서 {statementOrders.length}장
+                🔗 명세서 한개에 전부 함께 작성된 지시서들이에요.
                 {statementOrders.length < linkFilter.length ? ` (전체 ${linkFilter.length}장 중 불러온 것만)` : ""}
                 <button type="button" onClick={() => setLinkFilter(null)}>전체 보기</button>
               </div>
