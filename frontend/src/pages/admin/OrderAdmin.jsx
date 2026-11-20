@@ -419,13 +419,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [stmtResult, setStmtResult] = useState(null); // {items, matches, truncated, tookMs}
   const [stmtSearching, setStmtSearching] = useState(false);
   const [stmtSort, setStmtSort] = useState("recent"); // recent | low | high
-  // 명세서 탭 카드 순서 — new(최신 업로드순, 기본) | old(오래된 업로드순) | due(납기날짜순, 날짜마다 선으로 나눔). 이 PC 에 기억.
+  // 명세서 탭 카드 순서 — due(납기날짜순, 기본 — 날짜마다 선으로 나눔) | new(최신 업로드순) | old(오래된 업로드순). 이 PC 에 기억.
   const [stmtOrder, setStmtOrder] = useState(() => {
     try {
       const v = localStorage.getItem("hd.stmtOrder");
-      return v === "old" || v === "due" ? v : "new";
+      return v === "old" || v === "new" ? v : "due";
     } catch {
-      return "new";
+      return "due";
     }
   });
   const changeStmtOrder = (v) => {
@@ -2292,9 +2292,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 aria-label="카드 순서"
                 title="카드 순서 — 납기날짜순은 오늘·내일처럼 납기가 가까운 것부터, 날짜마다 선으로 나눠요(지난 납기는 그 뒤)"
               >
+                <option value="due">납기날짜순</option>
                 <option value="new">최신 업로드순</option>
                 <option value="old">오래된순</option>
-                <option value="due">납기날짜순</option>
               </select>
               {isOrderPage && (
                 <>
