@@ -4106,28 +4106,35 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         {/* 우측 이지폼 grid */}
         <div className="aq-side">
           {linkedOrders.length > 1 && (() => {
-            const others = linkedOrders.filter((l) => l.id !== order?.id);
+            // 지시서가 만들어진 순서(주문 id = 등록 순)로 1번째·2번째… — 주문번호보다 알아보기 쉽게(사용자 요청 2026-11-20)
+            const seq = [...linkedOrders].sort((x, y) => x.id - y.id);
             return (
               <div className="aq-linked">
                 <div className="aq-linked-title">
-                  🔗 합친 명세서 — 이 명세서를 쓰는 지시서가 <b>{others.length}개</b> 더 있어요
+                  🔗 합친 명세서 - 총 <b>{seq.length}개</b>의 지시서가 같이 작성되었어요.
                 </div>
                 <div className="aq-linked-sub">
-                  주문 {linkedOrders.map((l) => orderNoCore(l.orderNumber)).join(' + ')} 이(가) 이 명세서 1장을 같이 씁니다
+                  총 {seq.length}장의 지시서가 같은 현장이에요. 명세서도 같이 작성되어있어요.
                 </div>
-                {onOpenOrder && others.length > 0 && (
+                {onOpenOrder && (
                   <div className="aq-linked-btns">
-                    {others.map((l) => (
-                      <button
-                        type="button"
-                        key={l.id}
-                        className="aq-linked-go"
-                        onClick={() => onOpenOrder(l.id)}
-                        title="그 지시서의 명세서작성으로 옮겨가요"
-                      >
-                        {orderNoCore(l.orderNumber)} 지시서로 가기 →
-                      </button>
-                    ))}
+                    {seq.map((l, i) =>
+                      l.id === order?.id ? (
+                        <span key={l.id} className="aq-linked-go is-current" title={`주문 ${orderNoCore(l.orderNumber)}`}>
+                          {i + 1}번째 지시서 (지금)
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          key={l.id}
+                          className="aq-linked-go"
+                          onClick={() => onOpenOrder(l.id)}
+                          title={`주문 ${orderNoCore(l.orderNumber)} — 그 지시서의 명세서작성으로 옮겨가요`}
+                        >
+                          {i + 1}번째 지시서로 가기 →
+                        </button>
+                      ),
+                    )}
                   </div>
                 )}
               </div>

@@ -137,6 +137,12 @@
 .aq-linked-go:hover {
   background: #1d4ed8;
 }
+.aq-linked-go.is-current,
+.aq-linked-go.is-current:hover {
+  background: #fff;
+  color: #1d4ed8;
+  cursor: default;
+}
 /* 이지폼 찾기 — 주문번호로 못 찾았을 때 단서로 고르기. */
 .aq-clue {
   width: min(720px, calc(100vw - 32px));
