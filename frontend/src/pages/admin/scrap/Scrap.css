@@ -301,36 +301,40 @@
 .scr-panel-grip {
   position: absolute;
   top: 0;
-  right: -4px;
+  right: 0;
   bottom: 0;
-  width: 8px;
-  cursor: ew-resize;
+  width: 0;
+  pointer-events: none; /* 가장자리 선 자체는 안 잡힘 — 손잡이만 */
 }
-.scr-panel-grip:hover {
-  background: rgba(10, 147, 150, 0.35);
-}
-/* 손잡이 — 오른쪽 가장자리 세로 가운데, 회색 알약 안에 세로줄 두 개(‖) */
+/* 손잡이 — 오른쪽 가장자리 세로 가운데의 얇은 회색 막대. 잡기 쉽게 투명 여백을 둘러 실제 잡는 폭은 넓게. */
 .scr-panel-handle {
   position: absolute;
   top: 50%;
-  left: 50%;
-  width: 14px;
-  height: 52px;
+  left: 0;
+  width: 20px;
+  height: 64px;
   transform: translate(-50%, -50%);
-  border: 1px solid #94a3b8;
-  border-radius: 7px;
-  background: #cbd5e1 linear-gradient(90deg,
-      transparent 4px, #64748b 4px, #64748b 5px, transparent 5px,
-      transparent 8px, #64748b 8px, #64748b 9px, transparent 9px);
-  background-size: 100% 26px;
-  background-position: center;
-  background-repeat: no-repeat;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
 }
-.scr-panel-grip:hover .scr-panel-handle {
-  border-color: #0a9396;
-  background-color: #e2e8f0;
+.scr-panel-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 4px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: #94a3b8;
+  box-shadow: 0 0 0 1px rgba(15, 22, 32, 0.6);
+  transition: background 0.15s, width 0.15s;
+}
+.scr-panel-handle:hover::before,
+.scr-panel-handle:active::before {
+  width: 6px;
+  background: #e2e8f0;
 }
 
 /* ── 지시서 + 명세서 보기 (참고 창·단가찾아보기 크게 보기) ── */
