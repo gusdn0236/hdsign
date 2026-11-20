@@ -3447,3 +3447,11 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   font-weight: 700;
   cursor: pointer;
 }
+.order-card-link.on {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+.order-card-link.on:hover {
+  background: #1d4ed8;
+}

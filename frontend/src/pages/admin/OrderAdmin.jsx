@@ -1912,11 +1912,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             ) : order.linkedOrderIds?.length > 1 ? (
               <button
                 type="button"
-                className="order-card-link"
-                title={`합친 명세서 — 지시서 ${order.linkedOrderIds.length}장이 명세서 1장을 같이 써요. 누르면 이 묶음만 보여요`}
+                className={"order-card-link" + (linkFilter && linkFilter.includes(order.id) ? " on" : "")}
+                title={
+                  linkFilter && linkFilter.includes(order.id)
+                    ? "누르면 전체 보기로 돌아가요"
+                    : `합친 명세서 — 지시서 ${order.linkedOrderIds.length}장이 명세서 1장을 같이 써요. 누르면 이 묶음만 보여요`
+                }
                 aria-label="합친 명세서 묶음만 보기"
                 onClick={(e) => {
                   e.stopPropagation();
+                  // 이 묶음만 보는 중에 다시 누르면 전체 보기로
+                  if (linkFilter && linkFilter.includes(order.id)) {
+                    setLinkFilter(null);
+                    return;
+                  }
                   setLinkFilter(order.linkedOrderIds);
                   setActiveFilter("STATEMENT");
                 }}
