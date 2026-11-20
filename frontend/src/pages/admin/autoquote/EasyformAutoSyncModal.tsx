@@ -9,7 +9,8 @@
  *     [맞아요] → 워처가 이지폼 비고에 주문번호를 적고 저장 → 홈페이지 명세서 덮어쓰기.
  * 이지폼이 참 데이터 — 홈페이지 명세서가 달라도 이지폼 내용으로 덮는다(사용자 결정 2026-11-20).
  */
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import PdfViewerJs from '../../../components/common/PdfViewer.jsx';
 import FitWorksheet from '../scrap/FitWorksheet';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -32,6 +33,8 @@ import './EasyformAutoSync.css';
 
 // 추가한 줄 묻기 때 뒤에 '그 명세서' 화면을 미리보기로 깐다(사용자 2026-11-20: 명세서를 열어 추가된 줄 표시)
 const AutoQuote = lazy(() => import('./AutoQuote'));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const PdfViewer = PdfViewerJs as unknown as ComponentType<any>;
 
 interface Props {
   ev: EfAutoEvent;
@@ -98,6 +101,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null);
   const [added, setAdded] = useState<Added | null>(null);
   const [other, setOther] = useState(false); // 새 줄 = 다른 지시서 → 고르기 목록 펼침
+  const [zoom, setZoom] = useState<EasyformCandidateOrder | null>(null); // 🔍 지시서 크게 보기
   const [msg, setMsg] = useState<{ main: string; sub?: string; warn?: string }>({ main: '' });
   const baseRef = useRef<EasyformCandidateOrder | null>(null); // 비고 번호의 (첫) 지시서
 
@@ -430,7 +434,16 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             ) : visible.length ? (
               <ul className="efas-grid">
                 {visible.slice(0, 24).map(({ o }) => (
-                  <li key={o.id}>
+                  <li key={o.id} className="efas-cand-li">
+                    <button
+                      type="button"
+                      className="efas-zoombtn"
+                      onClick={() => setZoom(o)}
+                      aria-label={`${orderNoCore(o.orderNumber)} 지시서 크게 보기`}
+                      title="크게 보기"
+                    >
+                      🔍
+                    </button>
                     <button
                       type="button"
                       className={'efas-cand' + (picked?.id === o.id ? ' on' : '')}
@@ -533,7 +546,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                 </button>
               )}
               <button type="button" className="efas-btn primary" disabled={!picked} onClick={confirm}>
-                {picked ? `${orderNoCore(picked.orderNumber)} 지시서가 맞아요` : '지시서를 눌러 골라주세요'}
+                {picked ? '반영하기' : '지시서를 골라주세요'}
               </button>
             </>
           ) : (
@@ -551,6 +564,41 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         </footer>
       </div>
     </div>
+      {zoom && (
+        // 🔍 지시서 크게 보기 — 휠 확대·끌어 이동(작업중 탭과 같은 PDF 보기). 사진만 있으면 사진.
+        <div className="efas-zoom" role="dialog" aria-modal="true" aria-label="지시서 크게 보기">
+          <div className="efas-zoom-head">
+            <b>
+              {zoom.clientCompanyName || ''} · {orderNoCore(zoom.orderNumber)}
+            </b>
+            <button type="button" className="efas-x light" onClick={() => setZoom(null)} aria-label="닫기">
+              ✕
+            </button>
+          </div>
+          <div className="efas-zoom-body">
+            {zoom.worksheetPdfUrl ? (
+              <PdfViewer key={zoom.worksheetPdfUrl} url={zoom.worksheetPdfUrl} />
+            ) : (
+              <FitWorksheet pdfUrl={null} thumbUrl={zoom.worksheetThumbnailUrl} title={zoom.title} />
+            )}
+          </div>
+          <div className="efas-zoom-foot">
+            <button type="button" className="efas-btn ghost" onClick={() => setZoom(null)}>
+              닫기
+            </button>
+            <button
+              type="button"
+              className="efas-btn primary"
+              onClick={() => {
+                setPicked(zoom);
+                setZoom(null);
+              }}
+            >
+              이 지시서 고르기
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
