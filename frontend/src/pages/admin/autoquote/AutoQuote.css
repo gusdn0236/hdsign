@@ -1501,6 +1501,12 @@
   background: #0a7d8c;
   color: #fff;
 }
+/* 📌 스크랩 핀 — 계산기 버튼과 같은 높이 */
+.aq-scrappin.scr-pin {
+  height: auto;
+  padding: 4px 8px;
+  font-size: 14px;
+}
 /* 도장비 합치기/펼치기 바 */
 .aq-dojangbar {
   display: flex;

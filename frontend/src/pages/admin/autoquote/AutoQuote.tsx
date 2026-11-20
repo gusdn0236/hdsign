@@ -68,6 +68,8 @@ const SHOW_LED_DOJANG = false;
 const EasyformBulkImport = lazyWithRetry(() => import('./EasyformBulkImport'));
 // 새 단가찾아보기(키워드 → 홈페이지 명세서 먼저 → 예전 이지폼 명세서, 📌 스크랩)
 const PriceFinder = lazyWithRetry(() => import('../scrap/PriceFinder'));
+import { ScrapPin } from '../scrap/ScrapDrawer';
+import { homeScrap } from '../scrap/scrapStore';
 
 // 지시서 PDF 를 pdf.js 로 1페이지만 고해상 렌더 → JPEG dataURL. 저해상 썸네일보다 화질이 좋고,
 // 데이터가 fetch(ArrayBuffer) 라 캔버스가 taint 되지 않아 [공유하기] 합성도 막히지 않는다.
@@ -4211,6 +4213,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             >
               🧮 계산기
             </button>
+            {/* 📌 지금 이 지시서&명세서를 스크랩(왼쪽 서랍)에 담기/빼기 — 글자 없이 핀만(사용자 요청 2026-11-20).
+                카드에 보일 줄 = 지금 표의 위에서부터 내용 있는 3줄. */}
+            {order && (
+              <ScrapPin
+                className="aq-scrappin"
+                item={homeScrap(
+                  order,
+                  pins
+                    .map((p) => (p?.vals || {}) as Record<string, string>)
+                    .filter((v) => String(v['품목'] || v['품목코드'] || '').trim())
+                    .slice(0, 3),
+                )}
+              />
+            )}
           </div>
           {/* 이지폼 → 홈페이지 버튼줄 — 헤더 한 줄에 다 넣으면 잘려서 계산기 아래 줄로(오른쪽 정렬). */}
           <div className="aq-h2">
