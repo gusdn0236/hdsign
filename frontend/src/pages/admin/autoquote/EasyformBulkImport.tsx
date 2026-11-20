@@ -1472,7 +1472,8 @@ function DetailView({
                             h.code || h.item || h.spec ? 'has-hit' : '',
                             // 합친 명세서 — 이 지시서 몫이 정해졌을 때만(비고에 이 번호/고른 시작 줄) 나머지 줄 회색.
                             // 비고에 다른 지시서 번호만 있는 명세서(키워드로 찾은 것 등)는 전체 정상 표시(사용자 지시 2026-11-20).
-                            bandOwner && bandOwner.includes(ownNo) && own !== ownNo ? 'is-otherband' : '',
+                            // 키워드로 찾을 때는 범위를 다시 정하므로 비고에 번호가 있어도 흐리게 안 함(전체 정상 + 키워드 초록·연두 줄만).
+                            !kwMode && bandOwner && bandOwner.includes(ownNo) && own !== ownNo ? 'is-otherband' : '',
                             pickMode ? 'is-pickable' : '',
                             pickMode && selA != null && i >= selA && i <= (selB ?? selA) ? 'is-picksel' : '',
                           ]
