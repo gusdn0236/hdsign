@@ -4118,17 +4118,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             return (
               <div className="aq-linked">
                 <div className="aq-linked-title">
-                  🔗 합친 명세서 - 총 <b>{seq.length}개</b>의 지시서가 같이 작성되었어요.
+                  🔗 합친 명세서 · 지시서 <b>{seq.length}개</b>가 이 명세서 하나에 같이 들어 있어요.
                 </div>
                 <div className="aq-linked-sub">
-                  전부 같은 현장이에요. 명세서도 같이 작성되었어요.
+                  초록색이 지금 보고 있는 지시서예요. 다른 지시서는 눌러서 볼 수 있어요.
                 </div>
                 {onOpenOrder && (
                   <div className="aq-linked-btns">
                     {seq.map((l, i) =>
                       l.id === order?.id ? (
                         <span key={l.id} className="aq-linked-go is-current" title={`주문 ${orderNoCore(l.orderNumber)}`}>
-                          {i + 1}번째 지시서 (지금)
+                          ✔ 지금 보는 지시서 ({i + 1}번)
                         </span>
                       ) : (
                         <button
@@ -4138,7 +4138,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           onClick={() => onOpenOrder(l.id)}
                           title={`주문 ${orderNoCore(l.orderNumber)} — 그 지시서의 명세서작성으로 옮겨가요`}
                         >
-                          {i + 1}번째 지시서로 가기 →
+                          {i + 1}번 지시서 보러 가기 →
                         </button>
                       ),
                     )}

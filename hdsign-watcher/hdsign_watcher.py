@@ -2883,42 +2883,38 @@ def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
 
 def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
     """납기 월/일 칸을 '마우스로' 누르면 칸 위에 작은 달력을 띄운다(사용자 요청 2026-11-20).
-    날짜를 누르면 월·일 칸에 그대로 들어가고 달력은 닫힌다. 키보드(Tab·자동 포커스)로 들어오면
-    안 뜬다 — 타이핑하는 사람을 방해하지 않게. Esc·바깥 클릭이면 그냥 닫힘.
+    - 달력이 떠 있어도 월·일 칸에 그대로 숫자를 칠 수 있다(달력은 포커스·입력잠금(grab)을 안 가져감).
+      치는 대로 달력의 선택 표시·보이는 달이 따라 바뀐다.
+    - 날짜를 누르면 월·일 칸에 들어가고 달력은 닫힌다.
+    - 월·일 칸이 아닌 다른 곳을 누르면 접힌다. 칸에서 Esc 도 접기(다이얼로그 취소는 안 됨).
+    - 키보드(Tab·자동 포커스)로 들어오면 안 뜬다 — 타이핑하는 사람을 방해하지 않게.
     외부 라이브러리(tkcalendar) 없이 tk 기본 위젯만 쓴다(워처 exe 번들 그대로)."""
     import calendar as _cal
 
-    state: dict = {"pop": None, "prev_grab": None}
+    state: dict = {"pop": None, "render": None}
     WD = ["일", "월", "화", "수", "목", "금", "토"]
+    entries = (month_entry, day_entry)
 
     def _close(_e=None):
         pop = state.get("pop")
         state["pop"] = None
+        state["render"] = None
         if pop is None:
             return
-        try:
-            pop.grab_release()
-        except Exception:
-            pass
         try:
             pop.destroy()
         except Exception:
             pass
-        prev = state.get("prev_grab")
-        state["prev_grab"] = None
-        try:
-            if prev is not None and prev.winfo_exists():
-                prev.grab_set()
-        except Exception:
-            pass
 
-    def _current() -> date:
+    def _current() -> "date | None":
         try:
             m = int((month_var.get() or "").strip())
             d = int((day_var.get() or "").strip())
+            if not (1 <= m <= 12 and 1 <= d <= 31):
+                return None
             return resolve_new_due_date_md("", m, d)
         except Exception:
-            return date.today()
+            return None
 
     def _open(_e=None):
         if state.get("pop") is not None:
@@ -2933,8 +2929,8 @@ def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
             pass
         pop.configure(bg="#cbd5e1")
         state["pop"] = pop
-        sel = _current()
-        view = {"y": sel.year, "m": sel.month}
+        first = _current() or date.today()
+        view = {"y": first.year, "m": first.month}
         body = tk.Frame(pop, bg="white", padx=6, pady=6)
         body.pack(padx=1, pady=1)
         head = tk.Frame(body, bg="white")
@@ -2957,6 +2953,7 @@ def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
             for w in grid.winfo_children():
                 w.destroy()
             y, m = view["y"], view["m"]
+            sel = _current()
             title.config(text=f"{y}년 {m}월")
             for i, wd in enumerate(WD):
                 tk.Label(grid, text=wd, bg="white", width=3,
@@ -2976,6 +2973,13 @@ def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
                     b.grid(row=r, column=c, padx=1, pady=1)
                     b.bind("<Button-1>", lambda _e, x=dd: _pick(x))
 
+        def _follow_typing():
+            # 칸에 친 날짜가 다른 달이면 그 달로 넘겨서 보여 준다.
+            sel = _current()
+            if sel is not None:
+                view["y"], view["m"] = sel.year, sel.month
+            _render()
+
         def _shift(k: int):
             m = view["m"] + k
             view["y"] += (m - 1) // 12
@@ -2990,45 +2994,52 @@ def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
         prev_b.bind("<Button-1>", lambda _e: _shift(-1))
         next_b.bind("<Button-1>", lambda _e: _shift(1))
         _render()
+        state["render"] = _follow_typing
 
         # 칸 바로 위(화면 위로 넘치면 아래)에 띄운다.
         pop.update_idletasks()
-        pw, ph = pop.winfo_reqwidth(), pop.winfo_reqheight()
+        ph = pop.winfo_reqheight()
         ax, ay = anchor.winfo_rootx(), anchor.winfo_rooty()
         y = ay - ph - 4
         if y < 0:
             y = ay + anchor.winfo_height() + 4
         pop.geometry(f"+{max(0, ax - 10)}+{y}")
 
-        # 바깥 클릭 = 닫기. 다이얼로그가 grab 을 쥐고 있으므로 잠시 달력으로 옮겼다가 닫을 때 돌려준다.
-        try:
-            state["prev_grab"] = pop.grab_current()
-            pop.grab_set()
-        except Exception:
-            state["prev_grab"] = None
-
-        def _outside(e):
-            # 날짜 칸 클릭도 여기로 같이 온다(bindtags) — 이미 닫혔으면 무시.
-            if state.get("pop") is not pop:
-                return
+    def _on_var(*_):
+        fn = state.get("render")
+        if fn is not None:
             try:
-                x0, y0 = pop.winfo_rootx(), pop.winfo_rooty()
-                inside = x0 <= e.x_root < x0 + pop.winfo_width() and y0 <= e.y_root < y0 + pop.winfo_height()
+                fn()
             except Exception:
-                return
-            if not inside:
-                _close()
+                pass
 
-        pop.bind("<Button-1>", _outside, add="+")
-        pop.bind("<Escape>", _close)
-        try:
-            pop.focus_set()
-        except Exception:
-            pass
+    month_var.trace_add("write", _on_var)
+    day_var.trace_add("write", _on_var)
 
-    for ent in (month_entry, day_entry):
+    def _esc(_e=None):
+        if state.get("pop") is not None:
+            _close()
+            return "break"  # 달력만 접고 다이얼로그 Esc(취소)는 막는다
+        return None
+
+    for ent in entries:
         # 마우스 클릭(포커스 이동 뒤)에만 연다 — after_idle 로 Entry 기본 클릭 처리 후에.
         ent.bind("<Button-1>", lambda _e, w=ent: w.after_idle(_open), add="+")
+        ent.bind("<Escape>", _esc, add="+")
+
+    # 월·일 칸이 아닌 곳을 누르면 접기 — 다이얼로그 창 안 어디를 눌러도(bindtags 에 창이 들어 있음).
+    # 달력은 별도 창이라 달력 안 클릭은 여기로 안 온다.
+    def _outside(e):
+        if state.get("pop") is None:
+            return
+        if e.widget in entries:
+            return
+        _close()
+
+    try:
+        month_entry.winfo_toplevel().bind("<Button-1>", _outside, add="+")
+    except Exception:
+        pass
 
 
 def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,

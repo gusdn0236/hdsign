@@ -99,6 +99,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const [clientDays, setClientDays] = useState(60);
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null);
+  // '이 지시서가 맞나요?' 한 번 더 확인(추가한 줄 고르기에서 같은/다른 지시서 모두) — 사용자 결정 2026-11-20
+  const [ask, setAsk] = useState<{ o: EasyformCandidateOrder; run: () => void } | null>(null);
   const [added, setAdded] = useState<Added | null>(null);
   const [other, setOther] = useState(false); // 새 줄 = 다른 지시서 → 고르기 목록 펼침
   const [zoom, setZoom] = useState<EasyformCandidateOrder | null>(null); // 🔍 지시서 크게 보기
@@ -303,7 +305,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     if (!picked) return;
     if (phase === 'added' && added) {
       // 새 줄 = 다른 지시서 → 이지폼 새 줄 첫 행 비고에 그 번호 + 합친 명세서(원래 번호들 먼저 = 대표 유지)
-      save([...ev.nos, orderNoCore(picked.orderNumber)], { o: picked, row: added.evRow });
+      const o = picked;
+      setAsk({ o, run: () => save([...ev.nos, orderNoCore(o.orderNumber)], { o, row: added.evRow }) });
     } else {
       save([orderNoCore(picked.orderNumber)], { o: picked });
     }
@@ -333,7 +336,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   );
   /** 추가한 줄 = 이 명세서에 이미 든 지시서 o. 지시서 1개면 번호 맨 위 맞추기만, 합친 명세서면 그 줄 바로 위 구간의
    *  지시서와 다를 때만 추가한 줄 첫 행 비고에 o 번호를 적어 구간을 나눈다. */
-  const memberSave = (o: EasyformCandidateOrder) => {
+  const memberSave = (o: EasyformCandidateOrder) => setAsk({ o, run: () => memberSaveNow(o) });
+  const memberSaveNow = (o: EasyformCandidateOrder) => {
     if (!added) return;
     if (ev.nos.length === 1) {
       save(ev.nos, { o, move: true });
@@ -362,7 +366,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           </Suspense>
         </div>
       )}
-    <div className={'efas' + (onAq ? ' on-aq' : '')} role="dialog" aria-modal="true" aria-label="이지폼 명세서 홈페이지 반영">
+    <div className={'efas' + (onAq ? ' on-aq' : '') + (onAq && other ? ' picking' : '')} role="dialog" aria-modal="true" aria-label="이지폼 명세서 홈페이지 반영">
       <div className="efas-card">
         <header className="efas-head">
           <div>
@@ -599,6 +603,40 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         </footer>
       </div>
     </div>
+      {ask && (
+        // 이 지시서가 맞나요? — 반영 직전 한 번 더 확인
+        <div className="efas-ask" role="alertdialog" aria-modal="true" aria-label="이 지시서가 맞나요?">
+          <div className="efas-ask-card">
+            <h3>이 지시서가 맞나요?</h3>
+            <div className="efas-ask-thumb">
+              <FitWorksheet pdfUrl={ask.o.worksheetPdfUrl} thumbUrl={ask.o.worksheetThumbnailUrl} title={ask.o.title} />
+            </div>
+            <p className="efas-ask-name">
+              <b>{orderNoCore(ask.o.orderNumber)}</b>
+              {ask.o.clientCompanyName ? ` · ${ask.o.clientCompanyName}` : ''}
+            </p>
+            {ask.o.title && <p className="efas-ask-sub">{ask.o.title}</p>}
+            {added && <p className="efas-ask-sub">추가한 {added.count}줄을 이 지시서로 홈페이지에 반영해요.</p>}
+            <div className="efas-ask-foot">
+              <button type="button" className="efas-btn ghost" onClick={() => setAsk(null)}>
+                아니요
+              </button>
+              <button
+                type="button"
+                className="efas-btn primary"
+                autoFocus
+                onClick={() => {
+                  const run = ask.run;
+                  setAsk(null);
+                  run();
+                }}
+              >
+                네, 반영할게요
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {zoom && (
         // 🔍 지시서 크게 보기 — 휠 확대·끌어 이동(작업중 탭과 같은 PDF 보기). 사진만 있으면 사진.
         <div className="efas-zoom" role="dialog" aria-modal="true" aria-label="지시서 크게 보기">
