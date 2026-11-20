@@ -1098,6 +1098,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       codes.forEach((v) => qs.append("code", v));
       specs.forEach((v) => qs.append("spec", v));
       texts.forEach((v) => qs.append("text", v));
+      // 작업키워드는 OR — '소, 연어, 육회' = 셋 중 하나라도 들어간 줄(사용자 결정 2026-11-20)
+      if (texts.length > 1) qs.set("textOr", "true");
       pick("order").forEach((v) => qs.append("order", v)); // 주문번호(부분일치)
       // 거래처도 서버에서 같이 거른다 — 화면에서만 거르면 '최신 300건'이 다른 거래처로 차서 빠질 수 있음.
       pick("client").forEach((v) => qs.append("client", v));

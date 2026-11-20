@@ -42,6 +42,8 @@ class StatementSearchServiceTest {
         // 텍스트 AND (공백 무시)
         assertEquals(1, StatementSearchService.matchRows(json, java.util.List.of(), java.util.List.of("육바연", "로고"), java.util.List.of()).size());
         assertEquals(0, StatementSearchService.matchRows(json, java.util.List.of(), java.util.List.of("육바연", "포장"), java.util.List.of()).size());
+        // 똑똑한 검색 키워드 OR — 하나라도 들어간 줄
+        assertEquals(2, StatementSearchService.matchRows(json, java.util.List.of(), java.util.List.of("육바연", "포장"), java.util.List.of(), true).size());
     }
 
     @Test

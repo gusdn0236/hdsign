@@ -189,7 +189,8 @@ public class AdminOrderController {
             @RequestParam(required = false) List<String> text,
             @RequestParam(required = false) List<String> client,
             @RequestParam(required = false) String requestType,
-            @RequestParam(required = false) List<String> order
+            @RequestParam(required = false) List<String> order,
+            @RequestParam(required = false, defaultValue = "false") boolean textOr
     ) {
         long t0 = System.currentTimeMillis();
         List<String> os = com.example.backend.service.StatementSearchService.normOrderNos(order);
@@ -226,7 +227,7 @@ public class AdminOrderController {
             return ResponseEntity.ok(body);
         }
         com.example.backend.service.StatementSearchService.Result r =
-                statementSearchService.search(code, spec, text, client, requestType, os);
+                statementSearchService.search(code, spec, text, client, requestType, os, textOr);
         List<Long> ids = r.matches().stream().map(com.example.backend.service.StatementSearchService.Match::orderId).toList();
         Map<Long, Order> byId = new HashMap<>();
         if (!ids.isEmpty()) for (Order o : orderRepository.findByIdIn(ids)) byId.put(o.getId(), o);

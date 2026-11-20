@@ -23,7 +23,9 @@ import java.util.regex.Pattern;
  *  - codes   : 품목코드 — 여러 개면 OR(한 행엔 코드가 하나라서). 공백 제거·대소문자 무시 '일치'.
  *  - specs   : 규격 — 여러 개면 OR. '500*100' / '500x100' / '500 100' 같은 표기, 가로·세로 뒤집힘도 같은 것.
  *              숫자 하나만 주면 그 숫자가 규격에 들어간 행.
- *  - texts   : 품목 텍스트 — 여러 개면 AND(모두 품목칸에 포함). 공백 제거·대소문자 무시 부분일치.
+ *  - texts   : 품목 텍스트 — 여러 개면 AND(모두 품목칸에 포함), textOr=true 면 OR(하나라도 포함).
+ *              공백 제거·대소문자 무시 부분일치. 명세서 탭 똑똑한 검색은 OR(사용자 결정 2026-11-20 —
+ *              '나라광고 + 소, 연어, 육회' = 셋 중 하나라도 들어간 줄).
  *  - clients : 거래처 — 여러 개면 OR, 부분일치.
  * 종류끼리는 AND 이고, code/spec/text 는 '같은 행'에서 동시에 맞아야 한다.
  *
@@ -55,9 +57,14 @@ public class StatementSearchService {
         return search(codes, specs, texts, clients, requestType, null);
     }
 
-    /** orders = 주문번호 조각(OR·부분일치, '주문-' 접두어 없이 '261113-18'·'261113' 도 됨). */
     public Result search(List<String> codes, List<String> specs, List<String> texts,
                          List<String> clients, String requestType, List<String> orders) {
+        return search(codes, specs, texts, clients, requestType, orders, false);
+    }
+
+    /** orders = 주문번호 조각(OR·부분일치, '주문-' 접두어 없이 '261113-18'·'261113' 도 됨). textOr = 키워드 OR. */
+    public Result search(List<String> codes, List<String> specs, List<String> texts,
+                         List<String> clients, String requestType, List<String> orders, boolean textOr) {
         List<String> os = normOrderNos(orders);
         List<String> cs = clean(codes, true);
         List<String> ts = clean(texts, true);
@@ -110,9 +117,19 @@ public class StatementSearchService {
             }
             sql.append(")");
         }
-        for (String t : ts) {
-            sql.append(" AND ").append(squeezed).append(" LIKE ? ESCAPE '!'");
-            args.add("%" + like(t) + "%");
+        if (textOr && !ts.isEmpty()) {
+            sql.append(" AND (");
+            for (int i = 0; i < ts.size(); i++) {
+                if (i > 0) sql.append(" OR ");
+                sql.append(squeezed).append(" LIKE ? ESCAPE '!'");
+                args.add("%" + like(ts.get(i)) + "%");
+            }
+            sql.append(")");
+        } else {
+            for (String t : ts) {
+                sql.append(" AND ").append(squeezed).append(" LIKE ? ESCAPE '!'");
+                args.add("%" + like(t) + "%");
+            }
         }
         if (!sps.isEmpty()) {
             sql.append(" AND (");
@@ -142,7 +159,7 @@ public class StatementSearchService {
                 return;
             }
             long orderId = rs.getLong("order_id");
-            List<Map<String, String>> rows = matchRows(rs.getString("grid_json"), cs, ts, sps);
+            List<Map<String, String>> rows = matchRows(rs.getString("grid_json"), cs, ts, sps, textOr);
             if (!rows.isEmpty()) out.add(new Match(orderId, rows));
         }, args.toArray());
         if (read[0] >= PREFILTER_LIMIT) truncated[0] = true;
@@ -163,6 +180,11 @@ public class StatementSearchService {
 
     // ② 행 단위 정확 판정.
     static List<Map<String, String>> matchRows(String json, List<String> cs, List<String> ts, List<double[]> sps) {
+        return matchRows(json, cs, ts, sps, false);
+    }
+
+    static List<Map<String, String>> matchRows(String json, List<String> cs, List<String> ts, List<double[]> sps,
+                                               boolean textOr) {
         List<Map<String, String>> hits = new ArrayList<>();
         JsonNode grid;
         try {
@@ -178,7 +200,7 @@ public class StatementSearchService {
             String rs = row.path("규격").asText("");
             if (!cs.isEmpty() && !cs.contains(norm(rc))) continue;
             String ni = norm(ri);
-            if (!ts.stream().allMatch(ni::contains)) continue;
+            if (!ts.isEmpty() && !(textOr ? ts.stream().anyMatch(ni::contains) : ts.stream().allMatch(ni::contains))) continue;
             if (!sps.isEmpty() && sps.stream().noneMatch(q -> specMatches(rs, q))) continue;
             Map<String, String> m = new LinkedHashMap<>();
             m.put("품목코드", rc);
