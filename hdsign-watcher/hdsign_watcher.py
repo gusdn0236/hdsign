@@ -2349,13 +2349,13 @@ def start_order_alert_loop():
 
 
 def resolve_new_due_date_md(current_iso: str, month_input: int, day_input: int) -> date:
-    """월+일을 명시적으로 입력받는 폼용 — 연도는 '오늘' 기준으로 정하고, 입력한 월/일이 올해
-    기준 작년·올해·내년 중 오늘과 가장 가까운 날로 정한다. 잘못된 조합(2/30 등)은 그 달 말일로 클램프.
+    """월+일을 명시적으로 입력받는 폼용 — 연도는 '오늘' 기준 올해(지난 날짜도 그대로), 해 넘김
+    (11~12월에 1~2월 → 내년, 1~2월에 11~12월 → 작년)만 예외. 잘못된 조합(2/30 등)은 그 달 말일로 클램프.
 
     current_iso(현재 납기)는 연도 기준으로 쓰지 않는다(인자는 호출부 호환을 위해 유지). 예전엔
     current_iso 를 기준으로 '입력<현재납기면 내년'으로 굴려서, 납기를 *현재보다 이른 날*로 당기면
     멀쩡한 가까운 미래인데도 내년으로 넘어갔다(실측 버그: 06-14→06-11 입력이 2027-06-11 로 저장,
-    05-22→05-20 이 2027-05-20 으로 저장). 기준을 오늘로 바꿔 '이미 지난 날짜만' 내년으로 민다."""
+    05-22→05-20 이 2027-05-20 으로 저장). 기준을 오늘로 바꿨다."""
     today = date.today()
     year = today.year
 
@@ -2370,11 +2370,14 @@ def resolve_new_due_date_md(current_iso: str, month_input: int, day_input: int) 
                 next_first = date(y, m + 1, 1)
             return next_first - timedelta(days=1)
 
-    # 작년·올해·내년 중 오늘과 가장 가까운 날로 정한다(같으면 미래 쪽). 예전엔 '지났으면 무조건
-    # 내년'이라 이틀 전 날짜(11-20 에 11-18 입력)가 2027-11-18 로 저장돼 작업중·작업완료 어디에도
-    # 안 보였다(2026-11-20 실측). 이제 11-18 → 올해, 12월에 1-05 → 내년, 1월에 12-28 → 작년.
-    cands = [_clamped(y, month_input, day_input) for y in (year - 1, year, year + 1)]
-    return min(cands, key=lambda d: (abs((d - today).days), d < today))
+    # 기본은 올해 — 지난 날짜도 그 날짜 그대로(사용자 결정 2026-11-20). 예전엔 '지났으면 무조건
+    # 내년'이라 이틀 전 날짜(11-20 에 11-18 입력)가 2027-11-18 로 저장돼 어디에도 안 보였다.
+    # 해 넘김만 예외: 11~12월에 1~2월 입력 → 내년, 1~2월에 11~12월 입력 → 작년.
+    if today.month >= 11 and month_input <= 2:
+        year += 1
+    elif today.month <= 2 and month_input >= 11:
+        year -= 1
+    return _clamped(year, month_input, day_input)
 
 
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
@@ -3149,6 +3152,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     new_month_var = tk.StringVar()
     new_delivery_var = tk.StringVar()
     new_day_entry: tk.Entry | None = None
+    new_month_entry: tk.Entry | None = None
 
     if qr_order_number is not None and most_recent is not None:
         # ── (A) 자동작성 + 큐 매칭 — 거래처/주문번호는 결정. 납기/배송만 입력. ───
@@ -3722,15 +3726,11 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
         if saved_note:
             note_text.insert("1.0", saved_note)
 
-        # 진입 시 포커스 — 월이 비어 있으면 월부터, 아니면 일에 포커스(가장 자주 바뀌는 값).
-        if not (month_var_local.get() or "").strip():
-            month_e.focus_set()
-            month_e.select_range(0, "end")
-            month_e.icursor("end")
-        else:
-            day_e.focus_set()
-            day_e.select_range(0, "end")
-            day_e.icursor("end")
+        # 진입 시 포커스 — 항상 월 칸(사용자 결정 2026-11-20: 월부터 쓰는 게 편함).
+        # 월을 2자리(또는 2~9)로 치면 자동으로 일 칸으로 넘어간다.
+        month_e.focus_set()
+        month_e.select_range(0, "end")
+        month_e.icursor("end")
 
         # 매칭된 지시서 PDF 미리보기는 폐기 — 작업자가 FlexiSign 에서 직접 확대해 보고
         # 분배함을 결정하므로, 다이얼로그 안에 미리보기를 두면 세로 공간만 잡아먹는다.
@@ -3773,7 +3773,7 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 # 이전에 저장한 분배함 ✓ 복원 — 직원이 다시 칸을 안 누르면 동일 분배 유지.
                 _restore_dept_tags(qr_matched_ws)
                 _schedule_dialog_redraw()
-                target = chosen_widgets.get("mod_day_entry")
+                target = chosen_widgets.get("mod_month_entry")
                 if target is not None:
                     try:
                         target.focus_set()
@@ -4154,6 +4154,42 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
     #   - skip_print=True: 웹 적용만, 종이 인쇄 생략
     # Enter 키/녹색 버튼 모두 기본 변종을 부르고, "웹에만 적용하고 인쇄안하기" 버튼만
     # skip_print=True 로 호출한다.
+    _past_due_no: dict = {}
+
+    def _ok_past_due(m: int, d: int) -> bool:
+        """납기가 오늘보다 지났으면 한 번 묻는다(사용자 결정 2026-11-20). 지난 납기로 반영하면
+        서버가 바로 작업완료로 보내므로 그것도 같이 알린다. [아니오]면 다이얼로그 유지·월 칸으로."""
+        try:
+            due = resolve_new_due_date_md("", m, d)
+        except Exception:
+            return True
+        if due >= date.today():
+            return True
+        # Enter 는 칸과 창 양쪽에 걸려 있어 confirm 이 연달아 두 번 불린다 — [아니오] 직후 같은
+        # 키 입력의 두 번째 호출이면 다시 묻지 않고 막는다.
+        if time.time() - _past_due_no.get("t", 0.0) < 0.6:
+            return False
+        try:
+            ok = messagebox.askyesno(
+                "지난 날짜",
+                f"{due.month}월 {due.day}일은 이미 지난 날짜예요.\n"
+                "그래도 진행할까요?\n\n"
+                "(진행하면 이 지시서는 바로 '작업완료'로 들어가요.)",
+                parent=dlg, default="no",
+            )
+        except Exception:
+            return True
+        if not ok:
+            _past_due_no["t"] = time.time()
+            try:
+                tgt = new_month_entry if notebook.index(notebook.select()) == 0 else chosen_widgets.get("mod_month_entry")
+                if tgt is not None:
+                    tgt.focus_set()
+                    tgt.select_range(0, "end")
+            except Exception:
+                pass
+        return bool(ok)
+
     def confirm(_event=None, skip_print=False):
         # 라디오에서 [종이만 인쇄] 를 골랐다면 매칭/납기 검증 없이 종이만 출력하고 끝낸다.
         # 호출 측은 sel.get("order_number") is None + intent=="paper_only" 로 알아챈다.
@@ -4204,6 +4240,8 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
                 return
             m, d = int(ms), int(ds)
             if not (1 <= m <= 12 and 1 <= d <= 31):
+                return
+            if not _ok_past_due(m, d):
                 return
             delivery_ko = (new_delivery_var.get() or "").strip()
             delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
@@ -4272,6 +4310,8 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             return
         m, d = int(ms), int(ds)
         if not (1 <= m <= 12 and 1 <= d <= 31):
+            return
+        if not _ok_past_due(m, d):
             return
         delivery_ko = (delivery_var_local.get() or "").strip()
         delivery_enum = DELIVERY_KO_TO_ENUM.get(delivery_ko, "")
@@ -4472,11 +4512,11 @@ def _ask_print_match_blocking(orders: list[dict], pdf_path: Path,
             target = None
             try:
                 if notebook.select() == str(modify_tab):
-                    candidate = chosen_widgets.get("mod_day_entry")
+                    candidate = chosen_widgets.get("mod_month_entry")
                     if candidate is not None and candidate.winfo_ismapped():
                         target = candidate
-                elif new_day_entry is not None and new_day_entry.winfo_ismapped():
-                    target = new_day_entry
+                elif new_month_entry is not None and new_month_entry.winfo_ismapped():
+                    target = new_month_entry
             except Exception:
                 target = None
             if target is not None:

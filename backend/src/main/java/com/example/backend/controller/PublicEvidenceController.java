@@ -448,6 +448,15 @@ public class PublicEvidenceController {
                 order.setDueDate(parsed);
                 changed = true;
             }
+            // 오늘(KST)보다 지난 납기로 인쇄·웹반영하면 이미 나간 현장 — 바로 작업완료로 보낸다
+            // (사용자 결정 2026-11-20). 매일 10시 OverdueAutoCompleteScheduler 와 같은 처리·같은 범위:
+            // 작업중(IN_PROGRESS)·옛 COMPLETED 만, 접수(RECEIVED)는 제외, 이미 작업완료면 그대로.
+            if (parsed.isBefore(LocalDate.now(java.time.ZoneId.of("Asia/Seoul")))
+                    && order.getDeletedAt() == null
+                    && order.getStatus() != Order.OrderStatus.RECEIVED) {
+                order.setStatus(Order.OrderStatus.COMPLETED);
+                order.setDeletedAt(LocalDateTime.now());
+            }
         }
 
         if (hasDelivery) {

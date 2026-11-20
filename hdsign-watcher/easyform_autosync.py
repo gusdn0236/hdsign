@@ -59,6 +59,7 @@ if ef.EASYFORM_AVAILABLE:
     _u.WindowFromPoint.restype = wintypes.HWND
     _u.GetParent.argtypes = [wintypes.HWND]
     _u.GetParent.restype = wintypes.HWND
+    _u.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
     _u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     _u.InternalGetWindowText.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     _u.GetForegroundWindow.restype = wintypes.HWND
@@ -355,8 +356,18 @@ def _overlay(text: "str | None") -> None:
 def _read_saved(main, form) -> "dict | None":
     # 읽기 전에 명세서 창을 기준 위치(이지폼 자동입력과 같은 EF_FORM_HOME)로 — 매번 같은 조건에서 OCR·표 읽기
     # (사용자 지시 2026-11-20: 창이 잘리거나 엉뚱한 곳에 있어도 거래처명을 똑같이 읽게). 포커스는 안 건드림.
+    # 기준 위치 = 이지폼 메인 작업영역의 왼쪽 위(클라이언트 0,0). 예전 EF_FORM_HOME 은 '화면' 좌표라 이지폼을
+    # 전체화면 아닌 작은 창으로 한쪽(예: 오른쪽 절반)에 띄워 쓰면 명세서가 메인 영역 밖으로 밀려 거의 안 보이게
+    # 됐다(2026-11-20 점검). 메인 안쪽 왼쪽 위면 메인 크기·위치와 무관하게 최대한 보이고, 메인보다 커서 오른쪽·
+    # 아래가 잘려도 PrintWindow(0)는 창 전체를 그리고 표는 메시지로 읽으므로 괜찮다.
     try:
-        ef._ef_move_to_screen(form, ef.EF_FORM_HOME[0], ef.EF_FORM_HOME[1])
+        parent = _u.GetParent(form)
+        if parent:
+            pt = wintypes.POINT(0, 0)
+            _u.ClientToScreen(parent, ctypes.byref(pt))
+            ef._ef_move_to_screen(form, pt.x, pt.y)
+        else:
+            ef._ef_move_to_screen(form, ef.EF_FORM_HOME[0], ef.EF_FORM_HOME[1])
         time.sleep(0.25)
     except Exception:
         logging.exception("명세서 창 기준 위치 이동 실패(그 자리에서 읽음)")
