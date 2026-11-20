@@ -731,6 +731,29 @@ public class AdminOrderController {
         return ResponseEntity.ok(Map.of("keys", out));
     }
 
+    // 이지폼 저장 자동반영(워처가 '매출 거래명세서' [저장]을 감지 → 홈페이지 확인 카드) — 그 명세서 발행일 근처의
+    // 지시서 후보. 작업중+작업완료(3년 보관분) 모두, 발주(ORDER)만. 거래처 짝짓기·순위는 프론트(clientSim)가 한다.
+    // date = 'YYYY.MM.DD'(이지폼 발행일), days = 앞뒤 며칠(기본 7, 최대 45).
+    @GetMapping("/estimate/easyform-candidates")
+    public ResponseEntity<?> easyformCandidates(
+            @RequestParam String date,
+            @RequestParam(defaultValue = "7") int days
+    ) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{4})[.\\-/](\\d{1,2})[.\\-/](\\d{1,2})").matcher(date);
+        if (!m.find()) return ResponseEntity.badRequest().body(Map.of("message", "날짜를 못 읽었어요: " + date));
+        java.time.LocalDate d = java.time.LocalDate.of(
+                Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)));
+        int n = Math.max(0, Math.min(45, days));
+        Map<Long, Order> found = new LinkedHashMap<>();
+        for (Order o : orderRepository.findByDueDateBetween(d.minusDays(n), d.plusDays(n))) found.putIfAbsent(o.getId(), o);
+        for (Order o : orderRepository.findByDueDateIsNullAndCreatedAtBetween(
+                d.minusDays(n).atStartOfDay(), d.plusDays(n + 1).atStartOfDay())) found.putIfAbsent(o.getId(), o);
+        List<Order> list = found.values().stream()
+                .filter(o -> o.getRequestType() == null || o.getRequestType() == Order.RequestType.ORDER)
+                .toList();
+        return ResponseEntity.ok(Map.of("items", toResponsesWithEstimates(list)));
+    }
+
     /** 이지폼 명세서 지문 '거래처id|YYYY.MM.DD|합계숫자'. 발행일·합계가 없으면 null. */
     private static String efKey(Order order, String date, String total) {
         String d = date == null ? "" : date.trim();

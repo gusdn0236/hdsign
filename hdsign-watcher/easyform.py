@@ -1988,6 +1988,12 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     else:
                         show_done(ok, msg, ok_text=f"✅ {n}줄을 가져왔어요.\n홈페이지 명세서 화면에서 확인하세요.")
                     logging.info("이지폼 가져오기 %s — %s", "성공" if ok else "실패/중단", msg)
+                elif cmd[0] == "auto_overlay":  # 이지폼 저장 자동반영(easyform_autosync) — 읽는/적는 동안 잠금 안내
+                    if not busy["v"]:
+                        show_overlay(cmd[1])
+                elif cmd[0] == "auto_overlay_hide":
+                    if not busy["v"]:
+                        hide_overlay()
                 elif cmd[0] == "result":
                     ok, msg = cmd[1], cmd[2]
                     show_done(ok, msg)

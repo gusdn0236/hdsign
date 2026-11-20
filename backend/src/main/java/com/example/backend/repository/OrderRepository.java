@@ -57,6 +57,14 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     // 같은 prefix 의 모든 번호를 가져와 Java 에서 max 계산. 하루 최대 ~수십 건이라 비용 미미.
     List<Order> findByOrderNumberStartingWith(String prefix);
 
+    // 이지폼 저장 자동반영 — 명세서 발행일(=보통 납기) 근처 지시서 후보(작업중+작업완료 모두).
+    @EntityGraph(attributePaths = {"client", "files"})
+    List<Order> findByDueDateBetween(java.time.LocalDate from, java.time.LocalDate to);
+
+    // 납기 없는 지시서 — 등록일로 후보.
+    @EntityGraph(attributePaths = {"client", "files"})
+    List<Order> findByDueDateIsNullAndCreatedAtBetween(LocalDateTime from, LocalDateTime to);
+
     // 명세서 탭 똑똑한 검색 — 주문번호 칩만 있을 때(부분일치, 최신 등록순 300건).
     List<Order> findTop300ByOrderNumberContainingOrderByCreatedAtDesc(String part);
 

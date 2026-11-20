@@ -713,6 +713,15 @@ class _PingHandler(BaseHTTPRequestHandler):
         elif self.path == "/easyform/probe":
             # 이지폼 자동기입 feature-detect — 관리자 명세서작성 모달이 호출.
             self._send_json(200, easyform.handle_probe())
+        elif self.path.startswith("/easyform/autosync"):
+            # 이지폼 저장 자동반영 — 홈페이지(관리자 화면)가 폴링
+            import easyform_autosync
+            from urllib.parse import urlparse as _au, parse_qs as _aq
+            try:
+                after = int((_aq(_au(self.path).query).get("after") or ["0"])[0] or 0)
+            except ValueError:
+                after = 0
+            self._send_json(200, easyform_autosync.handle_events(after))
         elif self.path.startswith("/easyform/bulk"):
             # 이지폼 일괄 가져오기(명세서 탭) — 진행/결과 폴링
             import easyform_bulk
@@ -747,6 +756,29 @@ class _PingHandler(BaseHTTPRequestHandler):
             except Exception:
                 pbody = {}
             self._send_json(*easyform.handle_pull_start(pbody))
+            return
+        if parsed.path.startswith("/easyform/autosync/"):
+            # 이지폼 저장 자동반영 — claim(한 탭만) / front(홈페이지 창 앞으로) / stamp(비고에 주문번호 적고 저장)
+            import easyform_autosync
+            try:
+                n = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(n) if n > 0 else b""
+                abody = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                abody = {}
+            act = parsed.path.rsplit("/", 1)[-1]
+            if act == "claim":
+                try:
+                    aid = int((parse_qs(parsed.query).get("id") or ["0"])[0] or 0)
+                except ValueError:
+                    aid = 0
+                self._send_json(200, easyform_autosync.handle_claim(aid))
+            elif act == "front":
+                self._send_json(200, easyform_autosync.handle_front(abody))
+            elif act == "stamp":
+                self._send_json(200, easyform_autosync.handle_stamp(abody))
+            else:
+                self._send_json(404, {"ok": False})
             return
         if parsed.path == "/easyform/bulk":
             import easyform_bulk
@@ -8885,6 +8917,12 @@ def main():
         easyform.install(app)
     except Exception as e:  # noqa: BLE001 — easyform 실패해도 워처 본기능은 계속.
         ui_log(f"이지폼 자동기입 UI 설치 실패: {e}")
+    # 이지폼 '매출 거래명세서' [저장] 감지 → 홈페이지 반영(묻고, 예일 때만).
+    try:
+        import easyform_autosync
+        easyform_autosync.start()
+    except Exception as e:  # noqa: BLE001
+        ui_log(f"이지폼 저장 자동반영 시작 실패: {e}")
     app.after(300, app.start_watcher)
     app.mainloop()
 

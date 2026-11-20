@@ -10,6 +10,7 @@ import DemoBanner from '../../components/common/DemoBanner.jsx';
 import DemoButtonLock from '../../components/common/DemoButtonLock.jsx';
 import { isDemoToken } from '../../utils/demoGuard';
 import ScrapDrawer from './scrap/ScrapDrawer.tsx';
+import EasyformAutoSync from './autoquote/EasyformAutoSync.tsx';
 import './AdminLayout.css';
 
 const AdminLayout = () => {
@@ -36,6 +37,8 @@ const AdminLayout = () => {
         <div className="admin-shell">
             {/* 왼쪽 스크랩 서랍 — 관리자 화면 어디서든 떠 있음(이 PC 에만 저장) */}
             <ScrapDrawer token={token} />
+            {/* 이지폼 '매출 거래명세서' [저장] → 이 PC 워처가 묻고 → 홈페이지 반영 확인 카드(관리자 화면 어디서든) */}
+            <EasyformAutoSync token={token} />
             {isDemo && <DemoBanner />}
             {isDemo && <DemoButtonLock />}
             <Banner

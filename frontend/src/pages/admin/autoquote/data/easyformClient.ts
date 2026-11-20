@@ -369,3 +369,53 @@ export async function pauseEfBulk(id: number, on: boolean): Promise<void> {
     /* 워처가 꺼졌으면 무시 */
   }
 }
+
+// ── 이지폼 저장 자동반영(워처 easyform_autosync) ─────────────────────────────────────
+// 사무실 직원이 이지폼 '매출 거래명세서' [저장] → 워처가 "홈페이지에도 반영할까요?" → 예 → 명세서를 읽어 이벤트로 쌓음.
+// 관리자 화면(EasyformAutoSync)이 폴링해서 카드로 확인받고 홈페이지 명세서를 덮어쓴다.
+export interface EfAutoEvent {
+  id: number;
+  biz: string; // 'corp' | 'personal'
+  bizName: string;
+  client: string; // 거래처명(화면 글자 OCR — 한두 글자 틀릴 수 있음)
+  date: string; // 발행일 'YYYY.MM.DD'
+  total: string; // 합계금액(화면 글자)
+  rows: EasyformPulledRow[];
+  nos: string[]; // 비고에 이미 적힌 홈페이지 주문번호
+  at: number;
+}
+
+export async function pollEfAuto(after: number): Promise<{ available: boolean; events: EfAutoEvent[] } | null> {
+  try {
+    const res = await fetch(`${AGENT_URL}/easyform/autosync?after=${after}`, { cache: 'no-store' });
+    if (!res.ok) return null; // 옛 워처(이 기능 없음) = 404
+    return await res.json();
+  } catch {
+    return null; // 워처 꺼짐 / 이 PC 엔 워처 없음
+  }
+}
+
+async function efAutoPost<T>(path: string, body?: unknown): Promise<T | null> {
+  try {
+    const res = await fetch(`${AGENT_URL}/easyform/autosync/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    });
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 이 PC 의 홈페이지 탭이 여러 개여도 한 탭만 카드를 띄우게 — 먼저 가져간 탭이 true. */
+export const claimEfAuto = (id: number) => efAutoPost<{ ok: boolean }>(`claim?id=${id}`).then((r) => !!r?.ok);
+
+/** 제목에 title 글자가 든 브라우저 창을 맨 앞으로(직원은 이지폼을 보고 있으니까). */
+export const frontEfAuto = (title: string) => efAutoPost<{ ok: boolean }>('front', { title }).then((r) => !!r?.ok);
+
+/** 아직 열려 있는 그 이지폼 명세서 비고에 주문번호를 적고 저장. */
+export const stampEfAuto = (id: number, nos: string[]) =>
+  efAutoPost<{ ok: boolean; message?: string; row?: number; remark?: string; skipped?: boolean }>('stamp', { id, nos }).then(
+    (r) => r || { ok: false, message: '워처가 응답하지 않아요' },
+  );

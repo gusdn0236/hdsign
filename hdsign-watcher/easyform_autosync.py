@@ -1,0 +1,599 @@
+"""이지폼 저장 → 홈페이지 자동반영 (2026-11-20).
+
+사무실 직원이 이지폼 **'매출 거래명세서'** 창에서 직접 [저장]을 누르면:
+  1) 워처가 그 클릭(또는 저장 버튼에 포커스 두고 Enter/Space)을 알아챈다 — 저수준 마우스·키 훅, **관찰만**(입력은 안 막음).
+     · 창 제목이 정확히 '매출 거래명세서' 인 명세서 창(TfrmExchange)의 [저장](TBitBtn)만. 매입·발주서 등은 무시.
+     · 우리 자동화(비고 적기 저장 등)는 PostMessage 로 누르므로 물리 입력이 아니라 여기 안 걸린다(무한반복 없음).
+  2) 이미 있던 명세서면 이지폼이 '동일한 고유번호… 저장?' Yes/No 를 묻는다 → 직원이 [Yes] 면 계속, [No] 면 끝.
+     새 명세서는 묻는 창 없이 바로 저장된다(사용자 확인 2026-11-20).
+  3) "홈페이지에도 반영할까요?" 예/아니오 — **예일 때만** 아래가 돈다(사용자 지시).
+  4) 2~3초 입력 잠금 + 안내판 → 발행일·합계(창 글자), 거래처명(화면에 그려진 글자라 OCR), 품목 표(칸 읽기) 읽기.
+  5) 읽은 명세서를 '이벤트'로 쌓아 두면 홈페이지(관리자 화면, EasyformAutoSync)가 폴링해서
+     · 비고에 주문번호가 있으면 그 주문 명세서를 바로 덮어쓰고,
+     · 없으면 거래처·날짜로 지시서 카드를 띄워 "이 지시서가 맞나요?" → [맞아요] → /stamp 로 이지폼 비고에
+       주문번호 적고 저장(easyform_bulk 의 승인된 저장 경로) → 홈페이지 명세서 덮어쓰기.
+홈페이지가 안 열려 있으면 관리자 페이지를 브라우저로 연다.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import queue
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import webbrowser
+
+import easyform as ef
+
+ADMIN_URL = "https://hdsigncraft.com/admin/orders"
+FORM_TITLE = "매출 거래명세서"
+_EVENT_TTL = 30 * 60  # 30분 지난 이벤트는 버림
+
+_LOCK = threading.Lock()
+_STATE = {"seq": 0, "events": [], "last_poll": 0.0, "busy": False, "started": False}
+_Q: "queue.Queue[tuple]" = queue.Queue()
+_ANSWER = {"text": "", "at": 0.0}  # 이지폼 질문창(TMessageForm)에서 마지막으로 누른 버튼
+
+if ef.EASYFORM_AVAILABLE:
+    import ctypes
+    from ctypes import wintypes
+
+    import easyform_bulk as bulk
+
+    _u = ctypes.WinDLL("user32", use_last_error=True)
+    _k = ctypes.WinDLL("kernel32", use_last_error=True)
+    _g = ctypes.WinDLL("gdi32", use_last_error=True)
+    _LRESULT = ctypes.c_ssize_t
+    _HOOKPROC = ctypes.WINFUNCTYPE(_LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+    _u.SetWindowsHookExW.argtypes = [ctypes.c_int, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+    _u.SetWindowsHookExW.restype = wintypes.HHOOK
+    _u.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+    _u.CallNextHookEx.restype = _LRESULT
+    _u.GetMessageW.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.UINT]
+    _u.WindowFromPoint.argtypes = [wintypes.POINT]
+    _u.WindowFromPoint.restype = wintypes.HWND
+    _u.GetParent.argtypes = [wintypes.HWND]
+    _u.GetParent.restype = wintypes.HWND
+    _u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _u.InternalGetWindowText.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _u.GetForegroundWindow.restype = wintypes.HWND
+    _u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    _u.GetWindowThreadProcessId.restype = wintypes.DWORD
+    _u.GetWindowDC.argtypes = [wintypes.HWND]
+    _u.GetWindowDC.restype = wintypes.HDC
+    _u.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    _u.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+    _g.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    _g.CreateCompatibleDC.restype = wintypes.HDC
+    _g.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    _g.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+    _g.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    _g.SelectObject.restype = wintypes.HGDIOBJ
+    _g.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT, ctypes.c_void_p,
+                             ctypes.c_void_p, wintypes.UINT]
+    _g.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    _g.DeleteDC.argtypes = [wintypes.HDC]
+
+    class _MSLL(ctypes.Structure):
+        _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD), ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+    class _KBLL(ctypes.Structure):
+        _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD), ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+    class _GUITHREADINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("flags", wintypes.DWORD), ("hwndActive", wintypes.HWND),
+                    ("hwndFocus", wintypes.HWND), ("hwndCapture", wintypes.HWND), ("hwndMenuOwner", wintypes.HWND),
+                    ("hwndMoveSize", wintypes.HWND), ("hwndCaret", wintypes.HWND), ("rcCaret", wintypes.RECT)]
+
+    _u.GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(_GUITHREADINFO)]
+    _u.IsWindowVisible.argtypes = [wintypes.HWND]
+    _u.EnumWindows.argtypes = [bulk._ENUM, wintypes.LPARAM]
+    _k.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    _k.GetModuleHandleW.restype = wintypes.HMODULE
+
+
+# ── 창 도구(훅 안에서도 쓰는 것 = 메시지를 보내지 않는 함수만) ─────────────────────────
+def _cls(h) -> str:
+    b = ctypes.create_unicode_buffer(128)
+    _u.GetClassNameW(h, b, 128)
+    return b.value or ""
+
+
+def _itext(h) -> str:
+    """창 글자(InternalGetWindowText) — 다른 프로세스에 메시지를 보내지 않아 훅 안에서도 안전."""
+    b = ctypes.create_unicode_buffer(256)
+    _u.InternalGetWindowText(h, b, 256)
+    return (b.value or "").replace("&", "").strip()
+
+
+def _ancestor(h, klass: str, depth: int = 12):
+    while h and depth > 0:
+        if _cls(h) == klass:
+            return h
+        h = _u.GetParent(h)
+        depth -= 1
+    return None
+
+
+def _classify(h) -> "tuple | None":
+    """누른 컨트롤 → ('save', 명세서창) / ('answer', 'Yes'|'No'|…) / None."""
+    if not h:
+        return None
+    c = _cls(h)
+    if c == "TBitBtn" and _itext(h) == "저장":
+        form = _ancestor(_u.GetParent(h), "TfrmExchange")
+        if form and _itext(form) == FORM_TITLE:
+            return ("save", form)
+        return None
+    if c == "TButton":
+        p = _u.GetParent(h)
+        if p and _cls(p) == "TMessageForm":
+            return ("answer", _itext(h))
+    return None
+
+
+def _focus_of_foreground():
+    fg = _u.GetForegroundWindow()
+    if not fg:
+        return None
+    tid = _u.GetWindowThreadProcessId(fg, None)
+    gi = _GUITHREADINFO()
+    gi.cbSize = ctypes.sizeof(_GUITHREADINFO)
+    if not _u.GetGUIThreadInfo(tid, ctypes.byref(gi)):
+        return None
+    return gi.hwndFocus
+
+
+# ── 훅(관찰만 — 항상 다음 훅으로 넘김, 아무것도 안 막음) ──────────────────────────────
+_refs: list = []
+
+
+def _mouse_proc(n, wp, lp):
+    try:
+        if n >= 0 and wp == 0x0202:  # WM_LBUTTONUP
+            ms = ctypes.cast(lp, ctypes.POINTER(_MSLL)).contents
+            if not (ms.flags & 0x1):  # 사람 손(주입 아님)
+                r = _classify(_u.WindowFromPoint(ms.pt))
+                if r:
+                    _Q.put(r + (time.time(),))
+    except Exception:
+        pass
+    return _u.CallNextHookEx(None, n, wp, lp)
+
+
+def _kbd_proc(n, wp, lp):
+    try:
+        if n >= 0 and wp in (0x0100, 0x0104):  # WM_KEYDOWN / WM_SYSKEYDOWN
+            kb = ctypes.cast(lp, ctypes.POINTER(_KBLL)).contents
+            if not (kb.flags & 0x10) and kb.vkCode in (0x0D, 0x20, 0x59, 0x4E, 0x1B):
+                f = _focus_of_foreground()
+                if f:
+                    r = _classify(f)
+                    if r and r[0] == "save" and kb.vkCode in (0x0D, 0x20):
+                        _Q.put(r + (time.time(),))
+                    elif r and r[0] == "answer":
+                        # 질문창: Enter/Space = 포커스 버튼, Y = Yes, N/ESC = No
+                        ans = r[1] if kb.vkCode in (0x0D, 0x20) else ("Yes" if kb.vkCode == 0x59 else "No")
+                        _Q.put(("answer", ans, time.time()))
+    except Exception:
+        pass
+    return _u.CallNextHookEx(None, n, wp, lp)
+
+
+def _hook_thread():
+    hinst = _k.GetModuleHandleW(None)
+    mp, kp = _HOOKPROC(_mouse_proc), _HOOKPROC(_kbd_proc)
+    _refs[:] = [mp, kp]
+    hm = _u.SetWindowsHookExW(14, mp, hinst, 0)  # WH_MOUSE_LL
+    hk = _u.SetWindowsHookExW(13, kp, hinst, 0)  # WH_KEYBOARD_LL
+    logging.info("이지폼 저장 자동반영: 감시 시작(마우스훅=%s 키훅=%s)", bool(hm), bool(hk))
+    msg = wintypes.MSG()
+    while _u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        pass
+
+
+def _other_job_running() -> bool:
+    try:
+        if bulk._JOB.get("state") == "running":
+            return True
+    except Exception:
+        pass
+    try:
+        if ef._EF_PULL.get("state") == "running":
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _dispatch_thread():
+    while True:
+        item = _Q.get()
+        try:
+            if item[0] == "answer":
+                _ANSWER.update(text=item[1], at=item[2])
+                continue
+            if item[0] == "save":
+                with _LOCK:
+                    if _STATE["busy"]:
+                        continue  # 이전 저장 처리 중(같은 저장 이중 클릭 등)
+                    _STATE["busy"] = True
+                if _other_job_running():
+                    logging.info("이지폼 저장 감지 — 다른 이지폼 작업 중이라 건너뜀")
+                    with _LOCK:
+                        _STATE["busy"] = False
+                    continue
+                threading.Thread(target=_handle_save, args=(item[1], item[2]), daemon=True).start()
+        except Exception:
+            logging.exception("이지폼 저장 감지 처리 오류")
+
+
+# ── 저장 1건 처리 ────────────────────────────────────────────────────────────────
+def _main_of(form):
+    h = form
+    for _ in range(12):
+        p = _u.GetParent(h)
+        if not p:
+            break
+        h = p
+        if _cls(h) == "TfrmBookMain":
+            return h
+    return None
+
+
+def _biz_of(main) -> "tuple[str, str]":
+    for m in bulk._mains():
+        if m["hwnd"] == main:
+            return m["biz"], m["name"]
+    return "", ""
+
+
+def _wait_saved(main, t_click: float) -> "tuple[bool, str]":
+    """저장 클릭 뒤 — 질문창이 뜨면 사람이 답할 때까지 기다린다. (저장됐나, 이유)."""
+    t0 = time.time()
+    seen = None
+    while time.time() - t0 < 1.2:  # 새 명세서는 묻는 창 없이 바로 저장
+        pops = [p for p in bulk._popups(main) if p[1] == "TMessageForm"]
+        if pops:
+            seen = pops[0][0]
+            break
+        time.sleep(0.05)
+    if not seen:
+        return True, "새 명세서(질문창 없음)"
+    btns = sorted(bulk._txt(x).replace("&", "") for x in bulk._kids(seen, "TButton"))
+    while bulk._popups(main):  # 사람이 답할 때까지(최대 10분)
+        if time.time() - t0 > 600:
+            return False, "질문창에 답이 없음"
+        time.sleep(0.05)
+    time.sleep(0.15)  # 답 버튼 클릭이 감시 스레드에서 기록될 틈
+    ans = _ANSWER["text"] if _ANSWER["at"] >= t_click else ""
+    if btns != ["No", "Yes"]:
+        return False, f"예상 밖 창({', '.join(btns)}) — 저장 안 된 것으로 봄"
+    if ans == "Yes":
+        time.sleep(0.3)
+        while bulk._popups(main):  # 저장 뒤 또 뜨는 창이 있으면 그것도 끝날 때까지
+            if time.time() - t0 > 600:
+                return False, "저장 뒤 창이 안 닫힘"
+            time.sleep(0.05)
+        return True, "고쳐서 저장(Yes)"
+    return False, f"저장 안 함({ans or '답 모름'})"
+
+
+def _handle_save(form, t_click: float) -> None:
+    try:
+        main = _main_of(form)
+        if not main:
+            return
+        ok, why = _wait_saved(main, t_click)
+        logging.info("이지폼 저장 감지 — %s", why)
+        if not ok:
+            return
+        if not ef.ef_confirm("이지폼에 명세서를 저장했어요.\n\n홈페이지에도 반영할까요?\n\n"
+                             "[예]를 누르면 명세서를 읽는 동안(2~3초) 마우스가 잠깁니다.", "홈페이지 반영"):
+            logging.info("이지폼 저장 자동반영 — 사람이 [아니오]")
+            return
+        if not bulk._shown(form) or bulk._popups(main):
+            ef.ef_messagebox("명세서 창이 닫혀서 읽지 못했어요.\n명세서를 다시 열고 [저장]을 눌러주세요.", "홈페이지 반영")
+            return
+        ev = _read_saved(main, form)
+        if ev is None:
+            return
+        _push(ev)
+    except Exception as e:  # noqa: BLE001
+        logging.exception("이지폼 저장 자동반영 오류")
+        ef.ef_messagebox(f"홈페이지 반영 중 오류가 났어요.\n{e}", "홈페이지 반영")
+    finally:
+        with _LOCK:
+            _STATE["busy"] = False
+
+
+def _overlay(text: "str | None") -> None:
+    try:
+        ef._EF_UI_QUEUE.put(("auto_overlay", text) if text else ("auto_overlay_hide",))
+    except Exception:
+        pass
+
+
+def _read_saved(main, form) -> "dict | None":
+    date, total = bulk._form_header(form)
+    shot = _capture_client(form)  # 거래처명 영역 이미지(OCR 은 읽는 동안 옆에서)
+    ocr: dict = {}
+    th = threading.Thread(target=lambda: ocr.update(text=_ocr(shot)), daemon=True) if shot else None
+    if th:
+        th.start()
+    _overlay("명세서를 읽는 동안 마우스가 잠깁니다.")
+    ef.ef_guard_start()
+    done = threading.Event()
+
+    def esc_relay():  # 잠금 중 ESC(입력가드가 잡음) → 읽기 멈춤
+        while not done.is_set():
+            if ef.ef_aborted():
+                bulk._ABORT.set()
+                return
+            time.sleep(0.05)
+
+    try:
+        bulk._ABORT.clear()
+        threading.Thread(target=esc_relay, daemon=True).start()
+        rows = bulk._read_form(form)
+    except bulk.Stop as e:
+        ef.ef_messagebox(f"명세서를 다 못 읽어서 홈페이지에 반영 안 했어요.\n{e}", "홈페이지 반영")
+        return None
+    finally:
+        done.set()
+        ef.ef_guard_stop()
+        _overlay(None)
+        bulk._ABORT.clear()
+    if th:
+        th.join(timeout=8)
+    biz, name = _biz_of(main)
+    nos: list = []
+    for r in rows:
+        for m in ef._EF_ORDER_NO_RE.finditer(r.get("remark") or ""):
+            if m.group(1) not in nos:
+                nos.append(m.group(1))
+    client = (ocr.get("text") or "").strip()
+    logging.info("이지폼 저장 자동반영 — 읽음 %s %s원 거래처(OCR)='%s' %d줄 비고번호=%s",
+                 date, total, client, len(rows), nos)
+    return {"biz": biz, "bizName": name, "client": client, "date": date, "total": total,
+            "rows": rows, "nos": nos, "form": int(form)}
+
+
+def _push(ev: dict) -> None:
+    with _LOCK:
+        _STATE["seq"] += 1
+        ev.update(id=_STATE["seq"], at=time.time(), claimed=False)
+        now = time.time()
+        _STATE["events"] = [e for e in _STATE["events"] if now - e["at"] < _EVENT_TTL] + [ev]
+        web_alive = now - _STATE["last_poll"] < 8
+    if not web_alive:
+        # 이 PC 에 홈페이지(관리자 화면)가 안 열려 있음 → 열면 쌓인 이벤트를 바로 가져간다.
+        logging.info("이지폼 저장 자동반영 — 홈페이지가 안 열려 있어 관리자 페이지를 엶")
+        try:
+            webbrowser.open(ADMIN_URL)
+        except Exception:
+            logging.exception("관리자 페이지 열기 실패")
+
+
+# ── 거래처명 OCR(화면에 그려진 글자라 창 글자로 못 읽음) ─────────────────────────────
+# 발행일 칸(TMaskEdit) 기준 상대 위치 — 실측(2026-11-20): 발행일 칸 왼위 (71,127) 일 때 거래처명 (52,152)-(183,176).
+_CLIENT_BOX = (-19, 25, 112, 49)
+
+
+def _capture_client(form) -> "str | None":
+    """명세서 창을 PrintWindow 로 떠서 거래처명 칸만 잘라 4배 키우고 흑백으로 → BMP 파일 경로."""
+    try:
+        date_edit = next(iter(bulk._kids(form, "TMaskEdit")), None)
+        if not date_edit:
+            return None
+        fl, ft, fr, fb = bulk._rect(form)
+        dl, dt, _dr, _db = bulk._rect(date_edit)
+        w, h = fr - fl, fb - ft
+        x0, y0 = dl - fl + _CLIENT_BOX[0], dt - ft + _CLIENT_BOX[1]
+        x1, y1 = dl - fl + _CLIENT_BOX[2], dt - ft + _CLIENT_BOX[3]
+        hdc = _u.GetWindowDC(form)
+        mdc = _g.CreateCompatibleDC(hdc)
+        bmp = _g.CreateCompatibleBitmap(hdc, w, h)
+        old = _g.SelectObject(mdc, bmp)
+        # 플래그 0(WM_PRINT 식). 2(PW_RENDERFULLCONTENT)는 창이 이지폼 메인 밖으로 잘리면 보이는 부분만 왼쪽으로
+        # 당겨 그려 거래처 칸이 어긋났다(실측 2026-11-20, 왼쪽 25px 잘림 → "(주)" 잘림). 0 은 잘려도 창 전체를 제자리에.
+        _u.PrintWindow(form, mdc, 0)
+        _g.SelectObject(mdc, old)  # GetDIBits 는 DC 에서 빼낸 비트맵으로
+        hdr = (ctypes.c_uint32 * 10)(40, w, (-h) & 0xFFFFFFFF, 1 | (32 << 16), 0, 0, 0, 0, 0, 0)
+        buf = ctypes.create_string_buffer(w * h * 4)
+        _g.GetDIBits(mdc, bmp, 0, h, buf, hdr, 0)
+        _g.DeleteObject(bmp)
+        _g.DeleteDC(mdc)
+        _u.ReleaseDC(form, hdc)
+        raw = buf.raw
+        cw, ch, S = x1 - x0, y1 - y0, 4
+        path = os.path.join(tempfile.gettempdir(), "hdsign_ef_client.bmp")
+        try:
+            # 실측(2026-11-20): 3배 LANCZOS + 흑백 기준 150~180 에서 '(주)에이치디사인' 정확(그냥 확대는 '메미치').
+            from PIL import Image, ImageOps
+            full = Image.frombuffer("RGB", (w, h), raw, "raw", "BGRX", 0, 1)
+            im = full.crop((x0, y0, x1, y1)).convert("L")
+            im = im.resize((cw * 3, ch * 3), Image.LANCZOS).point(lambda p: 255 if p > 165 else 0)
+            ImageOps.expand(im, border=20, fill=255).convert("RGB").save(path)
+            return path
+        except ImportError:
+            pass  # 경량 에이전트(Pillow 없음) — 아래 손으로 4배·흑백
+        gray = [[0] * cw for _ in range(ch)]
+        for yy in range(ch):
+            base = ((y0 + yy) * w + x0) * 4
+            for xx in range(cw):
+                b, g, r = raw[base + xx * 4], raw[base + xx * 4 + 1], raw[base + xx * 4 + 2]
+                gray[yy][xx] = 255 if (r * 299 + g * 587 + b * 114) // 1000 > 150 else 0
+        pad = 20
+        W, H = cw * S + pad * 2, ch * S + pad * 2
+        row_bytes = (W * 3 + 3) & ~3
+        out = bytearray()
+        for yy in range(H - 1, -1, -1):  # BMP 는 아래 줄부터
+            line = bytearray()
+            sy = (yy - pad) // S
+            for xx in range(W):
+                sx = (xx - pad) // S
+                v = gray[sy][sx] if 0 <= sy < ch and 0 <= sx < cw and yy >= pad and xx >= pad else 255
+                line += bytes((v, v, v))
+            line += b"\0" * (row_bytes - W * 3)
+            out += line
+        import struct
+        head = struct.pack("<2sIHHI", b"BM", 54 + len(out), 0, 0, 54) + \
+            struct.pack("<IiiHHIIiiII", 40, W, H, 1, 24, 0, len(out), 2835, 2835, 0, 0)
+        path = os.path.join(tempfile.gettempdir(), "hdsign_ef_client.bmp")
+        with open(path, "wb") as f:
+            f.write(head + out)
+        return path
+    except Exception:
+        logging.exception("거래처명 캡처 실패")
+        return None
+
+
+_OCR_PS = r"""
+param($path)
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null=[Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime]
+$null=[Windows.Graphics.Imaging.BitmapDecoder,Windows.Foundation,ContentType=WindowsRuntime]
+$null=[Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime]
+$null=[Windows.Globalization.Language,Windows.Globalization,ContentType=WindowsRuntime]
+$asTask=([System.WindowsRuntimeSystemExtensions].GetMethods()|?{$_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'})[0]
+function Await($op,$t){$task=$asTask.MakeGenericMethod($t).Invoke($null,@($op));$task.Wait();$task.Result}
+$f=Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
+$s=Await ($f.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+$d=Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($s)) ([Windows.Graphics.Imaging.BitmapDecoder])
+$b=Await ($d.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+$e=[Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new('ko'))
+$r=Await ($e.RecognizeAsync($b)) ([Windows.Media.Ocr.OcrResult])
+[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$r.Text
+"""
+
+
+def _ocr(path: str) -> str:
+    """Windows 기본 OCR(한국어) — PowerShell 로 부른다(추가 설치 없음). 실패하면 ''."""
+    try:
+        ps = os.path.join(tempfile.gettempdir(), "hdsign_ef_ocr.ps1")
+        with open(ps, "w", encoding="utf-8-sig") as f:
+            f.write(_OCR_PS)
+        path = os.path.abspath(os.path.normpath(path))  # StorageFile 은 '/' 경로를 못 연다
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps, path],
+                           capture_output=True, timeout=15,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return r.stdout.decode("utf-8", "replace").strip()
+    except Exception:
+        logging.exception("거래처명 OCR 실패")
+        return ""
+
+
+# ── HTTP(홈페이지가 부름) ───────────────────────────────────────────────────────
+def handle_events(after: int) -> dict:
+    """GET /easyform/autosync?after=N — 아직 아무 탭도 가져가지 않은 이벤트."""
+    now = time.time()
+    with _LOCK:
+        _STATE["last_poll"] = now
+        evs = [{k: v for k, v in e.items() if k != "claimed"} for e in _STATE["events"]
+               if e["id"] > after and not e["claimed"] and now - e["at"] < _EVENT_TTL]
+        busy = _STATE["busy"]
+    return {"available": bool(ef.EASYFORM_AVAILABLE and _STATE["started"]), "events": evs, "busy": busy}
+
+
+def handle_claim(eid: int) -> dict:
+    """POST /easyform/autosync/claim?id=N — 이 PC 의 홈페이지 탭이 여러 개여도 한 탭만 카드를 띄우게."""
+    with _LOCK:
+        for e in _STATE["events"]:
+            if e["id"] == eid:
+                if e["claimed"]:
+                    return {"ok": False}
+                e["claimed"] = True
+                return {"ok": True}
+    return {"ok": False}
+
+
+def handle_front(body: dict) -> dict:
+    """POST /easyform/autosync/front {title} — 제목에 그 글자가 든 브라우저 창을 맨 앞으로."""
+    want = str((body or {}).get("title") or "").strip()
+    if not want or not ef.EASYFORM_AVAILABLE:
+        return {"ok": False}
+    found: list = []
+
+    def cb(h, _):
+        if _u.IsWindowVisible(h) and want in _itext(h):
+            found.append(h)
+        return True
+
+    _u.EnumWindows(bulk._ENUM(cb), 0)
+    return {"ok": bool(found and ef.ef_force_foreground(found[0]))}
+
+
+def handle_stamp(body: dict) -> dict:
+    """POST /easyform/autosync/stamp {id, nos:[주문번호]} — 아직 열려 있는 그 명세서의 비고에 주문번호를 적고 저장.
+    비고 빈 칸 = 내용 있는 첫 줄(일괄 가져오기와 같은 규칙). 예상 밖이면 저장 안 함."""
+    if not ef.EASYFORM_AVAILABLE:
+        return {"ok": False, "message": "이 PC 에서는 이지폼 자동화를 쓸 수 없어요."}
+    try:
+        eid = int((body or {}).get("id") or 0)
+    except (TypeError, ValueError):
+        eid = 0
+    nos = [str(n) for n in ((body or {}).get("nos") or []) if n][:10]
+    with _LOCK:
+        ev = next((e for e in _STATE["events"] if e["id"] == eid), None)
+        if _STATE["busy"]:
+            return {"ok": False, "message": "이지폼에서 다른 저장을 처리하는 중이에요."}
+        _STATE["busy"] = True
+    try:
+        if not ev or not nos:
+            return {"ok": False, "message": "반영할 명세서를 못 찾았어요."}
+        form = ev["form"]
+        main = _main_of(form)
+        if not main or not bulk._shown(form):
+            return {"ok": False, "message": "이지폼 명세서 창이 닫혀서 비고엔 못 적었어요."}
+        date, total = bulk._form_header(form, ev["total"])
+        if date != ev["date"] or bulk._digits(total) != bulk._digits(ev["total"]):
+            return {"ok": False, "message": f"이지폼에 다른 명세서({date})가 열려 있어서 비고엔 못 적었어요."}
+        if bulk._popups(main):
+            return {"ok": False, "message": "이지폼에 질문창이 떠 있어서 비고엔 못 적었어요."}
+        rows = ev["rows"]
+        if any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
+            return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
+        cand = [i for i, r in enumerate(rows) if bulk._has_content(r) and not (r.get("remark") or "").strip()]
+        if not cand:
+            return {"ok": False, "message": "이지폼 명세서에 빈 비고 칸이 없어서 안 적었어요."}
+        row = cand[0]
+        it = {"row": row, "item": rows[row].get("item") or "", "remark": "", "rowCount": len(rows), "nos": nos}
+        _overlay("이지폼 비고에 주문번호를 적는 동안 마우스가 잠깁니다.")
+        ef.ef_guard_start()
+        try:
+            bulk._ABORT.clear()
+            res = bulk._stamp_row_fast(main, form, it, nos, ", ".join(nos))
+        except bulk.Stop as e:
+            res = {"ok": False, "message": str(e)}
+        finally:
+            ef.ef_guard_stop()
+            _overlay(None)
+        if res.get("ok") and not res.get("skipped"):
+            ev["rows"][row]["remark"] = res.get("remark") or ", ".join(nos)
+        logging.info("이지폼 저장 자동반영 — 비고 적기 %s", res)
+        return res
+    except Exception as e:  # noqa: BLE001
+        logging.exception("이지폼 저장 자동반영 — 비고 적기 오류")
+        return {"ok": False, "message": f"오류: {e}"}
+    finally:
+        with _LOCK:
+            _STATE["busy"] = False
+
+
+def start() -> None:
+    """워처/에이전트 시작 때 1번. 이지폼 자동화가 안 되는 PC 면 아무것도 안 함."""
+    if not ef.EASYFORM_AVAILABLE or sys.platform != "win32":
+        return
+    with _LOCK:
+        if _STATE["started"]:
+            return
+        _STATE["started"] = True
+    threading.Thread(target=_hook_thread, daemon=True, name="ef-autosync-hook").start()
+    threading.Thread(target=_dispatch_thread, daemon=True, name="ef-autosync").start()

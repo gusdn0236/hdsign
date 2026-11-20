@@ -48,6 +48,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "app": "hdsign_easyform_agent"})
         elif self.path == "/easyform/probe":
             self._json(200, easyform.handle_probe())
+        elif self.path.startswith("/easyform/autosync"):
+            import easyform_autosync
+            try:
+                after = int((parse_qs(urlparse(self.path).query).get("after") or ["0"])[0] or 0)
+            except ValueError:
+                after = 0
+            self._json(200, easyform_autosync.handle_events(after))
         elif self.path.startswith("/easyform/bulk"):
             # 이지폼 일괄 가져오기(명세서 탭) — 진행/결과 폴링
             import easyform_bulk
@@ -79,6 +86,28 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pbody = {}
             self._json(*easyform.handle_pull_start(pbody))
+            return
+        if parsed.path.startswith("/easyform/autosync/"):
+            import easyform_autosync
+            try:
+                n = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(n) if n > 0 else b""
+                abody = json.loads(raw.decode("utf-8")) if raw else {}
+            except Exception:
+                abody = {}
+            act = parsed.path.rsplit("/", 1)[-1]
+            if act == "claim":
+                try:
+                    aid = int((parse_qs(parsed.query).get("id") or ["0"])[0] or 0)
+                except ValueError:
+                    aid = 0
+                self._json(200, easyform_autosync.handle_claim(aid))
+            elif act == "front":
+                self._json(200, easyform_autosync.handle_front(abody))
+            elif act == "stamp":
+                self._json(200, easyform_autosync.handle_stamp(abody))
+            else:
+                self._json(404, {"ok": False})
             return
         if parsed.path == "/easyform/bulk":
             import easyform_bulk
@@ -174,6 +203,11 @@ def main():
         easyform.install(root, accent=ORANGE, accent_dark=ORANGE_DARK)  # 주황 테마 버튼 UI + F6
     except Exception as e:  # noqa: BLE001
         logging.warning("이지폼 UI 설치 실패: %s", e)
+    try:
+        import easyform_autosync  # 이지폼 '매출 거래명세서' [저장] 감지 → 홈페이지 반영(묻고, 예일 때만)
+        easyform_autosync.start()
+    except Exception as e:  # noqa: BLE001
+        logging.warning("이지폼 저장 자동반영 시작 실패: %s", e)
     root.mainloop()
 
 

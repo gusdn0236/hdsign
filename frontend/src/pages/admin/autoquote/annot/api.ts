@@ -379,7 +379,7 @@ export async function syncEstimateFromEasyform(
     orderNumbers: string[];
     grid: any[];
     total?: number;
-    source: 'pull' | 'fill' | 'batch';
+    source: 'pull' | 'fill' | 'batch' | 'auto'; // auto = 이지폼 [저장] 감지 자동반영
     efDate?: string; // 이지폼 명세서 발행일 — 같은 명세서 알아보기(지문)
     efTotal?: string; // 이지폼 명세서 합계
     keepLinked?: boolean; // false = '따로 저장' — 기존 합친 명세서 묶음을 푼다(기본: 같은 명세서면 묶음 유지)
@@ -623,4 +623,32 @@ export async function getEasyformUsedKeys(
   } catch {
     return [];
   }
+}
+
+/** 이지폼 저장 자동반영 — 명세서 발행일(=보통 납기) 근처 지시서 후보(작업중+작업완료). 거래처 짝짓기는 프론트. */
+export async function getEasyformCandidates(
+  token: string | null | undefined,
+  date: string,
+  days = 7,
+): Promise<EasyformCandidateOrder[]> {
+  const res = await fetch(
+    `${BASE_URL}/api/admin/orders/estimate/easyform-candidates?date=${encodeURIComponent(date)}&days=${days}`,
+    { headers: authHeaders(token) },
+  );
+  if (!res.ok) throw new Error(`지시서 후보를 못 불러왔어요 (${res.status})`);
+  const j = await res.json();
+  return Array.isArray(j?.items) ? j.items : [];
+}
+
+export interface EasyformCandidateOrder {
+  id: number;
+  orderNumber?: string | null;
+  clientCompanyName?: string | null;
+  title?: string | null;
+  dueDate?: string | null;
+  createdAt?: string | null;
+  worksheetPdfUrl?: string | null;
+  worksheetThumbnailUrl?: string | null;
+  hasEstimate?: boolean;
+  deletedAt?: string | null;
 }
