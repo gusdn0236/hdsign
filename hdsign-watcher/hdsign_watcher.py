@@ -2350,7 +2350,7 @@ def start_order_alert_loop():
 
 def resolve_new_due_date_md(current_iso: str, month_input: int, day_input: int) -> date:
     """월+일을 명시적으로 입력받는 폼용 — 연도는 '오늘' 기준으로 정하고, 입력한 월/일이 올해
-    기준으로 이미 지났으면(=오늘보다 과거) 다음 해로 롤오버. 잘못된 조합(2/30 등)은 그 달 말일로 클램프.
+    기준 작년·올해·내년 중 오늘과 가장 가까운 날로 정한다. 잘못된 조합(2/30 등)은 그 달 말일로 클램프.
 
     current_iso(현재 납기)는 연도 기준으로 쓰지 않는다(인자는 호출부 호환을 위해 유지). 예전엔
     current_iso 를 기준으로 '입력<현재납기면 내년'으로 굴려서, 납기를 *현재보다 이른 날*로 당기면
@@ -2370,11 +2370,11 @@ def resolve_new_due_date_md(current_iso: str, month_input: int, day_input: int) 
                 next_first = date(y, m + 1, 1)
             return next_first - timedelta(days=1)
 
-    candidate = _clamped(year, month_input, day_input)
-    if candidate < today:
-        # 입력 월/일이 올해 기준 이미 지났음 → 같은 월/일의 내년.
-        candidate = _clamped(year + 1, month_input, day_input)
-    return candidate
+    # 작년·올해·내년 중 오늘과 가장 가까운 날로 정한다(같으면 미래 쪽). 예전엔 '지났으면 무조건
+    # 내년'이라 이틀 전 날짜(11-20 에 11-18 입력)가 2027-11-18 로 저장돼 작업중·작업완료 어디에도
+    # 안 보였다(2026-11-20 실측). 이제 11-18 → 올해, 12월에 1-05 → 내년, 1월에 12-28 → 작년.
+    cands = [_clamped(y, month_input, day_input) for y in (year - 1, year, year + 1)]
+    return min(cands, key=lambda d: (abs((d - today).days), d < today))
 
 
 def resolve_new_due_date(current_iso: str, day_input: int) -> date:
