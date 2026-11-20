@@ -4554,8 +4554,17 @@ def _fs_stem_from_title(title: str) -> str:
         inner = m.group(1).strip()
         if inner.lower().endswith(".fs"):
             inner = inner[:-3].strip()
+        # 새(한 번도 저장 안 한) 문서의 기본 이름 'Untitled 8' 등은 파일명이 아니다 — 이걸 stem 으로
+        # 잡으면 '저장된 문서'로 오판해 Save As 대기를 건너뛰고 'Untitled 8.fs' 로 도장하려다 실패했다
+        # (2026-11-20 실측: 저장 안 하고 웹반영 → stem 못 찾음 → 현장 FS열기 실패).
+        if _UNTITLED_RE.match(inner):
+            return ""
         return inner
     return ""
+
+
+# FlexiSIGN 새 문서 기본 제목('Untitled 8', '제목 없음 2' …) — 확장자 없는 [..] 표기에서만 거른다.
+_UNTITLED_RE = re.compile(r'^\s*(untitled|제목\s*없음|이름\s*없음)\s*-?\s*\d*\s*$', re.IGNORECASE)
 
 
 def _flexisign_window_status() -> tuple[str, str | None, int]:
@@ -5040,7 +5049,7 @@ def _auto_save_flexisign_for_print(
     pdf_path: Path,
     prior_status: str = '',
     prior_stem: str | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, str | None]:
     """인쇄 PDF 감지 시 호출 — FlexiSIGN 도큐먼트 자동 Ctrl+S 저장.
 
     반환 (계속진행, alert_kind).
@@ -5066,7 +5075,7 @@ def _auto_save_flexisign_for_print(
     status, stem, hwnd = _flexisign_window_status()
     if status == "no_window":
         ui_log("FlexiSIGN 창 없음 — 다른 앱 인쇄로 추정, Ctrl+S 생략")
-        return True, ''
+        return True, '', None
 
     effective_stem = stem or prior_stem
 
@@ -5076,28 +5085,27 @@ def _auto_save_flexisign_for_print(
         send_ok = _send_save_keystroke_to(hwnd)
         if not send_ok:
             ui_log("FlexiSIGN — Ctrl+S 포그라운드 검증 실패, 그대로 진행")
-            return True, 'failed'
-
-    # 이미 .fs 이름이 잡힌 기존 지시서는 Ctrl+S 만으로 저장이 끝난다. 이 상태에서
-    # FlexiSIGN 인쇄/경고 같은 다른 #32770 창이 잠깐 남아 있어도 새 지시서 Save As 로
-    # 기다리면 웹반영이 멈추므로, 이름 있는 문서는 Save As 감시를 하지 않는다.
-    if effective_stem:
-        ui_log(f"FlexiSIGN Ctrl+S 송신 — '{effective_stem}.fs' 저장 처리")
-        return True, 'saved'
+            return True, 'failed', None
 
     # Save As 다이얼로그가 떴는지 짧게 폴링. 떴으면 사용자가 파일명 입력 중 → 대기 모달.
     # 안 떴으면(보통의 경우 — 이미 저장된 .fs 또는 변경분 자동저장) 즉시 통과.
-    # 0.1s × 12 = 1.2s 예산: Save As 는 거의 즉시 뜨고, 이 정도면 잡힌다.
+    # 이름 있는 문서도 짧게(0.5s) 확인한다 — 제목만으론 새 문서를 놓칠 수 있어서(2026-11-20
+    # 'Untitled 8' 오판). Save As 는 거의 즉시 뜨고, 감지 함수가 제목으로 Save As 만 골라
+    # 인쇄/경고 #32770 에 멈추지 않는다. 이름 없는 문서는 1.2s 까지.
     save_as_open = False
-    for _ in range(12):
+    for _ in range(5 if effective_stem else 12):
         time.sleep(0.1)
         if _flexisign_save_as_dialog_present():
             save_as_open = True
             break
 
+    if not save_as_open and effective_stem:
+        ui_log(f"FlexiSIGN Ctrl+S 송신 — '{effective_stem}.fs' 저장 처리")
+        return True, 'saved', None
+
     if not save_as_open:
         ui_log("FlexiSIGN Ctrl+S 송신 — Save As 미발생, stem 미상으로 진행")
-        return True, 'saved'
+        return True, 'saved', None
 
     # Save As 다이얼로그 열림 — 사용자에게 제목 입력 안내. 다이얼로그가 닫힐 때까지 대기.
     ui_log("FlexiSIGN — Save As 다이얼로그 감지, 사용자 파일명 입력 대기 모달 띄움")
@@ -5111,10 +5119,13 @@ def _auto_save_flexisign_for_print(
             # 다이얼로그가 사라졌으면 저장(또는 사용자 직접 취소) 완료로 판정.
             if not _flexisign_save_as_dialog_present():
                 # 짧게 더 기다린 뒤 .fs 잡히는지 확인 — 저장 완료라면 제목이 업데이트됨.
-                time.sleep(0.2)
-                s2, st2, _ = _flexisign_window_status()
-                if s2 == "saved" and st2:
-                    saved_after = st2
+                # 저장 직후 제목이 '[새이름.fs]' 로 바뀌는 데 잠깐 걸린다 — 최대 ~2s 재확인.
+                for _w in range(10):
+                    time.sleep(0.2)
+                    s2, st2, _ = _flexisign_window_status()
+                    if s2 == "saved" and st2:
+                        saved_after = st2
+                        break
                 break
             time.sleep(0.3)
     finally:
@@ -5127,13 +5138,13 @@ def _auto_save_flexisign_for_print(
                 pdf_path.unlink()
         except Exception as e:
             ui_log(f"PDF 삭제 실패: {e}")
-        return False, ''
+        return False, '', None
 
     if saved_after:
         ui_log(f"인쇄 — FlexiSIGN Save As 완료('{saved_after}.fs') → 평소 흐름 진행")
     else:
         ui_log("인쇄 — Save As 다이얼로그 사라짐(저장됐는지 확인 못함), stem 미상으로 진행")
-    return True, 'saved'
+    return True, 'saved', (saved_after or '')
 
 
 def _rename_printed_pdf_to_original(pdf_path: Path, order_number: str,
@@ -6223,7 +6234,7 @@ def _process_printed_pdf(pdf_path: Path):
     #     워처가 그걸 감지하면 "지시서 제목 입력 대기" 모달, 사용자가 저장 완료 시 통과.
     #     [취소]/타임아웃이면 auto_ok=False → patch/업로드/종이 모두 생략하고 종료.
     #   ・no_window (다른 앱 인쇄): Ctrl+S 안 보내고 그대로 통과.
-    auto_ok, alert_kind = _auto_save_flexisign_for_print(
+    auto_ok, alert_kind, _saved_as_stem = _auto_save_flexisign_for_print(
         pdf_path,
         prior_status=_intent_status,
         prior_stem=_intent_stem,
@@ -6310,7 +6321,9 @@ def _process_printed_pdf(pdf_path: Path):
     # _intent_stem 이 없으면(새 도큐먼트라 Save As 로 이제야 이름이 생긴 경우 등) 지금 창에서 한 번 읽는다.
     # 이 stem 을 PDF 리네임(썸네일 이름)과 .fs UID 스탬프 양쪽에 같이 넘겨, 썸네일과 못 박는
     # .fs 가 같은 도큐먼트를 가리키게 한다('썸네일 ≠ 열리는 파일' 어긋남 원천 차단).
-    printed_stem = _intent_stem
+    # 새 문서를 방금 Save As 로 저장했으면(_saved_as_stem 이 None 이 아님) 인쇄 전 이름('Untitled'
+    # 등)은 버리고 저장한 새 이름을 쓴다. '' = 저장은 했는데 이름을 못 읽음 → 아래에서 다시 읽기.
+    printed_stem = _intent_stem if _saved_as_stem is None else (_saved_as_stem or None)
     if not printed_stem:
         try:
             _ps_status, _ps_stem, _ = _flexisign_window_status_quick()
