@@ -2890,3 +2890,12 @@
   color: #94a3b8;
   white-space: nowrap;
 }
+
+/* 이지폼 저장 자동반영 미리보기 — 추가된 줄 */
+.aq tr.efnew td,
+tr.efnew td {
+  background: #fef08a !important;
+}
+tr.efnew td:first-child {
+  box-shadow: inset 4px 0 0 #ca8a04;
+}

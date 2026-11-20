@@ -9,8 +9,8 @@
  *     [맞아요] → 워처가 이지폼 비고에 주문번호를 적고 저장 → 홈페이지 명세서 덮어쓰기.
  * 이지폼이 참 데이터 — 홈페이지 명세서가 달라도 이지폼 내용으로 덮는다(사용자 결정 2026-11-20).
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import WorksheetThumbnailJs from '../../../components/common/WorksheetThumbnail.jsx';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import FitWorksheet from '../scrap/FitWorksheet';
 import { useAuth } from '../../../context/AuthContext';
 import {
   findOrdersByNumbers,
@@ -24,20 +24,18 @@ import {
   extractOrderNos,
   frontEfAuto,
   orderNoCore,
-  releaseEfAuto,
   stampEfAuto,
   type EfAutoEvent,
 } from './data/easyformClient';
 import { clientSim, efRowsToGrid, normClient, rememberClientAlias } from './data/efMatch';
 import './EasyformAutoSync.css';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const WorksheetThumbnail = WorksheetThumbnailJs as unknown as ComponentType<any>;
+// 추가한 줄 묻기 때 뒤에 '그 명세서' 화면을 미리보기로 깐다(사용자 2026-11-20: 명세서를 열어 추가된 줄 표시)
+const AutoQuote = lazy(() => import('./AutoQuote'));
 
 interface Props {
   ev: EfAutoEvent;
   token: string | null | undefined;
-  tab: string; // 이 탭 표시(내려놓기용)
   more: number; // 뒤에 기다리는 저장 수
   onClose: () => void;
 }
@@ -79,7 +77,7 @@ interface Added {
   base: EasyformCandidateOrder; // 원래 지시서(비고 번호의 첫 주문)
 }
 
-export default function EasyformAutoSyncModal({ ev, token, tab, more, onClose: drop }: Props) {
+export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }: Props) {
   // 닫을 땐 언제나 이지폼 명세서 창으로 돌아간다(직원은 이지폼에서 일하던 중 — 사용자 2026-11-20)
   const onClose = useCallback(() => {
     backEfAuto(ev.id);
@@ -114,16 +112,10 @@ export default function EasyformAutoSyncModal({ ev, token, tab, more, onClose: d
     document.title = `🧾 ${mark}`;
     let alive = true;
     (async () => {
-      const ok = await frontEfAuto(mark);
-      if (!alive) return;
-      if (!ok && document.visibilityState === 'hidden') {
-        // 브라우저에서 안 보이는 탭(다른 탭 뒤) → 앞으로 못 띄움. 내려놓으면 워처가 관리자 페이지를 새 탭으로 열고
-        // 새 탭(저절로 맨 앞)이 이 건을 가져가 카드를 띄운다. 이 탭은 아무것도 반영하지 않고 조용히 빠진다.
-        await releaseEfAuto(ev.id, tab);
-        if (alive) drop();
-        return;
-      }
-      setReady(true);
+      // 워처가 이 창을 앞으로 — 다른 탭 뒤에 숨어 있으면 Chrome 탭 목록에서 이 탭을 골라 앞으로(새 탭은 안 엶:
+      // 관리자 로그인이 탭마다라 새 탭은 다시 로그인해야 함, 사용자 2026-11-20). 못 띄워도 카드는 여기 그대로.
+      await frontEfAuto(mark);
+      if (alive) setReady(true);
     })();
     return () => {
       alive = false;
@@ -291,12 +283,32 @@ export default function EasyformAutoSyncModal({ ev, token, tab, more, onClose: d
           : '홈페이지에 반영하는 중…';
   const who = ev.client || added?.base.clientCompanyName || '';
   const price = (v: string) => (v ? `${Number(v.replace(/,/g, '')).toLocaleString('ko-KR')}원` : '');
+  const preview = useMemo(
+    () =>
+      added
+        ? {
+            rows: grid.map((r) => ({ 품목코드: r.품목코드, 품목: r.품목, 규격: r.규격, 수량: r.수량, 단가: r.단가, 비고: r.비고 })),
+            newFrom: added.from,
+          }
+        : undefined,
+    [added, grid],
+  );
   const sameSave = () => {
     if (added) save(ev.nos, ev.nos.length === 1 ? { o: added.base, move: true } : undefined);
   };
 
+  const onAq = !!added && phase !== 'pick'; // 뒤에 명세서 미리보기를 깔 때
+
   return (
-    <div className="efas" role="dialog" aria-modal="true" aria-label="이지폼 명세서 홈페이지 반영">
+    <>
+      {onAq && added && (
+        <div className="aq-modal-overlay efas-aqwrap" aria-hidden="true">
+          <Suspense fallback={null}>
+            <AutoQuote orderId={added.base.id} efPreview={preview} onClose={onClose} />
+          </Suspense>
+        </div>
+      )}
+    <div className={'efas' + (onAq ? ' on-aq' : '')} role="dialog" aria-modal="true" aria-label="이지폼 명세서 홈페이지 반영">
       <div className="efas-card">
         <header className="efas-head">
           <div>
@@ -358,11 +370,7 @@ export default function EasyformAutoSyncModal({ ev, token, tab, more, onClose: d
           <div className="efas-choice">
             <button type="button" className="efas-opt" onClick={sameSave}>
               <div className="efas-opt-thumb">
-                <WorksheetThumbnail
-                  pdfUrl={added.base.worksheetPdfUrl}
-                  thumbnailUrl={added.base.worksheetThumbnailUrl}
-                  rootMargin="300px 0px"
-                />
+                <FitWorksheet pdfUrl={added.base.worksheetPdfUrl} thumbUrl={added.base.worksheetThumbnailUrl} title={added.base.title} />
               </div>
               <b>같은 지시서</b>
               <span>{baseNo}</span>
@@ -410,7 +418,7 @@ export default function EasyformAutoSyncModal({ ev, token, tab, more, onClose: d
                       aria-pressed={picked?.id === o.id}
                     >
                       <div className="efas-thumb">
-                        <WorksheetThumbnail pdfUrl={o.worksheetPdfUrl} thumbnailUrl={o.worksheetThumbnailUrl} rootMargin="300px 0px" />
+                        <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
                       </div>
                       <div className="efas-cand-body">
                         <span className="efas-cand-client">{o.clientCompanyName || '거래처 없음'}</span>
@@ -502,5 +510,6 @@ export default function EasyformAutoSyncModal({ ev, token, tab, more, onClose: d
         </footer>
       </div>
     </div>
+    </>
   );
 }

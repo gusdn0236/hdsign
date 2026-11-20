@@ -447,3 +447,34 @@
     height: 120px;
   }
 }
+
+/* 추가한 줄 묻기 — 뒤에 '그 명세서' 미리보기(보기만), 앞에 고르기 카드 */
+.efas-aqwrap {
+  z-index: 1490;
+  pointer-events: none; /* 보기만 — 실수로 임시저장 등 누르지 않게 */
+}
+.efas.on-aq {
+  align-items: flex-end;
+  background: rgba(15, 23, 42, 0.25);
+  padding-bottom: 28px;
+}
+.efas.on-aq .efas-card {
+  width: min(760px, 100%);
+  max-height: 62vh;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+/* 지시서 사진 — 잘리지 않게 전체(FitWorksheet 가 상자에 맞춤) */
+.efas-thumb,
+.efas-opt-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  box-sizing: border-box;
+}
+.efas-thumb {
+  height: 190px;
+}
+.efas-opt-thumb {
+  height: 210px;
+}

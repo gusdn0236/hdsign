@@ -50,7 +50,6 @@ export default function EasyformAutoSync({ token }: { token: string | null | und
         key={cur.id}
         ev={cur}
         token={token}
-        tab={tab.current}
         more={queue.length - 1}
         onClose={() => setQueue((q) => q.slice(1))}
       />

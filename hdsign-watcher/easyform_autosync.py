@@ -595,8 +595,51 @@ def handle_back(eid: int) -> dict:
     return {"ok": bool(ok)}
 
 
+# Chrome 탭 목록(UI Automation)에서 이름에 그 글자가 든 탭을 골라(선택) 그 창 핸들을 돌려준다.
+# 관리자 로그인은 탭마다(sessionStorage)라 새 탭을 열면 다시 로그인해야 함 → 이미 열린 관리자 탭을 앞으로(사용자 2026-11-20).
+_TAB_PS = r"""
+param($mark)
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$A = [System.Windows.Automation.AutomationElement]
+$root = $A::RootElement
+$wc = New-Object System.Windows.Automation.PropertyCondition($A::ClassNameProperty, 'Chrome_WidgetWin_1')
+$tc = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::TabItem)
+foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $wc)) {
+  foreach ($t in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tc)) {
+    if ($t.Current.Name -like "*$mark*") {
+      try { $t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch {
+        try { $t.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() } catch {}
+      }
+      "HWND=" + $w.Current.NativeWindowHandle
+      exit 0
+    }
+  }
+}
+"NONE"
+"""
+
+
+def _select_chrome_tab(mark: str):
+    try:
+        ps = os.path.join(tempfile.gettempdir(), "hdsign_ef_tab.ps1")
+        with open(ps, "w", encoding="utf-8-sig") as f:
+            f.write(_TAB_PS)
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps, mark],
+                           capture_output=True, timeout=15,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = r.stdout.decode("utf-8", "replace")
+        for line in out.splitlines():
+            if line.startswith("HWND="):
+                return int(line[5:].strip() or 0) or None
+    except Exception:
+        logging.exception("Chrome 탭 고르기 실패")
+    return None
+
+
 def handle_front(body: dict) -> dict:
-    """POST /easyform/autosync/front {title} — 제목에 그 글자가 든 브라우저 창을 맨 앞으로."""
+    """POST /easyform/autosync/front {title} — 그 글자가 제목에 든 홈페이지를 맨 앞으로.
+    ① 창 제목(관리자 탭이 그 창의 보이는 탭일 때) ② 안 보이는 탭이면 Chrome 탭 목록에서 골라 선택 후 그 창을 앞으로."""
     want = str((body or {}).get("title") or "").strip()
     if not want or not ef.EASYFORM_AVAILABLE:
         return {"ok": False}
@@ -608,7 +651,15 @@ def handle_front(body: dict) -> dict:
         return True
 
     _u.EnumWindows(bulk._ENUM(cb), 0)
-    return {"ok": bool(found and ef.ef_force_foreground(found[0]))}
+    if found and ef.ef_force_foreground(found[0]):
+        return {"ok": True, "how": "window"}
+    h = _select_chrome_tab(want)
+    if h:
+        time.sleep(0.15)
+        ok = ef.ef_force_foreground(h)
+        logging.info("이지폼 저장 자동반영 — 숨은 관리자 탭을 골라 앞으로: %s", ok)
+        return {"ok": bool(ok), "how": "tab"}
+    return {"ok": False}
 
 
 # ── 비고 적기(빠른 길) ──────────────────────────────────────────────────────────
