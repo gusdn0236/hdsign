@@ -341,8 +341,7 @@
 .sv-zoom-in {
   width: 100%;
   height: 100%;
-  transform-origin: center center;
-  will-change: transform;
+  transform-origin: center center; /* will-change 빼야 확대 때 선명하게 다시 그려짐 */
 }
 .sv-zoom-in > .efb-fit {
   width: 100%;

@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import FitWorksheet from '../scrap/FitWorksheet';
+import { ZoomBox } from '../scrap/ScrapViewer';
 import WorksheetThumbnailJs from '../../../components/common/WorksheetThumbnail.jsx';
 import {
   startEfBulk,
@@ -1394,7 +1395,9 @@ function DetailView({
         </div>
         <div className="efb-dbody">
           <div className="efb-dws">
-            <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
+            <ZoomBox resetKey={String(order.id)}>
+              <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
+            </ZoomBox>
           </div>
           <div className="efb-dstmt">
             <div className="efb-dstmt-head">
@@ -1634,7 +1637,9 @@ function WsZoom({ order, onClose }: { order: EfBulkOrder; onClose: () => void })
           <button type="button" className="efb-x efb-x--light" onClick={onClose} aria-label="닫기">✕</button>
         </div>
         <div className="efb-zoom-ws">
-          <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
+          <ZoomBox resetKey={String(order.id)}>
+            <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
+          </ZoomBox>
         </div>
       </div>
     </div>
@@ -1747,7 +1752,9 @@ function ClueEntry({
   return (
     <div className="efb-clue">
       <div className="efb-clue-ws">
-        <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
+        <ZoomBox resetKey={String(o.id)}>
+          <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
+        </ZoomBox>
       </div>
       <aside className="efb-clue-side">
         <div className="efb-clue-head">

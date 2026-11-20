@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import { evidence as fetchEvidence, getEstimate, type Evidence } from '../autoquote/annot/api';
 import { ZoomImg } from '../autoquote/LookupResultModal';
 import FitWorksheet from './FitWorksheet';
+import { ZoomScaleContext } from './zoomScale';
 import type { ScrapItem, ScrapRow } from './scrapStore';
 
 /**
@@ -25,10 +26,18 @@ export function ZoomBox({ children, resetKey }: { children: ReactNode; resetKey:
   const t = useRef({ scale: 1, tx: 0, ty: 0 });
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const [, force] = useReducer((x) => x + 1, 0);
+  // 손을 멈춘 뒤의 배율(1·2·3·4·6 단계로 올림) — 안의 지시서 PDF 가 이 배율로 선명하게 다시 그려진다
+  const [settled, setSettled] = useState(1);
+  const settleT = useRef<number | undefined>(undefined);
   const apply = (scale: number, tx: number, ty: number) => {
     t.current = { scale, tx, ty };
     force();
+    window.clearTimeout(settleT.current);
+    settleT.current = window.setTimeout(() => {
+      setSettled([1, 2, 3, 4, 6].find((s) => s >= scale - 0.01) ?? 6);
+    }, 220);
   };
+  useEffect(() => () => window.clearTimeout(settleT.current), []);
   useEffect(() => apply(1, 0, 0), [resetKey]);
   useEffect(() => {
     const el = wrap.current;
@@ -68,7 +77,7 @@ export function ZoomBox({ children, resetKey }: { children: ReactNode; resetKey:
       title="휠: 확대·축소 · 드래그: 이동 · 더블클릭: 원래대로"
     >
       <div className="sv-zoom-in" style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}>
-        {children}
+        <ZoomScaleContext.Provider value={settled}>{children}</ZoomScaleContext.Provider>
       </div>
     </div>
   );
