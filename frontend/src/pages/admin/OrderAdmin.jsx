@@ -288,6 +288,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setOrders((prev) => prev.map(patch));
     setTrashOrders((prev) => prev.map(patch));
   }, [editorName]);
+  // 이지폼 저장 자동반영(EasyformAutoSync)이 홈페이지 명세서를 저장함 → 그 카드들에 바로 '명세서 완료'.
+  // (합친 명세서 묶음 표시 등 나머지는 20초 자동 새로고침이 맞춘다)
+  useEffect(() => {
+    const on = (e) => (e.detail?.ids || []).forEach((id) => markEasyformDone(id));
+    window.addEventListener("hd:efauto-saved", on);
+    return () => window.removeEventListener("hd:efauto-saved", on);
+  }, [markEasyformDone]);
   // 명세서작성 모달이 열린 동안 배경(/admin/orders) 스크롤 잠금.
   useEffect(() => {
     if (estimateOrderId == null) return undefined;
@@ -381,6 +388,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   }, [statementLockHolder]);
   // 작업현황 등 다른 화면에서 `?order=<id>` 로 넘어오면 그 주문 상세 모달을 바로 연다.
   const [searchParams, setSearchParams] = useSearchParams();
+  // ?tab=statement — 명세서 탭으로(이지폼 저장 자동반영이 이 주소로 연다). 한 번만 소비.
+  useEffect(() => {
+    if (searchParams.get("tab") !== "statement") return;
+    setActiveFilter("STATEMENT");
+    const next = new URLSearchParams(searchParams);
+    next.delete("tab");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   useEffect(() => {
     const raw = searchParams.get("order");
     if (!raw) return;

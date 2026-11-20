@@ -1956,6 +1956,10 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
              fg="#374151", bg="#ffffff").pack(anchor="w")
     ask_client = tk.Label(ask_in, text="", font=("맑은 고딕", int(12 * s)), fg="#6b7280", bg="#ffffff")
     ask_client.pack(anchor="w", pady=(int(4 * s), 0))
+    # 홈페이지 연결 상태(관리자 화면이 켜져 있고 로그인됐나)
+    ask_status = tk.Label(ask_in, text="", font=("맑은 고딕", int(11 * s), "bold"), fg="#15803d", bg="#ffffff",
+                          justify="left", wraplength=int(520 * s))
+    ask_status.pack(anchor="w", pady=(int(8 * s), 0))
     tk.Label(ask_in, text="홈페이지에도 반영할까요?", font=("맑은 고딕", int(24 * s), "bold"),
              fg="#111827", bg="#ffffff").pack(anchor="w", pady=(int(14 * s), int(6 * s)))
     tk.Label(ask_in, text="[예]를 누르면 명세서를 읽는 동안(2~3초) 마우스가 잠깁니다.",
@@ -2008,13 +2012,17 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         ask.lift()
         root.after(300, ask_keep_on_top)
 
-    def ask_show(holder, client=""):
+    def ask_show(holder, client="", status=None):
         if ask_state["holder"]:  # 앞 질문이 남아 있으면 아니오로 정리
             old = ask_state["holder"]
             old["ans"] = False
             old["ev"].set()
         ask_state["holder"] = holder
         ask_client.config(text=client)  # '11월 20일 발행 · 합계 1원'
+        if status:
+            ask_status.config(text=status[0], fg="#15803d" if status[1] else "#b45309")
+        else:
+            ask_status.config(text="")
         ask_dim.deiconify()
         ask_dim.lift()
         ask.update_idletasks()
@@ -2083,7 +2091,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                         show_done(ok, msg, ok_text=f"✅ {n}줄을 가져왔어요.\n홈페이지 명세서 화면에서 확인하세요.")
                     logging.info("이지폼 가져오기 %s — %s", "성공" if ok else "실패/중단", msg)
                 elif cmd[0] == "auto_ask":  # 이지폼 저장 자동반영 — "홈페이지에도 반영할까요?"
-                    ask_show(cmd[1], cmd[2] if len(cmd) > 2 else "")
+                    ask_show(cmd[1], cmd[2] if len(cmd) > 2 else "", cmd[3] if len(cmd) > 3 else None)
                 elif cmd[0] == "auto_ask_cancel":
                     if ask_state["holder"] is cmd[1]:
                         ask_answer(False)

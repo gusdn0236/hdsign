@@ -28,12 +28,14 @@ import webbrowser
 
 import easyform as ef
 
-ADMIN_URL = "https://hdsigncraft.com/admin/orders"
+ADMIN_URL = "https://hdsigncraft.com/admin/orders?tab=statement"
+# 관리자 화면(로그인된 탭)의 제목 — 홈페이지 EasyformAutoSync 가 붙인다. Chrome 탭 목록에서 이걸로 관리자 탭을 찾는다.
+ADMIN_TAB_MARK = "HD Sign 관리자"
 FORM_TITLE = "매출 거래명세서"
 _EVENT_TTL = 30 * 60  # 30분 지난 이벤트는 버림
 
 _LOCK = threading.Lock()
-_STATE = {"seq": 0, "events": [], "last_poll": 0.0, "busy": False, "started": False}
+_STATE = {"seq": 0, "events": [], "last_poll": 0.0, "busy": False, "started": False, "reading": False}
 _Q: "queue.Queue[tuple]" = queue.Queue()
 _ANSWER = {"text": "", "at": 0.0}  # 이지폼 질문창(TMessageForm)에서 마지막으로 누른 버튼
 
@@ -299,7 +301,16 @@ def _handle_save(form, t_click: float) -> None:
         if not bulk._shown(form) or bulk._popups(main):
             ef.ef_messagebox("명세서 창이 닫혀서 읽지 못했어요.\n명세서를 다시 열고 [저장]을 눌러주세요.", "홈페이지 반영")
             return
-        ev = _read_saved(main, form)
+        # [예] 즉시 홈페이지를 앞으로 + '읽는 중' 표시(읽기는 화면을 안 쓰는 메시지 방식이라 뒤에서 그대로 진행).
+        # 예전엔 다 읽고 → 홈페이지 신호 기다림 → 앞으로 라서 반응이 늦었다(사용자 2026-11-20).
+        with _LOCK:
+            _STATE["reading"] = True
+        threading.Thread(target=_front_admin, daemon=True).start()
+        try:
+            ev = _read_saved(main, form)
+        finally:
+            with _LOCK:
+                _STATE["reading"] = False
         if ev is None:
             return
         _push(ev)
@@ -323,7 +334,9 @@ def _ask_reflect(form) -> bool:
         except Exception:
             pass
         holder = {"ev": threading.Event(), "ans": False}
-        ef._EF_UI_QUEUE.put(("auto_ask", holder, info))
+        st = _web_status()
+        status = ("✅ 홈페이지 연결됨", True) if st != "none" else             ("⚠ 홈페이지가 꺼져 있거나 로그인이 안 돼 있어요 — [예]를 누르면 홈페이지를 열어요(로그인하면 이어서 진행)", False)
+        ef._EF_UI_QUEUE.put(("auto_ask", holder, info, status))
         if holder["ev"].wait(600):
             return bool(holder["ans"])
         ef._EF_UI_QUEUE.put(("auto_ask_cancel", holder))
@@ -406,20 +419,55 @@ def _read_saved(main, form) -> "dict | None":
             "rows": rows, "nos": nos, "form": int(form)}
 
 
+def _front_admin() -> bool:
+    """관리자 화면을 맨 앞으로 — ① 창 제목(관리자 탭이 보이는 탭이면 바로) ② 숨은 탭이면 Chrome 탭 목록에서 골라."""
+    found: list = []
+
+    def cb(h, _):
+        if _u.IsWindowVisible(h) and ADMIN_TAB_MARK in _itext(h):
+            found.append(h)
+        return True
+
+    try:
+        _u.EnumWindows(bulk._ENUM(cb), 0)
+        if found and ef.ef_force_foreground(found[0]):
+            return True
+        h = _select_chrome_tab(ADMIN_TAB_MARK, select=True)
+        return bool(h and ef.ef_force_foreground(h))
+    except Exception:
+        logging.exception("관리자 화면 앞으로 실패")
+        return False
+
+
+def _web_status() -> str:
+    """'live' = 로그인된 관리자 화면이 방금 신호를 보냄 / 'tab' = 관리자 탭은 열려 있음(뒤에 숨어 신호가 느림 —
+    Chrome 이 숨은 탭 타이머를 늦춤) / 'none' = 관리자 화면이 안 열렸거나 로그인 안 됨.
+    (홈페이지는 관리자로 로그인된 화면에서만 신호를 보내고 제목에 ADMIN_TAB_MARK 를 붙인다.)"""
+    with _LOCK:
+        if time.time() - _STATE["last_poll"] < 5:
+            return "live"
+    return "tab" if _select_chrome_tab(ADMIN_TAB_MARK, select=False) else "none"
+
+
 def _push(ev: dict) -> None:
     with _LOCK:
         _STATE["seq"] += 1
         ev.update(id=_STATE["seq"], at=time.time(), claimed=False)
         now = time.time()
         _STATE["events"] = [e for e in _STATE["events"] if now - e["at"] < _EVENT_TTL] + [ev]
-        web_alive = now - _STATE["last_poll"] < 8
-    if not web_alive:
-        # 이 PC 에 홈페이지(관리자 화면)가 안 열려 있음 → 열면 쌓인 이벤트를 바로 가져간다.
-        logging.info("이지폼 저장 자동반영 — 홈페이지가 안 열려 있어 관리자 페이지를 엶")
-        try:
-            webbrowser.open(ADMIN_URL)
-        except Exception:
-            logging.exception("관리자 페이지 열기 실패")
+        web_alive = now - _STATE["last_poll"] < 4
+    if web_alive:
+        return  # 관리자 화면이 바로 가져가 앞으로 나온다
+    # 관리자 탭이 뒤에 숨어 있으면(신호 느림) 그 탭을 골라 앞으로 → 숨김이 풀려 바로 신호 → 카드
+    if _front_admin():
+        logging.info("이지폼 저장 자동반영 — 관리자 화면을 앞으로")
+        return
+    # 관리자 화면이 없거나 로그인 안 됨 → 관리자 페이지(명세서 탭)를 연다. 로그인하면 쌓인 건을 바로 가져간다.
+    logging.info("이지폼 저장 자동반영 — 관리자 화면이 없어 관리자 페이지를 엶(로그인 필요)")
+    try:
+        webbrowser.open(ADMIN_URL)
+    except Exception:
+        logging.exception("관리자 페이지 열기 실패")
 
 
 # ── 거래처명 OCR(화면에 그려진 글자라 창 글자로 못 읽음) ─────────────────────────────
@@ -541,7 +589,9 @@ def handle_events(after: int) -> dict:
         evs = [{k: v for k, v in e.items() if k != "claimed"} for e in _STATE["events"]
                if e["id"] > after and not e["claimed"] and now - e["at"] < _EVENT_TTL]
         busy = _STATE["busy"]
-    return {"available": bool(ef.EASYFORM_AVAILABLE and _STATE["started"]), "events": evs, "busy": busy}
+        reading = _STATE["reading"]
+    return {"available": bool(ef.EASYFORM_AVAILABLE and _STATE["started"]), "events": evs, "busy": busy,
+            "reading": reading}
 
 
 def handle_claim(eid: int, tab: str = "") -> dict:
@@ -598,7 +648,7 @@ def handle_back(eid: int) -> dict:
 # Chrome 탭 목록(UI Automation)에서 이름에 그 글자가 든 탭을 골라(선택) 그 창 핸들을 돌려준다.
 # 관리자 로그인은 탭마다(sessionStorage)라 새 탭을 열면 다시 로그인해야 함 → 이미 열린 관리자 탭을 앞으로(사용자 2026-11-20).
 _TAB_PS = r"""
-param($mark)
+param($mark, $select = '1')
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 $A = [System.Windows.Automation.AutomationElement]
@@ -608,8 +658,10 @@ $tc = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProp
 foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $wc)) {
   foreach ($t in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tc)) {
     if ($t.Current.Name -like "*$mark*") {
-      try { $t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch {
-        try { $t.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() } catch {}
+      if ($select -eq '1') {
+        try { $t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() } catch {
+          try { $t.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() } catch {}
+        }
       }
       "HWND=" + $w.Current.NativeWindowHandle
       exit 0
@@ -620,12 +672,14 @@ foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, $w
 """
 
 
-def _select_chrome_tab(mark: str):
+def _select_chrome_tab(mark: str, select: bool = True):
+    """이름에 mark 가 든 Chrome 탭 → 그 창 핸들(select=True 면 그 탭을 골라 둠). 없으면 None."""
     try:
         ps = os.path.join(tempfile.gettempdir(), "hdsign_ef_tab.ps1")
         with open(ps, "w", encoding="utf-8-sig") as f:
             f.write(_TAB_PS)
-        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps, mark],
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps, mark,
+                            "1" if select else "0"],
                            capture_output=True, timeout=15,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         out = r.stdout.decode("utf-8", "replace")

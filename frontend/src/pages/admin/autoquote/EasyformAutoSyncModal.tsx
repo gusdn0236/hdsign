@@ -109,7 +109,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   useEffect(() => {
     const old = document.title;
     const mark = `이지폼 명세서 확인 #${ev.id}`;
-    document.title = `🧾 ${mark}`;
+    document.title = `🧾 ${mark} · HD Sign 관리자`; // 관리자 표시는 남겨 둔다(워처가 탭을 찾는 이름)
     let alive = true;
     (async () => {
       // 워처가 이 창을 앞으로 — 다른 탭 뒤에 숨어 있으면 Chrome 탭 목록에서 이 탭을 골라 앞으로(새 탭은 안 엶:
@@ -159,6 +159,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         });
         if (stamp && stamp.row === undefined && ev.client) rememberClientAlias(stamp.o.clientCompanyName, ev.client);
         const nos = res.linked.map((l) => orderNoCore(l.orderNumber));
+        // 명세서 탭 카드에 바로 '명세서 완료' 표시 + 목록 새로고침(OrderAdmin 이 받음)
+        window.dispatchEvent(new CustomEvent('hd:efauto-saved', { detail: { ids: res.linked.map((l) => l.id) } }));
         setMsg({
           main: '홈페이지 명세서에 반영했어요',
           sub: `${nos.length > 1 ? '합친 명세서 ' : '주문 '}${nos.join(', ')}${res.changed ? '' : ' · 바뀐 내용 없음'}`,

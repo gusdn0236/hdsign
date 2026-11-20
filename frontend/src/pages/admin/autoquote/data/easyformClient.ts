@@ -385,7 +385,9 @@ export interface EfAutoEvent {
   at: number;
 }
 
-export async function pollEfAuto(after: number): Promise<{ available: boolean; events: EfAutoEvent[] } | null> {
+export async function pollEfAuto(
+  after: number,
+): Promise<{ available: boolean; events: EfAutoEvent[]; reading?: boolean } | null> {
   try {
     const res = await fetch(`${AGENT_URL}/easyform/autosync?after=${after}`, { cache: 'no-store' });
     if (!res.ok) return null; // 옛 워처(이 기능 없음) = 404

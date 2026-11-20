@@ -478,3 +478,40 @@
 .efas-opt-thumb {
   height: 210px;
 }
+
+/* [예] 직후 워처가 이지폼 명세서를 읽는 동안 */
+.efas-reading {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translateX(-50%);
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-radius: 999px;
+  background: #1f2937;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+}
+.efas-spin {
+  width: 18px;
+  height: 18px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: efas-spin 0.8s linear infinite;
+}
+@keyframes efas-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .efas-spin {
+    animation: none;
+  }
+}
