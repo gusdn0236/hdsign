@@ -4114,7 +4114,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   🔗 합친 명세서 - 총 <b>{seq.length}개</b>의 지시서가 같이 작성되었어요.
                 </div>
                 <div className="aq-linked-sub">
-                  총 {seq.length}장의 지시서가 같은 현장이에요. 명세서도 같이 작성되어있어요.
+                  전부 같은 현장이에요. 명세서도 같이 작성되었어요.
                 </div>
                 {onOpenOrder && (
                   <div className="aq-linked-btns">
