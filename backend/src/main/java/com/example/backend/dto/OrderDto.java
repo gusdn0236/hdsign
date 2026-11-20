@@ -54,6 +54,8 @@ public class OrderDto {
         private LocalDateTime easyformUploadedAt;
         // 자동견적 — 마지막으로 명세서를 처리(임시저장/이지폼)한 작성자 표시이름. 배지에 "ㅇㅇㅇ님: ..." 로 노출.
         private String estimateEditorName;
+        // 합친 명세서 — 이 주문과 명세서 1장을 같이 쓰는 지시서 id들(본인 포함, 2건+). 묶음이 아니면 null. 카드 🔗 표시·묶음만 보기용.
+        private List<Long> linkedOrderIds;
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime deletedAt;
@@ -153,6 +155,7 @@ public class OrderDto {
                 .hasEstimate(estimate != null)
                 .easyformUploadedAt(estimate != null ? estimate.getEasyformUploadedAt() : null)
                 .estimateEditorName(estimate != null ? estimate.getEditorName() : null)
+                .linkedOrderIds(linkedIdsOf(estimate))
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .deletedAt(order.getDeletedAt())
@@ -170,5 +173,21 @@ public class OrderDto {
             if (!t.isEmpty()) out.add(t);
         }
         return out;
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper LINK_OM = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** 명세서 JSON 의 linkedOrders id 들(2건+ 일 때만). 대표·딸린 주문 모두 linkedOrders 를 갖고 있다. */
+    private static List<Long> linkedIdsOf(com.example.backend.entity.AutoQuoteEstimate estimate) {
+        if (estimate == null || estimate.getGridJson() == null || !estimate.getGridJson().contains("linkedOrders")) return null;
+        try {
+            List<Long> ids = new java.util.ArrayList<>();
+            for (com.fasterxml.jackson.databind.JsonNode l : LINK_OM.readTree(estimate.getGridJson()).path("linkedOrders")) {
+                if (l.path("id").canConvertToLong()) ids.add(l.path("id").asLong());
+            }
+            return ids.size() >= 2 ? ids : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

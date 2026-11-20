@@ -247,6 +247,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [purgeConfirmText, setPurgeConfirmText] = useState("");
   // 기본 진입 — 작업중 탭. 새 주문 받기보단 진행 중인 일과 완료검토가 가장 빈번한 작업이라.
   const [activeFilter, setActiveFilter] = useState("IN_PROGRESS");
+  // 합친 명세서 묶음만 보기 — 카드 🔗 를 누르면 그 묶음 지시서 id 들(명세서 탭에서). null = 전체.
+  const [linkFilter, setLinkFilter] = useState(null);
+  useEffect(() => {
+    if (activeFilter !== "STATEMENT") setLinkFilter(null);
+  }, [activeFilter]);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
   // 자동견적 명세서작성 모달 — 열린 주문 id(없으면 닫힘). 별도 탭이 아니라 OrderAdmin 안 모달로 띄운다.
   const [estimateOrderId, setEstimateOrderId] = useState(null);
@@ -976,13 +981,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     if (!isStatementView) return [];
     // 명세서 탭은 위쪽 거래처 필터(다른 탭용)와 무관 — 검색창의 거래처 칩만 쓴다.
     const clientToks = stmtTokens.filter((t) => t.type === "client").map((t) => t.value.toLowerCase());
-    const base = stmtResult
+    const base0 = stmtResult
       ? stmtResult.items // 서버가 거래처까지 걸러 줌
       : statusFilteredOrders.filter((o) => {
           if (clientToks.length === 0) return true;
           const name = (o.clientCompanyName || "").toLowerCase();
           return clientToks.some((t) => name.includes(t));
         });
+    // 🔗 합친 명세서 묶음만 보기 — 검색·거래처 필터와 상관없이 그 묶음 지시서만
+    const base = linkFilter
+      ? statusFilteredOrders.filter((o) => linkFilter.includes(o.id))
+      : base0;
     const byNew = (x, y) => {
       const ta = x.createdAt ? new Date(x.createdAt).getTime() : 0;
       const tb = y.createdAt ? new Date(y.createdAt).getTime() : 0;
@@ -1026,7 +1035,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       });
     }
     return [...base].sort(byNew);
-  }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort, stmtOrder]);
+  }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort, stmtOrder, linkFilter]);
 
   // 납기날짜순일 때 — 납기 날짜별 묶음(묶음 사이에 얇은 선). 가격순 검색 정렬 중엔 묶지 않음.
   const stmtDueGroups = useMemo(() => {
@@ -1900,6 +1909,21 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               <span className={`order-card-check ${checked ? "is-checked" : ""}`} aria-hidden="true">
                 {checked ? "✓" : ""}
               </span>
+            ) : order.linkedOrderIds?.length > 1 ? (
+              <button
+                type="button"
+                className="order-card-link"
+                title={`합친 명세서 — 지시서 ${order.linkedOrderIds.length}장이 명세서 1장을 같이 써요. 누르면 이 묶음만 보여요`}
+                aria-label="합친 명세서 묶음만 보기"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLinkFilter(order.linkedOrderIds);
+                  setActiveFilter("STATEMENT");
+                }}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                🔗 {order.linkedOrderIds.length}
+              </button>
             ) : (
               <span aria-hidden="true" />
             )}
@@ -2335,6 +2359,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </button>
               </span>
             </h3>
+            {linkFilter && (
+              <div className="stmt-linkfilter">
+                🔗 합친 명세서 묶음만 보는 중 — 지시서 {statementOrders.length}장
+                {statementOrders.length < linkFilter.length ? ` (전체 ${linkFilter.length}장 중 불러온 것만)` : ""}
+                <button type="button" onClick={() => setLinkFilter(null)}>전체 보기</button>
+              </div>
+            )}
             <StatementSmartSearch
               clientNames={stmtClientNames}
               tokens={stmtTokens}
