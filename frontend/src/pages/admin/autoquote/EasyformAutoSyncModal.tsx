@@ -90,6 +90,10 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const [cands, setCands] = useState<EasyformCandidateOrder[] | null>(null); // null = 불러오는 중
   const [days, setDays] = useState(7);
   const [showAll, setShowAll] = useState(false);
+  // 다른 지시서 더하기 = 기본 '같은 거래처' 지시서(발행일 앞뒤 60일). 일주일 넘게 지난 현장 건에 다음 주 추가
+  // 발주를 같이 끊는 경우가 있어 날짜보다 거래처로 찾는다(사용자 2026-11-20).
+  const [byClient, setByClient] = useState(true);
+  const [clientDays, setClientDays] = useState(60);
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null);
   const [added, setAdded] = useState<Added | null>(null);
@@ -222,7 +226,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     if (!ready || (phase !== 'pick' && phase !== 'added')) return;
     let alive = true;
     setCands(null);
-    getEasyformCandidates(tk, ev.date, days)
+    const sameClient = phase === 'added' && added && byClient;
+    getEasyformCandidates(tk, ev.date, sameClient ? clientDays : days, sameClient ? added.base.id : undefined)
       .then((list) => alive && setCands(list))
       .catch((e) => {
         if (!alive) return;
@@ -233,7 +238,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, phase === 'pick' || phase === 'added', days]);
+  }, [ready, phase === 'pick' || phase === 'added', days, byClient, clientDays]);
 
   // 다 끝나면 잠깐 보여 주고 닫기
   useEffect(() => {
@@ -400,7 +405,11 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           <section className="efas-pick">
             <div className="efas-tools">
               <span className="efas-hint">
-                {phase === 'added' || !clientKnown ? (
+                {phase === 'added' && added && byClient ? (
+                  <>
+                    <b>{added.base.clientCompanyName || '같은 거래처'}</b> 지시서 · 명세서 날짜와 가까운 순
+                  </>
+                ) : phase === 'added' || !clientKnown ? (
                   '비슷한 날짜 지시서'
                 ) : (
                   <>
@@ -451,18 +460,37 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             ) : (
               <p className="efas-empty">{q ? '찾는 지시서가 없어요.' : '지시서가 없어요.'}</p>
             )}
-            <div className="efas-wider">
-              {!q && hiddenCount > 0 && (
-                <button type="button" onClick={() => setShowAll(true)}>
+            {phase === 'added' && byClient ? (
+              <div className="efas-wider">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setByClient(false);
+                    setShowAll(true);
+                  }}
+                >
                   다른 거래처도 보기
                 </button>
-              )}
-              {days < 30 && (
-                <button type="button" onClick={() => setDays(30)}>
-                  날짜 넓혀 보기
-                </button>
-              )}
-            </div>
+                {clientDays < 120 && (
+                  <button type="button" onClick={() => setClientDays(120)}>
+                    날짜 넓혀 보기
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="efas-wider">
+                {!q && hiddenCount > 0 && (
+                  <button type="button" onClick={() => setShowAll(true)}>
+                    다른 거래처도 보기
+                  </button>
+                )}
+                {days < 30 && (
+                  <button type="button" onClick={() => setDays(30)}>
+                    날짜 넓혀 보기
+                  </button>
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -493,6 +521,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                   onClick={() => {
                     setOther(false);
                     setPicked(null);
+                    setByClient(true); // 다시 [다른 지시서] 누르면 같은 거래처부터
+                    setShowAll(false);
                   }}
                 >
                   ← 뒤로

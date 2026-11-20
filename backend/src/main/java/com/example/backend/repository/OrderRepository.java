@@ -61,6 +61,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByDueDateBetween(java.time.LocalDate from, java.time.LocalDate to);
 
+    // 이지폼 저장 자동반영 — 합친 명세서에 더할 '같은 거래처' 지시서(등록일 기준 최근 것).
+    @EntityGraph(attributePaths = {"client", "files"})
+    List<Order> findByClient_IdAndCreatedAtAfter(Long clientId, LocalDateTime after);
+
     // 납기 없는 지시서 — 등록일로 후보.
     @EntityGraph(attributePaths = {"client", "files"})
     List<Order> findByDueDateIsNullAndCreatedAtBetween(LocalDateTime from, LocalDateTime to);

@@ -734,15 +734,34 @@ public class AdminOrderController {
     // 이지폼 저장 자동반영(워처가 '매출 거래명세서' [저장]을 감지 → 홈페이지 확인 카드) — 그 명세서 발행일 근처의
     // 지시서 후보. 작업중+작업완료(3년 보관분) 모두, 발주(ORDER)만. 거래처 짝짓기·순위는 프론트(clientSim)가 한다.
     // date = 'YYYY.MM.DD'(이지폼 발행일), days = 앞뒤 며칠(기본 7, 최대 45).
+    // sameAs = 주문 id → 그 주문과 **같은 거래처** 지시서만, 발행일 앞뒤 days(최대 120)일. 합친 명세서에 다른 지시서를
+    // 더할 때 — 일주일 넘게 지난 현장 건에 다음 주 추가 발주를 같이 끊는 경우가 있어 날짜보다 거래처로(사용자 2026-11-20).
     @GetMapping("/estimate/easyform-candidates")
     public ResponseEntity<?> easyformCandidates(
             @RequestParam String date,
-            @RequestParam(defaultValue = "7") int days
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) Long sameAs
     ) {
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{4})[.\\-/](\\d{1,2})[.\\-/](\\d{1,2})").matcher(date);
         if (!m.find()) return ResponseEntity.badRequest().body(Map.of("message", "날짜를 못 읽었어요: " + date));
         java.time.LocalDate d = java.time.LocalDate.of(
                 Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)));
+        if (sameAs != null) {
+            Order base = orderRepository.findById(sameAs).orElse(null);
+            if (base == null || base.getClient() == null) return ResponseEntity.ok(Map.of("items", List.of()));
+            int w = Math.max(1, Math.min(120, days));
+            java.time.LocalDate from = d.minusDays(w), to = d.plusDays(w);
+            List<Order> list = orderRepository.findByClient_IdAndCreatedAtAfter(
+                            base.getClient().getId(), from.minusDays(60).atStartOfDay()).stream()
+                    .filter(o -> o.getRequestType() == null || o.getRequestType() == Order.RequestType.ORDER)
+                    .filter(o -> {
+                        java.time.LocalDate od = o.getDueDate() != null ? o.getDueDate()
+                                : o.getCreatedAt() != null ? o.getCreatedAt().toLocalDate() : null;
+                        return od != null && !od.isBefore(from) && !od.isAfter(to);
+                    })
+                    .toList();
+            return ResponseEntity.ok(Map.of("items", toResponsesWithEstimates(list)));
+        }
         int n = Math.max(0, Math.min(45, days));
         Map<Long, Order> found = new LinkedHashMap<>();
         for (Order o : orderRepository.findByDueDateBetween(d.minusDays(n), d.plusDays(n))) found.putIfAbsent(o.getId(), o);

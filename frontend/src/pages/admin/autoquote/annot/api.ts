@@ -630,9 +630,11 @@ export async function getEasyformCandidates(
   token: string | null | undefined,
   date: string,
   days = 7,
+  sameAs?: number, // 이 주문과 같은 거래처 지시서만(합친 명세서에 다른 지시서 더하기)
 ): Promise<EasyformCandidateOrder[]> {
   const res = await fetch(
-    `${BASE_URL}/api/admin/orders/estimate/easyform-candidates?date=${encodeURIComponent(date)}&days=${days}`,
+    `${BASE_URL}/api/admin/orders/estimate/easyform-candidates?date=${encodeURIComponent(date)}&days=${days}` +
+      (sameAs ? `&sameAs=${sameAs}` : ''),
     { headers: authHeaders(token) },
   );
   if (!res.ok) throw new Error(`지시서 후보를 못 불러왔어요 (${res.status})`);
