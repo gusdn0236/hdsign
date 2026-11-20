@@ -1986,6 +1986,28 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     ask.bind("<Escape>", lambda _e: ask_answer(False))
     ask.withdraw()
 
+    def ask_raise(_e=None):
+        """카드를 어두운 배경 위로 다시. 둘 다 '항상 위'라 배경을 누르면 배경이 카드를 덮어 화면이 까매지고
+        아무것도 못 누르던 버그(2026-11-20) — 배경 클릭·포커스 때 + 떠 있는 동안 0.3초마다 카드를 올린다."""
+        if not ask_state["holder"]:
+            return
+        ask.lift()
+        try:
+            ef_force_foreground(ctypes.windll.user32.GetAncestor(ask.winfo_id(), 2))
+        except Exception:
+            pass
+        ask.focus_force()
+
+    ask_dim.bind("<Button-1>", ask_raise)
+    ask_dim.bind("<FocusIn>", ask_raise)
+
+    def ask_keep_on_top():
+        if not ask_state["holder"]:
+            return
+        ask_dim.lower(ask)  # 배경은 항상 카드 밑
+        ask.lift()
+        root.after(300, ask_keep_on_top)
+
     def ask_show(holder, client=""):
         if ask_state["holder"]:  # 앞 질문이 남아 있으면 아니오로 정리
             old = ask_state["holder"]
@@ -2006,6 +2028,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
             pass
         ask.focus_force()
         ask_yes.focus_set()
+        root.after(300, ask_keep_on_top)
 
     btn.config(command=on_btn)
     done_btn.config(command=hide_overlay)
