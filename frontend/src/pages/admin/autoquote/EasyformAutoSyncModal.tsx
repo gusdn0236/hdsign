@@ -208,6 +208,22 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           else fresh.push(k);
         });
         const freshHasNo = fresh.some((k) => extractOrderNos(ev.rows[pairs[k].i]?.remark || '').length);
+        // 합친 명세서에서 직원이 비고의 주문번호를 **직접 옮겼으면**(번호가 붙은 줄이 저장본과 다름) = 지시서 구간을
+        // 바꾼 것 → 묻지도 고치지도 않고 이지폼 그대로 반영. 구간(명세서 화면 'n번째 지시서' 흐림)은 비고 번호 위치를
+        // 따라가므로 저장하면 그대로 맞춰진다(사용자 2026-11-20). 줄만 끼웠으면 번호는 원래 줄에 붙어 있어 여기 안 걸림.
+        if (ev.nos.length > 1 && n > 0) {
+          const placed = new Set<string>();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          saved.forEach((r: any) => extractOrderNos(String(r?.비고 || '')).forEach((no) => placed.add(`${sig(r)}|${no}`)));
+          const moved = pairs.some((p) =>
+            extractOrderNos(ev.rows[p.i]?.remark || '').some((no) => !placed.has(`${sig(p.g)}|${no}`)),
+          );
+          if (moved) {
+            const ok = await save(ev.nos);
+            if (!ok) setPhase('pick');
+            return;
+          }
+        }
         // 줄 수가 늘었을 때만 묻는다(고치기만 했으면 같은 지시서 — 바로 반영)
         if (base && n > 0 && pairs.length > n && fresh.length && !freshHasNo) {
           const members = ev.nos
