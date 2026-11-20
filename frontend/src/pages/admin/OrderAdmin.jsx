@@ -1007,15 +1007,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     }
     if (stmtOrder === "old") return [...base].sort((x, y) => byNew(y, x));
     if (stmtOrder === "due") {
-      // 납기 늦은 날짜가 위(앞으로 나갈 것 → 오늘 → 지난 것), 같은 날은 최신 업로드순, 납기 미정은 맨 끝
+      // 작업중 탭처럼 납기가 얼마 안 남은 것부터: 오늘 → 내일 → … (가까운 순), 그 뒤에 지난 납기(최근 지난 것부터 —
+      // 명세서 탭엔 3년치 끝난 지시서가 섞여 있어 오래된 것부터 보이면 안 됨), 같은 날은 최신 업로드순, 납기 미정은 맨 끝
       const dueOf = (o) => (o.dueDate ? String(o.dueDate).split("T")[0] : "");
+      const today = formatYmd(new Date());
       return [...base].sort((x, y) => {
         const a = dueOf(x);
         const b = dueOf(y);
         if (a !== b) {
           if (!a) return 1;
           if (!b) return -1;
-          return b.localeCompare(a);
+          const pa = a < today;
+          const pb = b < today;
+          if (pa !== pb) return pa ? 1 : -1;
+          return pa ? b.localeCompare(a) : a.localeCompare(b);
         }
         return byNew(x, y);
       });
@@ -2285,7 +2290,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 value={stmtOrder}
                 onChange={(e) => changeStmtOrder(e.target.value)}
                 aria-label="카드 순서"
-                title="카드 순서 — 납기날짜순은 날짜마다 선으로 나눠요(납기 늦은 날짜부터)"
+                title="카드 순서 — 납기날짜순은 오늘·내일처럼 납기가 가까운 것부터, 날짜마다 선으로 나눠요(지난 납기는 그 뒤)"
               >
                 <option value="new">최신 업로드순</option>
                 <option value="old">오래된순</option>
