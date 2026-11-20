@@ -4113,8 +4113,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         {/* 우측 이지폼 grid */}
         <div className="aq-side">
           {linkedOrders.length > 1 && (() => {
-            // 지시서가 만들어진 순서(주문 id = 등록 순)로 1번째·2번째… — 주문번호보다 알아보기 쉽게(사용자 요청 2026-11-20)
-            const seq = [...linkedOrders].sort((x, y) => x.id - y.id);
+            // 1번·2번 = 명세서에 먼저 작성된 순서 = 명세서 위에서부터 그 지시서 구간이 처음 나오는 줄 순서
+            // (사용자 결정 2026-11-20 — 합친 명세서는 먼저 쓴 지시서가 위, 더한 지시서가 아래라 위치 = 작성 순서).
+            // 구간을 모르는 지시서(비고에 번호가 없는 등)는 뒤로, 그들끼리는 등록 순(주문 id).
+            const firstRow = (l: { orderNumber: string }) => {
+              const k = linkOwner ? linkOwner.indexOf(orderNoCore(l.orderNumber)) : -1;
+              return k < 0 ? Number.MAX_SAFE_INTEGER : k;
+            };
+            const seq = [...linkedOrders].sort((x, y) => firstRow(x) - firstRow(y) || x.id - y.id);
             return (
               <div className="aq-linked">
                 <div className="aq-linked-title">
