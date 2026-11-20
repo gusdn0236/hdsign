@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import FitWorksheet from '../scrap/FitWorksheet';
-import { ZoomBox } from '../scrap/ScrapViewer';
+import PdfViewerJs from '../../../components/common/PdfViewer.jsx';
 import WorksheetThumbnailJs from '../../../components/common/WorksheetThumbnail.jsx';
 import {
   startEfBulk,
@@ -46,6 +46,19 @@ import './EasyformBulkImport.css';
 // JS(memo) 컴포넌트라 props 타입이 추론되지 않음 → 느슨하게.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const WorksheetThumbnail = WorksheetThumbnailJs as unknown as ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const PdfViewer = PdfViewerJs as unknown as ComponentType<any>;
+
+/** 지시서 크게 보기 — 작업중 탭과 같은 뷰어(보이는 부분만 화면 해상도로 다시 그려 확대해도 선명, 휠 확대·드래그 이동).
+ *  PDF 가 없으면 미리보기 사진. */
+function SharpWorksheet({ o }: { o: { worksheetPdfUrl?: string | null; worksheetThumbnailUrl?: string | null; title?: string | null } }) {
+  if (!o.worksheetPdfUrl) return <FitWorksheet pdfUrl={null} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />;
+  return (
+    <div className="efb-pv">
+      <PdfViewer key={o.worksheetPdfUrl} url={o.worksheetPdfUrl} />
+    </div>
+  );
+}
 
 export interface EfBulkOrder extends EfOrder {
   worksheetPdfUrl?: string | null;
@@ -1410,9 +1423,7 @@ function DetailView({
         </div>
         <div className="efb-dbody">
           <div className="efb-dws">
-            <ZoomBox resetKey={String(order.id)}>
-              <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
-            </ZoomBox>
+            <SharpWorksheet o={order} />
           </div>
           <div className="efb-dstmt">
             <div className="efb-dstmt-head">
@@ -1424,7 +1435,7 @@ function DetailView({
             {pickMode && (
               <div className="efb-pickline">
                 <span>
-                  ▶ <b>{ownNo}</b> 지시서 범위 — {selA == null ? <><b>시작 줄</b>을 누르세요</> : selB == null ? <><b>끝 줄</b>을 누르세요 <small>(한 줄이면 같은 줄 한 번 더)</small></> : '아래에서 확인하세요'}
+                  ▶ {selA == null ? <>이 지시서는 <b>어느 줄</b>에 있나요? 클릭해서 정해주세요.</> : selB == null ? <><b>끝 줄</b>을 클릭해 주세요 <small>(한 줄이면 같은 줄 한 번 더)</small></> : '아래에서 확인하세요'}
                 </span>
                 <button type="button" className="efb-pickline-btn" onClick={() => onPick?.(null)}>
                   모르겠어요
@@ -1567,7 +1578,7 @@ function DetailView({
             {pickMode ? (
               <div className="efb-dfoot efb-dfoot--pick">
                 {selA == null || selB == null ? (
-                  <span className="efb-pick-ask">{selA == null ? '시작 줄을 눌러 주세요' : `${selA + 1}번째 줄부터 — 끝 줄을 눌러 주세요`}</span>
+                  <span className="efb-pick-ask">{selA == null ? '이 지시서는 어느 줄에 있나요? 클릭해서 정해주세요.' : `${selA + 1}번째 줄부터 — 끝 줄을 클릭해 주세요`}</span>
                 ) : (
                   <>
                     <span className="efb-pick-ask">
@@ -1652,9 +1663,7 @@ function WsZoom({ order, onClose }: { order: EfBulkOrder; onClose: () => void })
           <button type="button" className="efb-x efb-x--light" onClick={onClose} aria-label="닫기">✕</button>
         </div>
         <div className="efb-zoom-ws">
-          <ZoomBox resetKey={String(order.id)}>
-            <FitWorksheet pdfUrl={order.worksheetPdfUrl} thumbUrl={order.worksheetThumbnailUrl} title={order.title} />
-          </ZoomBox>
+          <SharpWorksheet o={order} />
         </div>
       </div>
     </div>
@@ -1767,9 +1776,7 @@ function ClueEntry({
   return (
     <div className="efb-clue">
       <div className="efb-clue-ws">
-        <ZoomBox resetKey={String(o.id)}>
-          <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
-        </ZoomBox>
+        <SharpWorksheet o={o} />
       </div>
       <aside className="efb-clue-side">
         <div className="efb-clue-head">

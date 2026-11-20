@@ -1722,3 +1722,18 @@
 .efb-zoom-ws > .sv-zoom {
   inset: 0;
 }
+
+/* 지시서 크게 보기 — 작업중 탭과 같은 PdfViewer 를 칸에 꽉(휠 확대해도 선명) */
+.efb-pv {
+  position: absolute;
+  inset: 10px;
+}
+.efb-dws > .efb-pv {
+  inset: 12px;
+}
+.efb-clue-ws > .efb-pv {
+  inset: 18px;
+}
+.efb-zoom-ws > .efb-pv {
+  inset: 0;
+}
