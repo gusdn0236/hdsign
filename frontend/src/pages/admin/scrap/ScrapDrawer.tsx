@@ -101,6 +101,8 @@ function Panel({
   it,
   token,
   collapsed,
+  closedW,
+  count,
   dw,
   onSlide,
   onRelease,
@@ -108,6 +110,8 @@ function Panel({
   it: ScrapItem;
   token: string | null | undefined;
   collapsed: boolean;
+  closedW: number; // 접혔을 때 서랍 폭 — 참고 창이 떠 있으면 0(창이 화면 왼쪽 끝에 붙음)
+  count: number;
   dw: number;
   onSlide: (dw: number | null) => void;
   onRelease: (dw: number) => void;
@@ -147,17 +151,17 @@ function Panel({
       // 접힌 상태: 화면 절반까지는 폭만, 그 너머로 끌면 서랍이 따라 들어옴.
       const t = window.innerWidth / 2;
       if (r <= t) {
-        nd = W_CLOSED;
-        nw = Math.max(PANEL_MIN, r - W_CLOSED);
+        nd = closedW;
+        nw = Math.max(PANEL_MIN, r - closedW);
       } else {
-        nd = Math.min(W_OPEN, W_CLOSED + (r - t));
+        nd = Math.min(W_OPEN, closedW + (r - t));
         nw = Math.min(maxW, Math.max(PANEL_MIN, r - nd));
       }
     }
     d.dw = nd;
     d.w = nw;
     setW(nw);
-    onSlide(nd === (collapsed ? W_CLOSED : W_OPEN) ? null : nd);
+    onSlide(nd === (collapsed ? closedW : W_OPEN) ? null : nd);
   };
   const onUp = () => {
     const d = drag.current;
@@ -169,6 +173,12 @@ function Panel({
   return (
     <div className="scr-panel" style={{ width: w }} role="dialog" aria-label="스크랩 참고">
       <div className="scr-panel-head">
+        {collapsed && (
+          // 서랍이 접혀 있으면 따로 뜬 손잡이 대신 창 머리에 펼치기 버튼(왼쪽 붕 뜬 빈칸 없이 창이 화면 끝에 붙음)
+          <button type="button" className="scr-panel-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
+            » 📌{count > 0 ? ` ${count}` : ''}
+          </button>
+        )}
         <b>{it.client || '거래처 없음'}</b>
         <span>
           {shortDate(it.date)}
@@ -205,7 +215,9 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
   // 손잡이로 끄는 중(또는 손 놓은 뒤 스르륵 움직이는 중) 서랍이 보이는 폭. null = 평소(접힘/펼침 그대로).
   const [slide, setSlide] = useState<number | null>(null);
   const animT = useRef<number | undefined>(undefined);
-  const dw = slide ?? (collapsed ? W_CLOSED : W_OPEN);
+  // 접힌 서랍 폭 — 참고 창이 떠 있으면 0: 창이 화면 왼쪽 끝에 붙고 펼치기 버튼은 창 머리로(사용자 요청 2026-11-20)
+  const closedW = opened ? 0 : W_CLOSED;
+  const dw = slide ?? (collapsed ? closedW : W_OPEN);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -225,13 +237,13 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
   /** 손을 놓으면 절반 기준으로 접힘/펼침 쪽으로 스르륵. */
   const release = (at: number) => {
     const open = at >= SLIDE_MID;
-    if (at === (collapsed ? W_CLOSED : W_OPEN) && open === !collapsed) {
+    if (at === (collapsed ? closedW : W_OPEN) && open === !collapsed) {
       setSlide(null);
       return;
     }
     const root = document.documentElement;
     root.classList.add('scrap-anim');
-    setSlide(open ? W_OPEN : W_CLOSED);
+    setSlide(open ? W_OPEN : closedW);
     window.clearTimeout(animT.current);
     animT.current = window.setTimeout(() => {
       scrap.setCollapsed(!open);
@@ -240,12 +252,23 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
     }, 220);
   };
   const panel = opened && (
-    <Panel key={opened.key} it={opened} token={token} collapsed={collapsed} dw={dw} onSlide={setSlide} onRelease={release} />
+    <Panel
+      key={opened.key}
+      it={opened}
+      token={token}
+      collapsed={collapsed && slide === null}
+      closedW={closedW}
+      count={items.length}
+      dw={dw}
+      onSlide={setSlide}
+      onRelease={release}
+    />
   );
 
   if (collapsed && slide === null) {
     // 서랍을 접어도 펼쳐 둔 참고 창은 그대로 — ✕ 로 닫을 때만 닫힘(사용자 결정 2026-11-20).
     // 참고 창은 --scrap-w(접힘 34px) 바로 옆에 붙으므로 접으면 왼쪽 공간이 그만큼 넓어진다.
+    if (opened) return <>{panel}</>;
     return (
       <>
         <aside className="scr is-closed">
