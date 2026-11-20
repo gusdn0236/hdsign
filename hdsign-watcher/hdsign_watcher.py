@@ -2883,7 +2883,7 @@ def _start_thumbnail_loader(dlg, work_items: list[tuple[dict, "tk.Label"]],
 
 def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
     """납기 월/일 칸을 '마우스로' 누르면 칸 위에 작은 달력을 띄운다(사용자 요청 2026-11-20).
-    - 달력이 떠 있어도 월·일 칸에 그대로 숫자를 칠 수 있다(달력은 포커스·입력잠금(grab)을 안 가져감).
+    - 달력이 떠 있어도 월·일 칸 포커스는 그대로(달력은 포커스·입력잠금(grab)을 안 가져감) — 치기 시작하면 달력은 접힘.
       치는 대로 달력의 선택 표시·보이는 달이 따라 바뀐다.
     - 날짜를 누르면 월·일 칸에 들어가고 달력은 닫힌다.
     - 월·일 칸이 아닌 다른 곳을 누르면 접힌다. 칸에서 Esc 도 접기(다이얼로그 취소는 안 됨).
@@ -3022,10 +3022,17 @@ def _attach_date_picker(month_entry, day_entry, month_var, day_var) -> None:
             return "break"  # 달력만 접고 다이얼로그 Esc(취소)는 막는다
         return None
 
+    def _typed(e=None):
+        # 월·일 칸에 키보드로 치기 시작하면 달력은 접는다(사용자 결정 2026-11-20). 다시 마우스로
+        # 칸을 누르면 펼쳐진다. Esc 는 _esc 가 따로 처리.
+        if state.get("pop") is not None and getattr(e, "keysym", "") != "Escape":
+            _close()
+
     for ent in entries:
         # 마우스 클릭(포커스 이동 뒤)에만 연다 — after_idle 로 Entry 기본 클릭 처리 후에.
         ent.bind("<Button-1>", lambda _e, w=ent: w.after_idle(_open), add="+")
         ent.bind("<Escape>", _esc, add="+")
+        ent.bind("<KeyPress>", _typed, add="+")
 
     # 월·일 칸이 아닌 곳을 누르면 접기 — 다이얼로그 창 안 어디를 눌러도(bindtags 에 창이 들어 있음).
     # 달력은 별도 창이라 달력 안 클릭은 여기로 안 온다.
