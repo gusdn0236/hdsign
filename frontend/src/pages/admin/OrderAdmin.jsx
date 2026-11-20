@@ -2280,23 +2280,17 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   : `명세서 — ${stmtOrder === "old" ? "오래된 업로드순" : stmtOrder === "due" ? "납기날짜순" : "최신 업로드순"}`}
               </span>
               <span className="order-card-group-count">{statementOrders.length}건</span>
-              <span className="stmt-order" role="group" aria-label="카드 순서">
-                {[
-                  ["new", "최신 업로드순", "가장 마지막에 올린 지시서가 위"],
-                  ["old", "오래된순", "먼저 올린 지시서가 위"],
-                  ["due", "납기날짜순", "납기 늦은 날짜부터 — 날짜마다 선으로 나눠요"],
-                ].map(([v, label, tip]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    className={"stmt-order-btn" + (stmtOrder === v ? " on" : "")}
-                    onClick={() => changeStmtOrder(v)}
-                    title={tip}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </span>
+              <select
+                className="stmt-order-select"
+                value={stmtOrder}
+                onChange={(e) => changeStmtOrder(e.target.value)}
+                aria-label="카드 순서"
+                title="카드 순서 — 납기날짜순은 날짜마다 선으로 나눠요(납기 늦은 날짜부터)"
+              >
+                <option value="new">최신 업로드순</option>
+                <option value="old">오래된순</option>
+                <option value="due">납기날짜순</option>
+              </select>
               {isOrderPage && (
                 <>
                   {/* 명세서작성 화면 [📥 이지폼 불러오기] 와 같은 모양. 여러 건 찾기라 '열어 둔 명세서 가져오기' 메뉴는 없음. */}

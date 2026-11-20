@@ -2429,36 +2429,22 @@
   border-top: 1px solid #e4e4e7;
   padding-top: 16px;
 }
-/* 명세서 탭 카드 순서 고르기 */
-.stmt-order {
-  display: inline-flex;
+/* 명세서 탭 카드 순서 고르기(드롭다운) */
+.stmt-order-select {
   flex-shrink: 0;
-  gap: 0;
   margin-left: 8px;
+  padding: 5px 8px;
   border: 1px solid #d4d4d8;
   border-radius: 8px;
-  overflow: hidden;
-}
-.stmt-order-btn {
-  white-space: nowrap;
-  padding: 5px 10px;
-  border: 0;
-  border-right: 1px solid #d4d4d8;
   background: #fff;
-  color: #52525b;
-  font-size: 12.5px;
+  color: #18181b;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
-.stmt-order-btn:last-child {
-  border-right: 0;
-}
-.stmt-order-btn:hover {
-  background: #f4f4f5;
-}
-.stmt-order-btn.on {
-  background: #18181b;
-  color: #fff;
+.stmt-order-select:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
 }
 .calendar-selected-section .order-card-group-head {
   display: flex;
