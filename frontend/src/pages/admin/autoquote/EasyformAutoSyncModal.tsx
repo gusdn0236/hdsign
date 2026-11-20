@@ -78,6 +78,7 @@ interface Added {
   evRow: number; // 이지폼 표 기준 첫 새 줄(비고 적을 곳)
   count: number;
   base: EasyformCandidateOrder; // 원래 지시서(비고 번호의 첫 주문)
+  members: EasyformCandidateOrder[]; // 이 명세서에 이미 든 지시서들(합친 명세서면 여럿)
 }
 
 export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }: Props) {
@@ -93,9 +94,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const [cands, setCands] = useState<EasyformCandidateOrder[] | null>(null); // null = 불러오는 중
   const [days, setDays] = useState(7);
   const [showAll, setShowAll] = useState(false);
-  // 다른 지시서 더하기 = 기본 '같은 거래처' 지시서(발행일 앞뒤 60일). 일주일 넘게 지난 현장 건에 다음 주 추가
-  // 발주를 같이 끊는 경우가 있어 날짜보다 거래처로 찾는다(사용자 2026-11-20).
-  const [byClient, setByClient] = useState(true);
+  // 다른 지시서 더하기 = '같은 거래처' 지시서만(발행일 앞뒤 60일, 넓히면 120일). 일주일 넘게 지난 현장 건에 다음 주
+  // 추가 발주를 같이 끊는 경우가 있어 날짜보다 거래처로 찾고, 다른 거래처를 같이 끊는 일은 없음(사용자 2026-11-20).
   const [clientDays, setClientDays] = useState(60);
   const [q, setQ] = useState('');
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null);
@@ -210,7 +210,10 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         const freshHasNo = fresh.some((k) => extractOrderNos(ev.rows[pairs[k].i]?.remark || '').length);
         // 줄 수가 늘었을 때만 묻는다(고치기만 했으면 같은 지시서 — 바로 반영)
         if (base && n > 0 && pairs.length > n && fresh.length && !freshHasNo) {
-          setAdded({ idx: fresh, evRow: pairs[fresh[0]].i, count: fresh.length, base });
+          const members = ev.nos
+            .map((no) => orders.find((o) => orderNoCore(o.orderNumber) === no))
+            .filter((o): o is EasyformCandidateOrder => !!o);
+          setAdded({ idx: fresh, evRow: pairs[fresh[0]].i, count: fresh.length, base, members: members.length ? members : [base] });
           setPhase('added');
           return;
         }
@@ -230,7 +233,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     if (!ready || (phase !== 'pick' && phase !== 'added')) return;
     let alive = true;
     setCands(null);
-    const sameClient = phase === 'added' && added && byClient;
+    const sameClient = phase === 'added' && added;
     getEasyformCandidates(tk, ev.date, sameClient ? clientDays : days, sameClient ? added.base.id : undefined)
       .then((list) => alive && setCands(list))
       .catch((e) => {
@@ -242,7 +245,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, phase === 'pick' || phase === 'added', days, byClient, clientDays]);
+  }, [ready, phase === 'pick' || phase === 'added', days, clientDays]);
 
   // 다 끝나면 잠깐 보여 주고 닫기
   useEffect(() => {
@@ -273,10 +276,15 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         (r) => normClient(r.o.clientCompanyName).includes(needle) || (r.o.orderNumber || '').includes(q.trim()) || normClient(r.o.title).includes(needle),
       );
     }
+    if (phase === 'added' && added) {
+      // 합친 명세서에 더하는 지시서 = **같은 거래처만**(다른 거래처를 같이 끊는 일은 없음, 사용자 2026-11-20)
+      const mine = normClient(added.base.clientCompanyName);
+      return ranked.filter((r) => normClient(r.o.clientCompanyName) === mine);
+    }
     if (showAll) return ranked;
     const good = ranked.filter((r) => r.sim >= 0.5);
     return good.length ? good : ranked;
-  }, [ranked, q, showAll]);
+  }, [ranked, q, showAll, phase, added]);
   const hiddenCount = ranked.length - visible.length;
   const clientKnown = ranked.some((r) => r.sim >= 0.5);
 
@@ -292,7 +300,6 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
 
   const busy = phase === 'saving' || phase === 'check';
   const choosing = phase === 'pick' || (phase === 'added' && other); // 지시서 카드 목록을 보여줄 때
-  const baseNo = added ? orderNoCore(added.base.orderNumber) : '';
   const title =
     phase === 'pick'
       ? '어느 지시서의 명세서인가요?'
@@ -313,8 +320,24 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         : undefined,
     [added, grid],
   );
-  const sameSave = () => {
-    if (added) save(ev.nos, ev.nos.length === 1 ? { o: added.base, move: true } : undefined);
+  /** 추가한 줄 = 이 명세서에 이미 든 지시서 o. 지시서 1개면 번호 맨 위 맞추기만, 합친 명세서면 그 줄 바로 위 구간의
+   *  지시서와 다를 때만 추가한 줄 첫 행 비고에 o 번호를 적어 구간을 나눈다. */
+  const memberSave = (o: EasyformCandidateOrder) => {
+    if (!added) return;
+    if (ev.nos.length === 1) {
+      save(ev.nos, { o, move: true });
+      return;
+    }
+    let owner = ev.nos[0];
+    for (let i = added.evRow - 1; i >= 0; i--) {
+      const ns = extractOrderNos(ev.rows[i]?.remark || '');
+      if (ns.length) {
+        owner = ns[ns.length - 1];
+        break;
+      }
+    }
+    if (orderNoCore(o.orderNumber) === owner) save(ev.nos);
+    else save(ev.nos, { o, row: added.evRow });
   };
 
   const onAq = !!added && phase !== 'pick'; // 뒤에 명세서 미리보기를 깔 때
@@ -388,13 +411,15 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
 
         {phase === 'added' && added && !other && (
           <div className="efas-choice">
-            <button type="button" className="efas-opt" onClick={sameSave}>
-              <div className="efas-opt-thumb">
-                <FitWorksheet pdfUrl={added.base.worksheetPdfUrl} thumbUrl={added.base.worksheetThumbnailUrl} title={added.base.title} />
-              </div>
-              <b>같은 지시서</b>
-              <span>{baseNo}</span>
-            </button>
+            {added.members.map((o) => (
+              <button key={o.id} type="button" className="efas-opt" onClick={() => memberSave(o)}>
+                <div className="efas-opt-thumb">
+                  <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
+                </div>
+                <b>{added.members.length > 1 ? orderNoCore(o.orderNumber) : '같은 지시서'}</b>
+                <span>{added.members.length > 1 ? o.title || '이 명세서에 든 지시서' : orderNoCore(o.orderNumber)}</span>
+              </button>
+            ))}
             <button type="button" className="efas-opt other" onClick={() => setOther(true)}>
               <div className="efas-opt-plus" aria-hidden="true">
                 ＋
@@ -409,7 +434,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           <section className="efas-pick">
             <div className="efas-tools">
               <span className="efas-hint">
-                {phase === 'added' && added && byClient ? (
+                {phase === 'added' && added ? (
                   <>
                     <b>{added.base.clientCompanyName || '같은 거래처'}</b> 지시서 · 명세서 날짜와 가까운 순
                   </>
@@ -471,19 +496,12 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                 ))}
               </ul>
             ) : (
-              <p className="efas-empty">{q ? '찾는 지시서가 없어요.' : '지시서가 없어요.'}</p>
+              <p className="efas-empty">
+                {q ? '찾는 지시서가 없어요.' : phase === 'added' ? '같은 거래처 지시서가 없어요.' : '지시서가 없어요.'}
+              </p>
             )}
-            {phase === 'added' && byClient ? (
+            {phase === 'added' ? (
               <div className="efas-wider">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setByClient(false);
-                    setShowAll(true);
-                  }}
-                >
-                  다른 거래처도 보기
-                </button>
                 {clientDays < 120 && (
                   <button type="button" onClick={() => setClientDays(120)}>
                     날짜 넓혀 보기
@@ -534,7 +552,6 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                   onClick={() => {
                     setOther(false);
                     setPicked(null);
-                    setByClient(true); // 다시 [다른 지시서] 누르면 같은 거래처부터
                     setShowAll(false);
                   }}
                 >

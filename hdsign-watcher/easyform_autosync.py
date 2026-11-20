@@ -746,10 +746,14 @@ def _plan(rows: list, nos: list, move: bool, want_row: "int | None"):
                 old = (rows[i].get("remark") or "").strip()
                 edits.append((i, rows[i].get("item") or "", old, bulk._strip_nos(old, [no])))
         return {"ok": True}, edits, row
-    if any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
-        return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}, [], None
     if want_row is not None and 0 <= want_row < len(rows):
-        row = want_row  # 합친 명세서 — 밑에 새로 쓴 줄(다른 지시서)의 첫 줄(기존 비고 뒤에 붙임)
+        # 합친 명세서 — 밑에 새로 쓴 줄의 첫 줄(기존 비고 뒤에 붙임). 이미 명세서에 든 지시서 번호여도 적는다
+        # (그 줄부터 그 지시서 구간 — 합친 명세서에서 추가한 줄이 어느 지시서인지 고른 경우, 사용자 2026-11-20).
+        if all(n in (rows[want_row].get("remark") or "") for n in nos):
+            return {"ok": True, "message": "이미 그 줄 비고에 적혀 있어요", "skipped": True}, [], want_row
+        row = want_row
+    elif any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
+        return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}, [], None
     else:
         cand = [i for i, r in enumerate(rows) if bulk._has_content(r) and not (r.get("remark") or "").strip()]
         if not cand:
