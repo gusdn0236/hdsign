@@ -589,13 +589,23 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             const no = orderNoCore(o.orderNumber);
             const s0 = stampRow[o.id];
             const e0 = Math.max(s0, stampEnd[o.id] ?? s0);
-            const already = (orig || []).some((x) => (x.remark || '').includes(no));
-            // 홈페이지(비고 칸은 화면에 안 보임): 범위 모든 줄에 번호 → 띠가 정확히 그 범위
-            for (let k = s0; k <= e0 && k < efRows.length; k++) {
-              if (!(efRows[k].remark || '').includes(no)) efRows[k].remark = `${(efRows[k].remark || '').trim()} ${no}`.trim();
+            // 사람이 범위를 다시 정함 → 번호가 다른 줄에 있든 없든 고른 범위가 정답(사용자 지시 2026-11-20).
+            // 홈페이지(비고 칸은 화면에 안 보임): 범위 밖 줄의 이 번호는 지우고, 범위 모든 줄에 번호 → 띠가 정확히 그 범위
+            for (let k = 0; k < efRows.length; k++) {
+              const r = efRows[k].remark || '';
+              const inR = k >= s0 && k <= e0;
+              if (inR && !extractOrderNos(r).includes(no)) efRows[k].remark = `${r.trim()} ${no}`.trim();
+              if (!inR && extractOrderNos(r).includes(no)) {
+                efRows[k].remark = r
+                  .split(/([\s,]+)/)
+                  .filter((t) => t !== no)
+                  .join('')
+                  .replace(/^[\s,]+|[\s,]+$/g, '')
+                  .replace(/[\s,]*,[\s,]*,/g, ',');
+              }
             }
-            // 이지폼: 시작 줄 비고에만(이미 어디든 적혀 있으면 안 적음)
-            if (!already) items.push(at(s0, [no]));
+            // 이지폼: 시작 줄 비고에 적는다 — 그 줄에 이미 있으면 안 적고, 다른 줄에만 있으면 그래도 적음(force)
+            if (!extractOrderNos(orig[s0]?.remark || '').includes(no)) items.push({ ...at(s0, [no]), force: true });
           }
           const rest = g.filter((o) => !picked.includes(o)).map((o) => orderNoCore(o.orderNumber));
           const restNos = rest.filter((no) => !efRows.some((r) => (r.remark || '').includes(no)));

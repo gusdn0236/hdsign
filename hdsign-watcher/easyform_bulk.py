@@ -983,9 +983,10 @@ def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
     grid = next(iter(_kids(form, "TAdvStringGrid")), None)
     if not grid:
         return {"ok": False, "message": "명세서 표를 못 찾아서 안 적었어요"}
-    # 비고 칸만 훑어서 이미 이 주문번호가 어디든 적혀 있으면 안 적는다
+    # 비고 칸만 훑어서 이미 이 주문번호가 어디든 적혀 있으면 안 적는다.
+    # force = 사람이 범위를 다시 정함 → 다른 줄에 번호가 있어도 고른 시작 줄에 적는다(그 줄에 이미 있으면 위에서 건너뜀).
     n = int(it.get("rowCount") or 0)
-    if n > 0:
+    if n > 0 and not it.get("force"):
         rems = _scan_remarks(grid, n)
         if any(all(no in r for no in nos) for r in rems):
             return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
