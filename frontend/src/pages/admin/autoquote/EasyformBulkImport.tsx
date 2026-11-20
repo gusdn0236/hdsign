@@ -604,8 +604,13 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
                   .replace(/[\s,]*,[\s,]*,/g, ',');
               }
             }
-            // 이지폼: 시작 줄 비고에 적는다 — 그 줄에 이미 있으면 안 적고, 다른 줄에만 있으면 그래도 적음(force)
-            if (!extractOrderNos(orig[s0]?.remark || '').includes(no)) items.push({ ...at(s0, [no]), force: true });
+            // 이지폼: 시작 줄 비고로 **옮겨 적는다** — 다른 줄에 있던 같은 번호는 지우고(clear) 시작 줄에 적음(force).
+            // 그래야 다음에 불러와도 홈페이지 범위가 고른 대로 나온다(사용자 지시 2026-11-20).
+            const clear = orig
+              .map((x, k) => ({ row: k, item: x.item || '', remark: (x.remark || '').trim() }))
+              .filter((x) => x.row !== s0 && extractOrderNos(x.remark).includes(no));
+            if (!extractOrderNos(orig[s0]?.remark || '').includes(no) || clear.length)
+              items.push({ ...at(s0, [no]), force: true, clear });
           }
           const rest = g.filter((o) => !picked.includes(o)).map((o) => orderNoCore(o.orderNumber));
           const restNos = rest.filter((no) => !efRows.some((r) => (r.remark || '').includes(no)));

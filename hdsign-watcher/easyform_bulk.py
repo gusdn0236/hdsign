@@ -972,28 +972,21 @@ def _save_with_yes(main, form) -> dict:
     return {"ok": True, "message": ""}
 
 
-def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
-    """빠른 길 — 웹이 준 줄(row)·품목(item)·기존 비고(remark)로 그 줄만 확인하고 적는다.
-    전: 그 줄 품목·비고가 웹이 읽은 것과 같아야 씀 / 후: 그 줄 6칸을 다시 읽어 비고만 바뀌었어야 저장."""
-    row = it["row"]
-    base = (it.get("remark") or "").strip()
-    if all(n in base for n in nos):
-        return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
-    want = f"{base} {text}".strip() if base else text
-    grid = next(iter(_kids(form, "TAdvStringGrid")), None)
-    if not grid:
-        return {"ok": False, "message": "명세서 표를 못 찾아서 안 적었어요"}
-    # 비고 칸만 훑어서 이미 이 주문번호가 어디든 적혀 있으면 안 적는다.
-    # force = 사람이 범위를 다시 정함 → 다른 줄에 번호가 있어도 고른 시작 줄에 적는다(그 줄에 이미 있으면 위에서 건너뜀).
-    n = int(it.get("rowCount") or 0)
-    if n > 0 and not it.get("force"):
-        rems = _scan_remarks(grid, n)
-        if any(all(no in r for no in nos) for r in rems):
-            return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
+def _strip_nos(remark: str, nos: list) -> str:
+    """비고 글자에서 주문번호만 빼기(나머지 글자·다른 번호는 그대로)."""
+    parts = re.split(r"([\s,]+)", remark or "")
+    out = "".join(p for p in parts if p not in nos)
+    out = re.sub(r"[\s,]*,[\s,]*,", ",", out)
+    return out.strip(" ,	")
+
+
+def _set_remark(main, grid, row: int, item: str, base: str, want: str) -> "str | None":
+    """row 줄 비고를 base → want 로. 전: 그 줄 품목·비고가 웹이 읽은 것과 같아야 / 후: 비고만 바뀌었어야.
+    문제 있으면 이유 글자, 없으면 None. (저장은 안 함 — 부르는 쪽이 다 끝나고 한 번)"""
     cells = _row_cells(grid, row)
     before = _read_row(grid, cells)
-    if before is None or before.get("item", "") != (it.get("item") or "") or before.get("remark", "") != base:
-        return {"ok": False, "message": f"{row + 1}행이 홈페이지에서 본 것과 달라서 안 적었어요"}
+    if before is None or before.get("item", "") != (item or "") or before.get("remark", "") != base:
+        return f"{row + 1}행이 홈페이지에서 본 것과 달라서 안 적었어요"
     rx, ry = cells["remark"]
     ix, iy = cells["item"]
     _click(grid, "비고", rx, ry)
@@ -1005,7 +998,7 @@ def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
 
     edit = _wait(lambda: next((e for e in _kids(grid, "TAdvInplaceEdit") if _at(e)), None), 1.0, 0.03)
     if not edit:
-        return {"ok": False, "message": "비고 편집칸이 안 떠서 안 적었어요"}
+        return "비고 편집칸이 안 떠서 안 적었어요"
     _u.SendMessageW(edit, 0x000C, 0, ctypes.c_wchar_p(want))  # WM_SETTEXT
     time.sleep(0.12)
     _click(grid, "품목", ix, iy)  # 같은 줄 다른 칸 = 비고 확정
@@ -1014,16 +1007,57 @@ def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
         raise Stop("비고를 적다가 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
     after = _read_row(grid, _row_cells(grid, row))
     if after is None:
-        return {"ok": False, "message": "적은 뒤 그 줄을 다시 못 읽어서 저장 안 했어요"}
+        return "적은 뒤 그 줄을 다시 못 읽어서 저장 안 했어요"
     for k, v in after.items():
         if k == "remark":
             if v != want:
-                return {"ok": False, "message": f"비고가 '{v}'(으)로 들어가서 저장 안 했어요"}
+                return f"{row + 1}행 비고가 '{v}'(으)로 들어가서 저장 안 했어요"
         elif v != before.get(k, "") and not _same_num(k, before.get(k, ""), v):
-            return {"ok": False, "message": f"{row + 1}행 {k} 가 바뀌어서 저장 안 했어요"}
+            return f"{row + 1}행 {k} 가 바뀌어서 저장 안 했어요"
+    return None
+
+
+def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
+    """빠른 길 — 웹이 준 줄(row)·품목(item)·기존 비고(remark)로 그 줄만 확인하고 적는다.
+    clear = [{row,item,remark}] — 사람이 범위를 다시 정했을 때 **다른 줄에 있던 같은 번호는 지운다**(옮겨 적기,
+    2026-11-20 사용자 지시: 그래야 홈페이지 범위가 맞음). 적기·지우기 다 끝나고 저장 1번. 하나라도 어긋나면 저장 안 함
+    (닫을 때 ESC = 변경 버림)."""
+    row = it["row"]
+    base = (it.get("remark") or "").strip()
+    clears = [c for c in (it.get("clear") or []) if isinstance(c, dict) and isinstance(c.get("row"), int) and c["row"] != row]
+    has = all(n in base for n in nos)
+    if has and not clears:
+        return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
+    want = f"{base} {text}".strip() if base else text
+    grid = next(iter(_kids(form, "TAdvStringGrid")), None)
+    if not grid:
+        return {"ok": False, "message": "명세서 표를 못 찾아서 안 적었어요"}
+    # 비고 칸만 훑어서 이미 이 주문번호가 어디든 적혀 있으면 안 적는다.
+    # force = 사람이 범위를 다시 정함 → 다른 줄에 번호가 있어도 고른 시작 줄에 적는다.
+    n = int(it.get("rowCount") or 0)
+    if n > 0 and not it.get("force"):
+        rems = _scan_remarks(grid, n)
+        if any(all(no in r for no in nos) for r in rems):
+            return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
+    if not has:
+        err = _set_remark(main, grid, row, it.get("item") or "", base, want)
+        if err:
+            return {"ok": False, "message": err}
+    moved = []
+    for c in clears:
+        old = (c.get("remark") or "").strip()
+        new = _strip_nos(old, nos)
+        if new == old:
+            continue
+        err = _set_remark(main, grid, c["row"], c.get("item") or "", old, new)
+        if err:
+            return {"ok": False, "message": f"옛 번호 지우기 — {err}"}
+        moved.append(c["row"] + 1)
     res = _save_with_yes(main, form)
     if res.get("ok"):
-        res.update(row=row, remark=want)
+        res.update(row=row, remark=want if not has else base)
+        if moved:
+            res["message"] = f"{', '.join(map(str, moved))}행에 있던 번호를 {row + 1}행으로 옮겼어요"
     return res
 
 

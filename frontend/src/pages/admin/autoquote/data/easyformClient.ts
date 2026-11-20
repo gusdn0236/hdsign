@@ -298,6 +298,7 @@ export interface EfStampItem {
   remark?: string; // 그 줄 기존 비고(읽었을 때)
   rowCount?: number; // 명세서 줄 수 — 워처가 비고 칸만 훑어 이미 적혔는지 확인
   force?: boolean; // 사람이 범위를 다시 정함 — 다른 줄에 번호가 있어도 이 줄에 적는다(이 줄에 이미 있으면 건너뜀)
+  clear?: { row: number; item: string; remark: string }[]; // 같은 번호가 있던 다른 줄 — 거기선 지운다(옮겨 적기)
 }
 
 export interface EfBulkResult {
