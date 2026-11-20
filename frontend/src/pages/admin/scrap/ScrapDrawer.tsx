@@ -153,14 +153,19 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
   }, [collapsed]);
 
   if (collapsed) {
+    // 서랍을 접어도 펼쳐 둔 참고 창은 그대로 — ✕ 로 닫을 때만 닫힘(사용자 결정 2026-11-20).
+    // 참고 창은 --scrap-w(접힘 34px) 바로 옆에 붙으므로 접으면 왼쪽 공간이 그만큼 넓어진다.
     return (
-      <aside className="scr is-closed">
-        <button type="button" className="scr-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
-          <span>»</span>
-          <span className="scr-vert">📌 스크랩</span>
-          {items.length > 0 && <b>{items.length}</b>}
-        </button>
-      </aside>
+      <>
+        <aside className="scr is-closed">
+          <button type="button" className="scr-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
+            <span>»</span>
+            <span className="scr-vert">📌 스크랩</span>
+            {items.length > 0 && <b>{items.length}</b>}
+          </button>
+        </aside>
+        {opened && <Panel key={opened.key} it={opened} token={token} />}
+      </>
     );
   }
 
