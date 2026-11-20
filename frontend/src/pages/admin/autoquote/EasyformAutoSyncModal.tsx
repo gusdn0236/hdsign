@@ -71,7 +71,7 @@ interface Ranked {
 
 /** 새로 붙은 줄 — 홈페이지 저장본이 이지폼 앞줄과 똑같고 밑에 줄이 더 있을 때. */
 interface Added {
-  from: number; // 표(그리드) 기준 첫 새 줄
+  idx: number[]; // 표(그리드) 기준 새 줄들(저장본에 없는 줄)
   evRow: number; // 이지폼 표 기준 첫 새 줄(비고 적을 곳)
   count: number;
   base: EasyformCandidateOrder; // 원래 지시서(비고 번호의 첫 주문)
@@ -187,11 +187,20 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const saved = ((est?.estimate?.grid || []) as any[]).filter((r) => sig(r).replace(/\u0001/g, ''));
         const n = saved.length;
-        const prefixSame = n > 0 && pairs.length > n && saved.every((r, k) => sig(r) === sig(pairs[k].g));
-        const tail = prefixSame ? pairs.slice(n) : [];
-        const tailHasNo = tail.some((p) => extractOrderNos(ev.rows[p.i]?.remark || '').length);
-        if (base && tail.length && !tailHasNo) {
-          setAdded({ from: n, evRow: tail[0].i, count: tail.length, base });
+        // 위치가 아니라 **내용으로** 비교 — 저장본에 같은 줄(5칸)이 있으면 지운다(같은 줄 여러 개면 개수만큼).
+        // 맨 위·중간에 끼운 줄이나 기존 줄을 고친 것도 '저장본에 없는 줄'로 잡힌다(사용자 2026-11-20: ✕ 뒤 고쳐 저장하니 안 물음).
+        const left = new Map<string, number>();
+        saved.forEach((r) => left.set(sig(r), (left.get(sig(r)) || 0) + 1));
+        const fresh: number[] = [];
+        pairs.forEach((p, k) => {
+          const c = left.get(sig(p.g)) || 0;
+          if (c > 0) left.set(sig(p.g), c - 1);
+          else fresh.push(k);
+        });
+        const freshHasNo = fresh.some((k) => extractOrderNos(ev.rows[pairs[k].i]?.remark || '').length);
+        // 줄 수가 늘었을 때만 묻는다(고치기만 했으면 같은 지시서 — 바로 반영)
+        if (base && n > 0 && pairs.length > n && fresh.length && !freshHasNo) {
+          setAdded({ idx: fresh, evRow: pairs[fresh[0]].i, count: fresh.length, base });
           setPhase('added');
           return;
         }
@@ -288,7 +297,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
       added
         ? {
             rows: grid.map((r) => ({ 품목코드: r.품목코드, 품목: r.품목, 규격: r.규격, 수량: r.수량, 단가: r.단가, 비고: r.비고 })),
-            newFrom: added.from,
+            newRows: added.idx,
           }
         : undefined,
     [added, grid],
@@ -329,7 +338,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             <p className="efas-newbox-label">추가한 줄</p>
             <table>
               <tbody>
-                {grid.slice(added.from).map((r, i) => (
+                {grid.filter((_, k) => added.idx.includes(k)).map((r, i) => (
                   <tr key={i}>
                     <td>{r.품목 || r.품목코드}</td>
                     <td>{r.규격}</td>

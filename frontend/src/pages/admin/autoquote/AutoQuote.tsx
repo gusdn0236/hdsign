@@ -404,8 +404,8 @@ interface AutoQuoteProps {
   /** 합친 명세서 — 같은 명세서를 쓰는 다른 지시서의 명세서작성으로 옮겨가기(부모가 열린 주문을 바꿈). */
   onOpenOrder?: (orderId: number) => void;
   /** 이지폼 저장 자동반영 — 저장된 명세서 대신 이지폼에서 읽은 줄로 표를 채워 **보여주기만**(저장 안 함).
-   *  newFrom 부터는 '추가된 줄' 표시. 그 위에 '같은 지시서/다른 지시서' 고르기 카드가 뜬다. */
-  efPreview?: { rows: Record<string, string>[]; newFrom: number };
+   *  newRows(줄 번호들)는 '추가된 줄' 표시. 그 위에 '같은 지시서/다른 지시서' 고르기 카드가 뜬다. */
+  efPreview?: { rows: Record<string, string>[]; newRows: number[] };
 }
 
 export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCleared, onEasyformUploaded, onOpenOrder, efPreview }: AutoQuoteProps = {}) {
@@ -4327,7 +4327,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                           dragRow === i ? 'rowdragging' : '',
                           dragOverRow === i ? 'rowswapover' : '',
                           mergeSel.includes(i) ? 'mergesel' : '',
-                          p && efPreview && i >= efPreview.newFrom ? 'efnew' : '',
+                          p && efPreview && efPreview.newRows.includes(i) ? 'efnew' : '',
                         ]
                           .filter(Boolean)
                           .join(' ') || undefined
