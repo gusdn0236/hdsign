@@ -39,7 +39,7 @@ import {
   type EfCandidate,
   type EfOrder,
 } from './data/efMatch';
-import { BASE_URL, getEasyformUsedKeys, syncEstimateFromEasyform, findEasyformMatch } from './annot/api';
+import { BASE_URL, getEasyformUsedKeys, syncEstimateFromEasyform, findEasyformMatch, getEstimate } from './annot/api';
 import './EasyformBulkImport.css';
 
 // JS(memo) 컴포넌트라 props 타입이 추론되지 않음 → 느슨하게.
@@ -417,6 +417,33 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     }
   };
 
+  // 이미 등록된 주문의 지시서 사진 — 공개 지시서 정보(PDF·썸네일 주소)를 받아 합치기 확인창 카드에 띄운다
+  const loadSavedWs = (list: { id: number; orderNumber: string }[]) => {
+    list.forEach((o) => {
+      const core = orderNoCore(o.orderNumber);
+      if (savedWs[core]) return;
+      fetch(`${BASE_URL}/api/public/worksheets/${encodeURIComponent(o.orderNumber)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (!j) return;
+          setSavedWs((prev) => ({
+            ...prev,
+            [core]: {
+              id: o.id,
+              orderNumber: o.orderNumber,
+              title: j.title ?? null,
+              dueDate: j.dueDate ?? null,
+              clientCompanyName: j.companyName ?? null,
+              worksheetPdfUrl: j.worksheetPdfUrl ?? null,
+              worksheetThumbnailUrl: j.worksheetThumbnailUrl ?? null,
+            } as EfBulkOrder,
+          }));
+        })
+        .catch(() => {});
+    });
+  };
+  const grownDone = useRef(new Set<number>()); // 줄 추가 의심 검사를 이미 한 지시서(다시 묻지 않음)
+
   // 이 지시서의 명세서를 같이 쓰는 다른 주문 — 이번에 [맞아요] 한 지시서 + 홈페이지에 이미 저장된 주문
   const sharersOf = (orderId: number) => {
     const key = matches[orderId]?.best?.key;
@@ -424,44 +451,74 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     const session = orders.filter(
       (o) => o.id !== orderId && matches[o.id]?.best?.key === key && (verdict[o.id] === 'yes' || savedIds.has(o.id)),
     );
-    return { session, saved: !!matches[orderId].best!.usedBy?.length };
+    const b = matches[orderId].best!;
+    return { session, saved: !!b.usedBy?.length || !!b.remarkNos?.length };
+  };
+
+  // 이 명세서를 이미 쓰는 홈페이지 주문(주문번호 핵심) — ① 발행일·합계 지문 ② 비고에 적힌 다른 주문번호
+  // ③ 같은 거래처·발행일인데 합계만 커진 저장 명세서 중 저장본 줄이 이 명세서 앞줄과 같은 것(밑에 줄을 더 쓴 경우).
+  // keepSelf = 저장 때 — 이 주문이 이미 든 묶음은 순서(대표 먼저) 그대로 돌려준다.
+  const savedSharers = async (orderId: number, keepSelf = false): Promise<{ id: number; orderNumber: string }[]> => {
+    const m = matchRef.current[orderId] || matches[orderId];
+    const b = m?.best;
+    if (!b) return [];
+    const rd = reads[b.key];
+    const date = rd?.date || b.row.date;
+    type G = { orders: { id: number; orderNumber: string }[] };
+    const groups: G[] = [];
+    const add = (gs: G[]) => groups.push(...gs);
+    add(await findEasyformMatch(token, orderId, date, rd?.total || b.row.total, true, b.remarkNos || []));
+    const others = () => groups.some((g) => g.orders.some((o) => o.id !== orderId));
+    if (!others() && !b.remarkNos?.length && b.grownFrom?.length && rd?.rows) {
+      const norm = (x?: string) => String(x || '').replace(/\s+/g, '');
+      const mine = efRowsToGrid(rd.rows);
+      for (const g of b.grownFrom) {
+        const est = await getEstimate(token, g.orderId).catch(() => null);
+        const old = ((est?.estimate?.grid || []) as { 품목?: string; 규격?: string; 품목코드?: string }[]).filter(
+          (r) => norm(r.품목) || norm(r.규격) || norm(r.품목코드),
+        );
+        const prefix =
+          old.length > 0 &&
+          old.length < mine.length &&
+          old.every((r, i) => norm(r.품목) === norm(mine[i].품목) && norm(r.규격) === norm(mine[i].규격));
+        if (prefix) add(await findEasyformMatch(token, orderId, date, g.total, true));
+      }
+    }
+    // 순서 = 대표 정하기: 이 주문이 든 기존 묶음(2건+) → 다른 주문 묶음(먼저 등록된 쪽) → 이 주문 혼자 저장된 것.
+    // (예: 따로 저장됐던 지시서를 다시 불러와 합치면 먼저 등록된 지시서가 대표)
+    const rank = (g: G) => (g.orders.some((o) => o.id === orderId) ? (g.orders.length > 1 ? 0 : 2) : 1);
+    const out = new Map<number, { id: number; orderNumber: string }>();
+    [...groups]
+      .sort((x, y) => rank(x) - rank(y))
+      .flatMap((g) => g.orders)
+      .forEach((o) => (keepSelf || o.id !== orderId) && !out.has(o.id) && out.set(o.id, o));
+    return [...out.values()];
   };
   const mark = (orderId: number, v: Verdict, choice?: 'merge' | 'separate') => {
     if (v === 'yes' && !choice && !mergeChoice[orderId]) {
       const sh = sharersOf(orderId);
+      const grown = !sh.saved && !!matches[orderId]?.best?.grownFrom?.length && !grownDone.current.has(orderId);
+      if (grown && !sh.session.length) {
+        // 합계만 커진 저장 명세서가 있음 — 저장본 줄이 이 명세서 앞줄과 같으면(줄 추가) 합칠지 묻고, 아니면 그대로 [맞아요]
+        grownDone.current.add(orderId);
+        savedSharers(orderId)
+          .catch(() => [])
+          .then((list) => {
+            if (list.length) {
+              setMergeAsk({ orderId, nos: list.map((o) => orderNoCore(o.orderNumber)), loading: false, others: [] });
+              loadSavedWs(list);
+            } else mark(orderId, v);
+          });
+        return;
+      }
       if (sh.session.length || sh.saved) {
         const nos = sh.session.map((o) => orderNoCore(o.orderNumber));
         setMergeAsk({ orderId, nos, loading: sh.saved, others: sh.session.map((o) => o.id) });
         if (sh.saved) {
-          const m = matches[orderId];
-          const rd = reads[m.best!.key];
-          findEasyformMatch(token, orderId, rd?.date || m.best!.row.date, rd?.total || m.best!.row.total, true).then((gs) => {
-            const list = gs.flatMap((g) => g.orders).filter((o) => o.id !== orderId);
+          savedSharers(orderId).then((list) => {
             const more = list.map((o) => orderNoCore(o.orderNumber));
             setMergeAsk((a) => (a && a.orderId === orderId ? { ...a, nos: [...new Set([...a.nos, ...more])], loading: false } : a));
-            // 이미 등록된 주문의 지시서 사진 — 공개 지시서 정보(PDF·썸네일 주소)를 받아 카드에 띄운다
-            list.forEach((o) => {
-              const core = orderNoCore(o.orderNumber);
-              if (savedWs[core]) return;
-              fetch(`${BASE_URL}/api/public/worksheets/${encodeURIComponent(o.orderNumber)}`)
-                .then((r) => (r.ok ? r.json() : null))
-                .then((j) => {
-                  if (!j) return;
-                  setSavedWs((prev) => ({
-                    ...prev,
-                    [core]: {
-                      id: o.id,
-                      orderNumber: o.orderNumber,
-                      title: j.title ?? null,
-                      dueDate: j.dueDate ?? null,
-                      clientCompanyName: j.companyName ?? null,
-                      worksheetPdfUrl: j.worksheetPdfUrl ?? null,
-                      worksheetThumbnailUrl: j.worksheetThumbnailUrl ?? null,
-                    } as EfBulkOrder,
-                  }));
-                })
-                .catch(() => {});
-            });
+            loadSavedWs(list);
           });
         }
         return;
@@ -562,8 +619,9 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
           // 기존 묶음의 대표가 계속 대표(먼저), 매출은 한 번만.
           let existing: string[] = [];
           if (g.some((o) => mergeChoice[o.id] === 'merge')) {
-            const gs = await findEasyformMatch(token, g[0].id, efDate, efTotal, true);
-            existing = gs.flatMap((x) => x.orders.map((o) => orderNoCore(o.orderNumber)));
+            // 지문(발행일·합계) + 비고 주문번호 + 줄 추가된 저장 명세서 — 합계가 바뀌어도 기존 묶음과 합친다
+            const list = await savedSharers(g[0].id, true);
+            existing = list.map((o) => orderNoCore(o.orderNumber));
           }
           const nos = [...new Set([...existing, ...g.map((o) => orderNoCore(o.orderNumber))])];
           await syncEstimateFromEasyform(token, {

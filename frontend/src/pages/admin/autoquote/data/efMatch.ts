@@ -38,6 +38,12 @@ export interface EfCandidate {
   clueN?: number;
   // 이미 홈페이지의 다른 주문에 저장된 이지폼 명세서(주문 id) — 고르면 그 주문과 합친 명세서로 저장
   usedBy?: number[];
+  // 읽은 명세서 비고에 적힌 **다른** 주문번호 — 이미 홈페이지 주문이 쓰는 명세서일 수 있다(밑에 줄을 더 써서
+  // 합계가 바뀌면 usedBy(발행일·합계)로는 못 알아봄 → 이 번호로 합칠지 묻는다, 2026-11-20)
+  remarkNos?: string[];
+  // 같은 거래처·같은 발행일인데 합계만 더 큰 이미 저장된 명세서 — 줄을 더 쓴 같은 명세서일 수 있음(비고에 번호가 없는 옛 명세서용).
+  // 저장본 줄이 이 명세서 앞줄과 같은지는 [맞아요] 때 확인한다.
+  grownFrom?: { orderId: number; total: string }[];
 }
 
 /** 이 후보를 이 지시서 짝으로 볼 근거가 있나(이미 다른 주문에 저장된 명세서를 같이 쓸 때 필요). */
@@ -209,6 +215,18 @@ export function matchOrders(
     usedSet
       .filter((u) => u.k === `${r.date}|${digits(r.total)}` && clientSim(u.client, r.client, alias) >= MIN_CLIENT)
       .map((u) => u.id ?? -1);
+  // 같은 거래처·발행일, 합계만 더 커진 저장 명세서(줄 추가 의심)
+  const grownOf = (r: EfListRow) =>
+    used
+      .filter(
+        (u) =>
+          u.orderId != null &&
+          u.date === r.date &&
+          Number(digits(u.total)) > 0 &&
+          Number(digits(u.total)) < Number(digits(r.total)) &&
+          clientSim(u.client, r.client, alias) >= 0.85,
+      )
+      .map((u) => ({ orderId: u.orderId!, total: u.total }));
   const free = rows.filter((r) => Number(digits(r.total)) > 0); // 0원·마이너스(반품·정정) 명세서는 후보에서 뺌
   // 첫 줄 품목 낱말의 흔함(IDF) — '아크릴5t' 처럼 여기저기 나오는 낱말은 무게 ≈ 0.
   const df = new Map<string, number>();
@@ -243,7 +261,17 @@ export function matchOrders(
       const pre = cl.length ? clueHits(cl, [{ item: r.firstItem }]).hit / cl.length : 0;
       const usedBy = usedByOf(r);
       const score = 3 * c + 2.5 * dateScore + 1.5 * tw + 2 * pre - (usedBy.length ? 2 : 0);
-      cands.push({ row: r, key: efRowKey(r), score, client: c, days, title: tw, usedBy: usedBy.length ? usedBy : undefined });
+      const grown = usedBy.length ? [] : grownOf(r);
+      cands.push({
+        row: r,
+        key: efRowKey(r),
+        score,
+        client: c,
+        days,
+        title: tw,
+        usedBy: usedBy.length ? usedBy : undefined,
+        grownFrom: grown.length ? grown : undefined,
+      });
     });
     cands.sort((a, b) => b.score - a.score || a.days - b.days);
     // 위 6개 + 같은 거래처·납기 ±1일인 '이미 저장된 명세서'는 순위 밖이어도 후보에 남긴다(합친 명세서용)
@@ -477,6 +505,7 @@ export function rescoreByContent(
         dimHit: dh.n ? hit : undefined,
         dimN: dh.n ? dh.n : undefined,
         remark,
+        remarkNos: nos.filter((n) => n !== own).length ? nos.filter((n) => n !== own) : undefined,
         clueHit: cl.length ? ch : undefined,
         clueN: cl.length ? cl.length : undefined,
       };

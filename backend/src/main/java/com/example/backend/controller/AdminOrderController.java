@@ -655,16 +655,18 @@ public class AdminOrderController {
             @RequestParam String date,
             @RequestParam String total,
             // true = 이 주문이 이미 든 묶음도 돌려준다(다시 등록할 때 같이 쓰는 다른 지시서를 보여주려고)
-            @RequestParam(defaultValue = "false") boolean includeOwn
+            @RequestParam(defaultValue = "false") boolean includeOwn,
+            // 이지폼 명세서 비고에 적힌 주문번호들(쉼표) — 명세서 밑에 줄을 더 써서 합계가 바뀌면 지문으로는 못 찾으므로,
+            // 비고 번호의 주문이 홈페이지에 명세서가 저장돼 있으면 그 묶음도 돌려준다(2026-11-20).
+            @RequestParam(required = false) String nos
     ) {
         Order me = orderRepository.findById(orderId).orElse(null);
         String key = me == null ? null : efKey(me, date, total);
-        if (key == null) return ResponseEntity.ok(Map.of("groups", List.of()));
-        String needle = "%\"efKey\":\"" + key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "\"%";
         List<Map<String, Object>> groups = new ArrayList<>();
-        jdbcTemplate.query("SELECT order_id, grid_json FROM autoquote_estimate WHERE grid_json LIKE ?", rs -> {
-            long primaryId = rs.getLong("order_id");
-            List<Long> ids = linkedOrderIds(rs.getString("grid_json"));
+        java.util.Set<Long> seenPrimary = new java.util.HashSet<>();
+        java.util.function.BiConsumer<Long, String> addGroup = (primaryId, gridJson) -> {
+            if (!seenPrimary.add(primaryId)) return;
+            List<Long> ids = linkedOrderIds(gridJson);
             if (ids.isEmpty()) ids = List.of(primaryId);
             if (ids.contains(orderId) && !includeOwn) return; // 이미 이 주문과 같은 묶음
             List<Map<String, Object>> orders = new ArrayList<>();
@@ -673,7 +675,26 @@ public class AdminOrderController {
                         orders.add(Map.of("id", o.getId(), "orderNumber", o.getOrderNumber())));
             }
             if (!orders.isEmpty()) groups.add(Map.of("primaryOrderId", primaryId, "orders", orders));
-        }, needle);
+        };
+        if (key != null) {
+            String needle = "%\"efKey\":\"" + key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "\"%";
+            jdbcTemplate.query("SELECT order_id, grid_json FROM autoquote_estimate WHERE grid_json LIKE ?",
+                    rs -> { addGroup.accept(rs.getLong("order_id"), rs.getString("grid_json")); }, needle);
+        }
+        if (nos != null && !nos.isBlank()) {
+            List<String> list = new ArrayList<>();
+            addOrderNos(list, nos);
+            for (String n : list) {
+                Order o = findOrderByLooseNumber(n);
+                if (o == null || o.getId().equals(orderId)) continue;
+                AutoQuoteEstimate e = estimateRepository.findByOrderId(o.getId()).orElse(null);
+                if (e == null || e.getGridJson() == null) continue; // 홈페이지에 명세서가 없는 주문 = 합칠 대상 아님
+                Long t = sharedTarget(e);
+                AutoQuoteEstimate head = t != null ? estimateRepository.findByOrderId(t).orElse(null) : e;
+                if (head == null) continue;
+                addGroup.accept(head.getOrderId(), head.getGridJson());
+            }
+        }
         return ResponseEntity.ok(Map.of("groups", groups));
     }
 

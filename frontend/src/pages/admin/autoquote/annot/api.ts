@@ -410,9 +410,13 @@ export async function findEasyformMatch(
   date: string,
   total: string,
   includeOwn = false, // true = 이 주문이 이미 든 묶음도(같이 쓰는 다른 지시서 보여주기)
+  // 이지폼 명세서 비고에 적힌 주문번호 — 줄을 더 써서 합계가 바뀌어도 그 주문의 묶음을 찾는다
+  nos: string[] = [],
 ): Promise<EasyformMatchGroup[]> {
   try {
-    const q = `orderId=${encodeURIComponent(String(orderId))}&date=${encodeURIComponent(date)}&total=${encodeURIComponent(total)}${includeOwn ? '&includeOwn=true' : ''}`;
+    const q =
+      `orderId=${encodeURIComponent(String(orderId))}&date=${encodeURIComponent(date)}&total=${encodeURIComponent(total)}` +
+      `${includeOwn ? '&includeOwn=true' : ''}${nos.length ? `&nos=${encodeURIComponent(nos.join(','))}` : ''}`;
     const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-match?${q}`, { headers: authHeaders(token) });
     if (!res.ok) return [];
     const j = await res.json();
