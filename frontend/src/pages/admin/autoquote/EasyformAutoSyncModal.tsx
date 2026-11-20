@@ -263,12 +263,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, phase === 'pick' || phase === 'added', days, clientDays]);
 
-  // 다 끝나면 잠깐 보여 주고 닫기
-  useEffect(() => {
-    if (phase !== 'done' || msg.warn) return;
-    const t = setTimeout(onClose, 2500); // 잠깐 보여 주고 이지폼으로 돌아감
-    return () => clearTimeout(t);
-  }, [phase, msg.warn, onClose]);
+  // 다 끝나도 자동으로 닫지 않음 — 사용자가 [확인]을 눌러야 이지폼으로 돌아감(사용자 결정 2026-11-20)
 
   const ranked: Ranked[] = useMemo(() => {
     const d0 = dayOf(ev.date);
@@ -589,8 +584,15 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                   다시 고르기
                 </button>
               )}
-              <button type="button" className="efas-btn primary" onClick={onClose} disabled={phase === 'saving'}>
-                확인
+              <button
+                type="button"
+                className="efas-btn primary"
+                onClick={onClose}
+                disabled={phase === 'saving'}
+                autoFocus={phase === 'done'}
+                key={phase}
+              >
+                {phase === 'done' ? '확인 (이지폼으로 돌아가기)' : '확인'}
               </button>
             </>
           )}
