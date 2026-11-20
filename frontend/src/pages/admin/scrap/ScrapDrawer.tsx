@@ -262,6 +262,24 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
       window.setTimeout(() => root.classList.remove('scrap-anim'), 30);
     }, 220);
   };
+  /** [»]/[«] 버튼 — 스르륵 펼치기/접기(0.18초, 너무 느리지 않게 — 사용자 요청 2026-11-20). */
+  const toggleAnimated = (open: boolean) => {
+    if (open === !collapsed) return;
+    const root = document.documentElement;
+    window.clearTimeout(animT.current);
+    setSlide(collapsed ? closedW : W_OPEN); // 지금 자리에서 시작(펼칠 땐 서랍을 화면 밖에 먼저 그림)
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        root.classList.add('scrap-anim');
+        setSlide(open ? W_OPEN : closedW);
+        animT.current = window.setTimeout(() => {
+          scrap.setCollapsed(!open);
+          setSlide(null);
+          window.setTimeout(() => root.classList.remove('scrap-anim'), 30);
+        }, 190);
+      }),
+    );
+  };
   const panel = opened && (
     <Panel
       key={opened.key}
@@ -282,7 +300,7 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
       return (
         <>
           <aside className="scr is-closed">
-            <button type="button" className="scr-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
+            <button type="button" className="scr-open" onClick={() => toggleAnimated(true)} title="스크랩 펼치기">
               <span>»</span>
               <span className="scr-vert">📌 스크랩</span>
               {items.length > 0 && <b>{items.length}</b>}
@@ -299,7 +317,7 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
       {hidden && (
         // 접힘+참고 창: 펼치기 손잡이는 원래 자리(화면 40% 높이 왼쪽 끝)에 작은 세로형으로 — 창 위에 살짝 겹쳐도 OK
         <aside className="scr is-closed is-mini">
-          <button type="button" className="scr-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
+          <button type="button" className="scr-open" onClick={() => toggleAnimated(true)} title="스크랩 펼치기">
             <span>»</span>
             <span className="scr-vert">📌 스크랩</span>
             {items.length > 0 && <b>{items.length}</b>}
@@ -322,7 +340,7 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
           <span className="scr-title">📌 스크랩 {items.length > 0 && <b>{items.length}</b>}</span>
         </div>
         {/* 접기 — 접었을 때 여는 손잡이와 같은 높이(화면 40%)에, 서랍 오른쪽 가장자리 바깥으로 */}
-        <button type="button" className="scr-fold-tab" onClick={() => scrap.setCollapsed(true)} title="스크랩 접기">
+        <button type="button" className="scr-fold-tab" onClick={() => toggleAnimated(false)} title="스크랩 접기">
           «
         </button>
         <div className="scr-list">

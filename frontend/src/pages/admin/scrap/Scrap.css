@@ -924,7 +924,7 @@
 /* 손잡이로 서랍 밀기/끌어오기 — 손 놓은 뒤 스르륵 */
 html.scrap-anim .scr,
 html.scrap-anim .scr-panel {
-  transition: transform 0.2s ease, left 0.2s ease;
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1), left 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 .scr.is-sliding .scr-fold-tab {
   display: none;
