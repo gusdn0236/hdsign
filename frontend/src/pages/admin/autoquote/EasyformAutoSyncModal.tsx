@@ -9,7 +9,7 @@
  *     [맞아요] → 워처가 이지폼 비고에 주문번호를 적고 저장 → 홈페이지 명세서 덮어쓰기.
  * 이지폼이 참 데이터 — 홈페이지 명세서가 달라도 이지폼 내용으로 덮는다(사용자 결정 2026-11-20).
  */
-import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import WorksheetThumbnailJs from '../../../components/common/WorksheetThumbnail.jsx';
 import { useAuth } from '../../../context/AuthContext';
 import {
@@ -81,6 +81,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null);
   const [added, setAdded] = useState<Added | null>(null);
   const [msg, setMsg] = useState<{ main: string; sub?: string; warn?: string }>({ main: '' });
+  const baseRef = useRef<EasyformCandidateOrder | null>(null); // 비고 번호의 (첫) 지시서
 
   // 이지폼 표 줄 ↔ 홈페이지 그리드 줄(빈 줄은 그리드에서 빠짐)
   const pairs = useMemo(
@@ -103,15 +104,19 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
 
   /** 반영. stamp = 이지폼 비고에 먼저 적을 것(지시서·번호·줄). 못 적어도 홈페이지 반영은 한다. */
   const save = useCallback(
-    async (orderNumbers: string[], stamp?: { o: EasyformCandidateOrder; row?: number }) => {
+    async (orderNumbers: string[], stamp?: { o: EasyformCandidateOrder; row?: number; move?: boolean }) => {
       setPhase('saving');
       let rows = ev.rows;
       let warn = '';
       if (stamp) {
         const no = orderNoCore(stamp.o.orderNumber);
-        const st = await stampEfAuto(ev.id, [no], stamp.row);
-        if (st.ok && !st.skipped && typeof st.row === 'number' && rows[st.row]) {
+        const st = await stampEfAuto(ev.id, [no], stamp.row, !!stamp.move);
+        if (st.ok && Array.isArray(st.rows) && st.rows.length === rows.length) {
+          rows = st.rows; // 워처가 비고(적기·옮기기) 반영한 줄들
+        } else if (st.ok && !st.skipped && typeof st.row === 'number' && rows[st.row]) {
           rows = rows.map((r, i) => (i === st.row ? { ...r, remark: st.remark || no } : r));
+        } else if (!st.ok && stamp.move) {
+          warn = `이지폼 비고의 주문번호를 맨 위로 못 옮겼어요 — ${st.message || '알 수 없는 이유'}`;
         } else if (!st.ok) {
           warn = `이지폼 비고엔 주문번호를 못 적었어요 — ${st.message || '알 수 없는 이유'}`;
           if (typeof stamp.row === 'number' && rows[stamp.row]) {
@@ -155,6 +160,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
       try {
         const orders = await findOrdersByNumbers(tk, ev.nos);
         const base = orders.find((o) => orderNoCore(o.orderNumber) === ev.nos[0]);
+        baseRef.current = base || null;
         const est = base ? await getEstimate(tk, base.id).catch(() => null) : null;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const saved = ((est?.estimate?.grid || []) as any[]).filter((r) => sig(r).replace(/\u0001/g, ''));
@@ -170,7 +176,9 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
       } catch {
         /* 확인 못 하면 예전처럼 바로 반영 */
       }
-      const ok = await save(ev.nos);
+      // 지시서 1개짜리면 번호를 맨 위(비고 빈 첫 줄)로 맞춰 둔다 — 맨 위에 줄을 끼우면 밀리므로(사용자 2026-11-20)
+      const one = ev.nos.length === 1 ? baseRef.current : null;
+      const ok = await save(ev.nos, one ? { o: one, move: true } : undefined);
       if (!ok) setPhase('pick'); // 홈페이지에서 그 번호를 못 찾음 → 직접 고르기
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -308,7 +316,11 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose }: Prop
 
         {phase === 'added' && added && (
           <div className="efas-same">
-            <button type="button" className="efas-btn same" onClick={() => save(ev.nos)}>
+            <button
+              type="button"
+              className="efas-btn same"
+              onClick={() => save(ev.nos, ev.nos.length === 1 ? { o: added.base, move: true } : undefined)}
+            >
               기존 지시서({baseNo}) 내용이에요
             </button>
             <span className="efas-mute">다른 지시서 내용이면 아래에서 골라주세요 — 새 줄 첫 행 비고에 그 주문번호를 적어요.</span>

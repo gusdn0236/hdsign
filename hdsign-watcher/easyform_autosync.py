@@ -586,19 +586,41 @@ def handle_stamp(body: dict) -> dict:
         if bulk._popups(main):
             return {"ok": False, "message": "이지폼에 질문창이 떠 있어서 비고엔 못 적었어요."}
         rows = ev["rows"]
-        if any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
-            return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True}
-        want_row = (body or {}).get("row")
-        if isinstance(want_row, int) and 0 <= want_row < len(rows):
-            # 합친 명세서 — 밑에 새로 쓴 줄(다른 지시서)의 첫 줄에 그 지시서 번호(기존 비고 뒤에 붙임)
-            row = want_row
-        else:
-            cand = [i for i, r in enumerate(rows) if bulk._has_content(r) and not (r.get("remark") or "").strip()]
+        move = bool((body or {}).get("move"))
+        clear: list = []
+        if move:
+            # 지시서 1개짜리 명세서 — 번호는 항상 '위에서부터 비고가 빈 첫 줄'(그 번호 말고 다른 글이 있으면 그 밑).
+            # 맨 위에 줄을 끼워 넣으면 이지폼 비고가 한 칸 밑으로 밀린다 → 제자리로 옮겨 적는다(사용자 2026-11-20).
+            if len(nos) != 1:
+                return {"ok": False, "message": "옮겨 적기는 주문번호 1개일 때만"}
+            no = nos[0]
+            holders = [i for i, r in enumerate(rows) if no in ef._EF_ORDER_NO_RE.findall(r.get("remark") or "")]
+            cand = [i for i, r in enumerate(rows)
+                    if bulk._has_content(r) and not bulk._strip_nos(r.get("remark") or "", [no]).strip()]
             if not cand:
-                return {"ok": False, "message": "이지폼 명세서에 빈 비고 칸이 없어서 안 적었어요."}
+                return {"ok": True, "message": "번호를 옮길 빈 비고 칸이 없어서 그대로 뒀어요", "skipped": True,
+                        "rows": rows}
             row = cand[0]
+            if holders == [row]:
+                return {"ok": True, "message": "이미 맨 위에 적혀 있어요", "skipped": True, "rows": rows}
+            clear = [{"row": i, "item": rows[i].get("item") or "", "remark": (rows[i].get("remark") or "").strip()}
+                     for i in holders if i != row]
+        else:
+            if any(all(n in (r.get("remark") or "") for n in nos) for r in rows):
+                return {"ok": True, "message": "이미 비고에 적혀 있어요", "skipped": True, "rows": rows}
+            want_row = (body or {}).get("row")
+            if isinstance(want_row, int) and 0 <= want_row < len(rows):
+                # 합친 명세서 — 밑에 새로 쓴 줄(다른 지시서)의 첫 줄에 그 지시서 번호(기존 비고 뒤에 붙임)
+                row = want_row
+            else:
+                cand = [i for i, r in enumerate(rows) if bulk._has_content(r) and not (r.get("remark") or "").strip()]
+                if not cand:
+                    return {"ok": False, "message": "이지폼 명세서에 빈 비고 칸이 없어서 안 적었어요."}
+                row = cand[0]
         it = {"row": row, "item": rows[row].get("item") or "", "remark": (rows[row].get("remark") or "").strip(),
               "rowCount": len(rows), "nos": nos}
+        if move:
+            it.update(force=True, clear=clear)  # 다른 줄의 같은 번호는 지우고 이 줄에(저장 1번)
         _overlay("이지폼 비고에 주문번호를 적는 동안 마우스가 잠깁니다.")
         ef.ef_guard_start()
         try:
@@ -611,7 +633,10 @@ def handle_stamp(body: dict) -> dict:
             _overlay(None)
         if res.get("ok") and not res.get("skipped"):
             ev["rows"][row]["remark"] = res.get("remark") or ", ".join(nos)
-        logging.info("이지폼 저장 자동반영 — 비고 적기 %s", res)
+            for c in clear:
+                ev["rows"][c["row"]]["remark"] = bulk._strip_nos(c["remark"], nos)
+        res["rows"] = ev["rows"]  # 홈페이지는 이 줄들(비고 반영된)로 저장
+        logging.info("이지폼 저장 자동반영 — 비고 적기 %s", {k: v for k, v in res.items() if k != "rows"})
         return res
     except Exception as e:  # noqa: BLE001
         logging.exception("이지폼 저장 자동반영 — 비고 적기 오류")
