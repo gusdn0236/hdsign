@@ -936,21 +936,14 @@ html.scrap-anim .scr-panel {
   }
 }
 
-/* 서랍 접힘 + 참고 창 — 창 머리 왼쪽 펼치기 버튼 */
-.scr-panel-open {
-  flex: none;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid #26364a;
-  border-radius: 7px;
-  background: #111a24;
-  color: #cbd5e1;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
+/* 서랍 접힘 + 참고 창 — 원래 자리의 작은 세로 펼치기 손잡이(창 위에 겹침) */
+.scr.is-closed.is-mini {
+  width: 26px;
+  z-index: 2210;
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.35);
 }
-.scr-panel-open:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+.scr.is-closed.is-mini .scr-open {
+  gap: 6px;
+  padding: 8px 0;
+  font-size: 11.5px;
 }

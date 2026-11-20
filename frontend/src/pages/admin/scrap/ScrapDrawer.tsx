@@ -102,7 +102,6 @@ function Panel({
   token,
   collapsed,
   closedW,
-  count,
   dw,
   onSlide,
   onRelease,
@@ -111,7 +110,6 @@ function Panel({
   token: string | null | undefined;
   collapsed: boolean;
   closedW: number; // 접혔을 때 서랍 폭 — 참고 창이 떠 있으면 0(창이 화면 왼쪽 끝에 붙음)
-  count: number;
   dw: number;
   onSlide: (dw: number | null) => void;
   onRelease: (dw: number) => void;
@@ -131,11 +129,22 @@ function Panel({
     drag.current = { x: e.clientX, r: dw + w, dw, w };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
+  const raf = useRef<number | null>(null);
+  const lastX = useRef(0);
   const onMove = (e: React.PointerEvent) => {
+    if (!drag.current) return;
+    lastX.current = e.clientX;
+    if (raf.current !== null) return; // 한 화면(프레임)에 한 번만 — 마우스 이벤트마다 그리면 떨림
+    raf.current = requestAnimationFrame(() => {
+      raf.current = null;
+      step(lastX.current);
+    });
+  };
+  const step = (clientX: number) => {
     const d = drag.current;
     if (!d) return;
     const maxW = window.innerWidth - 260;
-    const r = d.r + e.clientX - d.x; // 참고 창 오른쪽 끝 = 손잡이 위치
+    const r = d.r + clientX - d.x; // 참고 창 오른쪽 끝 = 손잡이 위치
     let nd: number;
     let nw: number;
     if (!collapsed) {
@@ -163,7 +172,12 @@ function Panel({
     setW(nw);
     onSlide(nd === (collapsed ? closedW : W_OPEN) ? null : nd);
   };
-  const onUp = () => {
+  const onUp = (e?: React.PointerEvent) => {
+    if (raf.current !== null) {
+      cancelAnimationFrame(raf.current);
+      raf.current = null;
+    }
+    if (e && drag.current) step(e.clientX);
     const d = drag.current;
     drag.current = null;
     if (!d) return;
@@ -171,14 +185,8 @@ function Panel({
     onRelease(d.dw);
   };
   return (
-    <div className="scr-panel" style={{ width: w }} role="dialog" aria-label="스크랩 참고">
+    <div className="scr-panel" style={{ width: w, left: dw }} role="dialog" aria-label="스크랩 참고">
       <div className="scr-panel-head">
-        {collapsed && (
-          // 서랍이 접혀 있으면 따로 뜬 손잡이 대신 창 머리에 펼치기 버튼(왼쪽 붕 뜬 빈칸 없이 창이 화면 끝에 붙음)
-          <button type="button" className="scr-panel-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
-            » 📌{count > 0 ? ` ${count}` : ''}
-          </button>
-        )}
         <b>{it.client || '거래처 없음'}</b>
         <span>
           {shortDate(it.date)}
@@ -219,11 +227,14 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
   const closedW = opened ? 0 : W_CLOSED;
   const dw = slide ?? (collapsed ? closedW : W_OPEN);
 
+  // 화면 전체 배치(--scrap-w)는 '확정된' 상태로만 바꾼다. 끄는 중에 매번 바꾸면 관리자 화면·명세서작성 전체가
+  // 마우스 움직임마다 다시 배치돼 찌직거렸다(2026-11-20). 끄는 동안엔 서랍·참고 창만 직접 움직인다.
+  const committedW = collapsed ? closedW : W_OPEN;
   useLayoutEffect(() => {
     const root = document.documentElement;
-    root.style.setProperty('--scrap-w', `${dw}px`);
+    root.style.setProperty('--scrap-w', `${committedW}px`);
     root.classList.add('has-scrap');
-  }, [dw]);
+  }, [committedW]);
   useEffect(
     () => () => {
       const root = document.documentElement;
@@ -258,7 +269,6 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
       token={token}
       collapsed={collapsed && slide === null}
       closedW={closedW}
-      count={items.length}
       dw={dw}
       onSlide={setSlide}
       onRelease={release}
@@ -268,31 +278,48 @@ export default function ScrapDrawer({ token }: { token: string | null | undefine
   if (collapsed && slide === null) {
     // 서랍을 접어도 펼쳐 둔 참고 창은 그대로 — ✕ 로 닫을 때만 닫힘(사용자 결정 2026-11-20).
     // 참고 창은 --scrap-w(접힘 34px) 바로 옆에 붙으므로 접으면 왼쪽 공간이 그만큼 넓어진다.
-    if (opened) return <>{panel}</>;
-    return (
-      <>
-        <aside className="scr is-closed">
+    if (!opened)
+      return (
+        <>
+          <aside className="scr is-closed">
+            <button type="button" className="scr-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
+              <span>»</span>
+              <span className="scr-vert">📌 스크랩</span>
+              {items.length > 0 && <b>{items.length}</b>}
+            </button>
+          </aside>
+        </>
+      );
+  }
+
+  // 접힘+참고 창: 서랍은 화면 밖에 둔 채 그대로 두고(다시 끌어올 때 새로 그리지 않게) 창만 보인다.
+  const hidden = collapsed && slide === null;
+  return (
+    <>
+      {hidden && (
+        // 접힘+참고 창: 펼치기 손잡이는 원래 자리(화면 40% 높이 왼쪽 끝)에 작은 세로형으로 — 창 위에 살짝 겹쳐도 OK
+        <aside className="scr is-closed is-mini">
           <button type="button" className="scr-open" onClick={() => scrap.setCollapsed(false)} title="스크랩 펼치기">
             <span>»</span>
             <span className="scr-vert">📌 스크랩</span>
             {items.length > 0 && <b>{items.length}</b>}
           </button>
         </aside>
-        {panel}
-      </>
-    );
-  }
-
-  return (
-    <>
+      )}
       <aside
-        className={'scr' + (slide !== null ? ' is-sliding' : '')}
-        style={slide !== null ? { width: W_OPEN, transform: `translateX(${slide - W_OPEN}px)` } : undefined}
+        className={'scr' + (slide !== null || hidden ? ' is-sliding' : '')}
+        style={
+          slide !== null || hidden
+            ? {
+                width: W_OPEN,
+                transform: `translateX(${(hidden ? 0 : (slide as number)) - W_OPEN}px)`,
+              }
+            : undefined
+        }
+        aria-hidden={hidden || undefined}
       >
         <div className="scr-head">
-          <span className="scr-title">
-            📌 스크랩 {items.length > 0 && <b>{items.length}</b>}
-          </span>
+          <span className="scr-title">📌 스크랩 {items.length > 0 && <b>{items.length}</b>}</span>
         </div>
         {/* 접기 — 접었을 때 여는 손잡이와 같은 높이(화면 40%)에, 서랍 오른쪽 가장자리 바깥으로 */}
         <button type="button" className="scr-fold-tab" onClick={() => scrap.setCollapsed(true)} title="스크랩 접기">
