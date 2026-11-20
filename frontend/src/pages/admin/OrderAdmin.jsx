@@ -419,6 +419,19 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const [stmtResult, setStmtResult] = useState(null); // {items, matches, truncated, tookMs}
   const [stmtSearching, setStmtSearching] = useState(false);
   const [stmtSort, setStmtSort] = useState("recent"); // recent | low | high
+  // 명세서 탭 카드 순서 — new(최신 업로드순, 기본) | old(오래된 업로드순) | due(납기날짜순, 날짜마다 선으로 나눔). 이 PC 에 기억.
+  const [stmtOrder, setStmtOrder] = useState(() => {
+    try {
+      const v = localStorage.getItem("hd.stmtOrder");
+      return v === "old" || v === "due" ? v : "new";
+    } catch {
+      return "new";
+    }
+  });
+  const changeStmtOrder = (v) => {
+    setStmtOrder(v);
+    try { localStorage.setItem("hd.stmtOrder", v); } catch { /* 저장 불가 무시 */ }
+  };
   const [allClientNames, setAllClientNames] = useState([]); // 전체 거래처(자동완성·분류) — 30일치 화면과 무관
   const [stmtRecent, setStmtRecent] = useState(() => {
     try {
@@ -992,8 +1005,40 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         return stmtSort === "low" ? px - py : py - px;
       });
     }
+    if (stmtOrder === "old") return [...base].sort((x, y) => byNew(y, x));
+    if (stmtOrder === "due") {
+      // 납기 늦은 날짜가 위(앞으로 나갈 것 → 오늘 → 지난 것), 같은 날은 최신 업로드순, 납기 미정은 맨 끝
+      const dueOf = (o) => (o.dueDate ? String(o.dueDate).split("T")[0] : "");
+      return [...base].sort((x, y) => {
+        const a = dueOf(x);
+        const b = dueOf(y);
+        if (a !== b) {
+          if (!a) return 1;
+          if (!b) return -1;
+          return b.localeCompare(a);
+        }
+        return byNew(x, y);
+      });
+    }
     return [...base].sort(byNew);
-  }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort]);
+  }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort, stmtOrder]);
+
+  // 납기날짜순일 때 — 납기 날짜별 묶음(묶음 사이에 얇은 선). 가격순 검색 정렬 중엔 묶지 않음.
+  const stmtDueGroups = useMemo(() => {
+    if (stmtOrder !== "due" || (stmtResult && stmtSort !== "recent")) return null;
+    const groups = [];
+    statementOrders.forEach((o) => {
+      const key = o.dueDate ? String(o.dueDate).split("T")[0] : "none";
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.list.push(o);
+      else groups.push({ key, list: [o] });
+    });
+    return groups.map((g) => {
+      const badge = g.key === "none" ? null : getDueBadge(g.key);
+      // 명세서 탭엔 끝난 지시서도 섞여 있어 'n일 지남'은 안 띄움 — 오늘·내일만
+      return { ...g, dateLabel: formatGroupDateLabel(g.key), badge: badge && badge.kind !== "overdue" ? badge : null };
+    });
+  }, [stmtOrder, stmtResult, stmtSort, statementOrders]);
 
   // [이지폼에서 가져오기] 대상 — 명세서 탭에 불러온 지시서 중 홈페이지 명세서가 비어 있는 주문 카드.
   // 이지폼 목록은 올해(1/1~12/31)만 뽑으므로 작년 12월 중순 이전 건은 뺀다. 날짜(납기, 없으면 등록일) 오래된 순.
@@ -2027,6 +2072,36 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     );
   };
 
+  // 명세서 탭 카드 1장 — 검색 중이면 걸린 명세서 행을 아래에, 📌 스크랩은 홈페이지 명세서가 있는 카드만(왼쪽 서랍에 담김)
+  const renderStmtCard = (o) => {
+    if (!stmtResult) {
+      return (
+        <div key={o.id} className="stmt-pin-wrap">
+          {renderOrderCard(o)}
+          {o.hasEstimate && <ScrapPin item={homeScrap(o)} />}
+        </div>
+      );
+    }
+    const hits = stmtResult.matches[String(o.id)] || [];
+    return (
+      <div key={o.id} className="stmt-hit-wrap stmt-pin-wrap">
+        {renderOrderCard(o)}
+        {o.hasEstimate && <ScrapPin item={homeScrap(o, hits)} />}
+        {hits.length > 0 && (
+          <ul className="stmt-hit-rows" title="검색에 걸린 명세서 행">
+            {hits.slice(0, 3).map((h, k) => (
+              <li key={k}>
+                <b>{h["품목코드"] || "-"}</b> {h["품목"]} <span>{h["규격"]}</span>
+                {h["단가"] ? <em> {h["단가"]}원</em> : null}
+              </li>
+            ))}
+            {hits.length > 3 && <li className="stmt-hit-more">외 {hits.length - 3}행</li>}
+          </ul>
+        )}
+      </div>
+    );
+  };
+
   // 거래처 필터(칩 + 입력 + 드롭다운 + 해제) — 다른 탭은 위 정렬줄에, 명세서 탭은 명세서 검색 줄 맨 앞에 그린다.
   const clientFilterControls = (
     <>
@@ -2200,9 +2275,28 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           <section className="calendar-selected-section">
             <h3 className="calendar-selected-head">
               <span className="order-card-group-date">
-                {stmtResult ? "명세서 검색 결과 — 3년 보관분 전체" : "명세서 — 최신 업로드순"}
+                {stmtResult
+                  ? "명세서 검색 결과 — 3년 보관분 전체"
+                  : `명세서 — ${stmtOrder === "old" ? "오래된 업로드순" : stmtOrder === "due" ? "납기날짜순" : "최신 업로드순"}`}
               </span>
               <span className="order-card-group-count">{statementOrders.length}건</span>
+              <span className="stmt-order" role="group" aria-label="카드 순서">
+                {[
+                  ["new", "최신 업로드순", "가장 마지막에 올린 지시서가 위"],
+                  ["old", "오래된순", "먼저 올린 지시서가 위"],
+                  ["due", "납기날짜순", "납기 늦은 날짜부터 — 날짜마다 선으로 나눠요"],
+                ].map(([v, label, tip]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={"stmt-order-btn" + (stmtOrder === v ? " on" : "")}
+                    onClick={() => changeStmtOrder(v)}
+                    title={tip}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </span>
               {isOrderPage && (
                 <>
                   {/* 명세서작성 화면 [📥 이지폼 불러오기] 와 같은 모양. 여러 건 찾기라 '열어 둔 명세서 가져오기' 메뉴는 없음. */}
@@ -2269,36 +2363,22 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     ? "필터에 맞는 작업중·작업완료 카드가 없습니다."
                     : "작업중·작업완료 카드가 없습니다."}
               </div>
+            ) : stmtDueGroups ? (
+              stmtDueGroups.map((group) => (
+                <section className="order-card-group" key={group.key}>
+                  <h4 className="order-card-group-head">
+                    {group.badge && (
+                      <span className={`due-badge due-badge--lg due-badge--${group.badge.kind}`}>{group.badge.text}</span>
+                    )}
+                    <span className="order-card-group-date">{group.dateLabel}</span>
+                    <span className="order-card-group-count">{group.list.length}건</span>
+                  </h4>
+                  <div className="order-card-grid">{group.list.map(renderStmtCard)}</div>
+                </section>
+              ))
             ) : (
               <div className="order-card-grid">
-                {stmtResult
-                  ? statementOrders.map((o) => {
-                      const hits = stmtResult.matches[String(o.id)] || [];
-                      return (
-                        <div key={o.id} className="stmt-hit-wrap stmt-pin-wrap">
-                          {renderOrderCard(o)}
-                          {o.hasEstimate && <ScrapPin item={homeScrap(o, hits)} />}
-                          {hits.length > 0 && (
-                            <ul className="stmt-hit-rows" title="검색에 걸린 명세서 행">
-                              {hits.slice(0, 3).map((h, k) => (
-                                <li key={k}>
-                                  <b>{h["품목코드"] || "-"}</b> {h["품목"]} <span>{h["규격"]}</span>
-                                  {h["단가"] ? <em> {h["단가"]}원</em> : null}
-                                </li>
-                              ))}
-                              {hits.length > 3 && <li className="stmt-hit-more">외 {hits.length - 3}행</li>}
-                            </ul>
-                          )}
-                        </div>
-                      );
-                    })
-                  : statementOrders.map((o) => (
-                      // 📌 스크랩 — 홈페이지 명세서가 있는 카드만(왼쪽 서랍에 담김)
-                      <div key={o.id} className="stmt-pin-wrap">
-                        {renderOrderCard(o)}
-                        {o.hasEstimate && <ScrapPin item={homeScrap(o)} />}
-                      </div>
-                    ))}
+                {statementOrders.map(renderStmtCard)}
               </div>
             )}
             {!loading && trashMoreBlock}
