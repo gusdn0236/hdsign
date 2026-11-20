@@ -524,6 +524,36 @@
   gap: 10px;
   margin-top: 16px;
 }
+.efas-ask-yes,
+.efas-ask-no {
+  flex: 1;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.efas-ask-yes {
+  border: 1px solid #16a34a;
+  background: #16a34a;
+  color: #ffffff;
+}
+.efas-ask-yes:hover {
+  background: #15803d;
+}
+.efas-ask-no {
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  color: #374151;
+}
+.efas-ask-no:hover {
+  background: #e5e7eb;
+}
+.efas-ask-yes:focus-visible,
+.efas-ask-no:focus-visible {
+  outline: 3px solid #93c5fd;
+  outline-offset: 2px;
+}
 /* 지시서 사진 — 잘리지 않게 전체(FitWorksheet 가 상자에 맞춤) */
 .efas-thumb,
 .efas-opt-thumb {

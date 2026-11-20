@@ -617,13 +617,11 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             </p>
             {ask.o.title && <p className="efas-ask-sub">{ask.o.title}</p>}
             {added && <p className="efas-ask-sub">추가한 {added.count}줄을 이 지시서로 홈페이지에 반영해요.</p>}
+            {/* 왼쪽 = 예(초록), 오른쪽 = 아니요(회색) — 사용자 결정 2026-11-20 */}
             <div className="efas-ask-foot">
-              <button type="button" className="efas-btn ghost" onClick={() => setAsk(null)}>
-                아니요
-              </button>
               <button
                 type="button"
-                className="efas-btn primary"
+                className="efas-ask-yes"
                 autoFocus
                 onClick={() => {
                   const run = ask.run;
@@ -631,7 +629,10 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                   run();
                 }}
               >
-                네, 반영할게요
+                예, 반영할게요
+              </button>
+              <button type="button" className="efas-ask-no" onClick={() => setAsk(null)}>
+                아니요
               </button>
             </div>
           </div>
