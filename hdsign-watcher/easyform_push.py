@@ -338,26 +338,46 @@ def _each_candidate(body: dict, progress, forms_ok: bool):
         raise Stop("켜져 있는 이지폼이 없어요.")
     mains.sort(key=lambda x: 0 if x["biz"] == body.get("biz") else 1)
     date, total = str(body.get("date") or ""), str(body.get("total") or "")
+    hint = body.get("biz")
+    hit_total = lambda r: b._digits(r["total"]) == b._digits(total)  # noqa: E731
+
+    def load(m, period, pi, exact):
+        lst = _list_candidates(m, period, progress, forms_ok=forms_ok)
+        if pi > 0 and date:
+            lst = [r for r in lst if r["date"] != date]  # 그날은 이미 봄
+        cands, lone = _order_cands(lst, body, exact)
+        return m, (cands if exact else cands[:30]), lone
+
+    def stop_check():
+        if b._aborted():
+            raise Stop("정지했어요.")
+
     for pi, (period, exact) in enumerate(_passes(body)):
         if pi > 0:
             progress(f"그날엔 없어서 앞뒤 7일({period[0]}~{period[1]})에서 찾는 중")
-        # 두 이지폼 목록을 먼저 다 뽑고(각자 자기 목록 창이라 서로 안 섞임) → 합계 맞는 것(두 이지폼) → 나머지 순
         per = []
+        seen = set()
+        # 기억해 둔 이지폼(지난번에 찾은 주식회사/개인)이 있으면 그쪽 목록만 먼저 뽑아 합계 맞는 것부터 —
+        # 찾으면 다른 이지폼 목록은 안 뽑는다(다시 열 때 ~10초 → ~5초, 사용자 2026-11-23).
+        if exact and hint and any(m["biz"] == hint for m in mains):
+            m, cs, lone = load(next(m for m in mains if m["biz"] == hint), period, pi, exact)
+            per.append((m, cs, lone))
+            for it in [x for x in cs if hit_total(x)]:
+                stop_check()
+                seen.add((m["biz"], it["idx"]))
+                yield m, it, lone, len(cs)
+        # 나머지 이지폼 목록도 뽑고(각자 자기 목록 창이라 서로 안 섞임) → 합계 맞는 것(양쪽) → 나머지 순
         for m in mains:
-            lst = _list_candidates(m, period, progress, forms_ok=forms_ok)
-            if pi > 0 and date:
-                lst = [r for r in lst if r["date"] != date]  # 그날은 이미 봄
-            cands, lone = _order_cands(lst, body, exact)
-            per.append((m, cands if exact else cands[:30], lone))
+            if not any(p[0] is m for p in per):
+                per.append(load(m, period, pi, exact))
         if exact:
-            hit_total = lambda r: b._digits(r["total"]) == b._digits(total)  # noqa: E731
             order = [(m, it, lone) for m, cs, lone in per for it in cs if hit_total(it)] + \
                     [(m, it, lone) for m, cs, lone in per for it in cs if not hit_total(it)]
         else:
             order = [(m, it, lone) for m, cs, lone in per for it in cs]
+        order = [x for x in order if (x[0]["biz"], x[1]["idx"]) not in seen]
         for m, it, lone in order:
-            if b._aborted():
-                raise Stop("정지했어요.")
+            stop_check()
             yield m, it, lone, len(order)
 
 
