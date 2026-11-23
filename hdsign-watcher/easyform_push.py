@@ -170,15 +170,22 @@ def _goto_list_row(main, idx: int):
     return grid
 
 
-def _open_row(main, it: dict):
-    """목록에서 it(idx·date·total) 명세서를 연다. 사람이 연 명세서가 있으면 멈춤(저장하는 작업이라)."""
-    b._assert_clean(main)
+def _open_row(main, it: dict, forms_ok: bool = False):
+    """목록에서 it(idx·date·total) 명세서를 연다. 사람이 연 명세서가 있으면 멈춤(저장하는 작업이라).
+    forms_ok=True([이지폼에서 열기] — 저장 안 함, 사용자 2026-11-23): 열린 명세서가 있어도 연다. 이지폼은 그 창에
+    덮어 띄운다(저장 안 한 수정은 이지폼이 묻지 않고 버림). 새로작성 중이라 저장확인창이 뜨면 아무것도 안 누르고 멈춤."""
+    b._assert_clean(main, forms_ok=forms_ok)
     grid = _goto_list_row(main, int(it.get("idx") or 0))
-    b._assert_clean(main)
-    before = b._forms(main)
-    b._key(grid, 0x0D)
+    b._assert_clean(main, forms_ok=forms_ok)
     want = str(it.get("total") or "")
-    form = b._new_form(main, before)
+    if forms_ok:
+        before_h = b._headers(main)
+        b._key(grid, 0x0D)
+        form = b._opened_form(main, before_h, it.get("date", ""), want)
+    else:
+        before = b._forms(main)
+        b._key(grid, 0x0D)
+        form = b._new_form(main, before)
     if not form:
         raise Stop(f"{it.get('date', '')} 명세서가 안 열려서 멈췄어요.")
     b._wait(lambda: b._digits(b._form_header(form, want)[1]) == b._digits(want), 2.5, 0.05)
@@ -280,8 +287,8 @@ def _read_remarks(form) -> list:
     return out
 
 
-def _list_candidates(m: dict, period: tuple, progress) -> list:
-    rows = b._export_one(m, 0, progress, period=period, forms_ok=False)
+def _list_candidates(m: dict, period: tuple, progress, forms_ok: bool = False) -> list:
+    rows = b._export_one(m, 0, progress, period=period, forms_ok=forms_ok)
     return rows
 
 
@@ -768,15 +775,26 @@ def open_show(body: dict, progress) -> dict:
     if not mains:
         raise Stop("켜져 있는 이지폼이 없어요.")
     mains.sort(key=lambda x: 0 if x["biz"] == body.get("biz") else 1)
+    # 찾는 명세서가 이미 열려 있으면(비고에 이 주문번호) 목록 안 뽑고 바로 앞으로
+    if want_nos:
+        for m in mains:
+            for f in b._kids(m["hwnd"], "TfrmExchange"):
+                d, t = b._form_header(f)
+                if not d or "_" in d or (exact and d != date):
+                    continue
+                if any(n in _nos([{"remark": x} for x in _read_remarks(f)]) for n in want_nos):
+                    _bring_front(m["hwnd"], f)
+                    return {"biz": m["biz"], "date": d, "total": b._digits(t), "client": "",
+                            "nos": _nos([{"remark": x} for x in _read_remarks(f)])}
     for m in mains:
         main = m["hwnd"]
-        lst = _list_candidates(m, period, progress)
+        lst = _list_candidates(m, period, progress, forms_ok=True)
         cands, lone = _order_cands(lst, body, exact)
         for k, it in enumerate(cands):
             if b._aborted():
                 raise Stop("정지했어요.")
             progress(f"이지폼 명세서 찾는 중 {k + 1}/{len(cands)} · {it['date']} {it.get('client', '')}")
-            form = _open_row(main, it)
+            form = _open_row(main, it, forms_ok=True)
             keep = False
             try:
                 nos = _nos([{"remark": x} for x in _read_remarks(form)])
