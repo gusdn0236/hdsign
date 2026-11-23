@@ -4709,19 +4709,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 거래처명 = 이지폼에 등록된 이름(홈페이지 거래처명 아님). 못 찾으면 열기 실패 창에서 '찾아 가져오기'. */}
             {/* 순서(사용자 2026-11-23): 회색 안내 ← 맨 왼쪽 · 거래처 칸 · [열기] 맨 오른쪽 */}
             <span className="aq-efmenu-hint aq-efopen-hint">이지폼에 작성된 이 명세서를 열어요.</span>
-            <span className="aq-efclient" title="이 명세서가 이지폼에서 어느 거래처로 작성돼 있는지">
-              <span className="aq-efclient-k">이지폼 거래처</span>
-              {efWhere.client ? (
-                <>
-                  {efWhere.biz && (
-                    <span className={`aq-efclient-biz ${efWhere.biz}`}>{efWhere.biz === 'corp' ? '(주)' : '개인'}</span>
-                  )}
-                  <b>{efWhere.client}</b>
-                </>
-              ) : (
-                <span className="aq-efclient-none">{order?.easyformUploadedAt ? '열면 확인돼요' : '아직 없음'}</span>
-              )}
-            </span>
+            {/* 이지폼 거래처 칩 — 라벨 없이 [열기] 바로 옆(사용자 2026-11-23). 모르면 숨김(열어보면 생김). */}
+            {efWhere.client && (
+              <span
+                className="aq-efclient"
+                title={`이지폼${efWhere.biz ? ` [${efWhere.biz === 'corp' ? '주식회사' : '개인'}]` : ''}에 이 거래처로 작성돼 있어요`}
+              >
+                {efWhere.biz && (
+                  <span className={`aq-efclient-biz ${efWhere.biz}`}>{efWhere.biz === 'corp' ? '(주)' : '개인'}</span>
+                )}
+                <b>{efWhere.client}</b>
+              </span>
+            )}
             <button
               type="button"
               className="aq-calcbtn"
