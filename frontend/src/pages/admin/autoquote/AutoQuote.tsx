@@ -3107,6 +3107,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     };
     if (c) setEfWhere({ client: c, biz: bz });
   };
+  // 새 명세서(아직 이지폼에 없음)의 품목코드·품목 칸을 처음 누를 때 한 번 — 이미 이지폼에 작성된 건지 [이지폼에서 열기]로
+  // 확인해 보라고 안내(강제 아님, 이 화면에서 한 번만 — 사용자 2026-11-23). 초록(이지폼에 있음)·미리보기 화면은 안 띄움.
+  const efHintRef = useRef<number | null>(null);
+  const efFirstTouch = () => {
+    if (!order || order.easyformUploadedAt || efPreviewRef.current || efHintRef.current === order.id) return;
+    efHintRef.current = order.id;
+    cdlg(
+      `<b style="font-size:15px">이미 이지폼에 작성된 명세서일 수 있어요</b>` +
+        `<div style="font-size:13px;margin-top:8px;line-height:1.6">새로 작성하기 전에 <b>[📂 이지폼에서 열기]</b>로 먼저 확인해 보세요.</div>`,
+      [
+        { label: '📂 이지폼에서 열기', fn: () => void openInEasyform() },
+        { label: '그냥 작성할게요', sec: true },
+      ],
+    );
+  };
   // [이지폼에서 열기] — 그 명세서를 찾아서 이지폼 화면에 띄운다(읽기만, 저장 없음).
   const openInEasyform = async () => {
     if (!order) return;
@@ -4730,7 +4745,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               type="button"
               className="aq-calcbtn"
               onClick={() => void openInEasyform()}
-              disabled={efBusy || !order?.easyformUploadedAt}
+              disabled={efBusy || !order}
               title="이지폼에 작성된 이 명세서를 찾아서 이지폼 화면에 띄워요"
             >
               📂 이지폼에서 열기
@@ -4900,7 +4915,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                             setCell(i, '품목코드', e.target.value);
                             openGridAc(i, e.currentTarget);
                           }}
-                          onFocus={(e) => openGridAc(i, e.currentTarget)}
+                          onFocus={(e) => {
+                            efFirstTouch();
+                            openGridAc(i, e.currentTarget);
+                          }}
                           onBlur={() => setTimeout(() => setGridAc((g) => (g && g.row === i ? null : g)), 150)}
                           onKeyDown={(e) => onGridCodeKey(e, i)}
                           data-gr={i}
@@ -4908,7 +4926,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                         />
                       </td>
                       <td className="it" style={p?._mergeParts ? { position: 'relative' } : undefined}>
-                        <input value={v['품목'] || ''} onChange={(e) => setCell(i, '품목', e.target.value)} data-gr={i} data-gc={1} onKeyDown={(e) => onGridKey(e, i, 1)} />
+                        <input value={v['품목'] || ''} onChange={(e) => setCell(i, '품목', e.target.value)} onFocus={efFirstTouch} data-gr={i} data-gc={1} onKeyDown={(e) => onGridKey(e, i, 1)} />
                         {p?._mergeParts && (
                           <button
                             type="button"
