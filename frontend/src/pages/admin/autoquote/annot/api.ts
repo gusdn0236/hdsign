@@ -417,6 +417,37 @@ export async function locateEasyform(
   }
 }
 
+/** 거래처별 이지폼 익히기 — 여러 주문에 이지폼 위치(발행일·합계·이지폼 거래처·주식회사/개인)를 한꺼번에 저장. */
+export async function locateEasyformBulk(
+  token: string | null | undefined,
+  items: { orderId: number; efDate: string; efTotal: string; efClient?: string; efBiz?: string }[],
+): Promise<number> {
+  if (!items.length) return 0;
+  const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-locate-bulk`, {
+    method: 'POST',
+    headers: authHeaders(token, true),
+    body: JSON.stringify(items),
+  });
+  if (!res.ok) throw new Error(`이지폼 거래처 기억 저장 실패 (${res.status})`);
+  const j = await res.json().catch(() => ({}));
+  return Number(j?.updated) || 0;
+}
+
+/** 이 주문 거래처가 주로 끊는 이지폼(같은 거래처 다른 주문 기록 집계). 기록 없으면 biz 없음. 실패하면 null. */
+export async function getEasyformPref(
+  token: string | null | undefined,
+  orderId: number | string,
+): Promise<{ corp: number; personal: number; biz?: 'corp' | 'personal'; client?: string } | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate/easyform-pref`, {
+      headers: authHeaders(token),
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface EasyformMatchGroup {
   primaryOrderId: number;
   orders: { id: number; orderNumber: string }[];

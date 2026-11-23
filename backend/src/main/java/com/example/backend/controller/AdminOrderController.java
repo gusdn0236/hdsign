@@ -887,19 +887,74 @@ public class AdminOrderController {
             @PathVariable Long id,
             @RequestBody JsonNode body
     ) {
+        Map<String, Object> res = locateOne(id, body);
+        return res == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(res);
+    }
+
+    // 거래처별 이지폼 익히기(웹 [🧠 이지폼 거래처 익히기]·[이지폼 새로 작성]) — 이지폼 목록(올해) × 홈페이지 지문으로 맞춘
+    // 주문들에 이지폼 거래처명·주식회사/개인을 한꺼번에 적는다. body = [{orderId, efDate, efTotal, efClient, efBiz}].
+    @PostMapping("/estimate/easyform-locate-bulk")
+    public ResponseEntity<?> easyformLocateBulk(@RequestBody JsonNode body) {
+        int ok = 0;
+        if (body != null && body.isArray()) {
+            for (JsonNode it : body) {
+                long id = it.path("orderId").asLong(0);
+                if (id > 0 && locateOne(id, it) != null) ok++;
+            }
+        }
+        return ResponseEntity.ok(Map.of("updated", ok));
+    }
+
+    // 이 주문 거래처가 이지폼 어느 쪽(주식회사/개인)·어느 이지폼 거래처로 주로 끊는지 — 같은 거래처 다른 주문들의 기록 집계.
+    // [이지폼에서 열기]·[이지폼에 적용하기]가 이 명세서 기록이 없을 때 주로 끊는 쪽 이지폼부터 보게(사용자 2026-11-23).
+    @GetMapping("/{id}/estimate/easyform-pref")
+    public ResponseEntity<?> easyformPref(@PathVariable Long id) {
+        Order order = orderRepository.findById(id).orElse(null);
+        if (order == null || order.getClient() == null) return ResponseEntity.ok(Map.of("corp", 0, "personal", 0));
+        Map<String, Integer> biz = new LinkedHashMap<>();
+        biz.put("corp", 0);
+        biz.put("personal", 0);
+        Map<String, Integer> names = new LinkedHashMap<>();
+        jdbcTemplate.query(
+                "SELECT e.grid_json FROM autoquote_estimate e JOIN orders o ON o.id = e.order_id "
+                        + "WHERE o.client_id = ? AND e.grid_json LIKE '%\"efBiz\"%'",
+                rs -> {
+                    JsonNode s = readSyncMeta(rs.getString(1));
+                    if (s == null) return;
+                    String b = s.path("efBiz").asText("");
+                    if (biz.containsKey(b)) biz.put(b, biz.get(b) + 1);
+                    String c = s.path("efClient").asText("");
+                    if (!c.isEmpty() && biz.containsKey(b)) names.merge(b + "|" + c, 1, Integer::sum);
+                },
+                order.getClient().getId());
+        String best = biz.get("corp") >= biz.get("personal") ? "corp" : "personal";
+        String bestClient = names.entrySet().stream()
+                .filter(e -> e.getKey().startsWith(best + "|"))
+                .max(Map.Entry.comparingByValue())
+                .map(e -> e.getKey().substring(best.length() + 1)).orElse("");
+        Map<String, Object> res = new LinkedHashMap<>(biz);
+        if (biz.get("corp") + biz.get("personal") > 0) {
+            res.put("biz", best);
+            res.put("client", bestClient);
+        }
+        return ResponseEntity.ok(res);
+    }
+
+    /** 찾은 이지폼 위치를 easyformSync 에만 적기(본문·저장시각 그대로). 없거나 깨졌으면 null. */
+    private Map<String, Object> locateOne(Long id, JsonNode body) {
         AutoQuoteEstimate own = estimateRepository.findByOrderId(id).orElse(null);
-        if (own == null) return ResponseEntity.notFound().build();
+        if (own == null) return null;
         Long target = sharedTarget(own);
         AutoQuoteEstimate est = target != null ? estimateRepository.findByOrderId(target).orElse(null) : own;
-        if (est == null || est.getGridJson() == null) return ResponseEntity.notFound().build();
+        if (est == null || est.getGridJson() == null) return null;
         Order owner = orderRepository.findById(est.getOrderId()).orElse(null);
         com.fasterxml.jackson.databind.node.ObjectNode doc;
         try {
             JsonNode n = OM.readTree(est.getGridJson());
-            if (!n.isObject()) return ResponseEntity.badRequest().body(Map.of("message", "명세서가 깨져 있어요."));
+            if (!n.isObject()) return null;
             doc = (com.fasterxml.jackson.databind.node.ObjectNode) n;
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("message", "명세서가 깨져 있어요."));
+            return null;
         }
         com.fasterxml.jackson.databind.node.ObjectNode sync = doc.path("easyformSync").isObject()
                 ? (com.fasterxml.jackson.databind.node.ObjectNode) doc.get("easyformSync")
@@ -917,7 +972,7 @@ public class AdminOrderController {
         res.put("efKey", key);
         res.put("efClient", sync.path("efClient").asText(""));
         res.put("efBiz", sync.path("efBiz").asText(""));
-        return ResponseEntity.ok(res);
+        return res;
     }
 
     @PostMapping("/{id}/estimate/easyform-uploaded")

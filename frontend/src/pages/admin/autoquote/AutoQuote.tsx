@@ -34,6 +34,7 @@ import {
   findEasyformMatch,
   getEasyformUsedKeys,
   locateEasyform,
+  getEasyformPref,
   readText,
   getVisionQuota,
   DailyLimitError,
@@ -62,6 +63,7 @@ import {
   type EfListRow,
 } from './data/easyformClient';
 import EasyformNewFill, { type EfClientChoice } from './EasyformNewFill';
+import { learnFromLists } from './data/efLearn';
 import { normClue, rankByClues } from './data/clueMatch';
 import { matchCodes, didYouMean, ITEM_CODES } from './itemCodes';
 import LookupResultModal, { type PickedRow } from './LookupResultModal';
@@ -522,6 +524,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const [linkedOrders, setLinkedOrders] = useState<{ id: number; orderNumber: string }[]>([]);
   // 저장본의 이지폼 동기화 정보 — efKey='거래처id|발행일|합계' 로 [이지폼 명세서 수정] 이 그 명세서를 바로 찾는다.
   const efSyncRef = useRef<{ efKey?: string; efClient?: string; efBiz?: string } | null>(null);
+  // 이 거래처가 주로 끊는 이지폼(같은 거래처 다른 주문 기록) — 이 명세서 기록이 없을 때 그쪽부터 찾기
+  const efPrefRef = useRef<{ biz?: 'corp' | 'personal'; client?: string } | null>(null);
   // 화면 '이지폼 거래처' 칸 — 이지폼에 등록된 거래처명(홈페이지 거래처명 아님)·주식회사/개인
   const [efWhere, setEfWhere] = useState<{ client?: string; biz?: string }>({});
   // [이지폼에서 찾기] 창(일괄 가져오기, 이 지시서 1건) — 저장하면 reloadKey 를 올려 명세서를 다시 불러온다.
@@ -825,6 +829,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           const sync = est?.estimate?.easyformSync;
           efSyncRef.current = sync && typeof sync === 'object' ? (sync as { efKey?: string }) : null;
           setEfWhere({ client: efSyncRef.current?.efClient || '', biz: efSyncRef.current?.efBiz || '' });
+          efPrefRef.current = null;
+          if (!efSyncRef.current?.efBiz) {
+            void getEasyformPref(token, id).then((p) => {
+              if (alive && p?.biz) efPrefRef.current = { biz: p.biz, client: p.client };
+            });
+          }
         }
         // 저장된 참고사진 복원(여러 장).
         if (alive && Array.isArray(est?.estimate?.refPhotos)) {
@@ -3082,8 +3092,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 다를 수 있음 — 사용자 2026-11-23). 거래처 이름은 이지폼 쪽 이름을 알면 그걸로.
   const efFindWhere = () => {
     const [, kDate, kTotal] = (efSyncRef.current?.efKey || '').split('|');
-    const client = efSyncRef.current?.efClient || order?.clientCompanyName || '';
-    const biz = efSyncRef.current?.efBiz || undefined;
+    const pref = efPrefRef.current;
+    const client = efSyncRef.current?.efClient || pref?.client || order?.clientCompanyName || '';
+    const biz = efSyncRef.current?.efBiz || pref?.biz || undefined;
     if (kDate && kTotal) return { date: kDate, total: kTotal, client, biz };
     const times = [order?.easyformUploadedAt, order?.dueDate]
       .map((s) => (s ? new Date(s).getTime() : NaN))
@@ -3378,6 +3389,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         return;
       }
       setDialog(null);
+      // 목록을 뽑은 김에 거래처별 이지폼 익히기(서버에 기억, 다른 PC도 사용) — 실패해도 무시
+      void learnFromLists(token, lists).catch((e) => console.error('이지폼 거래처 익히기 실패', e));
       const webClient = order.clientCompanyName || '';
       const keys = (await getEasyformUsedKeys(token)).filter((k) => webClient && k.client === webClient);
       const dig = (s: string) => String(s || '').replace(/[^0-9-]/g, '');
