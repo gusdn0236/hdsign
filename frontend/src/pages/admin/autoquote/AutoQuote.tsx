@@ -4707,12 +4707,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           <div className="aq-h2">
             {/* 이지폼 거래처 칸 + [이지폼에서 열기] — 이지폼 저장이 자동반영되므로 [이지폼 불러오기]를 대신함(2026-11-23).
                 거래처명 = 이지폼에 등록된 이름(홈페이지 거래처명 아님). 못 찾으면 열기 실패 창에서 '찾아 가져오기'. */}
+            {/* 순서(사용자 2026-11-23): 회색 안내 ← 맨 왼쪽 · 거래처 칸 · [열기] 맨 오른쪽 */}
+            <span className="aq-efmenu-hint aq-efopen-hint">이지폼에 작성된 이 명세서를 열어요.</span>
             <span className="aq-efclient" title="이 명세서가 이지폼에서 어느 거래처로 작성돼 있는지">
               <span className="aq-efclient-k">이지폼 거래처</span>
               {efWhere.client ? (
                 <>
                   {efWhere.biz && (
-                    <span className={`aq-efclient-biz ${efWhere.biz}`}>{efWhere.biz === 'corp' ? '주식회사' : '개인'}</span>
+                    <span className={`aq-efclient-biz ${efWhere.biz}`}>{efWhere.biz === 'corp' ? '(주)' : '개인'}</span>
                   )}
                   <b>{efWhere.client}</b>
                 </>
@@ -4729,7 +4731,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             >
               📂 이지폼에서 열기
             </button>
-            <span className="aq-efmenu-hint">이지폼에 작성된 이 명세서를 열어요.</span>
             {finder && (
               <Suspense fallback={<div className="aq-modal-loading">불러오는 중…</div>}>
                 <PriceFinder

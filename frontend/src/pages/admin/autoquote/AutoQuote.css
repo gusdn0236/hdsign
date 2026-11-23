@@ -2901,6 +2901,11 @@
   white-space: nowrap;
 }
 
+/* 회색 안내는 줄 맨 왼쪽(나머지 거래처 칸·[열기]는 오른쪽 끝) */
+.aq-efopen-hint {
+  margin-right: auto;
+}
+
 /* '이지폼 거래처' 칸 — 이 명세서가 이지폼에서 어느 거래처로 작성돼 있는지 */
 .aq-efclient {
   align-self: center;
