@@ -763,6 +763,13 @@ def _bring_front(main, form) -> None:
         u32.SendMessageW(mdi, 0x0222, form, 0)  # WM_MDIACTIVATE
 
 
+def _opened_notice() -> None:
+    """화면 가운데 맨 앞 '이지폼에서 명세서를 열었어요.' [확인](사용자 2026-11-23). 작업은 기다리지 않고 끝난다."""
+    import threading
+    threading.Thread(target=lambda: ef.ef_messagebox("이지폼에서 명세서를 열었어요.", "HD사인 이지폼"),
+                     daemon=True).start()
+
+
 def open_show(body: dict, progress) -> dict:
     """find_and_read 와 같은 방법으로 찾되 비고만 확인하고, 맞는 명세서는 **열어 둔 채** 이지폼을 앞으로."""
     want_nos = [n for n in (body.get("nos") or []) if n]
@@ -784,6 +791,7 @@ def open_show(body: dict, progress) -> dict:
                     continue
                 if any(n in _nos([{"remark": x} for x in _read_remarks(f)]) for n in want_nos):
                     _bring_front(m["hwnd"], f)
+                    _opened_notice()
                     return {"biz": m["biz"], "date": d, "total": b._digits(t), "client": "",
                             "nos": _nos([{"remark": x} for x in _read_remarks(f)])}
     for m in mains:
@@ -806,6 +814,7 @@ def open_show(body: dict, progress) -> dict:
             if keep:
                 ctypes.windll.user32.SendMessageW(next(iter(b._kids(form, "TAdvStringGrid"))), 0x0115, 6, 0)
                 _bring_front(main, form)
+                _opened_notice()
                 return {"biz": m["biz"], "date": it["date"], "total": it["total"], "client": it.get("client", ""),
                         "nos": nos}
     raise Stop("이지폼에서 이 주문의 명세서를 못 찾았어요.")
