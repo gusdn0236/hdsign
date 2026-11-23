@@ -3089,7 +3089,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       .map((s) => (s ? new Date(s).getTime() : NaN))
       .filter((t) => Number.isFinite(t));
     const base = times.length ? Math.min(...times) : Date.now();
-    return { from: efDay(new Date(base - 7 * 86400000)), to: efDay(new Date()), client, biz };
+    // 끝 = 오늘 + 한 달 — 발행일을 미래 날짜로 끊은 명세서도 찾게(사용자 2026-11-23)
+    return { from: efDay(new Date(base - 7 * 86400000)), to: efDay(new Date(Date.now() + 31 * 86400000)), client, biz };
   };
   // 이지폼에서 명세서를 찾은 순간 — 최신 발행일·합계·이지폼 거래처를 홈페이지에 기억(명세서 본문은 그대로).
   // 지문 합계가 옛 값이면 매번 같은 날 명세서를 다 열어 찾게 되므로(2026-11-23 실제로 못 찾음) 찾을 때마다 맞춘다.
