@@ -766,10 +766,9 @@ def _bring_front(main, form) -> None:
 def _opened_notice(biz: str, client: str, date: str, total) -> None:
     """화면 가운데 맨 앞 큰 카드 — '주식회사 (주)OO 명세서를 열었어요' + 발행일·합계 [확인](사용자 2026-11-23).
     작업은 기다리지 않고 끝난다."""
-    label = "주식회사" if biz == "corp" else "개인"
-    who = f"{label} {client}".strip() if client else f"{label} 이지폼"
+    tag = ("주식회사", "#2563eb") if biz == "corp" else ("개인", "#d97706")
     amt = int(b._digits(total) or 0)
-    ef.ef_notice(f"📂  {who} 명세서를 열었어요", f"{date}  ·  합계 {amt:,}원")
+    ef.ef_notice(f"{client or '이지폼'} 명세서를 열었어요", f"{date}  ·  합계 {amt:,}원", tag)
 
 
 def open_show(body: dict, progress) -> dict:

@@ -1414,11 +1414,14 @@ _EF_UI_QUEUE: "queue.Queue" = queue.Queue()  # HTTP 스레드 → tk UI 스레�
 _EF_UI_READY = [False]  # install() 로 tk 화면이 붙었나(알림 카드를 띄울 수 있나)
 
 
-def ef_notice(title: str, sub: str = "") -> None:
-    """가운데 맨 앞 큰 알림 카드(아무 데나 누르거나 Enter 로 닫힘). tk 화면이 없으면 기본 알림창."""
+def ef_notice(title: str, sub: str = "", tag: "tuple | None" = None) -> None:
+    """가운데 맨 앞 큰 알림 카드(아무 데나 누르거나 Enter 로 닫힘). tag=(글자, 배경색) 제목 앞 태그.
+    tk 화면이 없으면 기본 알림창."""
     if _EF_UI_READY[0]:
-        _EF_UI_QUEUE.put(("notice", title, sub))
+        _EF_UI_QUEUE.put(("notice", title, sub, tag))
         return
+    if tag:
+        title = f"[{tag[0]}] {title}"
     import threading
     threading.Thread(target=lambda: ef_messagebox(f"{title}\n\n{sub}" if sub else title), daemon=True).start()
 _EF_ROW_KEYS = ("item_code", "item", "spec", "qty", "unit_price", "supply", "tax", "remark")
@@ -2057,9 +2060,14 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     note.configure(bg=accent)  # 테두리 색
     note_in = tk.Frame(note, bg="#ffffff", padx=int(40 * s), pady=int(30 * s), cursor="hand2")
     note_in.pack(fill="both", expand=True, padx=int(4 * s), pady=int(4 * s))
-    note_title = tk.Label(note_in, text="", font=("맑은 고딕", int(20 * s), "bold"), fg="#111827", bg="#ffffff",
-                          cursor="hand2", wraplength=int(640 * s), justify="center")
-    note_title.pack(anchor="center")
+    # 제목 줄 = [태그(주식회사 파랑/개인 주황, 제목과 비슷한 크기)] + 제목 — 어느 이지폼에 작성됐는지 한눈에(사용자 2026-11-23)
+    note_row = tk.Frame(note_in, bg="#ffffff", cursor="hand2")
+    note_row.pack(anchor="center")
+    note_tag = tk.Label(note_row, text="", font=("맑은 고딕", int(15 * s), "bold"), fg="#ffffff", bg="#2563eb",
+                        padx=int(10 * s), pady=int(2 * s), cursor="hand2")
+    note_title = tk.Label(note_row, text="", font=("맑은 고딕", int(20 * s), "bold"), fg="#111827", bg="#ffffff",
+                          cursor="hand2", wraplength=int(600 * s), justify="left")
+    note_title.pack(side="left")
     note_sub = tk.Label(note_in, text="", font=("맑은 고딕", int(13 * s)), fg="#4b5563", bg="#ffffff",
                         cursor="hand2", wraplength=int(520 * s), justify="center")
     note_sub.pack(anchor="center", pady=(int(10 * s), 0))
@@ -2074,7 +2082,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                         activebackground=accent_dark, activeforeground="white", relief="flat", bd=0,
                         width=10, pady=int(8 * s), cursor="hand2", command=note_hide)
     note_ok.pack(anchor="center", pady=(int(22 * s), 0))
-    for wdg in (note, note_in, note_title, note_sub):
+    for wdg in (note, note_in, note_row, note_tag, note_title, note_sub):
         wdg.bind("<Button-1>", note_hide)
     for key in ("<Return>", "<KP_Enter>", "<space>", "<Escape>"):
         note.bind(key, note_hide)
@@ -2086,8 +2094,12 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         note.lift()
         root.after(400, note_keep_on_top)
 
-    def note_show(title, sub=""):
+    def note_show(title, sub="", tag=None):
         note_title.config(text=title)
+        note_tag.pack_forget()
+        if tag:  # (글자, 색)
+            note_tag.config(text=tag[0], bg=tag[1])
+            note_tag.pack(side="left", padx=(0, int(10 * s)), before=note_title)
         note_sub.config(text=sub or "")
         if sub:
             note_sub.pack(anchor="center", pady=(int(10 * s), 0), before=note_ok)
@@ -2173,7 +2185,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                     if not busy["v"]:
                         hide_overlay()
                 elif cmd[0] == "notice":  # 알림 카드(가운데 맨 앞, 큰 확인)
-                    note_show(cmd[1], cmd[2] if len(cmd) > 2 else "")
+                    note_show(cmd[1], cmd[2] if len(cmd) > 2 else "", cmd[3] if len(cmd) > 3 else None)
                 elif cmd[0] == "result":
                     ok, msg = cmd[1], cmd[2]
                     show_done(ok, msg)
