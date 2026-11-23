@@ -814,18 +814,23 @@ def open_show(body: dict, progress) -> dict:
     mains = b._mains()
     if not mains:
         raise Stop("켜져 있는 이지폼이 없어요.")
-    # 찾는 명세서가 이미 열려 있으면(비고에 이 주문번호) 목록 안 뽑고 바로 앞으로
-    if want_nos:
+    # 찾는 명세서가 이미 열려 있으면 목록 안 뽑고 바로 앞으로 — 비고에 이 주문번호가 있거나, 비고에 주문번호가 없는
+    # 옛 명세서면 발행일·합계가 홈페이지 기록(지문)과 같을 때(첫 열기는 '같은 날 같은 합계 하나'로 찾았는데 두 번째엔
+    # 비고만 봐서 다시 조회하던 것 — 사용자 2026-11-23).
+    date, total = str(body.get("date") or ""), str(body.get("total") or "")
+    if want_nos or (date and total):
         for m in mains:
             for f in b._kids(m["hwnd"], "TfrmExchange"):
-                d, t = b._form_header(f)
+                d, t = b._form_header(f, total)
                 if not d or "_" in d:
                     continue
-                if any(n in _nos([{"remark": x} for x in _read_remarks(f)]) for n in want_nos):
+                fnos = _nos([{"remark": x} for x in _read_remarks(f)])
+                same_key = bool(date and total) and d == date and b._digits(t) == b._digits(total)
+                if any(n in fnos for n in want_nos) or (same_key and not fnos):
                     _bring_front(m["hwnd"], f)
                     _opened_notice(m["biz"], str(body.get("client") or ""), d, t)
                     return {"biz": m["biz"], "date": d, "total": b._digits(t), "client": "",
-                            "nos": _nos([{"remark": x} for x in _read_remarks(f)])}
+                            "nos": fnos}
     k = 0
     for m, it, lone, n in _each_candidate(body, progress, forms_ok=True):
         main = m["hwnd"]
