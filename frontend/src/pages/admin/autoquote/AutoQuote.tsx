@@ -3077,15 +3077,19 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   };
   const efDay = (d: Date) =>
     `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
-  // 이지폼에서 이 명세서를 어디서 찾을지 — 지문(발행일·합계)이 있으면 그날 하루치(빠름), 없으면 이지폼 입력한 날 주변을
-  // 거래처 이름 + 비고 주문번호로. 거래처 이름은 이지폼 쪽 이름을 알면 그걸로.
+  // 이지폼에서 이 명세서를 어디서 찾을지 — 지문(실제 발행일·합계)이 있으면 그날 하루치(빠름, 못 찾으면 워처가 앞뒤 7일로
+  // 넓힘). 지문이 없으면 납기·이지폼 입력일 중 이른 날 7일 전 ~ 오늘을 거래처 이름 + 비고 주문번호로(발행일은 납기와
+  // 다를 수 있음 — 사용자 2026-11-23). 거래처 이름은 이지폼 쪽 이름을 알면 그걸로.
   const efFindWhere = () => {
     const [, kDate, kTotal] = (efSyncRef.current?.efKey || '').split('|');
     const client = efSyncRef.current?.efClient || order?.clientCompanyName || '';
     const biz = efSyncRef.current?.efBiz || undefined;
     if (kDate && kTotal) return { date: kDate, total: kTotal, client, biz };
-    const base = order?.easyformUploadedAt ? new Date(order.easyformUploadedAt) : new Date();
-    return { from: efDay(new Date(base.getTime() - 3 * 86400000)), to: efDay(new Date()), client, biz };
+    const times = [order?.easyformUploadedAt, order?.dueDate]
+      .map((s) => (s ? new Date(s).getTime() : NaN))
+      .filter((t) => Number.isFinite(t));
+    const base = times.length ? Math.min(...times) : Date.now();
+    return { from: efDay(new Date(base - 7 * 86400000)), to: efDay(new Date()), client, biz };
   };
   // 이지폼에서 명세서를 찾은 순간 — 최신 발행일·합계·이지폼 거래처를 홈페이지에 기억(명세서 본문은 그대로).
   // 지문 합계가 옛 값이면 매번 같은 날 명세서를 다 열어 찾게 되므로(2026-11-23 실제로 못 찾음) 찾을 때마다 맞춘다.

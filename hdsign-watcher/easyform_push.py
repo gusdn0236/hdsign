@@ -311,42 +311,79 @@ def _order_cands(lst: list, body: dict, exact: bool) -> "tuple[list, dict | None
     return cands[:40], None
 
 
+def _shift_day(d: str, days: int) -> str:
+    from datetime import datetime, timedelta
+    try:
+        return (datetime.strptime(d, "%Y.%m.%d") + timedelta(days=days)).strftime("%Y.%m.%d")
+    except ValueError:
+        return d
+
+
+def _passes(body: dict) -> list:
+    """찾는 순서 [(기간, exact)]. 지문 있음: ① 그날 하루(합계 맞는 것 먼저) → ② 못 찾으면 앞뒤 7일(그날 빼고)을
+    비고 주문번호로(이지폼에서 발행일을 바꾼 경우 등 — 사용자 2026-11-23). 지문 없음: 웹이 준 기간을 비고 주문번호로."""
+    date, total = str(body.get("date") or ""), str(body.get("total") or "")
+    if date and total:
+        return [((date, date), True), ((_shift_day(date, -7), _shift_day(date, 7)), False)]
+    f, t = str(body.get("from") or ""), str(body.get("to") or "")
+    if not (f and t):
+        raise Stop("이지폼에서 찾을 날짜가 없어요.")
+    return [((f, t), False)]
+
+
+def _each_candidate(body: dict, progress, forms_ok: bool):
+    """(m, it, lone) 을 찾는 순서대로. 기간마다 두 이지폼(지난번 쪽 먼저) 목록을 새로 뽑고 그 목록의 줄 번호로 연다."""
+    mains = b._mains()
+    if not mains:
+        raise Stop("켜져 있는 이지폼이 없어요.")
+    mains.sort(key=lambda x: 0 if x["biz"] == body.get("biz") else 1)
+    date, total = str(body.get("date") or ""), str(body.get("total") or "")
+    for pi, (period, exact) in enumerate(_passes(body)):
+        if pi > 0:
+            progress(f"그날엔 없어서 앞뒤 7일({period[0]}~{period[1]})에서 찾는 중")
+        # 두 이지폼 목록을 먼저 다 뽑고(각자 자기 목록 창이라 서로 안 섞임) → 합계 맞는 것(두 이지폼) → 나머지 순
+        per = []
+        for m in mains:
+            lst = _list_candidates(m, period, progress, forms_ok=forms_ok)
+            if pi > 0 and date:
+                lst = [r for r in lst if r["date"] != date]  # 그날은 이미 봄
+            cands, lone = _order_cands(lst, body, exact)
+            per.append((m, cands if exact else cands[:30], lone))
+        if exact:
+            hit_total = lambda r: b._digits(r["total"]) == b._digits(total)  # noqa: E731
+            order = [(m, it, lone) for m, cs, lone in per for it in cs if hit_total(it)] + \
+                    [(m, it, lone) for m, cs, lone in per for it in cs if not hit_total(it)]
+        else:
+            order = [(m, it, lone) for m, cs, lone in per for it in cs]
+        for m, it, lone in order:
+            if b._aborted():
+                raise Stop("정지했어요.")
+            yield m, it, lone, len(order)
+
+
 def find_and_read(body: dict, progress) -> dict:
     """명세서를 찾아 열고 읽고 닫는다 → {biz, idx, date, total, rows, nos}.
     body: date+total(지문이 있을 때, 그날 하루치) 또는 from~to+client(지문 없을 때, 비고 주문번호로 확인), nos."""
     want_nos = [n for n in (body.get("nos") or []) if n]
-    date, total = str(body.get("date") or ""), str(body.get("total") or "")
-    exact = bool(date and total)
-    period = (date, date) if exact else (str(body.get("from") or ""), str(body.get("to") or ""))
-    if not (period[0] and period[1]):
-        raise Stop("이지폼에서 찾을 날짜가 없어요.")
-    mains = b._mains()
-    if not mains:
-        raise Stop("켜져 있는 이지폼이 없어요.")
-    biz_hint = body.get("biz")
-    mains.sort(key=lambda x: 0 if x["biz"] == biz_hint else 1)
-    for m in mains:
+    k = 0
+    for m, it, lone, n in _each_candidate(body, progress, forms_ok=False):
         main = m["hwnd"]
-        lst = _list_candidates(m, period, progress)
-        cands, lone = _order_cands(lst, body, exact)
-        for k, it in enumerate(cands):
-            if b._aborted():
-                raise Stop("정지했어요.")
-            progress(f"이지폼 명세서 확인 중 {k + 1}/{len(cands)} · {it['date']} {it.get('client', '')}")
-            form = _open_row(main, it)
-            try:
-                # 비고만 먼저, 맞으면 그때 전체
-                nos = _nos([{"remark": x} for x in _read_remarks(form)])
-                hit = any(n in nos for n in want_nos) if want_nos else False
-                rows = _read_all(form) if (hit or (it is lone and not nos)) else []
-            finally:
-                _close(main, form)
-            if b._popups(main) or not b._gone(form):
-                raise Stop("명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
-            if hit or (it is lone and not nos):
-                return {"biz": m["biz"], "idx": it["idx"], "date": it["date"], "total": it["total"],
-                        "client": it.get("client", ""), "rows": rows, "nos": nos}
-    raise Stop("이지폼에서 이 주문의 명세서를 못 찾았어요. (비고에 이 주문번호가 적힌 명세서가 없어요)")
+        k += 1
+        progress(f"이지폼 명세서 확인 중 {k} · {it['date']} {it.get('client', '')}")
+        form = _open_row(main, it)
+        try:
+            # 비고만 먼저, 맞으면 그때 전체
+            nos = _nos([{"remark": x} for x in _read_remarks(form)])
+            hit = any(no in nos for no in want_nos) if want_nos else False
+            rows = _read_all(form) if (hit or (it is lone and not nos)) else []
+        finally:
+            _close(main, form)
+        if b._popups(main) or not b._gone(form):
+            raise Stop("명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
+        if hit or (it is lone and not nos):
+            return {"biz": m["biz"], "idx": it["idx"], "date": it["date"], "total": it["total"],
+                    "client": it.get("client", ""), "rows": rows, "nos": nos}
+    raise Stop("주식회사·개인 이지폼 모두에서 이 주문의 명세서를 못 찾았어요. (비고에 이 주문번호가 적힌 명세서가 없어요)")
 
 
 # ── 고치기 ─────────────────────────────────────────────────────────────────────
@@ -774,51 +811,42 @@ def _opened_notice(biz: str, client: str, date: str, total) -> None:
 def open_show(body: dict, progress) -> dict:
     """find_and_read 와 같은 방법으로 찾되 비고만 확인하고, 맞는 명세서는 **열어 둔 채** 이지폼을 앞으로."""
     want_nos = [n for n in (body.get("nos") or []) if n]
-    date, total = str(body.get("date") or ""), str(body.get("total") or "")
-    exact = bool(date and total)
-    period = (date, date) if exact else (str(body.get("from") or ""), str(body.get("to") or ""))
-    if not (period[0] and period[1]):
-        raise Stop("이지폼에서 찾을 날짜가 없어요.")
     mains = b._mains()
     if not mains:
         raise Stop("켜져 있는 이지폼이 없어요.")
-    mains.sort(key=lambda x: 0 if x["biz"] == body.get("biz") else 1)
     # 찾는 명세서가 이미 열려 있으면(비고에 이 주문번호) 목록 안 뽑고 바로 앞으로
     if want_nos:
         for m in mains:
             for f in b._kids(m["hwnd"], "TfrmExchange"):
                 d, t = b._form_header(f)
-                if not d or "_" in d or (exact and d != date):
+                if not d or "_" in d:
                     continue
                 if any(n in _nos([{"remark": x} for x in _read_remarks(f)]) for n in want_nos):
                     _bring_front(m["hwnd"], f)
                     _opened_notice(m["biz"], str(body.get("client") or ""), d, t)
                     return {"biz": m["biz"], "date": d, "total": b._digits(t), "client": "",
                             "nos": _nos([{"remark": x} for x in _read_remarks(f)])}
-    for m in mains:
+    k = 0
+    for m, it, lone, n in _each_candidate(body, progress, forms_ok=True):
         main = m["hwnd"]
-        lst = _list_candidates(m, period, progress, forms_ok=True)
-        cands, lone = _order_cands(lst, body, exact)
-        for k, it in enumerate(cands):
-            if b._aborted():
-                raise Stop("정지했어요.")
-            progress(f"이지폼 명세서 찾는 중 {k + 1}/{len(cands)} · {it['date']} {it.get('client', '')}")
-            form = _open_row(main, it, forms_ok=True)
-            keep = False
-            try:
-                nos = _nos([{"remark": x} for x in _read_remarks(form)])
-                ok = any(n in nos for n in want_nos) if want_nos else False
-                keep = ok or (it is lone and not nos)
-            finally:
-                if not keep:
-                    _close(main, form)
-            if keep:
-                ctypes.windll.user32.SendMessageW(next(iter(b._kids(form, "TAdvStringGrid"))), 0x0115, 6, 0)
-                _bring_front(main, form)
-                _opened_notice(m["biz"], it.get('client', ''), it['date'], it['total'])
-                return {"biz": m["biz"], "date": it["date"], "total": it["total"], "client": it.get("client", ""),
-                        "nos": nos}
-    raise Stop("이지폼에서 이 주문의 명세서를 못 찾았어요.")
+        k += 1
+        progress(f"이지폼 명세서 찾는 중 {k} · {it['date']} {it.get('client', '')}")
+        form = _open_row(main, it, forms_ok=True)
+        keep = False
+        try:
+            nos = _nos([{"remark": x} for x in _read_remarks(form)])
+            ok = any(no in nos for no in want_nos) if want_nos else False
+            keep = ok or (it is lone and not nos)
+        finally:
+            if not keep:
+                _close(main, form)
+        if keep:
+            ctypes.windll.user32.SendMessageW(next(iter(b._kids(form, "TAdvStringGrid"))), 0x0115, 6, 0)
+            _bring_front(main, form)
+            _opened_notice(m["biz"], it.get('client', ''), it['date'], it['total'])
+            return {"biz": m["biz"], "date": it["date"], "total": it["total"], "client": it.get("client", ""),
+                    "nos": nos}
+    raise Stop("주식회사·개인 이지폼 모두에서 이 주문의 명세서를 못 찾았어요. (비고에 이 주문번호가 적힌 명세서가 없어요)")
 
 
 def plan_summary(cur_raw: list, target_raw: list) -> dict:

@@ -454,9 +454,23 @@ def _export_one(m: dict, year: int, progress, period: "tuple[str, str] | None" =
     _wait(lambda: _count_text(lst) and _count_text(lst) != before, 3.0)  # 조건 같으면 안 바뀜 → 시간만
     time.sleep(0.6)
     _assert_clean(main, forms_ok=True)
+    # 그 기간 명세서가 0건이면 엑셀을 안 누른다 — 누르면 이지폼이 '저장할 자료가 없습니다' 창을 띄워
+    # 멈추고 다른 이지폼(주식회사/개인)을 못 봤음(2026-11-23 실제).
+    if re.match(r"\s*0\s*건", _count_text(lst) or ""):
+        return []
+
+    def nodata_popup():  # '저장할 자료가 없습니다…' = 'Easyformnetc' OK 하나짜리
+        for h, c, _t in _popups(main):
+            if c == "TMessageForm" and [_txt(x).replace("&", "") for x in _kids(h, "TButton")] == ["OK"]:
+                return h
+        return None
 
     _click(_named(lst, "TBitBtn", "엑셀(csv)"), "엑셀(csv)")
-    dlg = _wait(lambda: next(iter(_kids(main, "TfrmSavePath")), None), 5.0)
+    dlg = _wait(lambda: next(iter(_kids(main, "TfrmSavePath")), None) or nodata_popup(), 5.0)
+    if dlg and _cls(dlg) == "TMessageForm":
+        _click(_named(dlg, "TButton", "OK"), "OK")
+        _wait(lambda: not nodata_popup(), 2.0, 0.05)
+        return []
     if not dlg:
         _assert_clean(main, forms_ok=True)
         raise Stop("엑셀(csv) 저장 창이 안 떴어요.")
