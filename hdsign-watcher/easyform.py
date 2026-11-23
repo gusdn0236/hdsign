@@ -2069,10 +2069,11 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         note_state["on"] = False
         note.withdraw()
 
-    note_ok = tk.Button(note_in, text="확인", font=("맑은 고딕", int(17 * s), "bold"), bg=accent, fg="white",
+    # 확인 버튼은 적당한 크기로 가운데(꽉 채우면 너무 큼 — 사용자 2026-11-23). 카드 어디를 눌러도 닫히니 작아도 됨.
+    note_ok = tk.Button(note_in, text="확인", font=("맑은 고딕", int(14 * s), "bold"), bg=accent, fg="white",
                         activebackground=accent_dark, activeforeground="white", relief="flat", bd=0,
-                        padx=int(30 * s), pady=int(14 * s), cursor="hand2", command=note_hide)
-    note_ok.pack(fill="x", pady=(int(24 * s), 0))
+                        width=10, pady=int(8 * s), cursor="hand2", command=note_hide)
+    note_ok.pack(anchor="center", pady=(int(22 * s), 0))
     for wdg in (note, note_in, note_title, note_sub):
         wdg.bind("<Button-1>", note_hide)
     for key in ("<Return>", "<KP_Enter>", "<space>", "<Escape>"):
