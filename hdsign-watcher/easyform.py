@@ -1411,6 +1411,16 @@ EF_JOB_TTL = 1800                    # 30분 지나면 자동 만료(새로작�
 EF_HOTKEY_VK = 0x75                  # F6 (이지폼 단축키 F2/F5/F8/F9/F11/F12/Esc 와 충돌 없음) — 보조 트리거
 EF_HOTKEY_LABEL = "F6"
 _EF_UI_QUEUE: "queue.Queue" = queue.Queue()  # HTTP 스레드 → tk UI 스레드 신호
+_EF_UI_READY = [False]  # install() 로 tk 화면이 붙었나(알림 카드를 띄울 수 있나)
+
+
+def ef_notice(title: str, sub: str = "") -> None:
+    """가운데 맨 앞 큰 알림 카드(아무 데나 누르거나 Enter 로 닫힘). tk 화면이 없으면 기본 알림창."""
+    if _EF_UI_READY[0]:
+        _EF_UI_QUEUE.put(("notice", title, sub))
+        return
+    import threading
+    threading.Thread(target=lambda: ef_messagebox(f"{title}\n\n{sub}" if sub else title), daemon=True).start()
 _EF_ROW_KEYS = ("item_code", "item", "spec", "qty", "unit_price", "supply", "tax", "remark")
 
 
@@ -2038,6 +2048,66 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         ask_yes.focus_set()
         root.after(300, ask_keep_on_top)
 
+    # ── 알림 카드(예: [이지폼에서 열기] "이지폼에서 명세서를 열었어요") — 가운데 맨 앞, 크고 누르기 쉽게 ──
+    # 사용자 2026-11-23: 작은 MessageBox 대신 깔끔하고 큰 카드. 확인 버튼이 크고, 카드 어디를 눌러도 닫힘.
+    # Enter·Space·Esc 도 닫힘. 화면은 어둡게 안 함(뒤에 연 이지폼 명세서를 바로 보게).
+    note = tk.Toplevel(root)
+    note.overrideredirect(True)
+    note.attributes("-topmost", True)
+    note.configure(bg=accent)  # 테두리 색
+    note_in = tk.Frame(note, bg="#ffffff", padx=int(40 * s), pady=int(30 * s), cursor="hand2")
+    note_in.pack(fill="both", expand=True, padx=int(4 * s), pady=int(4 * s))
+    note_title = tk.Label(note_in, text="", font=("맑은 고딕", int(22 * s), "bold"), fg="#111827", bg="#ffffff",
+                          cursor="hand2")
+    note_title.pack(anchor="center")
+    note_sub = tk.Label(note_in, text="", font=("맑은 고딕", int(13 * s)), fg="#4b5563", bg="#ffffff",
+                        cursor="hand2", wraplength=int(520 * s), justify="center")
+    note_sub.pack(anchor="center", pady=(int(10 * s), 0))
+    note_state = {"on": False}
+
+    def note_hide(_e=None):
+        note_state["on"] = False
+        note.withdraw()
+
+    note_ok = tk.Button(note_in, text="확인", font=("맑은 고딕", int(17 * s), "bold"), bg=accent, fg="white",
+                        activebackground=accent_dark, activeforeground="white", relief="flat", bd=0,
+                        padx=int(30 * s), pady=int(14 * s), cursor="hand2", command=note_hide)
+    note_ok.pack(fill="x", pady=(int(24 * s), 0))
+    for wdg in (note, note_in, note_title, note_sub):
+        wdg.bind("<Button-1>", note_hide)
+    for key in ("<Return>", "<KP_Enter>", "<space>", "<Escape>"):
+        note.bind(key, note_hide)
+    note.withdraw()
+
+    def note_keep_on_top():
+        if not note_state["on"]:
+            return
+        note.lift()
+        root.after(400, note_keep_on_top)
+
+    def note_show(title, sub=""):
+        note_title.config(text=title)
+        note_sub.config(text=sub or "")
+        if sub:
+            note_sub.pack(anchor="center", pady=(int(10 * s), 0), before=note_ok)
+        else:
+            note_sub.pack_forget()
+        note_state["on"] = True
+        note.update_idletasks()
+        nw, nh = max(note.winfo_reqwidth(), int(440 * s)), note.winfo_reqheight()
+        note.geometry(f"{nw}x{nh}+{(sw - nw) // 2}+{(sh - nh) // 2}")
+        note.deiconify()
+        note.lift()
+        try:
+            ef_force_foreground(ctypes.windll.user32.GetAncestor(note.winfo_id(), 2))
+        except Exception:
+            pass
+        note.focus_force()
+        note_ok.focus_set()
+        root.after(400, note_keep_on_top)
+
+    _EF_UI_READY[0] = True
+
     btn.config(command=on_btn)
     done_btn.config(command=hide_overlay)
     win.protocol("WM_DELETE_WINDOW", on_close)
@@ -2101,6 +2171,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 elif cmd[0] == "auto_overlay_hide":
                     if not busy["v"]:
                         hide_overlay()
+                elif cmd[0] == "notice":  # 알림 카드(가운데 맨 앞, 큰 확인)
+                    note_show(cmd[1], cmd[2] if len(cmd) > 2 else "")
                 elif cmd[0] == "result":
                     ok, msg = cmd[1], cmd[2]
                     show_done(ok, msg)
