@@ -400,6 +400,23 @@ export async function syncEstimateFromEasyform(
   return j as EasyformSyncResult;
 }
 
+/** 이지폼에서 이 명세서를 찾은 순간 — 지금 이지폼의 발행일·합계·거래처명·사업자만 저장(본문은 그대로). 실패해도 무시. */
+export async function locateEasyform(
+  token: string | null | undefined,
+  orderId: number | string,
+  body: { efDate: string; efTotal: string; efClient?: string; efBiz?: string },
+): Promise<{ efKey: string | null; efClient: string; efBiz: string } | null> {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate/easyform-locate`,
+      { method: 'POST', headers: authHeaders(token, true), body: JSON.stringify(body) },
+    );
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface EasyformMatchGroup {
   primaryOrderId: number;
   orders: { id: number; orderNumber: string }[];

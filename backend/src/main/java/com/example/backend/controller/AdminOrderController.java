@@ -821,7 +821,6 @@ public class AdminOrderController {
         }
     }
 
-    /** 저장본에 남은 이지폼 명세서 지문(easyformSync.efKey). 없으면 null. */
     /** 저장본의 easyformSync 객체(없거나 깨졌으면 null). */
     private static JsonNode readSyncMeta(String gridJson) {
         try {
@@ -832,6 +831,7 @@ public class AdminOrderController {
         }
     }
 
+    /** 저장본에 남은 이지폼 명세서 지문(easyformSync.efKey). 없으면 null. */
     private static String syncedEfKey(String gridJson) {
         if (gridJson == null) return null;
         try {
@@ -879,6 +879,47 @@ public class AdminOrderController {
 
     // 이지폼 업로드 완료 표시(slice-14 매크로가 호출) → "이지폼" 배지. 명세서 선행 필수.
     // editorName(쿼리) = 이지폼으로 옮겨적은 사람. 최종 배지에 이 이름이 뜬다(임시저장자와 달라도 됨).
+    // 이지폼에서 이 명세서를 찾았을 때(웹 [이지폼에서 열기]·[이지폼 명세서 수정]) — 지금 이지폼의 발행일·합계·거래처명·사업자를
+    // easyformSync 에만 적는다(명세서 본문·저장시각은 그대로). 지문 합계가 옛 값이면(이지폼에서 고치고 홈페이지 반영 '아니오')
+    // 매번 같은 날 명세서를 다 열어 찾게 되므로, 찾은 순간 최신으로 맞춘다(사용자 2026-11-23).
+    @PostMapping("/{id}/estimate/easyform-locate")
+    public ResponseEntity<?> easyformLocate(
+            @PathVariable Long id,
+            @RequestBody JsonNode body
+    ) {
+        AutoQuoteEstimate own = estimateRepository.findByOrderId(id).orElse(null);
+        if (own == null) return ResponseEntity.notFound().build();
+        Long target = sharedTarget(own);
+        AutoQuoteEstimate est = target != null ? estimateRepository.findByOrderId(target).orElse(null) : own;
+        if (est == null || est.getGridJson() == null) return ResponseEntity.notFound().build();
+        Order owner = orderRepository.findById(est.getOrderId()).orElse(null);
+        com.fasterxml.jackson.databind.node.ObjectNode doc;
+        try {
+            JsonNode n = OM.readTree(est.getGridJson());
+            if (!n.isObject()) return ResponseEntity.badRequest().body(Map.of("message", "명세서가 깨져 있어요."));
+            doc = (com.fasterxml.jackson.databind.node.ObjectNode) n;
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "명세서가 깨져 있어요."));
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode sync = doc.path("easyformSync").isObject()
+                ? (com.fasterxml.jackson.databind.node.ObjectNode) doc.get("easyformSync")
+                : doc.putObject("easyformSync");
+        String key = efKey(owner, body.path("efDate").asText(""), body.path("efTotal").asText(""));
+        if (key != null) sync.put("efKey", key);
+        String efClient = body.path("efClient").asText("").trim();
+        if (!efClient.isEmpty()) sync.put("efClient", efClient.length() > 80 ? efClient.substring(0, 80) : efClient);
+        String efBiz = body.path("efBiz").asText("").trim();
+        if (efBiz.equals("corp") || efBiz.equals("personal")) sync.put("efBiz", efBiz);
+        sync.put("locatedAt", LocalDateTime.now().toString());
+        est.setGridJson(doc.toString());
+        estimateRepository.save(est);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("efKey", key);
+        res.put("efClient", sync.path("efClient").asText(""));
+        res.put("efBiz", sync.path("efBiz").asText(""));
+        return ResponseEntity.ok(res);
+    }
+
     @PostMapping("/{id}/estimate/easyform-uploaded")
     public ResponseEntity<?> markEasyformUploaded(
             @PathVariable Long id,

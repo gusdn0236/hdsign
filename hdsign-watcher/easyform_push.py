@@ -285,6 +285,25 @@ def _list_candidates(m: dict, period: tuple, progress) -> list:
     return rows
 
 
+def _order_cands(lst: list, body: dict, exact: bool) -> "tuple[list, dict | None]":
+    """볼 순서 + 'lone'(비고에 주문번호 없는 옛 명세서여도 받아들일 단 하나).
+    exact(지문 있음): ① 같은 날·같은 합계 → ② 같은 날 나머지(거래처 비슷한 것 먼저). ②는 **비고 주문번호가 맞아야만**.
+      지문 합계가 옛 값일 수 있어서(이지폼에서 고쳐 저장하고 홈페이지 반영 '아니오' 등 — 2026-11-23 실제로 못 찾음).
+      lone = ①이 딱 하나이고 거래처도 비슷할 때만.
+    지문 없음: 기간 안에서 거래처 비슷한 것(없으면 전부) 최대 40건, 비고 주문번호로만."""
+    cl = str(body.get("client") or "")
+    if exact:
+        date, total = str(body.get("date") or ""), str(body.get("total") or "")
+        same_day = [r for r in lst if r["date"] == date]
+        first = [r for r in same_day if b._digits(r["total"]) == b._digits(total)]
+        rest = [r for r in same_day if r not in first]
+        rest.sort(key=lambda r: 0 if cl and _client_like(cl, r.get("client", "")) else 1)
+        lone = first[0] if len(first) == 1 and (not cl or _client_like(cl, first[0].get("client", ""))) else None
+        return (first + rest)[:40], lone
+    cands = ([r for r in lst if _client_like(cl, r.get("client", ""))] if cl else []) or lst
+    return cands[:40], None
+
+
 def find_and_read(body: dict, progress) -> dict:
     """명세서를 찾아 열고 읽고 닫는다 → {biz, idx, date, total, rows, nos}.
     body: date+total(지문이 있을 때, 그날 하루치) 또는 from~to+client(지문 없을 때, 비고 주문번호로 확인), nos."""
@@ -302,44 +321,25 @@ def find_and_read(body: dict, progress) -> dict:
     for m in mains:
         main = m["hwnd"]
         lst = _list_candidates(m, period, progress)
-        if exact:
-            cands = [r for r in lst if r["date"] == date and b._digits(r["total"]) == b._digits(total)]
-        else:
-            cl = str(body.get("client") or "")
-            cands = [r for r in lst if _client_like(cl, r.get("client", ""))] if cl else []
-            cands = cands or lst
-            cands = cands[:40]
+        cands, lone = _order_cands(lst, body, exact)
         for k, it in enumerate(cands):
             if b._aborted():
                 raise Stop("정지했어요.")
             progress(f"이지폼 명세서 확인 중 {k + 1}/{len(cands)} · {it['date']} {it.get('client', '')}")
             form = _open_row(main, it)
             try:
-                if exact:
-                    rows = _read_all(form)
-                    nos = _nos(rows)
-                else:  # 훑기 — 비고만 먼저, 맞으면 그때 전체
-                    nos = _nos([{"remark": x} for x in _read_remarks(form)])
-                    rows = _read_all(form) if any(n in nos for n in want_nos) else []
+                # 비고만 먼저, 맞으면 그때 전체
+                nos = _nos([{"remark": x} for x in _read_remarks(form)])
+                hit = any(n in nos for n in want_nos) if want_nos else False
+                rows = _read_all(form) if (hit or (it is lone and not nos)) else []
             finally:
                 _close(main, form)
             if b._popups(main) or not b._gone(form):
                 raise Stop("명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
-            ok = any(n in nos for n in want_nos) if want_nos else False
-            if exact and len(cands) == 1 and not nos and not ok:
-                # 비고에 주문번호 없는 옛 명세서 — 같은 날·같은 합계가 하나뿐이어도 거래처까지 맞아야 받아들인다.
-                cl = str(body.get("client") or "")
-                if cl and not _client_like(cl, it.get("client", "")):
-                    raise Stop(f"{date} {total}원 명세서는 있는데 거래처({it.get('client', '')})가 이 주문과 달라요. "
-                               "이지폼에서 직접 확인해주세요.")
-            if ok or (exact and len(cands) == 1 and not nos):
+            if hit or (it is lone and not nos):
                 return {"biz": m["biz"], "idx": it["idx"], "date": it["date"], "total": it["total"],
                         "client": it.get("client", ""), "rows": rows, "nos": nos}
-            if exact and len(cands) == 1 and nos and not ok:
-                raise Stop(f"{date} {total}원 명세서 비고의 주문번호({', '.join(nos)})가 이 주문과 달라요. "
-                           "이지폼에서 직접 확인해주세요.")
-    raise Stop("이지폼에서 이 주문의 명세서를 못 찾았어요." +
-               ("" if exact else " (비고에 주문번호가 적힌 명세서가 없어요)"))
+    raise Stop("이지폼에서 이 주문의 명세서를 못 찾았어요. (비고에 이 주문번호가 적힌 명세서가 없어요)")
 
 
 # ── 고치기 ─────────────────────────────────────────────────────────────────────
@@ -768,15 +768,10 @@ def open_show(body: dict, progress) -> dict:
     if not mains:
         raise Stop("켜져 있는 이지폼이 없어요.")
     mains.sort(key=lambda x: 0 if x["biz"] == body.get("biz") else 1)
-    cl = str(body.get("client") or "")
     for m in mains:
         main = m["hwnd"]
         lst = _list_candidates(m, period, progress)
-        if exact:
-            cands = [r for r in lst if r["date"] == date and b._digits(r["total"]) == b._digits(total)]
-        else:
-            cands = ([r for r in lst if _client_like(cl, r.get("client", ""))] if cl else []) or lst
-            cands = cands[:40]
+        cands, lone = _order_cands(lst, body, exact)
         for k, it in enumerate(cands):
             if b._aborted():
                 raise Stop("정지했어요.")
@@ -786,10 +781,7 @@ def open_show(body: dict, progress) -> dict:
             try:
                 nos = _nos([{"remark": x} for x in _read_remarks(form)])
                 ok = any(n in nos for n in want_nos) if want_nos else False
-                lone = exact and len(cands) == 1 and not nos and (not cl or _client_like(cl, it.get("client", "")))
-                keep = ok or lone
-                if not keep and exact and len(cands) == 1 and nos:
-                    raise Stop(f"{date} {total}원 명세서 비고의 주문번호({', '.join(nos)})가 이 주문과 달라요.")
+                keep = ok or (it is lone and not nos)
             finally:
                 if not keep:
                     _close(main, form)

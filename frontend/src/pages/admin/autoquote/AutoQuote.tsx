@@ -33,6 +33,7 @@ import {
   syncEstimateFromEasyform,
   findEasyformMatch,
   getEasyformUsedKeys,
+  locateEasyform,
   readText,
   getVisionQuota,
   DailyLimitError,
@@ -3057,6 +3058,21 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     const base = order?.easyformUploadedAt ? new Date(order.easyformUploadedAt) : new Date();
     return { from: efDay(new Date(base.getTime() - 3 * 86400000)), to: efDay(new Date()), client, biz };
   };
+  // 이지폼에서 명세서를 찾은 순간 — 최신 발행일·합계·이지폼 거래처를 홈페이지에 기억(명세서 본문은 그대로).
+  // 지문 합계가 옛 값이면 매번 같은 날 명세서를 다 열어 찾게 되므로(2026-11-23 실제로 못 찾음) 찾을 때마다 맞춘다.
+  const rememberEfLocation = async (date: string, total: string, client?: string, biz?: string) => {
+    if (!order || !date || !total) return;
+    const r = await locateEasyform(token, order.id, { efDate: date, efTotal: total, efClient: client, efBiz: biz });
+    const c = r?.efClient || client || '';
+    const bz = r?.efBiz || biz || '';
+    efSyncRef.current = {
+      ...(efSyncRef.current || {}),
+      ...(r?.efKey ? { efKey: r.efKey } : {}),
+      ...(c ? { efClient: c } : {}),
+      ...(bz ? { efBiz: bz } : {}),
+    };
+    if (c) setEfWhere({ client: c, biz: bz });
+  };
   // [이지폼에서 열기] — 그 명세서를 찾아서 이지폼 화면에 띄운다(읽기만, 저장 없음).
   const openInEasyform = async () => {
     if (!order) return;
@@ -3073,7 +3089,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       const r = await runEfPush({ phase: 'open_show', nos, ...efFindWhere() }, '이지폼에서 명세서 찾는 중…');
       setDialog(null);
       if (!r?.date) throw new Error('이 PC 워처가 옛 버전일 수 있어요 — 바로가기를 껐다 다시 켠 뒤 해주세요.');
-      if (r.client && r.client !== efWhere.client) setEfWhere({ client: r.client, biz: r.biz });
+      void rememberEfLocation(r.date, r.total || '', r.client, r.biz);
     } catch (e) {
       cdlg(
         `<b style="font-size:15px">이지폼에서 못 열었어요</b>` +
@@ -3144,6 +3160,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         fail('이지폼 명세서를 읽지 못했어요. 이 PC 워처가 옛 버전일 수 있어요 — 바로가기를 껐다 다시 켠 뒤 해주세요.');
         return;
       }
+      // 찾은 순간 최신 위치(발행일·합계·거래처) 기억 — 반영을 취소해도 다음엔 바로 찾게
+      void rememberEfLocation(read.date, read.total, read.client, read.biz);
       const plan = read.plan;
       const head = `${escH(read.date)} · ${Number(String(read.total).replace(/[^0-9-]/g, '')).toLocaleString()}원 · ${escH(read.client || '')}`;
       if (plan.same) {
