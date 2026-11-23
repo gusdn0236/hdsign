@@ -379,9 +379,11 @@ export async function syncEstimateFromEasyform(
     orderNumbers: string[];
     grid: any[];
     total?: number;
-    source: 'pull' | 'fill' | 'batch' | 'auto'; // auto = 이지폼 [저장] 감지 자동반영
+    source: 'pull' | 'fill' | 'batch' | 'auto' | 'push'; // auto = 이지폼 [저장] 감지 자동반영 · push = 홈페이지 수정을 이지폼에 반영
     efDate?: string; // 이지폼 명세서 발행일 — 같은 명세서 알아보기(지문)
     efTotal?: string; // 이지폼 명세서 합계
+    efClient?: string; // 이지폼에 등록된 거래처명(홈페이지 거래처명과 다를 수 있음)
+    efBiz?: 'corp' | 'personal' | string; // 어느 이지폼(주식회사/개인)
     keepLinked?: boolean; // false = '따로 저장' — 기존 합친 명세서 묶음을 푼다(기본: 같은 명세서면 묶음 유지)
   },
 ): Promise<EasyformSyncResult> {

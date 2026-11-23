@@ -2901,6 +2901,45 @@
   white-space: nowrap;
 }
 
+/* '이지폼 거래처' 칸 — 이 명세서가 이지폼에서 어느 거래처로 작성돼 있는지 */
+.aq-efclient {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 340px;
+  padding: 4px 10px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.aq-efclient b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.aq-efclient-k {
+  font-size: 11px;
+  color: #64748b;
+}
+.aq-efclient-none {
+  color: #94a3b8;
+}
+.aq-efclient-biz {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #2563eb;
+}
+.aq-efclient-biz.personal {
+  background: #d97706;
+}
+
 /* 이지폼 저장 자동반영 미리보기 — 추가된 줄 */
 .aq tr.efnew td,
 tr.efnew td {

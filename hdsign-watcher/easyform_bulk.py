@@ -421,11 +421,14 @@ def _open_list(main):
 
 
 # ── 1) 엑셀(csv) 뽑기 ──────────────────────────────────────────────────────────
-def _export_one(m: dict, year: int, progress) -> list:
+def _export_one(m: dict, year: int, progress, period: "tuple[str, str] | None" = None,
+                forms_ok: bool = True) -> list:
+    """period=('YYYY.MM.DD', 'YYYY.MM.DD') 면 그 기간만(홈페이지 → 이지폼 반영: 그날 하루치). 없으면 year 1/1~12/31.
+    forms_ok=False: 명세서 창이 열려 있으면 멈춤(저장하는 작업용)."""
     main = m["hwnd"]
     label = "주식회사" if m["biz"] == "corp" else "개인"
     progress(f"{label} 이지폼에서 명세서 목록을 뽑고 있어요")
-    _assert_clean(main, forms_ok=True)
+    _assert_clean(main, forms_ok=forms_ok)
     lst = _open_list(main)
     _assert_clean(main, forms_ok=True)
     sheet, grid = _ensure_period_tab(lst)
@@ -436,7 +439,7 @@ def _export_one(m: dict, year: int, progress) -> list:
     edits = sorted(_kids(sheet, "TMaskEdit"), key=lambda h: _rect(h)[0])
     if len(edits) < 2:
         raise Stop("기간 입력칸을 못 찾았어요.")
-    want = (f"{year}.01.01", f"{year}.12.31")
+    want = tuple(period) if period else (f"{year}.01.01", f"{year}.12.31")
     for e, v in zip(edits[:2], want):
         if _txt(e).strip() != v:
             _u.SendMessageW(e, 0x000C, 0, ctypes.c_wchar_p(v))  # WM_SETTEXT
@@ -493,6 +496,8 @@ def _export_one(m: dict, year: int, progress) -> list:
     finally:
         _delete_csv(path)
     rows = _parse_csv(raw, m)
+    # 경로창은 조금 늦게 닫힐 때가 있다(다른 창 — 예: 거래처 정보 — 이 열려 있으면 더, 실측 2026-11-23) → 잠깐 기다림
+    _wait(lambda: not _popups(main) and not _kids(main, "TfrmSavePath"), 4.0, 0.1)
     if _popups(main) or _kids(main, "TfrmSavePath"):
         raise Stop("엑셀 저장 뒤에 이지폼 창이 남아 있어서 멈췄어요. 직접 닫아주세요.")
     return rows
@@ -1143,7 +1148,8 @@ def _run(phase: str, jid: int, body: dict) -> None:
     with _LOCK:
         home = _JOB.get("home")
     watch_stop = threading.Event()
-    threading.Thread(target=_watch_front, args=(watch_stop, home), daemon=True).start()
+    if phase != "open_show":  # 이지폼에서 열기 = 이지폼을 앞으로 띄우는 게 목적 → '앞에 나오면 내리기' 감시 안 함
+        threading.Thread(target=_watch_front, args=(watch_stop, home), daemon=True).start()
     _PAUSE.clear()
     try:
         if phase == "export":
@@ -1165,6 +1171,10 @@ def _run(phase: str, jid: int, body: dict) -> None:
             items = [x for x in (body.get("items") or []) if isinstance(x, dict)][:100]
             _stamp_items(items, progress, on_result)
             msg = "비고 적기를 마쳤어요."
+        elif phase in ("push_read", "push_apply", "new_fill", "open_show"):
+            # 홈페이지 수정 → 이지폼 기존 명세서 반영(easyform_push). 저장은 push_apply 의 검증 통과 때만.
+            import easyform_push
+            msg = easyform_push.run(phase, body, progress, on_result)
         else:
             items = [x for x in (body.get("items") or []) if isinstance(x, dict)][:300]
             _read_items(items, progress, on_result, keep_order=bool(body.get("keepOrder")))
@@ -1187,7 +1197,7 @@ def handle_start(body: "dict | None") -> "tuple[int, dict]":
     if not ef.EASYFORM_AVAILABLE:
         return 200, {"started": False, "message": "이 PC 에서는 이지폼 자동화를 쓸 수 없어요."}
     body = body if isinstance(body, dict) else {}
-    phase = body.get("phase") if body.get("phase") in ("read", "stamp") else "export"
+    phase = body.get("phase") if body.get("phase") in ("read", "stamp", "push_read", "push_apply", "new_fill", "open_show") else "export"
     with _LOCK:
         if _JOB["state"] == "running":
             return 200, {"started": False, "message": "이미 이지폼 작업이 진행 중이에요."}

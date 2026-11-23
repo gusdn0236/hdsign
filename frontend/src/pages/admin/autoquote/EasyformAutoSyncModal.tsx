@@ -66,6 +66,18 @@ function sig(r: any): string {
   return [t(r?.품목코드), t(r?.품목), t(r?.규격), t(r?.수량), t(r?.단가)].join('\u0001');
 }
 
+/** '홈페이지와 이미 같아요' 판단용 — 표시 차이는 같게(빈 수량·단가 '0'=빈칸, 단가 있는데 수량 빈칸 = 1). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function sameSig(r: any): string {
+  const t = (v: unknown) => String(v ?? '').replace(/,/g, '').replace(/\s+/g, ' ').trim();
+  let q = t(r?.수량);
+  let p = t(r?.단가);
+  if (/^0+$/.test(p)) p = '';
+  if (/^0+$/.test(q)) q = '';
+  if (p && !q) q = '1';
+  return [t(r?.품목코드), t(r?.품목), t(r?.규격), q, p].join('\u0001');
+}
+
 interface Ranked {
   o: EasyformCandidateOrder;
   sim: number;
@@ -166,6 +178,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           source: 'auto',
           efDate: ev.date,
           efTotal: ev.total,
+          efClient: ev.client, // OCR — 한두 글자 틀릴 수 있음
+          efBiz: ev.biz,
         });
         if (stamp && stamp.row === undefined && ev.client) rememberClientAlias(stamp.o.clientCompanyName, ev.client);
         const nos = res.linked.map((l) => orderNoCore(l.orderNumber));
@@ -210,6 +224,19 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           else fresh.push(k);
         });
         const freshHasNo = fresh.some((k) => extractOrderNos(ev.rows[pairs[k].i]?.remark || '').length);
+        // 홈페이지와 줄 내용·순서가 똑같으면(예: 홈페이지 → 이지폼 반영 뒤 고친 것 없이 저장을 또 누름) 아무것도 안 한다 —
+        // 이지폼 비고 다시 적기·홈페이지 덮어쓰기(말풍선 위치 정보 빠짐) 둘 다 건너뜀(사용자 2026-11-23).
+        // 합친 명세서는 비고 번호를 옮긴 경우('moved')를 먼저 반영하고, 안 옮겼을 때만 여기로.
+        const identical =
+          !!base && n > 0 && n === pairs.length && saved.every((r, k) => sameSig(r) === sameSig(pairs[k].g));
+        const sameDone = () => {
+          setMsg({ main: '홈페이지와 이미 같아요', sub: `주문 ${ev.nos.join(', ')} · 반영할 내용이 없어요` });
+          setPhase('done');
+        };
+        if (identical && ev.nos.length === 1) {
+          sameDone();
+          return;
+        }
         // 합친 명세서에서 직원이 비고의 주문번호를 **직접 옮겼으면**(번호가 붙은 줄이 저장본과 다름) = 지시서 구간을
         // 바꾼 것 → 묻지도 고치지도 않고 이지폼 그대로 반영. 구간(명세서 화면 'n번째 지시서' 흐림)은 비고 번호 위치를
         // 따라가므로 저장하면 그대로 맞춰진다(사용자 2026-11-20). 줄만 끼웠으면 번호는 원래 줄에 붙어 있어 여기 안 걸림.
@@ -225,6 +252,10 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             if (!ok) setPhase('pick');
             return;
           }
+        }
+        if (identical) {
+          sameDone();
+          return;
         }
         // 줄 수가 늘었을 때만 묻는다(고치기만 했으면 같은 지시서 — 바로 반영)
         if (base && n > 0 && pairs.length > n && fresh.length && !freshHasNo) {

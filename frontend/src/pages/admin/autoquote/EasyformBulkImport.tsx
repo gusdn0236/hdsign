@@ -660,6 +660,8 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
             source: 'batch',
             efDate,
             efTotal,
+            efClient: m.best!.row.client,
+            efBiz: m.best!.row.biz,
             // '다른 현장 — 따로 두기'를 고른 지시서만 기존 묶음을 푼다
             keepLinked: !g.some((o) => mergeChoice[o.id] === 'separate'),
           });

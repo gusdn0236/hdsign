@@ -614,6 +614,15 @@ public class AdminOrderController {
         // 이지폼 명세서 '지문'(거래처|발행일|합계) — 같은 명세서를 다른 주문에서 또 찾았을 때 알아보는 데 쓴다.
         String efKey = efKey(primary, body.path("efDate").asText(""), body.path("efTotal").asText(""));
         if (efKey != null) syncMeta.put("efKey", efKey);
+        // 이지폼 쪽 거래처(이지폼에 등록된 이름 — 홈페이지 거래처명과 다를 수 있음)·사업자(corp/personal) — 명세서 화면
+        // '이지폼 거래처' 칸 표시 + [이지폼에서 열기]가 그 이지폼부터 찾는 데 쓴다. 안 보내면 이전 값 유지.
+        String efClient = body.path("efClient").asText("").trim();
+        String efBiz = body.path("efBiz").asText("").trim();
+        JsonNode prevSync = est.getGridJson() == null ? null : readSyncMeta(est.getGridJson());
+        if (efClient.isEmpty() && prevSync != null) efClient = prevSync.path("efClient").asText("");
+        if (efBiz.isEmpty() && prevSync != null) efBiz = prevSync.path("efBiz").asText("");
+        if (!efClient.isEmpty()) syncMeta.put("efClient", efClient.length() > 80 ? efClient.substring(0, 80) : efClient);
+        if (efBiz.equals("corp") || efBiz.equals("personal")) syncMeta.put("efBiz", efBiz);
         LocalDateTime now = LocalDateTime.now();
         String editor = normalizeEditorName(editorName);
         est.setGridJson(doc.toString());
@@ -813,6 +822,16 @@ public class AdminOrderController {
     }
 
     /** 저장본에 남은 이지폼 명세서 지문(easyformSync.efKey). 없으면 null. */
+    /** 저장본의 easyformSync 객체(없거나 깨졌으면 null). */
+    private static JsonNode readSyncMeta(String gridJson) {
+        try {
+            JsonNode s = OM.readTree(gridJson).path("easyformSync");
+            return s.isObject() ? s : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private static String syncedEfKey(String gridJson) {
         if (gridJson == null) return null;
         try {

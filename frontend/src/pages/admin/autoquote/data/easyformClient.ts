@@ -301,6 +301,18 @@ export interface EfStampItem {
   clear?: { row: number; item: string; remark: string }[]; // 같은 번호가 있던 다른 줄 — 거기선 지운다(옮겨 적기)
 }
 
+/** 홈페이지 → 이지폼 기존 명세서 반영 — 무엇이 바뀌는지(워처가 이지폼 표와 홈페이지 표를 비교). row = 이지폼 줄 번호(0부터). */
+export interface EfPushPlan {
+  same: boolean;
+  mods: { row: number; from: EasyformPulledRow; to: EasyformPulledRow; cols: string[] }[];
+  dels: { row: number; from: EasyformPulledRow }[];
+  ins: { to: EasyformPulledRow }[];
+  lostNos: string[]; // 지워지는 줄에 있던 주문번호(남는 줄엔 없음) — 있으면 반영 안 함
+}
+
+/** 반영할 이지폼 줄(홈페이지 표 → 6칸). */
+export type EfPushRow = Pick<EasyformRow, 'item_code' | 'item' | 'spec' | 'qty' | 'unit_price' | 'remark'>;
+
 export interface EfBulkResult {
   key: string;
   ok: boolean;
@@ -309,11 +321,18 @@ export interface EfBulkResult {
   total?: string;
   rows?: EasyformPulledRow[];
   message?: string;
+  // push_read / push_apply
+  biz?: 'corp' | 'personal';
+  idx?: number;
+  client?: string;
+  nos?: string[];
+  plan?: EfPushPlan;
+  same?: boolean;
 }
 
 export interface EfBulkStatus {
   state: 'running' | 'done' | 'error' | 'idle' | 'gone';
-  phase?: 'export' | 'read' | 'stamp';
+  phase?: 'export' | 'read' | 'stamp' | 'push_read' | 'push_apply' | 'new_fill' | 'open_show';
   message?: string;
   progress?: string;
   lists?: { biz: 'corp' | 'personal'; name: string; rows: EfListRow[] }[];
@@ -325,7 +344,42 @@ export async function startEfBulk(
   body:
     | { phase: 'export'; year?: number }
     | { phase: 'read'; items: (EfListRow & { key: string })[]; keepOrder?: boolean }
-    | { phase: 'stamp'; items: EfStampItem[] },
+    | { phase: 'stamp'; items: EfStampItem[] }
+    // 홈페이지 수정 → 이지폼 기존 명세서: 지문(date+total)이 있으면 그날 하루치, 없으면 from~to+client 를 비고 주문번호로 확인
+    | {
+        phase: 'push_read';
+        nos: string[];
+        target: EfPushRow[];
+        date?: string;
+        total?: string;
+        from?: string;
+        to?: string;
+        client?: string;
+        biz?: string; // 먼저 볼 이지폼(지난번에 끊은 쪽)
+      }
+    // 이지폼에서 열기: 같은 방법으로 찾아 비고 주문번호 확인 → 열어 둔 채 이지폼을 앞으로(저장 없음)
+    | {
+        phase: 'open_show';
+        nos: string[];
+        date?: string;
+        total?: string;
+        from?: string;
+        to?: string;
+        client?: string;
+        biz?: string;
+      }
+    // 새 명세서: 새로작성 → 사업자번호로 거래처 1건 선택(OCR 확인) → 입력 → 다시 읽어 같아야 저장
+    | { phase: 'new_fill'; biz: string; bizNo: string; client: string; target: EfPushRow[] }
+    // 다시 열어 표가 expect(읽었을 때)와 같아야 고침 → 다시 읽어 target 과 같아야 저장
+    | {
+        phase: 'push_apply';
+        biz: string;
+        date: string;
+        total: string;
+        nos: string[];
+        expect: EasyformPulledRow[];
+        target: EfPushRow[];
+      },
 ): Promise<{ started: boolean; id?: number; message?: string }> {
   const res = await fetch(`${AGENT_URL}/easyform/bulk`, {
     method: 'POST',
