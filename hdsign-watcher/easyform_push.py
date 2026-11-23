@@ -549,9 +549,16 @@ def apply(body: dict, progress) -> dict:
         _close(main, f)
     if not form:
         raise Stop("그 사이 이지폼 명세서 내용이 바뀌었어요. 다시 [이지폼에 적용하기]를 눌러주세요.")
+    return _apply_on_form(main, form, raw, target, date, total, progress)
+
+
+def _apply_on_form(main, form, raw: list, target: list, date: str, total: str, progress,
+                   plan: "dict | None" = None) -> dict:
+    """열려 있는 그 명세서(raw = 지금 표)에 target 을 반영 → 다시 읽어 같을 때만 저장 → 닫기. 결과 {date,total,rows,same}."""
+    cur = _strip_tail([norm_row(r) for r in raw])
     saved = False
     try:
-        plan = make_plan(cur, target)
+        plan = plan or make_plan(cur, target)
         if plan["lostNos"]:
             raise Stop(f"주문번호({', '.join(plan['lostNos'])})가 적힌 줄을 지우게 돼서 멈췄어요. 이지폼에서 직접 고쳐주세요.")
         if plan["same"]:
@@ -828,15 +835,13 @@ def _opened_notice(biz: str, client: str, date: str, total) -> None:
     ef.ef_notice(f"{client or '이지폼'} 명세서를 열었어요", f"{date}  ·  합계 {amt:,}원", tag)
 
 
-def open_show(body: dict, progress) -> dict:
-    """find_and_read 와 같은 방법으로 찾되 비고만 확인하고, 맞는 명세서는 **열어 둔 채** 이지폼을 앞으로."""
+def _find_open(body: dict, progress) -> "tuple[dict, int, dict]":
+    """찾아서 **열어 둔 채** 이지폼을 앞으로 → (m, form, {biz,date,total,client,nos}). 열린 명세서가 있어도 됨.
+    이미 열려 있으면(비고에 이 주문번호, 또는 비고에 번호 없는 옛 명세서는 발행일·합계가 기록과 같을 때) 목록 안 뽑음."""
     want_nos = [n for n in (body.get("nos") or []) if n]
     mains = b._mains()
     if not mains:
         raise Stop("켜져 있는 이지폼이 없어요.")
-    # 찾는 명세서가 이미 열려 있으면 목록 안 뽑고 바로 앞으로 — 비고에 이 주문번호가 있거나, 비고에 주문번호가 없는
-    # 옛 명세서면 발행일·합계가 홈페이지 기록(지문)과 같을 때(첫 열기는 '같은 날 같은 합계 하나'로 찾았는데 두 번째엔
-    # 비고만 봐서 다시 조회하던 것 — 사용자 2026-11-23).
     date, total = str(body.get("date") or ""), str(body.get("total") or "")
     if want_nos or (date and total):
         for m in mains:
@@ -848,9 +853,8 @@ def open_show(body: dict, progress) -> dict:
                 same_key = bool(date and total) and d == date and b._digits(t) == b._digits(total)
                 if any(n in fnos for n in want_nos) or (same_key and not fnos):
                     _bring_front(m["hwnd"], f)
-                    _opened_notice(m["biz"], str(body.get("client") or ""), d, t)
-                    return {"biz": m["biz"], "date": d, "total": b._digits(t), "client": "",
-                            "nos": fnos}
+                    return m, f, {"biz": m["biz"], "date": d, "total": b._digits(t),
+                                  "client": str(body.get("client") or ""), "nos": fnos}
     k = 0
     for m, it, lone, n in _each_candidate(body, progress, forms_ok=True):
         main = m["hwnd"]
@@ -868,10 +872,85 @@ def open_show(body: dict, progress) -> dict:
         if keep:
             ctypes.windll.user32.SendMessageW(next(iter(b._kids(form, "TAdvStringGrid"))), 0x0115, 6, 0)
             _bring_front(main, form)
-            _opened_notice(m["biz"], it.get('client', ''), it['date'], it['total'])
-            return {"biz": m["biz"], "date": it["date"], "total": it["total"], "client": it.get("client", ""),
-                    "nos": nos}
+            return m, form, {"biz": m["biz"], "date": it["date"], "total": it["total"],
+                             "client": it.get("client", ""), "nos": nos}
     raise Stop("주식회사·개인 이지폼 모두에서 이 주문의 명세서를 못 찾았어요. (비고에 이 주문번호가 적힌 명세서가 없어요)")
+
+
+def open_show(body: dict, progress) -> dict:
+    """[이지폼에서 열기] — 찾아서 띄우고 '…명세서를 열었어요' 카드."""
+    _m, _f, info = _find_open(body, progress)
+    _opened_notice(info["biz"], info["client"], info["date"], info["total"])
+    return info
+
+
+def _plan_lines(plan: dict, limit: int = 6) -> list:
+    """확인 카드에 보일 바뀔 내용(짧게)."""
+    lab = {"item_code": "품목코드", "item": "품목", "spec": "규격", "qty": "수량", "unit_price": "단가"}
+    out = []
+    for m_ in plan["mods"]:
+        ch = ", ".join(f"{lab[c]} {m_['from'][c] or '빈칸'}→{m_['to'][c] or '빈칸'}" for c in m_["cols"])
+        out.append(f"✏️ {m_['row'] + 1}번째 줄 {m_['from']['item']} — {ch}")
+    for i_ in plan["ins"]:
+        t = i_["to"]
+        out.append(f"➕ 추가: {t['item'] or '(품목 없음)'}" + (f" {t['spec']}" if t["spec"] else "") +
+                   (f" · {t['qty'] or '1'}×{int(b._digits(t['unit_price']) or 0):,}" if t["unit_price"] else ""))
+    for d_ in plan["dels"]:
+        out.append(f"➖ 삭제: {d_['row'] + 1}번째 줄 {d_['from']['item'] or '(품목 없음)'}")
+    if len(out) > limit:
+        out = out[:limit] + [f"… 외 {len(out) - limit}가지"]
+    return out
+
+
+def push_confirm(body: dict, progress) -> dict:
+    """[이지폼에 적용하기] — 그 명세서를 이지폼에 띄우고 '이 명세서가 맞나요?'(네/아니오, 사용자 2026-11-23)
+    → 네 = 띄워 둔 그 명세서에 바뀐 줄만 고치고 다시 읽어 같을 때만 저장, 아니오 = 아무것도 안 바꿈(띄운 채 둠)."""
+    target = _strip_tail([norm_target(r) for r in (body.get("target") or []) if isinstance(r, dict)])
+    if not target:
+        raise Stop("반영할 줄이 없어요.")
+    m, form, info = _find_open(body, progress)
+    main = m["hwnd"]
+    progress("이지폼 명세서를 읽는 중")
+    raw = _read_all(form)
+    cur = _strip_tail([norm_row(r) for r in raw])
+    plan = make_plan(cur, target)
+    tag = ("주식회사", "#2563eb") if info["biz"] == "corp" else ("개인", "#d97706")
+    amt = int(b._digits(info["total"]) or 0)
+    sub = f"{info['client'] or '이지폼'}  ·  {info['date']}  ·  합계 {amt:,}원"
+    base = {**info, "rows": raw}
+    if plan["lostNos"]:
+        raise Stop(f"주문번호({', '.join(plan['lostNos'])})가 적힌 줄을 지우게 돼서 멈췄어요. 이지폼에서 직접 고쳐주세요.")
+    if plan["same"]:
+        ef.ef_notice("이미 홈페이지와 같아요", sub, tag)
+        return {**base, "same": True}
+    progress("이지폼 화면에서 '이 명세서가 맞나요?'에 답해주세요")
+    ok = ef.ef_ask("이 명세서가 맞나요?", sub, _plan_lines(plan), tag, yes="네, 적용할게요", no="아니오")
+    if not ok:
+        _go_home()  # 아니오 = 아무것도 안 바꾸고 홈페이지 화면으로(사용자 2026-11-23)
+        return {**base, "cancelled": True}
+    # 적용하는 동안 화면 잠금 안내 + 물리 입력 잠금(ESC = 중단) — 이지폼이 앞에 있어 손대면 꼬일 수 있음
+    ef.ef_busy("이지폼 명세서에 적용하는 중이에요. 잠시만 기다려 주세요.")
+    ef.ef_guard_start()
+    try:
+        res = _apply_on_form(main, form, raw, target, info["date"], info["total"], progress, plan=plan)
+    finally:
+        ef.ef_guard_stop()
+        ef.ef_busy(None)
+    _go_home()
+    ef.ef_notice("이지폼에 적용하고 저장했어요", f"{info['client'] or '이지폼'}  ·  {res['date']}  ·  합계 "
+                 f"{int(b._digits(res.get('total') or '') or 0):,}원", tag)
+    return {**base, **res}
+
+
+def _go_home() -> None:
+    """웹 버튼을 누른 순간 앞에 있던 창(= 홈페이지 브라우저)을 다시 앞으로."""
+    with b._LOCK:
+        home = b._JOB.get("home")
+    try:
+        if home and b._u.IsWindow(home):
+            ef.ef_force_foreground(home)
+    except Exception:
+        logging.exception("홈페이지 창 앞으로 실패")
 
 
 def plan_summary(cur_raw: list, target_raw: list) -> dict:
@@ -882,6 +961,10 @@ def plan_summary(cur_raw: list, target_raw: list) -> dict:
 
 
 def run(phase: str, body: dict, progress, on_result) -> str:
+    if phase == "push_confirm":
+        res = push_confirm(body, progress)
+        on_result({"key": "push", "ok": True, **res})
+        return "취소했어요." if res.get("cancelled") else ("이미 같아요." if res.get("same") else "이지폼에 적용했어요.")
     if phase == "open_show":
         res = open_show(body, progress)
         on_result({"key": "push", "ok": True, **res})

@@ -328,11 +328,12 @@ export interface EfBulkResult {
   nos?: string[];
   plan?: EfPushPlan;
   same?: boolean;
+  cancelled?: boolean; // push_confirm — '이 명세서가 맞나요?'에 아니오
 }
 
 export interface EfBulkStatus {
   state: 'running' | 'done' | 'error' | 'idle' | 'gone';
-  phase?: 'export' | 'read' | 'stamp' | 'push_read' | 'push_apply' | 'new_fill' | 'open_show';
+  phase?: 'export' | 'read' | 'stamp' | 'push_read' | 'push_apply' | 'new_fill' | 'open_show' | 'push_confirm';
   message?: string;
   progress?: string;
   lists?: { biz: 'corp' | 'personal'; name: string; rows: EfListRow[] }[];
@@ -370,6 +371,18 @@ export async function startEfBulk(
       }
     // 새 명세서: 새로작성 → 사업자번호로 거래처 1건 선택(OCR 확인) → 입력 → 다시 읽어 같아야 저장
     | { phase: 'new_fill'; biz: string; bizNo: string; client: string; target: EfPushRow[] }
+    // [이지폼에 적용하기]: 찾아서 이지폼에 띄우고 워처 카드 '이 명세서가 맞나요?' → 네=적용·저장 / 아니오=취소(홈페이지로)
+    | {
+        phase: 'push_confirm';
+        nos: string[];
+        target: EfPushRow[];
+        date?: string;
+        total?: string;
+        from?: string;
+        to?: string;
+        client?: string;
+        biz?: string;
+      }
     // 다시 열어 표가 expect(읽었을 때)와 같아야 고침 → 다시 읽어 target 과 같아야 저장
     | {
         phase: 'push_apply';

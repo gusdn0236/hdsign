@@ -1414,6 +1414,28 @@ _EF_UI_QUEUE: "queue.Queue" = queue.Queue()  # HTTP 스레드 → tk UI 스레�
 _EF_UI_READY = [False]  # install() 로 tk 화면이 붙었나(알림 카드를 띄울 수 있나)
 
 
+def ef_ask(title: str, sub: str = "", lines: "list | None" = None, tag: "tuple | None" = None,
+           yes: str = "네", no: str = "아니오", timeout: float = 600.0) -> bool:
+    """오른쪽 맨 앞 확인 카드(네=Enter / 아니오=Esc)를 띄우고 답을 기다린다. timeout 이면 아니오.
+    tk 화면이 없으면 기본 예/아니오 창."""
+    import threading
+    if not _EF_UI_READY[0]:
+        body = "\n".join([sub] + list(lines or []))
+        return ef_confirm(f"{title}\n\n{body}", "HD사인 이지폼")
+    holder = {"ev": threading.Event(), "ans": False}
+    _EF_UI_QUEUE.put(("ask2", holder, title, sub, list(lines or []), tag, yes, no))
+    if not holder["ev"].wait(timeout):
+        _EF_UI_QUEUE.put(("ask2_cancel", holder))
+        return False
+    return bool(holder["ans"])
+
+
+def ef_busy(text: "str | None") -> None:
+    """작업 중 화면 잠금 안내(text) / 끄기(None) — 자동기입 때 쓰는 그 판."""
+    if _EF_UI_READY[0]:
+        _EF_UI_QUEUE.put(("auto_overlay", text) if text else ("auto_overlay_hide",))
+
+
 def ef_notice(title: str, sub: str = "", tag: "tuple | None" = None) -> None:
     """가운데 맨 앞 큰 알림 카드(아무 데나 누르거나 Enter 로 닫힘). tag=(글자, 배경색) 제목 앞 태그.
     tk 화면이 없으면 기본 알림창."""
@@ -2119,6 +2141,93 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         note_ok.focus_set()
         root.after(400, note_keep_on_top)
 
+    # ── 확인 카드(예: [이지폼에 적용하기] "이 명세서가 맞나요?") — 띄운 이지폼 명세서를 가리지 않게 화면 오른쪽, 맨 앞.
+    # Enter = 네, Esc = 아니오. 답은 holder(ev, ans)로 일하는 스레드에 돌려준다(사용자 2026-11-23).
+    cf = tk.Toplevel(root)
+    cf.overrideredirect(True)
+    cf.attributes("-topmost", True)
+    cf.configure(bg=accent)
+    cf_in = tk.Frame(cf, bg="#ffffff", padx=int(30 * s), pady=int(24 * s))
+    cf_in.pack(fill="both", expand=True, padx=int(4 * s), pady=int(4 * s))
+    cf_row = tk.Frame(cf_in, bg="#ffffff")
+    cf_row.pack(anchor="w")
+    cf_tag = tk.Label(cf_row, text="", font=("맑은 고딕", int(13 * s), "bold"), fg="#ffffff", bg="#2563eb",
+                      padx=int(8 * s), pady=int(1 * s))
+    cf_title = tk.Label(cf_row, text="", font=("맑은 고딕", int(20 * s), "bold"), fg="#111827", bg="#ffffff")
+    cf_title.pack(side="left")
+    cf_sub = tk.Label(cf_in, text="", font=("맑은 고딕", int(12 * s)), fg="#4b5563", bg="#ffffff",
+                      wraplength=int(460 * s), justify="left")
+    cf_sub.pack(anchor="w", pady=(int(8 * s), 0))
+    cf_lines = tk.Frame(cf_in, bg="#f8fafc", padx=int(12 * s), pady=int(8 * s))
+    cf_btns = tk.Frame(cf_in, bg="#ffffff")
+    cf_btns.pack(fill="x", pady=(int(18 * s), 0))
+    cf_state = {"holder": None}
+
+    def cf_answer(ans: bool):
+        h = cf_state["holder"]
+        cf_state["holder"] = None
+        cf.withdraw()
+        if h:
+            h["ans"] = ans
+            h["ev"].set()
+
+    cf_yes = tk.Button(cf_btns, text="네", font=("맑은 고딕", int(14 * s), "bold"), bg=accent, fg="white",
+                       activebackground=accent_dark, activeforeground="white", relief="flat", bd=0,
+                       padx=int(20 * s), pady=int(9 * s), cursor="hand2", command=lambda: cf_answer(True))
+    cf_yes.pack(side="left", padx=(0, int(10 * s)))
+    cf_no = tk.Button(cf_btns, text="아니오", font=("맑은 고딕", int(13 * s)), bg="#e5e7eb", fg="#374151",
+                      activebackground="#d1d5db", relief="flat", bd=0, padx=int(18 * s), pady=int(9 * s),
+                      cursor="hand2", command=lambda: cf_answer(False))
+    cf_no.pack(side="left")
+    cf.bind("<Return>", lambda _e: cf_answer(True))
+    cf.bind("<KP_Enter>", lambda _e: cf_answer(True))
+    cf.bind("<Escape>", lambda _e: cf_answer(False))
+    cf.withdraw()
+
+    def cf_keep_on_top():
+        if not cf_state["holder"]:
+            return
+        cf.lift()
+        root.after(400, cf_keep_on_top)
+
+    def cf_show(holder, title, sub, lines, tag, yes, no):
+        if cf_state["holder"]:  # 앞 질문이 남아 있으면 아니오로 정리
+            old = cf_state["holder"]
+            old["ans"] = False
+            old["ev"].set()
+        cf_state["holder"] = holder
+        cf_title.config(text=title)
+        cf_tag.pack_forget()
+        if tag:
+            cf_tag.config(text=tag[0], bg=tag[1])
+            cf_tag.pack(side="left", padx=(0, int(10 * s)), before=cf_title)
+        cf_sub.config(text=sub or "")
+        for ch in cf_lines.winfo_children():
+            ch.destroy()
+        cf_lines.pack_forget()
+        if lines:
+            tk.Label(cf_lines, text="바뀌는 내용", font=("맑은 고딕", int(10 * s), "bold"), fg="#64748b",
+                     bg="#f8fafc").pack(anchor="w")
+            for ln in lines:
+                tk.Label(cf_lines, text=ln, font=("맑은 고딕", int(12 * s)), fg="#111827", bg="#f8fafc",
+                         wraplength=int(440 * s), justify="left").pack(anchor="w", pady=(int(2 * s), 0))
+            cf_lines.pack(anchor="w", fill="x", pady=(int(12 * s), 0), before=cf_btns)
+        cf_yes.config(text=f"{yes}  (Enter)")
+        cf_no.config(text=f"{no}  (Esc)")
+        cf.update_idletasks()
+        cw, ch_ = max(cf.winfo_reqwidth(), int(420 * s)), cf.winfo_reqheight()
+        # 이지폼 명세서(왼쪽)를 가리지 않게 화면 오른쪽
+        cf.geometry(f"{cw}x{ch_}+{max(0, sw - cw - int(60 * s))}+{max(0, (sh - ch_) // 2)}")
+        cf.deiconify()
+        cf.lift()
+        try:
+            ef_force_foreground(ctypes.windll.user32.GetAncestor(cf.winfo_id(), 2))
+        except Exception:
+            pass
+        cf.focus_force()
+        cf_yes.focus_set()
+        root.after(400, cf_keep_on_top)
+
     _EF_UI_READY[0] = True
 
     btn.config(command=on_btn)
@@ -2184,6 +2293,11 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 elif cmd[0] == "auto_overlay_hide":
                     if not busy["v"]:
                         hide_overlay()
+                elif cmd[0] == "ask2":  # 확인 카드(네/아니오)
+                    cf_show(*cmd[1:])
+                elif cmd[0] == "ask2_cancel":
+                    if cf_state["holder"] is cmd[1]:
+                        cf_answer(False)
                 elif cmd[0] == "notice":  # 알림 카드(가운데 맨 앞, 큰 확인)
                     note_show(cmd[1], cmd[2] if len(cmd) > 2 else "", cmd[3] if len(cmd) > 3 else None)
                 elif cmd[0] == "result":

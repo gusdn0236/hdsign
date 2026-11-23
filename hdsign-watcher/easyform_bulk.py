@@ -1162,7 +1162,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
     with _LOCK:
         home = _JOB.get("home")
     watch_stop = threading.Event()
-    if phase != "open_show":  # 이지폼에서 열기 = 이지폼을 앞으로 띄우는 게 목적 → '앞에 나오면 내리기' 감시 안 함
+    if phase not in ("open_show", "push_confirm"):  # 이지폼에서 열기·적용(확인) = 이지폼을 앞으로 띄우는 게 목적 → '앞에 나오면 내리기' 감시 안 함
         threading.Thread(target=_watch_front, args=(watch_stop, home), daemon=True).start()
     _PAUSE.clear()
     try:
@@ -1185,7 +1185,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
             items = [x for x in (body.get("items") or []) if isinstance(x, dict)][:100]
             _stamp_items(items, progress, on_result)
             msg = "비고 적기를 마쳤어요."
-        elif phase in ("push_read", "push_apply", "new_fill", "open_show"):
+        elif phase in ("push_read", "push_apply", "new_fill", "open_show", "push_confirm"):
             # 홈페이지 수정 → 이지폼 기존 명세서 반영(easyform_push). 저장은 push_apply 의 검증 통과 때만.
             import easyform_push
             msg = easyform_push.run(phase, body, progress, on_result)
@@ -1211,7 +1211,7 @@ def handle_start(body: "dict | None") -> "tuple[int, dict]":
     if not ef.EASYFORM_AVAILABLE:
         return 200, {"started": False, "message": "이 PC 에서는 이지폼 자동화를 쓸 수 없어요."}
     body = body if isinstance(body, dict) else {}
-    phase = body.get("phase") if body.get("phase") in ("read", "stamp", "push_read", "push_apply", "new_fill", "open_show") else "export"
+    phase = body.get("phase") if body.get("phase") in ("read", "stamp", "push_read", "push_apply", "new_fill", "open_show", "push_confirm") else "export"
     with _LOCK:
         if _JOB["state"] == "running":
             return 200, {"started": False, "message": "이미 이지폼 작업이 진행 중이에요."}

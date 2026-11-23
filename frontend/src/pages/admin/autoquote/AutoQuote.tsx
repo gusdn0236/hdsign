@@ -3206,80 +3206,43 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       await putEstimate(token, order.id, { grid, total, savedFrom: 'autoquote', ...(refPhotos ? { refPhotos } : {}) });
       setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
       onSaved?.();
-      // 2) 찾기 — 지문 있으면 그날 하루치(빠름), 없으면 이지폼 입력한 날 주변을 거래처·비고 주문번호로
-      const where = efFindWhere();
-      let read: EfBulkResult | null;
+      // 2) 이지폼에 그 명세서를 띄우고 워처 카드 "이 명세서가 맞나요?"(네/아니오) — 사용자 2026-11-23.
+      //    네 = 바뀐 줄만 고치고 홈페이지와 같을 때만 저장, 아니오 = 아무것도 안 바꾸고 홈페이지로 돌아옴.
+      let done: EfBulkResult | null;
       try {
-        read = await runEfPush({ phase: 'push_read', nos, target, ...where }, '이지폼에서 명세서 찾는 중…');
+        done = await runEfPush(
+          { phase: 'push_confirm', nos, target, ...efFindWhere() },
+          '이지폼에 명세서를 띄우는 중… 이지폼 화면에서 "이 명세서가 맞나요?"에 답해주세요',
+        );
       } catch (e) {
         fail((e as Error).message, /못 찾았/.test((e as Error).message));
         return;
       }
       setDialog(null);
-      if (!read?.plan || !read.rows || !read.biz || !read.date || !read.total) {
+      if (!done?.date) {
         fail('이지폼 명세서를 읽지 못했어요. 이 PC 워처가 옛 버전일 수 있어요 — 바로가기를 껐다 다시 켠 뒤 해주세요.');
         return;
       }
-      // 찾은 순간 최신 위치(발행일·합계·거래처) 기억 — 반영을 취소해도 다음엔 바로 찾게
-      void rememberEfLocation(read.date, read.total, read.client, read.biz);
-      const plan = read.plan;
-      const head = `${escH(read.date)} · ${Number(String(read.total).replace(/[^0-9-]/g, '')).toLocaleString()}원 · ${escH(read.client || '')}`;
-      if (plan.same) {
-        cdlg(`<b style="font-size:15px">이지폼 명세서가 이미 홈페이지와 같아요</b><div style="font-size:12px;color:#6b7785;margin-top:6px">${head}</div>`, [
-          { label: '확인' },
-        ]);
-        return;
-      }
-      if (plan.lostNos.length) {
-        fail(`주문번호(${plan.lostNos.join(', ')})가 적힌 줄을 지우게 돼서 멈췄어요. 이 줄은 이지폼에서 직접 고쳐주세요.`);
-        return;
-      }
-      // 3) 바뀔 내용 확인
-      const LBL: Record<string, string> = { item_code: '품목코드', item: '품목', spec: '규격', qty: '수량', unit_price: '단가' };
-      const v = (s?: string) => (s && s.trim() ? escH(s) : '<i style="color:#9aa5b1">빈칸</i>');
-      const line = (r: { item?: string; spec?: string; qty?: string; unit_price?: string }) =>
-        `<b>${escH(r.item || '(품목 없음)')}</b>${r.spec ? ` ${escH(r.spec)}` : ''}${r.unit_price ? ` · ${escH(r.qty || '1')} × ${escH(r.unit_price)}` : ''}`;
-      const items = [
-        ...plan.mods.map(
-          (m) =>
-            `<li>✏️ ${m.row + 1}번째 줄 ${escH(m.from.item || '')} — ` +
-            m.cols.map((c) => `${LBL[c] || c} ${v(m.from[c as keyof typeof m.from] as string)} → <b>${v(m.to[c as keyof typeof m.to] as string)}</b>`).join(', ') +
-            `</li>`,
-        ),
-        ...plan.ins.map((i) => `<li style="color:#15803d">➕ 추가: ${line(i.to)}</li>`),
-        ...plan.dels.map((d) => `<li style="color:#b91c1c">➖ 삭제: ${d.row + 1}번째 줄 ${line(d.from)}</li>`),
-      ];
-      const go = await new Promise<boolean>((res) =>
+      if (done.cancelled) {
+        // 아니오 = 이 명세서가 아님 → 위치는 기억하지 않음. 사람이 맞는 명세서를 직접 고쳐 저장하면
+        // 저장 감지(자동반영)가 지시서를 고르게 해서 연동한다(사용자 2026-11-23).
         cdlg(
-          `<b style="font-size:15px">이지폼 명세서에 이렇게 반영할까요?</b>` +
-            `<div style="font-size:12px;color:#6b7785;margin-top:4px">${head}</div>` +
-            `<ul style="font-size:13px;line-height:1.7;margin:10px 0 0;padding-left:18px;max-height:300px;overflow:auto;text-align:left">${items.join('')}</ul>` +
-            (read!.nos?.length
-              ? ''
-              : `<div style="font-size:12px;color:#b45309;margin-top:6px">이 이지폼 명세서 비고엔 주문번호가 없어요(발행일·합계로 찾았어요).</div>`) +
-            `<div style="font-size:12px;color:#6b7785;margin-top:8px">공급가액·세액·합계는 이지폼이 다시 계산해요. 다 고친 뒤 홈페이지와 똑같은지 확인하고서만 저장해요.</div>`,
-          [
-            { label: '이지폼에 반영', fn: () => res(true) },
-            { label: '취소', sec: true, fn: () => res(false) },
-          ],
-        ),
-      );
-      if (!go) return;
-      // 4) 반영
-      let done: EfBulkResult | null;
-      try {
-        done = await runEfPush(
-          { phase: 'push_apply', biz: read.biz, date: read.date, total: read.total, nos, expect: read.rows, target },
-          '이지폼 명세서 고치는 중…',
+          `<b style="font-size:15px">맞는 명세서를 찾지 못했어요</b>` +
+            `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼에서 맞는 명세서를 직접 열어 고친 뒤 <b>[저장]</b>을 눌러 주세요.<br>` +
+            `저장하면 지시서를 골라서 홈페이지에 반영할 수 있어요.</div>`,
+          [{ label: '확인' }],
         );
-      } catch (e) {
-        fail((e as Error).message);
         return;
       }
-      setDialog(null);
-      const newDate = done?.date || read.date;
-      const newTotal = done?.total || read.total;
-      // 5) 지문 갱신 — 다음 수정·이지폼 저장 자동반영이 이 명세서를 바로 알아보게
+      if (done.same) {
+        // 찾은 위치는 기억(다음엔 바로 찾게). 같다는 건 워처 카드가 알려줌
+        void rememberEfLocation(done.date, done.total || '', done.client, done.biz);
+        setStatus('이지폼 명세서가 이미 홈페이지와 같아요');
+        return;
+      }
+      const newDate = done.date;
+      const newTotal = done.total || '';
+      // 3) 지문 갱신 — 다음 수정·이지폼 저장 자동반영이 이 명세서를 바로 알아보게
       try {
         await syncEstimateFromEasyform(token, {
           orderNumbers: nos,
@@ -3288,26 +3251,22 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           source: 'push',
           efDate: newDate,
           efTotal: newTotal,
-          efClient: read.client,
-          efBiz: read.biz,
+          efClient: done.client,
+          efBiz: done.biz,
         });
         const [kClient] = (efSyncRef.current?.efKey || 'none').split('|');
         efSyncRef.current = {
           ...(efSyncRef.current || {}),
           efKey: `${kClient}|${newDate}|${String(newTotal).replace(/[^0-9-]/g, '')}`,
-          efClient: read.client,
-          efBiz: read.biz,
+          efClient: done.client || efSyncRef.current?.efClient,
+          efBiz: done.biz,
         };
-        setEfWhere({ client: read.client, biz: read.biz });
+        if (done.client) setEfWhere({ client: done.client, biz: done.biz });
         onSaved?.();
       } catch (e) {
         console.error('이지폼 반영 후 지문 갱신 실패', e);
       }
-      cdlg(
-        `<b style="font-size:15px">이지폼 명세서에 반영하고 저장했어요</b>` +
-          `<div style="font-size:13px;margin-top:8px">${escH(newDate)} · 합계 <b>${Number(String(newTotal).replace(/[^0-9-]/g, '')).toLocaleString()}원</b></div>`,
-        [{ label: '확인' }],
-      );
+      setStatus(`이지폼에 적용하고 저장했어요 — ${newDate} · 합계 ${Number(String(newTotal).replace(/[^0-9-]/g, '')).toLocaleString()}원`);
     } catch (e) {
       console.error(e);
       fail((e as Error).message || '알 수 없는 오류');
