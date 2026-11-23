@@ -13,7 +13,7 @@
   --efas-bad: #b91c1c;
   position: fixed;
   inset: 0;
-  z-index: 1500;
+  z-index: 5500; /* 명세서 상세(.aq-modal-overlay 1500)·주문 화면(2200) 위 — 이지폼 반영 카드는 항상 맨 앞(2026-11-23) */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -450,7 +450,7 @@
 
 /* 추가한 줄 묻기 — 뒤에 '그 명세서' 미리보기(보기만), 앞에 고르기 카드 */
 .efas-aqwrap {
-  z-index: 1490;
+  z-index: 5490;
   pointer-events: none; /* 보기만 — 실수로 임시저장 등 누르지 않게 */
 }
 .efas.on-aq {
@@ -477,7 +477,7 @@
 .efas-ask {
   position: fixed;
   inset: 0;
-  z-index: 1700;
+  z-index: 5700;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -576,7 +576,7 @@
   left: 50%;
   bottom: 32px;
   transform: translateX(-50%);
-  z-index: 1500;
+  z-index: 5500;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -631,7 +631,7 @@
 .efas-zoom {
   position: fixed;
   inset: 0;
-  z-index: 1600;
+  z-index: 5600;
   display: flex;
   flex-direction: column;
   background: #0e1620;

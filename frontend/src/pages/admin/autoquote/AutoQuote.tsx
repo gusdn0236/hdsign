@@ -144,6 +144,41 @@ interface Pin {
   qtyFixed?: boolean;
 }
 
+/** 저장된 명세서 grid → 핀. prev = 지금 핀들 — 저장본에 핀 위치(_ax…)가 없으면(이지폼 자동반영 저장본)
+ *  같은 줄 번호의 지금 위치를 그대로 써서 말풍선이 튀지 않게(깜빡임 없는 새로 불러오기, 2026-11-23). */
+function estGridToPins(grid: Record<string, unknown>[], prev: Pin[] = []): Pin[] {
+  return grid.map((g, i) => {
+    const hasGeo = g._ax != null && g._ay != null;
+    const old = !hasGeo ? prev[i] : undefined;
+    const ax = hasGeo ? Number(g._ax) : old ? old.ax : 30;
+    const ay = hasGeo ? Number(g._ay) : old ? old.ay : 30 + i * 30;
+    return {
+      ax,
+      ay,
+      lx: hasGeo && g._lx != null ? Number(g._lx) : old ? old.lx : ax,
+      ly: hasGeo && g._ly != null ? Number(g._ly) : old ? old.ly : ay,
+      dragged: hasGeo ? !!g._dragged : old ? old.dragged : false,
+      fi: FIELDS.length,
+      vals: {
+        월일: String(g['월일'] ?? ''),
+        품목코드: String(g['품목코드'] ?? ''),
+        품목: String(g['품목'] ?? ''),
+        규격: String(g['규격'] ?? ''),
+        수량: String(g['수량'] ?? ''),
+        단가: String(g['단가'] ?? ''),
+        비고: String(g['비고'] ?? ''),
+      },
+      // 단가 '한·영 합계' 내역 복원(각주).
+      ...(g._sumParts && typeof g._sumParts === 'object' ? { sumParts: g._sumParts as Pin['sumParts'] } : {}),
+      // 도장비 합치기 요약핀이면 보관된 개별 원자 복원(있을 때만).
+      ...(Array.isArray(g._dojangParts) ? { _dojangParts: g._dojangParts as Record<string, string>[] } : {}),
+      // 행 합치기로 만든 행이면 합치기 전 원본 행 복원(되돌리기용).
+      ...(g._qtyFixed ? { qtyFixed: true } : {}),
+      ...(Array.isArray(g._mergeParts) && g._mergeParts.length ? { _mergeParts: g._mergeParts as Pin[] } : {}),
+    };
+  });
+}
+
 interface DialogButton {
   label: string;
   sec?: boolean;
@@ -509,6 +544,35 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     };
   }, [efMenu]);
   const [reloadKey, setReloadKey] = useState(0);
+  // 이지폼 저장 자동반영이 이 주문(합친 명세서면 묶인 주문 포함) 명세서를 바꿨으면 다시 불러온다 — 상세 화면을 띄워 둔 채
+  // 이지폼에서 저장했을 때 옛 내용이 남아 있다가 [임시저장]으로 덮어쓰는 일 방지(2026-11-23). 미리보기 화면은 제외.
+  // 지시서 이미지·화면은 그대로 두고 명세서 표·이지폼 정보만 바꿔 끼운다(깜빡임 없음).
+  useEffect(() => {
+    if (!order || efPreviewRef.current) return;
+    const mine = new Set<number>([order.id, ...linkedOrders.map((l) => l.id)]);
+    const oid = order.id;
+    const on = (e: Event) => {
+      const ids: number[] = (e as CustomEvent).detail?.ids || [];
+      if (!ids.some((x) => mine.has(Number(x)))) return;
+      void (async () => {
+        const est = await getEstimate(token, oid).catch(() => null);
+        if (!est?.estimate) return;
+        const lo = est.estimate.linkedOrders;
+        setLinkedOrders(Array.isArray(lo) && lo.length > 1 ? lo : []);
+        const sync = est.estimate.easyformSync;
+        efSyncRef.current = sync && typeof sync === 'object' ? (sync as { efKey?: string }) : null;
+        setEfWhere({ client: efSyncRef.current?.efClient || '', biz: efSyncRef.current?.efBiz || '' });
+        setOrder((o) => (o ? { ...o, hasEstimate: true, easyformUploadedAt: o.easyformUploadedAt || est.easyformUploadedAt } : o));
+        if (Array.isArray(est.estimate.grid) && est.estimate.grid.length) {
+          setPins((prev) => estGridToPins(est.estimate.grid, prev));
+          setMergeSel([]);
+        }
+        setStatus('이지폼에서 저장한 내용으로 명세서를 새로 불러왔어요');
+      })();
+    };
+    window.addEventListener('hd:efauto-saved', on);
+    return () => window.removeEventListener('hd:efauto-saved', on);
+  }, [order, linkedOrders]);
   // 치수 오버레이 — 3번 모드(mode==='dim')일 때 지시서 위에 오브젝트별/구간 가로세로(mm) 표시.
   const dimMode = mode === 'dim';
   // LED 계산 오버레이 — 'LED계산' 버튼으로 켜는 모드. 치수와 같은 지오메트리(points)를 쓴다.
@@ -771,43 +835,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           }
         }
         if (alive && est?.estimate?.grid?.length) {
-          const restored: Pin[] = est.estimate.grid.map((g: Record<string, unknown>, i: number) => {
-            // 저장된 핀 위치(_ax…)가 있으면 원위치로, 없으면(옛 저장본) 좌상단 계단식 폴백.
-            const hasGeo = g._ax != null && g._ay != null;
-            const ax = hasGeo ? Number(g._ax) : 30;
-            const ay = hasGeo ? Number(g._ay) : 30 + i * 30;
-            return {
-              ax,
-              ay,
-              lx: hasGeo && g._lx != null ? Number(g._lx) : ax,
-              ly: hasGeo && g._ly != null ? Number(g._ly) : ay,
-              dragged: hasGeo ? !!g._dragged : false,
-              fi: FIELDS.length,
-              vals: {
-                월일: String(g['월일'] ?? ''),
-                품목코드: String(g['품목코드'] ?? ''),
-                품목: String(g['품목'] ?? ''),
-                규격: String(g['규격'] ?? ''),
-                수량: String(g['수량'] ?? ''),
-                단가: String(g['단가'] ?? ''),
-                비고: String(g['비고'] ?? ''),
-              },
-              // 단가 '한·영 합계' 내역 복원(각주).
-              ...(g._sumParts && typeof g._sumParts === 'object'
-                ? { sumParts: g._sumParts as Pin['sumParts'] }
-                : {}),
-              // 도장비 합치기 요약핀이면 보관된 개별 원자 복원(있을 때만).
-              ...(Array.isArray(g._dojangParts)
-                ? { _dojangParts: g._dojangParts as Record<string, string>[] }
-                : {}),
-              // 행 합치기로 만든 행이면 합치기 전 원본 행 복원(되돌리기용).
-              ...(g._qtyFixed ? { qtyFixed: true } : {}),
-              ...(Array.isArray(g._mergeParts) && g._mergeParts.length
-                ? { _mergeParts: g._mergeParts as Pin[] }
-                : {}),
-            };
-          });
-          setPins(restored);
+          // 저장된 핀 위치(_ax…)가 있으면 원위치로, 없으면(옛 저장본) 좌상단 계단식 폴백.
+          setPins(estGridToPins(est.estimate.grid));
         }
         // 이지폼 저장 자동반영 미리보기 — 저장본 대신 이지폼 줄(추가된 줄 포함)로 표를 채워 보여준다(저장 안 함).
         if (alive && efPreviewRef.current) applyEasyformRows(efPreviewRef.current.rows, 'replace');
