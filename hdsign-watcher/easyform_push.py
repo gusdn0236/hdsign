@@ -491,7 +491,7 @@ def apply(body: dict, progress) -> dict:
             break
         _close(main, f)
     if not form:
-        raise Stop("그 사이 이지폼 명세서 내용이 바뀌었어요. 다시 [이지폼 명세서 수정]을 눌러주세요.")
+        raise Stop("그 사이 이지폼 명세서 내용이 바뀌었어요. 다시 [이지폼에 적용하기]를 눌러주세요.")
     saved = False
     try:
         plan = make_plan(cur, target)

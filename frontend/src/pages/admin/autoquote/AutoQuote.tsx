@@ -3034,7 +3034,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     }
   };
 
-  // ---- [✏️ 이지폼 명세서 수정] — 이미 이지폼에 있는 명세서(초록 '명세서작성완료')를 찾아 바뀐 줄만 고친다 ----
+  // ---- [✏️ 이지폼에 적용하기] — 이미 이지폼에 있는 명세서(초록 '명세서작성완료')를 찾아 바뀐 줄만 고친다 ----
   // 사용자 원칙(2026-11-23): 마지막에 저장 누른 쪽이 덮어쓴다. 이지폼엔 바뀐 줄만(한 줄 추가면 그 한 줄만).
   // 1) 홈페이지 저장 → 2) 워처 push_read: 지문(발행일·합계)으로 그날 하루치 목록에서 열어 읽고 비교 → 3) 바뀔 내용 확인
   // → 4) push_apply: 다시 열어 그대로인지 확인 → 고치기 → 다시 읽어 홈페이지와 같을 때만 [저장] → 5) 지문 갱신.
@@ -5014,7 +5014,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                 disabled={efBusy}
                 title="이지폼에 이미 있는 이 명세서를 찾아 열어서, 홈페이지에서 바뀐 줄만 고치고 저장해요"
               >
-                {efBusy ? '이지폼 고치는 중…' : '✏️ 이지폼 명세서 수정'}
+                {efBusy ? '이지폼에 적용 중…' : '✏️ 이지폼에 적용하기'}
               </button>
             ) : (
               <button
