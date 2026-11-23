@@ -2057,8 +2057,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     note.configure(bg=accent)  # 테두리 색
     note_in = tk.Frame(note, bg="#ffffff", padx=int(40 * s), pady=int(30 * s), cursor="hand2")
     note_in.pack(fill="both", expand=True, padx=int(4 * s), pady=int(4 * s))
-    note_title = tk.Label(note_in, text="", font=("맑은 고딕", int(22 * s), "bold"), fg="#111827", bg="#ffffff",
-                          cursor="hand2")
+    note_title = tk.Label(note_in, text="", font=("맑은 고딕", int(20 * s), "bold"), fg="#111827", bg="#ffffff",
+                          cursor="hand2", wraplength=int(640 * s), justify="center")
     note_title.pack(anchor="center")
     note_sub = tk.Label(note_in, text="", font=("맑은 고딕", int(13 * s)), fg="#4b5563", bg="#ffffff",
                         cursor="hand2", wraplength=int(520 * s), justify="center")
