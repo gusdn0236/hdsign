@@ -25,9 +25,10 @@ export async function learnFromLists(
   }
   const items: { orderId: number; efDate: string; efTotal: string; efClient?: string; efBiz?: string }[] = [];
   for (const k of keys) {
-    let rows = byKey.get(`${k.date}|${dig(k.total)}`) || [];
-    // 같은 날·같은 합계가 여럿이면 홈페이지 거래처와 이름이 비슷한 것만
-    if (rows.length > 1) rows = rows.filter((r) => clientSim(k.client, r.client) >= 0.6);
+    // 0원은 짝짓지 않음 — 같은 날 0원 명세서가 다른 거래처 것이어도 붙어 버림(2026-11-24: 건화 주문이 나우그래픽 0원에 붙음)
+    if (!Number(dig(k.total))) continue;
+    // 같은 날·같은 합계라도 **홈페이지 거래처와 이름이 비슷한 것만**(한 건뿐이어도) — 날짜·합계만으로는 남의 명세서일 수 있음
+    const rows = (byKey.get(`${k.date}|${dig(k.total)}`) || []).filter((r) => clientSim(k.client, r.client) >= 0.6);
     const kinds = new Set(rows.map((r) => `${r.biz}|${r.bizNo}`));
     if (!rows.length || kinds.size !== 1) continue; // 애매하면 안 적음
     const r = rows[0];
