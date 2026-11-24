@@ -757,7 +757,7 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
                 raise Stop(f"{date} 명세서를 닫을 때 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
 
         try:
-            for it in its:
+            for it in _locked_items(its, progress):
                 _pause_point(progress)
                 if _aborted():
                     raise Stop("정지했어요.")
@@ -784,14 +784,7 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
                     date, tot = _form_header(form, want)
                     res.update(date=date, total=tot)
                     if date == it.get("date") and _digits(tot) == _digits(want):
-                        ef.ef_busy("이지폼 칸을 읽는 중이에요. 잠시만 기다려 주세요.")
-                        ef.ef_guard_start()  # 칸 읽는 동안만 화면 가림 + 마우스·키보드 잠금(사용자 2026-11-24)
-                        try:
-                            rows = _read_form(form)
-                        finally:
-                            ef.ef_guard_stop()
-                            ef.ef_busy(None)
-                        res.update(ok=True, rows=rows, message="")
+                        res.update(ok=True, rows=_read_form(form), message="")
                         close_form(form, date)
                         break
                     close_form(form, date)
@@ -1095,10 +1088,25 @@ def _stamp_row_fast(main, form, it: dict, nos: list, text: str) -> dict:
     return res
 
 
+def _locked_items(items, progress):
+    """명세서 한 건씩 — 그 건을 열고·읽고(적고)·닫는 동안만 화면 가림 + 마우스·키보드 잠금(사용자 2026-11-24).
+    건과 건 사이(일시정지·정지 확인)는 풀려 있다(풀기는 0.5초 늦춰 연달아 할 때 깜빡이지 않게 — easyform_push._lock_*)."""
+    import easyform_push as P
+    for x in items:
+        _pause_point(progress)
+        if _aborted():
+            raise Stop("정지했어요.")
+        P._lock_on()
+        try:
+            yield x
+        finally:
+            P._lock_off()
+
+
 def _stamp_items(items: list, progress, on_result) -> None:
     """items: [{key, biz, idx, date, total, nos:[주문번호], row?}] — 목록에서 그 명세서를 열어 비고에 적고 저장."""
     mains = {m["biz"]: m for m in _mains()}
-    for n, it in enumerate(items):
+    for n, it in enumerate(_locked_items(items, progress)):
         _pause_point(progress)
         if _aborted():
             raise Stop("정지했어요.")
@@ -1141,13 +1149,7 @@ def _stamp_items(items: list, progress, on_result) -> None:
             if date != it.get("date") or _digits(tot) != _digits(want_total):
                 res["message"] = f"목록이 바뀌어서 다른 명세서({date} {tot}원)가 열렸어요 — 안 적었어요"
             else:
-                ef.ef_busy("이지폼 비고에 주문번호를 적는 중이에요. 잠시만 기다려 주세요.")
-                ef.ef_guard_start()  # 비고 적는 동안만 화면 가림 + 마우스·키보드 잠금(사용자 2026-11-24)
-                try:
-                    res.update(_stamp_form(main, form, it))
-                finally:
-                    ef.ef_guard_stop()
-                    ef.ef_busy(None)
+                res.update(_stamp_form(main, form, it))
         finally:
             # 저장했으면 그냥 닫힘, 저장 안 했으면 ESC = 변경 버림(실측). 확인창이 떠 있으면 아무것도 안 누름.
             # ESC 는 **우리가 연 창(form)에만** — 사람이 열어 둔 명세서엔 절대 안 보냄.
@@ -1222,6 +1224,11 @@ def _run(phase: str, jid: int, body: dict) -> None:
         ok, msg = False, f"오류: {e}"
     finally:
         watch_stop.set()
+        try:
+            import easyform_push
+            easyform_push._lock_release_now()  # 남은 칸 잠금·가림이 있으면 바로 풂
+        except Exception:  # noqa: BLE001
+            logging.exception("이지폼 잠금 풀기 실패")
         with _LOCK:
             if _JOB["id"] == jid:
                 _JOB.update(state="done" if ok else "error", message=msg)
