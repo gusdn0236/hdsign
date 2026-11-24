@@ -562,8 +562,14 @@ export default function PriceFinder({
           <span className="pf-kwedit">✎ 키워드 고치기</span>
         </button>
       )}
-      {onClose && (
-        <button type="button" className="efb-x pf-close-all" onClick={onClose} aria-label="단가찾아보기 닫기" title="단가찾아보기 닫기">
+      {(onClose || detail != null) && (
+        <button
+          type="button"
+          className="pf-close"
+          onClick={() => (detail != null ? setDetail(null) : onClose?.())}
+          aria-label={detail != null ? '이 명세서 닫기' : '단가찾아보기 닫기'}
+          title={detail != null ? '이 명세서 닫고 목록으로' : '단가찾아보기 닫기'}
+        >
           ✕
         </button>
       )}
@@ -776,15 +782,6 @@ export default function PriceFinder({
             if (cur.item.kind === 'past' && ph) tinyThumb(ph).then((t) => t && scrap.patch(cur.item.key, { thumb: t }));
           }}
         />
-        <button
-          type="button"
-          className="pf-detail-close"
-          onClick={() => setDetail(null)}
-          aria-label="이 명세서 닫기"
-          title="이 명세서만 닫고 목록으로"
-        >
-          ✕
-        </button>
       </div>
       <ScrapViewer token={token} item={cur.item} data={cur.data || undefined} />
     </div>
