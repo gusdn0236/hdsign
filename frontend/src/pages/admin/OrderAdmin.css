@@ -2914,15 +2914,9 @@
 /* 발주관리 페이지에서는 페이지 스크롤바 노출 — App.css 전역 숨김(>860px) 을 이 페이지에 한해 해제.
    :has() 로 해당 페이지가 마운트된 동안만 적용되도록 스코프. */
 html:has(.order-admin-page) {
-  background: #f2f4f7;
   scrollbar-width: auto;
   -ms-overflow-style: auto;
 }
-/* 관리자 작업 화면 바탕 = 연회색 → 흰 카드·흰 패널이 바탕에서 또렷이 떠 보이게 (2026-11-24) */
-html:has(.order-admin-page) body {
-  background: #f2f4f7;
-}
-
 html:has(.order-admin-page)::-webkit-scrollbar {
   display: initial;
   width: 14px;
@@ -3856,26 +3850,26 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   overflow: visible;
 }
 .order-card.order-card--v2.oc2-st-done {
-  background: #f1faf4;
-  border-color: #c9ead6;
+  background: #e6f6ec;
+  border-color: #b6e2c6;
 }
 .order-card.order-card--v2.oc2-st-draft {
   background: #fffbea;
   border-color: #f2e2b3;
 }
-.order-card.order-card--v2.oc2-st-done:hover { border-color: #b4e0c5; }
+.order-card.order-card--v2.oc2-st-done:hover { border-color: #9fd6b4; }
 .order-card.order-card--v2.oc2-st-draft:hover { border-color: #ead39a; }
-.oc2-st-done .oc2-pill--done { background: #dcf3e5; }
+.oc2-st-done .oc2-pill--done { background: #cdeedb; }
 .oc2-st-draft .oc2-pill--draft { background: #fdeccb; }
 .oc2-st-done .oc2-ib,
-.oc2-st-done .oc2-ib.kko-share-btn { background: #e4f3ea; }
+.oc2-st-done .oc2-ib.kko-share-btn { background: #d6efdf; }
 .oc2-st-done .oc2-ib:hover:not(:disabled),
-.oc2-st-done .oc2-ib.kko-share-btn:hover:not(:disabled) { background: #d3ecdd; }
+.oc2-st-done .oc2-ib.kko-share-btn:hover:not(:disabled) { background: #c6e7d2; }
 .oc2-st-draft .oc2-ib,
 .oc2-st-draft .oc2-ib.kko-share-btn { background: #f7efd6; }
 .oc2-st-draft .oc2-ib:hover:not(:disabled),
 .oc2-st-draft .oc2-ib.kko-share-btn:hover:not(:disabled) { background: #f1e5c2; }
-.oc2-st-done .oc2-actions { border-top-color: #dcefe3; }
+.oc2-st-done .oc2-actions { border-top-color: #c9e8d4; }
 .oc2-st-draft .oc2-actions { border-top-color: #f2e8c9; }
 
 .oc2-done-check {
