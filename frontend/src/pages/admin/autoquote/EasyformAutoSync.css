@@ -704,3 +704,13 @@
 .efas-cards .efas-zoombtn {
   z-index: 3;
 }
+
+/* 지시서 고르기 — 제목만 크게, 스크롤은 이 창 안에서만(뒤 홈페이지로 안 넘어감) (2026-11-24) */
+.efas-title.big {
+  font-size: 28px;
+  padding: 6px 0;
+}
+.efas,
+.efas-pick {
+  overscroll-behavior: contain;
+}

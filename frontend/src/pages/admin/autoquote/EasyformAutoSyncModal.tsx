@@ -151,6 +151,16 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const grid = useMemo(() => pairs.map((p) => p.g), [pairs]);
   const sum = useMemo(() => grid.reduce((a, r) => a + (Number(r.공급가액) || 0), 0), [grid]);
 
+  // 이 창이 떠 있는 동안 뒤 홈페이지는 스크롤 안 되게(끝까지 내리면 뒤가 따라 내려가던 것 — 사용자 2026-11-24)
+  useEffect(() => {
+    const b = document.body;
+    const old = b.style.overflow;
+    b.style.overflow = 'hidden';
+    return () => {
+      b.style.overflow = old;
+    };
+  }, []);
+
   // 직원은 이지폼을 보고 있다 → 이 탭 제목에 표시를 달고 워처에게 이 창을 앞으로 가져오게 한다.
   useEffect(() => {
     const old = document.title;
@@ -371,7 +381,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const choosing = phase === 'pick' || (phase === 'added' && other); // 지시서 카드 목록을 보여줄 때
   const title =
     phase === 'pick'
-      ? '어느 지시서의 명세서인가요?'
+      ? '어느 지시서인지 선택해주세요'
       : phase === 'added'
         ? `추가한 ${added?.count}줄은 어느 지시서 건가요?`
         : phase === 'done' || phase === 'error'
@@ -425,11 +435,13 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
       <div className="efas-card">
         <header className="efas-head">
           <div>
-            <p className="efas-kicker">
-              이지폼 명세서{who ? ` · ${who}` : ''} · {fmtDay(ev.date)}
-              {more > 0 && <span className="efas-more">+{more}건 대기</span>}
-            </p>
-            <h2 className="efas-title">{title}</h2>
+            {phase !== 'pick' && (
+              <p className="efas-kicker">
+                이지폼 명세서{who ? ` · ${who}` : ''} · {fmtDay(ev.date)}
+                {more > 0 && <span className="efas-more">+{more}건 대기</span>}
+              </p>
+            )}
+            <h2 className={'efas-title' + (phase === 'pick' ? ' big' : '')}>{title}</h2>
           </div>
           <button type="button" className="efas-x" onClick={onClose} disabled={phase === 'saving'} aria-label="닫기">
             ✕
@@ -453,7 +465,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               </tbody>
             </table>
           </section>
-        ) : (
+        ) : phase === 'pick' ? null : (
           <section className="efas-stmt" aria-label="이지폼 명세서">
             <div className="efas-stmt-meta">
               <span className="efas-client">{ev.client || '거래처 못 읽음'}</span>
@@ -504,7 +516,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           <section className="efas-pick">
             <div className="efas-tools">
               <span className="efas-hint">
-                {phase === 'added' && added ? (
+                {phase === 'pick' ? null : phase === 'added' && added ? (
                   <>
                     <b>{added.base.clientCompanyName || '같은 거래처'}</b> 지시서 · 명세서 날짜와 가까운 순
                   </>
