@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy": "tsc --noEmit && vite build && gh-pages -d dist",
+    "deploy": "tsc --noEmit && vite build && gh-pages -d dist --dotfiles",
     "generate-og": "node scripts/generate-og.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
