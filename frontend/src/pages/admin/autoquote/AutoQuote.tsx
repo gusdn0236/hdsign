@@ -3019,13 +3019,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         unit_price: r.unit_price,
         remark: r.remark,
       }));
+      // 안내(2단계 + 예시 사진)는 화면 오른쪽 아래 워처 안내창에 뜬다(사용자 2026-11-24). 여기는 짧게만.
       const steps =
-        `<div style="font-size:13px;margin-top:10px;line-height:1.9">` +
-        `1. 이지폼에서 해당 예시처럼 화면을 띄워주세요.<br>` +
-        `2. 버튼을 눌러 작성을 시작할게요.</div>` +
-        // 예시 = 새로작성 → 거래처 고른 화면(사용자 2026-11-24 제공)
-        `<img src="/easyform-newfill-example.png" alt="이지폼 새로작성 → 거래처 선택 예시" ` +
-        `style="display:block;width:100%;max-width:520px;margin:12px auto 0;border:1px solid #d4d4d8;border-radius:8px" />`;
+        `<div style="font-size:13px;margin-top:10px;line-height:1.7">화면 <b>오른쪽 아래 안내창</b>을 보고 진행해주세요.</div>`;
       let done: EfBulkResult | null;
       try {
         done = await runEfPush(

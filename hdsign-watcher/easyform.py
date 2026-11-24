@@ -1994,11 +1994,28 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         manual["holder"] = holder
         busy["v"] = False
         mode["v"] = "manual"
-        text = ("1. 이지폼에서 새로작성을 눌러주세요.\n2. 거래처를 직접 선택해주세요.\n"
-                "3. 아래 버튼을 눌러 작성을 시작할게요.")
+        # 2단계 안내 + 예시 사진(새로작성 → 거래처 고른 화면) — 사진 때문에 창을 넓힌다(사용자 2026-11-24)
+        text = "1. 이지폼에서 해당 예시처럼 화면을 띄워주세요.\n2. 아래 버튼을 눌러 작성을 시작할게요."
         if note:
             text += f"\n⚠ {note}"
-        set_info("이지폼 새로작성", text)
+        img = manual.get("img")
+        if img is None:
+            try:
+                import easyform_example_img as ex
+                img = tk.PhotoImage(data=ex.PNG_B64)
+                if s >= 1.75:  # 화면 배율 200% 쯤이면 두 배로(작아 보이지 않게)
+                    img = img.zoom(2, 2)
+            except Exception:  # noqa: BLE001
+                logging.exception("이지폼 예시 사진 못 띄움")
+                img = False
+            manual["img"] = img
+        ww = max(w, (img.width() if img else 0) + int(44 * s))
+        set_info("이지폼 새로작성", text, ww=ww)
+        if img:
+            tk.Label(info_box, image=img, bg="#ffffff", bd=1, relief="solid").pack(anchor="w", pady=(int(6 * s), 0))
+            win.update_idletasks()
+            hh = win.winfo_reqheight()
+            win.geometry(f"{ww}x{hh}+{max(0, sw - ww - int(28 * s))}+{max(0, sh - hh - int(72 * s))}")
         btn.config(text="작성 시작하기 ▶", state="normal", bg=accent)
         win.deiconify()
         win.lift()
