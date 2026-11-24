@@ -47,7 +47,22 @@ import threading as _th
 
 _LK = _th.Lock()
 _LOCK = {"depth": 0, "on": False, "gen": 0}
-_LOCK_TEXT = "이지폼 칸을 읽고 쓰는 중이에요. 잠시만 기다려 주세요."
+# 화면 가림 문구 — 작업마다 실제로 하는 일만(사용자 2026-11-24: '읽고 쓰는 중'은 불안하게 함). 읽기만 하면 '내용은 안 바뀜'.
+T_FIND = "이지폼에서 명세서를 찾고 있어요.\n이지폼 내용은 바뀌지 않아요."
+T_APPLY = "확인하신 내용만 이지폼에 적용하고 있어요."
+T_NEW = "이지폼에 새 명세서를 작성하고 있어요."
+T_READ = "이지폼 명세서를 읽고 있어요.\n이지폼 내용은 바뀌지 않아요."
+T_STAMP = "이지폼 비고에 주문번호만 적고 있어요."
+_TEXT = {"text": T_FIND, "sub": None}
+
+
+def _lock_text(text: str, sub: "str | None" = None) -> None:
+    """지금 작업의 가림 문구. 이미 가려져 있으면 바로 바꿔 보여 줌."""
+    with _LK:
+        _TEXT.update(text=text, sub=sub)
+        on = _LOCK["on"]
+    if on:
+        ef.ef_busy(text, sub)
 
 
 def _lock_on() -> None:
@@ -57,7 +72,7 @@ def _lock_on() -> None:
         start = not _LOCK["on"]
         _LOCK["on"] = True
     if start:
-        ef.ef_busy(_LOCK_TEXT)
+        ef.ef_busy(_TEXT["text"], _TEXT["sub"])
         ef.ef_guard_start()
 
 
@@ -1299,6 +1314,7 @@ def push_confirm(body: dict, progress) -> dict:
         _go_home()  # 아니오 = 아무것도 안 바꾸고 홈페이지 화면으로(사용자 2026-11-23)
         return {**base, "cancelled": True}
     # 적용(칸 고치기·저장)은 _apply_on_form 이 화면을 가리고 입력을 잠근 채로(ESC = 중단)
+    _lock_text(T_APPLY)
     res = _apply_on_form(main, form, raw, target, info["date"], info["total"], progress, plan=plan)
     _lock_release_now()
     _go_home()
@@ -1338,6 +1354,7 @@ def run(phase: str, body: dict, progress, on_result) -> str:
                 return
 
     threading.Thread(target=esc_relay, daemon=True).start()
+    _lock_text(T_NEW if phase in ("new_fill", "manual_fill") else T_APPLY if phase == "push_apply" else T_FIND)
     try:
         return _run(phase, body, progress, on_result)
     finally:

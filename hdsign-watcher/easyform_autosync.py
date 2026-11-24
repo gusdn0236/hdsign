@@ -346,9 +346,9 @@ def _ask_reflect(form) -> bool:
                          "[예]를 누르면 명세서를 읽는 동안(2~3초) 마우스가 잠깁니다.", "홈페이지 반영")
 
 
-def _overlay(text: "str | None") -> None:
+def _overlay(text: "str | None", sub: "str | None" = None) -> None:
     try:
-        ef._EF_UI_QUEUE.put(("auto_overlay", text) if text else ("auto_overlay_hide",))
+        ef._EF_UI_QUEUE.put(("auto_overlay", text, sub) if text else ("auto_overlay_hide",))
     except Exception:
         pass
 
@@ -372,7 +372,7 @@ def _read_saved(main, form) -> "dict | None":
     except Exception:
         logging.exception("명세서 창 기준 위치 이동 실패(그 자리에서 읽음)")
     date, total = bulk._form_header(form)
-    _overlay("명세서를 읽는 동안 마우스가 잠깁니다.")
+    _overlay("이지폼 명세서를 읽고 있어요.\n이지폼 내용은 바뀌지 않아요.")
     ef.ef_guard_start()
     done = threading.Event()
 
@@ -398,7 +398,7 @@ def _read_saved(main, form) -> "dict | None":
             try:
                 _res, edits, _row = _plan(rows, nos, True, None)
                 if edits:
-                    _overlay("주문번호를 맨 위 줄 비고로 옮기는 동안 마우스가 잠깁니다.")
+                    _overlay("이지폼 비고의 주문번호만 맨 위 줄로 옮기고 있어요.")
                     r2 = _apply(main, form, edits)
                     if r2.get("ok"):
                         _commit_rows(rows, edits)
@@ -885,7 +885,7 @@ def handle_stamp(body: dict) -> dict:
         res, edits, row = _plan(rows, nos, bool((body or {}).get("move")),
                                 want_row if isinstance(want_row, int) else None)
         if edits:
-            _overlay("이지폼 비고에 주문번호를 적는 동안 마우스가 잠깁니다.")
+            _overlay("이지폼 비고에 주문번호만 적고 있어요.", ef.EF_SUB_NOESC)
             ef.ef_guard_start()
             try:
                 bulk._ABORT.clear()

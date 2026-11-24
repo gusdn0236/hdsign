@@ -1092,6 +1092,9 @@ def _locked_items(items, progress):
     """명세서 한 건씩 — 그 건을 열고·읽고(적고)·닫는 동안만 화면 가림 + 마우스·키보드 잠금(사용자 2026-11-24).
     건과 건 사이(일시정지·정지 확인)는 풀려 있다(풀기는 0.5초 늦춰 연달아 할 때 깜빡이지 않게 — easyform_push._lock_*)."""
     import easyform_push as P
+    with _LOCK:
+        stamp = _JOB.get("phase") == "stamp"
+    P._lock_text(P.T_STAMP if stamp else P.T_READ, ef.EF_SUB_NOESC)  # 일괄은 ESC 정지 없음(실수 방지)
     for x in items:
         _pause_point(progress)
         if _aborted():

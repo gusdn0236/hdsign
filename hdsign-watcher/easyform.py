@@ -1488,10 +1488,15 @@ def ef_manual_hide(holder: dict) -> None:
         _EF_UI_QUEUE.put(("manual_hide", holder))
 
 
-def ef_busy(text: "str | None") -> None:
-    """작업 중 화면 잠금 안내(text) / 끄기(None) — 자동기입 때 쓰는 그 판."""
+# 화면 가림 판 아래 작은 글씨(사용자 2026-11-24 — 무엇을 하는지만, '쓰는 중' 같은 말로 불안하게 하지 않게)
+EF_SUB_ESC = "끝날 때까지 잠시 마우스·키보드를 멈춰 둘게요. (멈추려면 ESC)"
+EF_SUB_NOESC = "끝날 때까지 잠시 마우스·키보드를 멈춰 둘게요."
+
+
+def ef_busy(text: "str | None", sub: "str | None" = None) -> None:
+    """작업 중 화면 잠금 안내(text, 아래 작은 글씨 sub) / 끄기(None) — 자동기입 때 쓰는 그 판."""
     if _EF_UI_READY[0]:
-        _EF_UI_QUEUE.put(("auto_overlay", text) if text else ("auto_overlay_hide",))
+        _EF_UI_QUEUE.put(("auto_overlay", text, sub) if text else ("auto_overlay_hide",))
 
 
 def ef_notice(title: str, sub: str = "", tag: "tuple | None" = None) -> None:
@@ -1664,14 +1669,15 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     tk.Label(run_frame, text="🔒", font=("Segoe UI Emoji", int(26 * s)),
              fg="#111827", bg="#ffffff").pack(pady=(int(22 * s), int(6 * s)))
     run_lbl = tk.Label(run_frame, text="자동입력 중에는 마우스가 잠깁니다.", font=("맑은 고딕", int(14 * s), "bold"),
-                       fg="#111827", bg="#ffffff")
+                       fg="#111827", bg="#ffffff", justify="center")
     run_lbl.pack()
     # 찾기(순회) 중 진행 — 'MM월 DD일까지 총 n개의 명세서를 읽고 있습니다.' 보고 안 나올 것 같으면 ESC 로 멈추게.
     prog_lbl = tk.Label(run_frame, text="", font=("맑은 고딕", int(13 * s), "bold"),
                         fg="#c2410c", bg="#ffffff")
     prog_lbl.pack(pady=(int(8 * s), 0))
-    tk.Label(run_frame, text="멈추려면 ESC", font=("맑은 고딕", int(11 * s)),
-             fg="#6b7280", bg="#ffffff").pack(pady=(int(8 * s), 0))
+    esc_lbl = tk.Label(run_frame, text=EF_SUB_ESC, font=("맑은 고딕", int(11 * s)),
+                       fg="#6b7280", bg="#ffffff")
+    esc_lbl.pack(pady=(int(8 * s), int(16 * s)))
 
     # ── 키워드 판(오른쪽 위) — 키워드로 찾기 때만: 찾는 키워드 + 맞은 명세서가 나올 때마다 한 줄씩.
     #    원하는 게 보이면 ESC → 지금까지 읽은 것 중에서 홈페이지에서 고른다.
@@ -1828,9 +1834,13 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     busy = {"v": False}
     mode = {"v": "fill"}  # 코너 버튼창 용도: fill(웹→이지폼 입력) / pull(이지폼→웹 가져오기)
 
-    def show_overlay(text="자동입력 중에는 마우스가 잠깁니다."):
+    def show_overlay(text="자동입력 중에는 마우스가 잠깁니다.", sub=None):
         run_lbl.config(text=text)
+        esc_lbl.config(text=sub or EF_SUB_ESC)
         prog_lbl.config(text="")
+        panel.update_idletasks()  # 두 줄 문구여도 다 보이게 높이 맞춤
+        hh = max(ph, run_frame.winfo_reqheight())
+        panel.geometry(f"{pw}x{hh}+{(sw - pw) // 2}+{(sh - hh) // 2}")
         run_frame.pack(fill="both", expand=True)
         done_frame.pack_forget()
         dim.deiconify()
@@ -2398,7 +2408,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                         ask_answer(False)
                 elif cmd[0] == "auto_overlay":  # 이지폼 저장 자동반영(easyform_autosync) — 읽는/적는 동안 잠금 안내
                     if not busy["v"]:
-                        show_overlay(cmd[1])
+                        show_overlay(cmd[1], cmd[2] if len(cmd) > 2 else None)
                 elif cmd[0] == "auto_overlay_hide":
                     if not busy["v"]:
                         hide_overlay()
