@@ -3021,9 +3021,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       }));
       const steps =
         `<div style="font-size:13px;margin-top:10px;line-height:1.9">` +
-        `1. 이지폼에서 <b>새로작성</b>을 눌러주세요.<br>` +
-        `2. <b>거래처</b>를 직접 선택해주세요.<br>` +
-        `3. 화면 오른쪽 아래 <b>[작성 시작하기 ▶]</b>를 눌러 작성을 시작할게요.</div>`;
+        `1. 이지폼에서 해당 예시처럼 화면을 띄워주세요.<br>` +
+        `2. 버튼을 눌러 작성을 시작할게요.</div>` +
+        // 예시 = 새로작성 → 거래처 고른 화면(사용자 2026-11-24 제공)
+        `<img src="/easyform-newfill-example.png" alt="이지폼 새로작성 → 거래처 선택 예시" ` +
+        `style="display:block;width:100%;max-width:520px;margin:12px auto 0;border:1px solid #d4d4d8;border-radius:8px" />`;
       let done: EfBulkResult | null;
       try {
         done = await runEfPush(
