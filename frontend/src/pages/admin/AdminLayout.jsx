@@ -11,6 +11,7 @@ import DemoButtonLock from '../../components/common/DemoButtonLock.jsx';
 import { isDemoToken } from '../../utils/demoGuard';
 import ScrapDrawer from './scrap/ScrapDrawer.tsx';
 import EasyformAutoSync from './autoquote/EasyformAutoSync.tsx';
+import HdProgramDownload from './HdProgramDownload.jsx';
 import './AdminLayout.css';
 
 const AdminLayout = () => {
@@ -41,6 +42,8 @@ const AdminLayout = () => {
             <EasyformAutoSync token={token} />
             {isDemo && <DemoBanner />}
             {isDemo && <DemoButtonLock />}
+            {/* 맨 오른쪽 위: 사무실용·현장용 프로그램 설치 파일 받기 */}
+            {!isDemo && <HdProgramDownload />}
             <Banner
                 image={supportBannerImg}
                 title="관리자 포털"
