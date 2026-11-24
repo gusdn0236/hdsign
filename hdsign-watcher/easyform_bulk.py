@@ -848,8 +848,10 @@ def _row_cells(grid, row: int) -> dict:
     ref = ef.EF_GRID_REF
     cells = [[(c[0] - ref[0], c[1] - ref[1]) for c in r] for r in ef.EF_CELLS]
     cap = len(cells)
-    _u.SendMessageW(grid, 0x0115, 6, None)  # SB_TOP
-    time.sleep(0.08)
+    vp = ef._ef_vpos(grid)
+    if row >= cap or not vp or vp[0] != 0:  # 이미 맨 위면 다시 올리지 않음
+        _u.SendMessageW(grid, 0x0115, 6, None)  # SB_TOP
+        time.sleep(0.08)
     if row < cap:
         rc = cells[row]
     else:

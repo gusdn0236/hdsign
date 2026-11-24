@@ -502,10 +502,11 @@ class _Form:
         if col in NUM:
             val = val.replace(",", "")
         b._u.SendMessageW(e, 0x000C, 0, ctypes.c_wchar_p(val))  # WM_SETTEXT
-        time.sleep(0.08)
+        time.sleep(0.04)
         if enter:
             b._key(e, 0x0D)  # 다음 칸으로(수량→단가, 단가→재계산). 비고 칸엔 절대 Enter 안 함(새 줄 생김).
-            time.sleep(0.3)
+            # 예전 자동기입(칸마다 ~0.2초) 정도로만 — 더 줄이지 않음(사용자 2026-11-24). 끝에 다시 읽어 확인
+            time.sleep(0.2 if col == "unit_price" else 0.1)
         self._check()
 
     def write_row(self, row: int, to: dict, cols=None, remark: "str | None" = None) -> None:
@@ -522,7 +523,7 @@ class _Form:
             self.put(row, "remark", remark, enter=False)
             ix, iy = b._row_cells(self.grid, row)["item"]
             b._click(self.grid, "품목", ix, iy)  # 같은 줄 다른 칸 = 비고 확정(Enter 금지)
-            time.sleep(0.3)
+            time.sleep(0.15)
             self._check()
 
     def _panel_click(self, rel, what: str) -> None:
@@ -572,7 +573,7 @@ class _Form:
             raise Stop("'현재 □ 줄' 칸에 2를 못 넣어서 멈췄어요.")
         for _ in range(n):
             self._panel_click(_INSERT_REL, "삽입")
-            time.sleep(0.3)
+            time.sleep(0.15)
             self._check()
         e = self.editor(n, "item")  # 끼운 뒤 줄 수 확인 — n+1 번째 줄이 있어야
         if (b._txt(e) or "").strip():
