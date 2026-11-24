@@ -426,16 +426,54 @@ try:
             if hK:
                 _user32.UnhookWindowsHookEx(hK)
 
-        def ef_guard_start() -> None:
+        # 겹쳐 불러도 안전하게(2026-11-24) — 예전엔 두 번 켜면 두 번째만 꺼져 훅이 남을 수 있었음. 횟수로 센다.
+        _EF_GUARD_DEPTH = [0]
+        _EF_GUARD_LOCK = threading.Lock()
+
+        def _ef_guard_on() -> None:
             _EF_ABORT.clear()
             threading.Thread(target=_ef_guard_thread, daemon=True).start()
             time.sleep(0.06)  # 훅 설치 + 메시지 큐 생성 잠깐 대기
 
-        def ef_guard_stop() -> None:
+        def _ef_guard_off() -> None:
             global _EF_GUARD_TID
             if _EF_GUARD_TID:
                 _user32.PostThreadMessageW(_EF_GUARD_TID, _WM_QUIT, 0, 0)
                 _EF_GUARD_TID = 0
+
+        def ef_guard_start() -> None:
+            with _EF_GUARD_LOCK:
+                _EF_GUARD_DEPTH[0] += 1
+                first = _EF_GUARD_DEPTH[0] == 1
+            if first:
+                _ef_guard_on()
+
+        def ef_guard_stop() -> None:
+            with _EF_GUARD_LOCK:
+                if _EF_GUARD_DEPTH[0] <= 0:
+                    return
+                _EF_GUARD_DEPTH[0] -= 1
+                last = _EF_GUARD_DEPTH[0] == 0
+            if last:
+                _ef_guard_off()
+
+        def ef_guard_suspend() -> int:
+            """사람이 답해야 할 때(확인 카드·[작성 시작하기]) 잠금을 잠깐 풂 → 돌려받은 횟수로 ef_guard_resume."""
+            with _EF_GUARD_LOCK:
+                n = _EF_GUARD_DEPTH[0]
+                _EF_GUARD_DEPTH[0] = 0
+            if n:
+                _ef_guard_off()
+            return n
+
+        def ef_guard_resume(n: int) -> None:
+            if n <= 0:
+                return
+            with _EF_GUARD_LOCK:
+                first = _EF_GUARD_DEPTH[0] == 0
+                _EF_GUARD_DEPTH[0] += n
+            if first:
+                _ef_guard_on()
 
         def ef_aborted() -> bool:
             return _EF_ABORT.is_set()
@@ -1419,15 +1457,19 @@ def ef_ask(title: str, sub: str = "", lines: "list | None" = None, tag: "tuple |
     """오른쪽 맨 앞 확인 카드(네=Enter / 아니오=Esc)를 띄우고 답을 기다린다. timeout 이면 아니오.
     tk 화면이 없으면 기본 예/아니오 창."""
     import threading
-    if not _EF_UI_READY[0]:
-        body = "\n".join([sub] + list(lines or []))
-        return ef_confirm(f"{title}\n\n{body}", "HD사인 이지폼")
-    holder = {"ev": threading.Event(), "ans": False}
-    _EF_UI_QUEUE.put(("ask2", holder, title, sub, list(lines or []), tag, yes, no))
-    if not holder["ev"].wait(timeout):
-        _EF_UI_QUEUE.put(("ask2_cancel", holder))
-        return False
-    return bool(holder["ans"])
+    held = ef_guard_suspend()  # 카드를 눌러야 하니 입력 잠금은 잠깐 풂(답하면 다시 잠금)
+    try:
+        if not _EF_UI_READY[0]:
+            body = "\n".join([sub] + list(lines or []))
+            return ef_confirm(f"{title}\n\n{body}", "HD사인 이지폼")
+        holder = {"ev": threading.Event(), "ans": False}
+        _EF_UI_QUEUE.put(("ask2", holder, title, sub, list(lines or []), tag, yes, no))
+        if not holder["ev"].wait(timeout):
+            _EF_UI_QUEUE.put(("ask2_cancel", holder))
+            return False
+        return bool(holder["ans"])
+    finally:
+        ef_guard_resume(held)
 
 
 def ef_manual_show(holder: dict, note: str = "") -> None:

@@ -3124,7 +3124,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         ? `<div class="aq-efjob-n">${n[1]} <span>/ ${n[2]}</span></div>`
         : p
           ? `<div class="aq-efjob-p">${escH(p)}</div>`
-          : '')
+          : '') +
+      `<div class="aq-efjob-lock">🔒 끝날 때까지 마우스·키보드가 잠겨요 (멈추려면 ESC)</div>`
     );
   };
   const runEfJob = async (

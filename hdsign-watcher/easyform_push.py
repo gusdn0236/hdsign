@@ -1107,6 +1107,7 @@ def manual_fill(body: dict, progress) -> dict:
         raise Stop("켜져 있는 이지폼이 없어요.")
     note = ""
     asked_client = False
+    held = ef.ef_guard_suspend()  # 사람이 이지폼에서 새로작성·거래처 선택하고 버튼을 눌러야 함 → 기다리는 동안 잠금 풂
     while True:
         holder = {"ev": threading.Event(), "ans": False}
         ef.ef_manual_show(holder, note)
@@ -1115,8 +1116,10 @@ def manual_fill(body: dict, progress) -> dict:
         while not holder["ev"].wait(0.2):
             if b._aborted() or time.time() - t0 > 1800:
                 ef.ef_manual_hide(holder)
+                ef.ef_guard_resume(held)
                 return {"cancelled": True}
         if not holder["ans"]:
+            ef.ef_guard_resume(held)
             return {"cancelled": True}
         found = _new_forms()
         if not found:
@@ -1139,6 +1142,7 @@ def manual_fill(body: dict, progress) -> dict:
             note = "거래처가 아직 안 보여요. 거래처를 선택하고 다시 눌러주세요."
             continue
         break
+    ef.ef_guard_resume(held)  # 버튼 눌렀음 → 다시 잠그고 칸 채우기
     saved = False
     tag = ("주식회사", "#2563eb") if m["biz"] == "corp" else ("개인", "#d97706")
     ef.ef_busy("이지폼에 명세서를 작성하는 중이에요. 잠시만 기다려 주세요.")
@@ -1268,6 +1272,27 @@ def plan_summary(cur_raw: list, target_raw: list) -> dict:
 
 
 def run(phase: str, body: dict, progress, on_result) -> str:
+    """이지폼 칸을 도는 동안 사람 마우스·키보드를 잠근다(사용자 2026-11-24 — 홈페이지 수정 → 이지폼 전달 중 키를 눌렀더니
+    오류). 확인 카드·[작성 시작하기]처럼 사람이 눌러야 할 때만 잠깐 풂(ef_ask·manual_fill). 잠긴 동안 ESC = 정지."""
+    import threading
+    ef.ef_guard_start()
+    done = threading.Event()
+
+    def esc_relay():
+        while not done.wait(0.1):
+            if ef.ef_aborted():
+                b._ABORT.set()
+                return
+
+    threading.Thread(target=esc_relay, daemon=True).start()
+    try:
+        return _run(phase, body, progress, on_result)
+    finally:
+        done.set()
+        ef.ef_guard_stop()
+
+
+def _run(phase: str, body: dict, progress, on_result) -> str:
     if phase == "push_confirm":
         res = push_confirm(body, progress)
         on_result({"key": "push", "ok": True, **res})
