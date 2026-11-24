@@ -1941,6 +1941,13 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           }
         }}
       >
+        {stmtState === "done" && (
+          <span className="oc2-done-check" title="명세서 완료" aria-label="명세서 완료">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 12.5l4 4 8-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+        )}
         <div className="order-card-thumb-wrap">
           <WorksheetThumbnail
             pdfUrl={order.worksheetPdfUrl || null}
@@ -1967,12 +1974,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </span>
               )}
               {typeKey === "quote" && <span className="oc2-chip oc2-chip--quote">견적</span>}
-            </span>
-            {selecting ? (
-              <span className={`order-card-check ${checked ? "is-checked" : ""}`} aria-hidden="true">
-                {checked ? "✓" : ""}
-              </span>
-            ) : order.linkedOrderIds?.length > 1 ? (
+              {/* 묶음 칩은 왼쪽 — 오른쪽 위 모서리는 완료 체크 자리 */}
+              {!selecting && order.linkedOrderIds?.length > 1 && (
               <button
                 type="button"
                 className={"oc2-chip oc2-chip--link" + (linkFilter && linkFilter.includes(order.id) ? " on" : "")}
@@ -2000,6 +2003,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </svg>
                 {order.linkedOrderIds.length}장 묶음
               </button>
+              )}
+            </span>
+            {selecting ? (
+              <span className={`order-card-check ${checked ? "is-checked" : ""}`} aria-hidden="true">
+                {checked ? "✓" : ""}
+              </span>
             ) : null}
           </div>
           {(hasPhotos || hasWorksheetChange) && (
@@ -2073,9 +2082,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               {formatDueDate(order.dueDate, order.deliveryMethod)}
             </span>
           </div>
-          <h3 className="oc2-title">
-            {order.title || (order.requestType === "QUOTE" ? "견적 문의" : "지시서")}
-          </h3>
+          {/* 제목 없으면 대체 글자 없이 칸 자체를 뺀다(빈 공간 최소화). */}
+          {(order.title || order.requestType === "QUOTE") && (
+            <h3 className="oc2-title">{order.title || "견적 문의"}</h3>
+          )}
           <div className="oc2-sub">
             <span className="oc2-num">
               {order.orderNumber}
@@ -2943,7 +2953,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             <aside className="order-preview-info">
               <p className="modal-order-no">{selectedOrder.orderNumber}</p>
               <h3 className="modal-order-title">
-                {selectedOrder.title || (selectedOrder.requestType === "QUOTE" ? "견적 문의" : "지시서")}
+                {selectedOrder.title || (selectedOrder.requestType === "QUOTE" ? "견적 문의" : "")}
               </h3>
 
               {(selectedOrder.hasEstimate || selectedOrder.easyformUploadedAt) && (() => {
