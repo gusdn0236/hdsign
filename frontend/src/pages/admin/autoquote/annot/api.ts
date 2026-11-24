@@ -520,27 +520,30 @@ export async function markEasyformUploaded(
 }
 
 // ---- 매출분석 대시보드 (GET /api/admin/analytics/sales) -------------------
+// 홈페이지에서 이지폼 입력까지 끝낸 명세서만 집계(서버가 30분마다 자동 재집계).
 export interface SalesSummary {
   totalRevenue: number;
-  totalInvoices: number;
+  invoices: number;
   avgInvoice: number;
-  firstYm: string;
-  lastYm: string;
-  latestYm: string;
-  latestRevenue: number;
-  momPct: number | null;
-  latestYear: number;
-  latestYearRevenue: number;
-  yoyPct: number | null;
   clientCount: number;
+  firstDate: string | null; // 2026-11-03
+  lastDate: string | null;
 }
-export interface MonthPoint {
-  ym: string;
+export interface SalesThisMonth {
+  ym: string; // 2026-11
+  throughDay: number;
   revenue: number;
   invoices: number;
+  prevSamePeriod: number; // 지난달 1일~같은 날
+  prevMonthFull: number;
+  vsPrevPct: number | null;
+  todayRevenue: number;
+  todayInvoices: number;
+  weekRevenue: number; // 이번 주 월요일~오늘
 }
-export interface YearPoint {
-  year: number;
+/** key = 날짜(일별) · 주 시작 월요일(주별) · 2026-11(월별) */
+export interface SalesPoint {
+  key: string;
   revenue: number;
   invoices: number;
 }
@@ -555,55 +558,6 @@ export interface ItemStat {
   qty: number;
   count: number;
 }
-export interface MonthAvg {
-  month: number;
-  revenue: number;
-}
-export interface Concentration {
-  top1Pct: number;
-  top5Pct: number;
-  top10Pct: number;
-  hhi: number;
-  pareto80Count: number;
-  pareto80Pct: number;
-}
-export interface ChurnClient {
-  name: string;
-  revenue: number;
-  lastYm: string;
-  inactiveMonths: number;
-  orders: number;
-}
-export interface NewYear {
-  year: number;
-  newClients: number;
-}
-export interface Segment {
-  name: string;
-  clients: number;
-  revenue: number;
-}
-export interface YearPace {
-  year: number;
-  throughMonth: number;
-  ytdRevenue: number;
-  lastYearYtd: number;
-  lastYearFull: number;
-  projectedRevenue: number;
-  projectedYoyPct: number | null;
-  ytdYoyPct: number | null;
-}
-export interface Mover {
-  name: string;
-  current: number;
-  previous: number;
-  delta: number;
-}
-export interface Movers {
-  basis: string;
-  risers: Mover[];
-  fallers: Mover[];
-}
 export interface ClientMonth {
   ym: string;
   revenue: number;
@@ -617,32 +571,36 @@ export interface ClientItem {
 export interface ClientDetail {
   name: string;
   totalRevenue: number;
-  orderCount: number;
-  firstYm: string | null;
-  lastYm: string | null;
-  inactiveMonths: number;
-  segment: string;
+  invoices: number;
+  firstDate: string;
+  lastDate: string;
   monthly: ClientMonth[];
   topItems: ClientItem[];
 }
+export interface RecentInvoice {
+  orderId: number;
+  orderNumber: string;
+  date: string;
+  client: string;
+  revenue: number;
+}
 export interface SalesAnalytics {
+  updatedAt: string; // 2026-11-24T14:30:00 (서버 KST)
+  refreshMinutes: number;
   summary: SalesSummary;
-  monthly: MonthPoint[];
-  yearly: YearPoint[];
+  thisMonth: SalesThisMonth;
+  daily: SalesPoint[]; // 최근 60일(0원 날 포함)
+  weekly: SalesPoint[];
+  monthly: SalesPoint[];
   topClients: NameRevenue[];
+  topClientsMonth: NameRevenue[];
   topItems: ItemStat[];
   materials: NameRevenue[];
-  seasonality: MonthAvg[];
-  concentration: Concentration;
-  churnRisk: ChurnClient[];
-  newClientsByYear: NewYear[];
-  segments: Segment[];
-  yearPace: YearPace;
-  movers: Movers;
   clientDetails: Record<string, ClientDetail>;
+  recent: RecentInvoice[];
 }
 
-/** 매출분석 집계 — 상세 명세서 기반. 미프로비저닝(503)이면 null. */
+/** 매출분석 집계 — 홈페이지 완료 명세서 기반(30분마다 서버 자동 갱신). */
 export async function salesAnalytics(token: string | null | undefined): Promise<SalesAnalytics | null> {
   const res = await fetch(`${BASE_URL}/api/admin/analytics/sales`, { headers: authHeaders(token) });
   if (res.status === 503) return null;
@@ -650,7 +608,7 @@ export async function salesAnalytics(token: string | null | undefined): Promise<
   return res.json();
 }
 
-/** 매출분석 캐시 비우고 재집계 — 거래처관리 별칭/명세서 변경 즉시 반영. 미프로비저닝(503)이면 null. */
+/** 매출분석 지금 바로 재집계. */
 export async function refreshSalesAnalytics(token: string | null | undefined): Promise<SalesAnalytics | null> {
   const res = await fetch(`${BASE_URL}/api/admin/analytics/sales/refresh`, {
     method: 'POST',
