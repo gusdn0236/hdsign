@@ -2972,6 +2972,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       cdlg('기입할 행이 없습니다. 먼저 명세서를 작성하세요.', [{ label: '확인', sec: true }]);
       return;
     }
+    if (!(await agentReady())) return;
     const allNos = [orderNoCore(order.orderNumber), ...extras];
     // 첫 줄 비고 = 주문번호들(+ 원래 적힌 메모는 뒤에 유지, 예전 주문번호는 중복 안 되게 뺌).
     const restMemo = (rows[0].remark || '').replace(/(주문-|견적-)?\d{6}-\d{1,4}[,\s]*/g, '').trim();
@@ -3210,6 +3211,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     };
     if (c) setEfWhere({ client: c, biz: bz });
   };
+  // 워처(또는 명세서 자동작성)가 꺼져 있으면 아무것도 하기 전에 먼저 켜라고 알린다(사용자 2026-11-24).
+  const agentReady = async (): Promise<boolean> => {
+    const p = await probeEasyformAgent();
+    if (p?.easyform) return true;
+    cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
+    return false;
+  };
   // 연동 안 된 명세서의 [이지폼에서 열기] — 먼저 '이지폼에서 명세서를 찾고 있어요'(k / n)를 띄우고 워처가 그 거래처의
   // 납기 앞뒤 1일 명세서만 빠르게 열어 본다. 찾으면 이지폼에 띄움, 못 찾으면 '찾지 못했어요' → 키워드로 찾기 화면(사용자 2026-11-24).
   const quickOpen = async (nos: string[]) => {
@@ -3264,6 +3272,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     const own = orderNoCore(order.orderNumber);
     const nos = (linkedOrders.length > 1 ? linkedOrders.map((l) => orderNoCore(l.orderNumber)) : [own]).filter(Boolean);
     if (own && !nos.includes(own)) nos.push(own);
+    if (!(await agentReady())) return;
     const [, kDate, kTotal] = (efSyncRef.current?.efKey || '').split('|');
     if (!order.easyformUploadedAt && !(kDate && kTotal)) {
       void quickOpen(nos); // 아직 홈페이지와 연동 안 된 명세서 → 먼저 빠르게 찾고, 없으면 키워드 화면

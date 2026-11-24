@@ -11,6 +11,7 @@ import StatementSmartSearch from "./StatementSmartSearch.jsx";
 import { ScrapPin } from "./scrap/ScrapDrawer.tsx";
 import { homeScrap } from "./scrap/scrapStore.ts";
 import "./OrderAdmin.css";
+import { probeEasyformAgent } from "./autoquote/data/easyformClient";
 
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
 // 모달 청크도 배포 뒤 옛 해시 404 → 빈 화면 방지(자동 새로고침)
@@ -2355,7 +2356,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   <button
                     type="button"
                     className={"statement-efbulk-btn" + (efBulkOpen ? " on" : "")}
-                    onClick={() => setEfBulkOpen(true)}
+                    onClick={async () => {
+                      // 워처가 꺼져 있으면 열기 전에 먼저 알림(사용자 2026-11-24)
+                      const p = await probeEasyformAgent();
+                      if (!p?.easyform) {
+                        alert("이 PC에서 'HD사인 지시서(사무실)' 또는 '명세서 자동작성' 프로그램이 꺼져 있어요. 먼저 켜고 다시 눌러주세요.");
+                        return;
+                      }
+                      setEfBulkOpen(true);
+                    }}
                     title="홈페이지 명세서가 비어 있는 지시서를 이지폼에서 찾아 한꺼번에 채웁니다"
                   >
                     📥 이지폼 불러오기
