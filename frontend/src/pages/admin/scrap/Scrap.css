@@ -1143,3 +1143,7 @@ html.scrap-anim .scr-panel {
   font-weight: 700;
   border-top: 1px dashed #e4e4e7;
 }
+/* 검정 ✕ 는 예전처럼 맨 오른쪽 위(2026-11-24) */
+.pf-top .pf-close {
+  margin-left: auto;
+}
