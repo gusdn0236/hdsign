@@ -809,7 +809,7 @@ def _discard_new(main, form) -> None:
     fgrid = next(iter(b._kids(form, "TAdvStringGrid")), None)
     b._key(fgrid or form, 0x1B)
     pop = b._wait(lambda: next((h for h, c, _t in b._popups(main) if c == "TMessageForm"), None)
-                  or (b._gone(form) and -1), 2.5, 0.05)
+                  or (b._gone(form) and -1), 4.0, 0.05)  # 확인창이 2.5초 넘게 늦게 뜬 적 있음(2026-11-24)
     if pop and pop != -1:
         btns = sorted(b._txt(x).replace("&", "") for x in b._kids(pop, "TButton"))
         if b._txt(pop) == "Information" and btns == ["No", "Yes"]:
@@ -882,6 +882,22 @@ def _press_new(main, form) -> None:
         raise Stop("이지폼 [새로작성]이 안 눌렸어요.")
 
 
+def _set_issue_date(form, due: str) -> None:
+    """새 명세서 발행일 = 납기(사용자 2026-11-24: 오늘 날짜가 아니라 납기 날짜로 발행). 표를 건드리기 **전에** 바꿔야
+    첫 줄 월일도 이 날짜로 자동 기입된다. 글자만 바꾼다(WM_SETTEXT — 목록 기간칸과 같은 방식)."""
+    if not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", due):
+        raise Stop(f"납기 날짜 형식이 이상해요({due}).")
+    date_edit = next(iter(b._kids(form, "TMaskEdit")), None)
+    if not date_edit:
+        raise Stop("이지폼 발행일 칸을 못 찾았어요.")
+    if b._txt(date_edit).strip() != due:
+        b._u.SendMessageW(date_edit, 0x000C, 0, ctypes.c_wchar_p(due))  # WM_SETTEXT
+        time.sleep(0.15)
+    if b._txt(date_edit).strip() != due:
+        raise Stop(f"발행일을 납기({due})로 못 바꿨어요.")
+    logging.info("이지폼 새로작성: 발행일 = 납기 %s", due)
+
+
 def _same_client(a: str, ocr: str) -> bool:
     import difflib
     ka, ko = _client_key(a), _client_key(ocr)
@@ -914,6 +930,10 @@ def new_fill(body: dict, progress) -> dict:
     _lock_on()  # 새로작성·거래처 고르기·채우기·저장 동안 화면 가림 + 입력 잠금
     try:
         _press_new(main, form)
+        due = str(body.get("due") or "").strip()  # 'YYYY.MM.DD' — 없으면(옛 화면·납기 없는 주문) 이지폼 기본=오늘
+        if due:
+            progress(f"발행일을 납기 {due} 로 맞추는 중")
+            _set_issue_date(form, due)
         # 거래처 선택 — 사업자번호로 검색해 딱 1건일 때만
         progress(f"거래처 고르는 중 · {client}")
         b._click(form, "거래처 선택", *_FOLDER_REL)
@@ -999,6 +1019,12 @@ def new_fill(body: dict, progress) -> dict:
                             after[bad] if bad < len(after) else None, target[bad] if bad < len(target) else None)
             raise Stop(f"입력한 뒤 {bad + 1}번째 줄이 홈페이지와 달라서 저장 안 했어요(새 명세서는 버렸어요).")
         date, total = b._form_header(form)
+        if due:
+            if date != due:
+                raise Stop(f"발행일이 납기({due})가 아니라 {date or '빈칸'}이라 저장 안 했어요(새 명세서는 버렸어요).")
+            md = b._digits(_Form(main, form).month_day(0))
+            if md and not md.endswith(due[5:7] + due[8:10]) and not md.endswith(str(int(due[5:7])) + due[8:10]):
+                raise Stop(f"첫 줄 월일({md})이 납기({due})와 달라서 저장 안 했어요(새 명세서는 버렸어요).")
         progress("이지폼에 저장하는 중")
         save = b._named(form, "TBitBtn", "저장")
         if not save or not b._u.IsWindowEnabled(save):

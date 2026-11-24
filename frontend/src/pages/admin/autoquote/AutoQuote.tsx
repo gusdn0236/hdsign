@@ -3531,10 +3531,13 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       }
       if (!choice) return;
       rememberClientAlias(webClient, choice.client);
+      // 발행일 = 납기(사용자 2026-11-24) — 납기가 없으면 워처가 이지폼 기본(오늘) 그대로
+      const newDueM = String(order?.dueDate || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+      const newDue = newDueM ? `${newDueM[1]}.${newDueM[2]}.${newDueM[3]}` : undefined;
       let done: EfBulkResult | null;
       try {
         done = await runEfPush(
-          { phase: 'new_fill', biz: choice.biz, bizNo: choice.bizNo, client: choice.client, target },
+          { phase: 'new_fill', biz: choice.biz, bizNo: choice.bizNo, client: choice.client, target, due: newDue },
           `이지폼 [${choice.biz === 'corp' ? '주식회사' : '개인'}] ${escH(choice.client)} 에 작성 중…`,
         );
       } catch (e) {
