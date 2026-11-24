@@ -499,17 +499,33 @@ export default function PriceFinder({
     }
   };
 
-  // 크게 보기용 합친 목록
-  const all = useMemo(() => {
-    const a: { item: Omit<ScrapItem, 'addedAt'>; data?: ViewerData | null }[] = [];
-    (home || []).forEach((h) => a.push({ item: homeScrap(h.o, h.hits) }));
-    (past || []).forEach(({ pr }) => {
-      const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
-      const d = pastData[k];
-      a.push({ item: pastItem(pr, d?.client), data: d || null });
-    });
-    return a;
-  }, [home, past, pastData]);
+  // 크게 보기용 합친 목록 — **화면에 보이는 순서 그대로**(묶음 ① → ④, 같은 묶음 안에선 홈페이지 먼저 → 순위)라
+  // ‹ › 로 넘기면 우선순위 높은 것부터 낮은 것으로(사용자 2026-11-24: 예전엔 홈페이지 전체 → 이지폼 전체 순이라 뒤섞임).
+  const navSeq = useMemo(() => {
+    const list: { src: 'h' | 'p'; i: number; g: number }[] = [
+      ...(home || []).map((h, i) => ({ src: 'h' as const, i, g: h.g })),
+      ...(past || []).map((x, i) => ({ src: 'p' as const, i, g: x.g })),
+    ];
+    return list.sort((a, b) => a.g - b.g || (a.src === b.src ? 0 : a.src === 'h' ? -1 : 1) || a.i - b.i);
+  }, [home, past]);
+  const posOf = useMemo(() => {
+    const m = new Map<string, number>();
+    navSeq.forEach((x, n) => m.set(`${x.src}${x.i}`, n));
+    return m;
+  }, [navSeq]);
+  const all = useMemo(
+    () =>
+      navSeq.map(({ src, i }) => {
+        if (src === 'h') {
+          const h = home![i];
+          return { item: homeScrap(h.o, h.hits) } as { item: Omit<ScrapItem, 'addedAt'>; data?: ViewerData | null };
+        }
+        const { pr } = past![i];
+        const d = pastData[pastKey(pr.ref_file, pr.ref_invoice_idx)];
+        return { item: pastItem(pr, d?.client), data: d || null };
+      }),
+    [navSeq, home, past, pastData],
+  );
   const cur = detail != null ? all[detail] : null;
 
   useEffect(() => {
@@ -671,7 +687,7 @@ export default function PriceFinder({
     ...(home || []).map((x, j) => ({
       key: `h${x.o.id}`,
       g: x.g,
-      el: <HomeCard key={`h${x.o.id}`} h={x} onOpen={() => setDetail(j)} />,
+      el: <HomeCard key={`h${x.o.id}`} h={x} onOpen={() => setDetail(posOf.get(`h${j}`) ?? null)} />,
     })),
     ...(past || []).map(({ pr, hit, g }, j) => {
       const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
@@ -686,7 +702,7 @@ export default function PriceFinder({
             token={token}
             data={pastData[k]}
             onData={(d) => setPastData((m) => ({ ...m, [k]: d }))}
-            onOpen={() => setDetail((home?.length || 0) + j)}
+            onOpen={() => setDetail(posOf.get(`p${j}`) ?? null)}
           />
         ),
       };
