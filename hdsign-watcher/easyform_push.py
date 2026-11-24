@@ -61,6 +61,9 @@ def norm_target(r: dict) -> dict:
     out = norm_row(r)
     if out["unit_price"] and not out["qty"]:
         out["qty"] = "1"
+    # 품목코드·품목이 둘 다 빈 줄은 이지폼이 저장 때 경고창을 띄워 멈춘다 → 품목코드에 '0'(사용자 2026-11-24)
+    if not out["item_code"] and not out["item"] and any(out[c] for c in ("spec", "qty", "unit_price", "remark")):
+        out["item_code"] = "0"
     return out
 
 
