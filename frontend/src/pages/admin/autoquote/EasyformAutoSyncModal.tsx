@@ -472,22 +472,6 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               <span>{fmtDay(ev.date)}</span>
               <b>{won(ev.total || sum)}</b>
             </div>
-            {phase === 'pick' && (
-              <div className="efas-rows">
-                <table>
-                  <tbody>
-                    {grid.map((r, i) => (
-                      <tr key={i}>
-                        <td>{r.품목 || r.품목코드}</td>
-                        <td>{r.규격}</td>
-                        <td className="num">{r.수량}</td>
-                        <td className="num">{price(r.단가)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </section>
         )}
 
