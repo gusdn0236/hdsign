@@ -1930,7 +1930,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       <div
         key={order.id}
         data-order-company={order.clientCompanyName || ""}
-        className={`order-card order-card--v2 order-card--${typeKey} oc2-st-${stmtState} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
+        className={`order-card order-card--v2 order-card--${typeKey} oc2-st-${isStatementView ? stmtState : "none"} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
         onClick={openCard}
         role="button"
         tabIndex={0}
@@ -1941,7 +1941,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           }
         }}
       >
-        {stmtState === "done" && (
+        {/* 카드 바탕색·완료 체크는 명세서 탭에서만 (작업중·작업완료 탭은 흰 카드 그대로) */}
+        {isStatementView && stmtState === "done" && (
           <span className="oc2-done-check" title="명세서 완료" aria-label="명세서 완료">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M6 12.5l4 4 8-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
