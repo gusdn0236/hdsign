@@ -1,0 +1,2 @@
+# gh-pages 배포 시 전역 core.autocrlf 가 CRLF 를 LF 로 바꾸지 않게(.bat 는 CRLF+CP949 그대로 서빙)
+*.bat -text
