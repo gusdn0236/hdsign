@@ -2074,7 +2074,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             </span>
           </div>
           <h3 className="oc2-title">
-            {order.title || requestLabel(order.requestType)}
+            {order.title || (order.requestType === "QUOTE" ? "견적 문의" : "지시서")}
           </h3>
           <div className="oc2-sub">
             <span className="oc2-num">
@@ -2943,7 +2943,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             <aside className="order-preview-info">
               <p className="modal-order-no">{selectedOrder.orderNumber}</p>
               <h3 className="modal-order-title">
-                {selectedOrder.title || requestLabel(selectedOrder.requestType)}
+                {selectedOrder.title || (selectedOrder.requestType === "QUOTE" ? "견적 문의" : "지시서")}
               </h3>
 
               {(selectedOrder.hasEstimate || selectedOrder.easyformUploadedAt) && (() => {
@@ -3001,11 +3001,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 </div>
               )}
 
-              <div className="file-chips" style={{ marginBottom: 16 }}>
-                <span className={`type-chip type-chip--${selectedOrder.requestType === "QUOTE" ? "quote" : "order"}`}>
-                  {requestLabel(selectedOrder.requestType)}
-                </span>
-              </div>
+              {/* 유형 칩은 견적만 — 거의 전부 발주라 '발주' 표시는 뺐다(2026-11-24). */}
+              {selectedOrder.requestType === "QUOTE" && (
+                <div className="file-chips" style={{ marginBottom: 16 }}>
+                  <span className="type-chip type-chip--quote">
+                    {requestLabel(selectedOrder.requestType)}
+                  </span>
+                </div>
+              )}
 
               <div className="modal-status-block">
                 <span className="modal-label">작업 상태</span>
@@ -3097,10 +3100,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   <span className="detail-label">거래처</span>
                   <span className="detail-value">{selectedOrder.clientCompanyName || "-"}</span>
                 </div>
-                <div className="detail-section">
-                  <span className="detail-label">요청 유형</span>
-                  <span className="detail-value">{requestLabel(selectedOrder.requestType)}</span>
-                </div>
+                {selectedOrder.requestType === "QUOTE" && (
+                  <div className="detail-section">
+                    <span className="detail-label">요청 유형</span>
+                    <span className="detail-value">{requestLabel(selectedOrder.requestType)}</span>
+                  </div>
+                )}
                 {selectedOrder.requestType !== "QUOTE" && (
                   <>
                     <div className="detail-section">
