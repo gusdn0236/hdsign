@@ -3226,57 +3226,53 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       ],
     );
   };
-  // 연동 안 된 명세서의 [이지폼에서 열기] — 키워드로 찾기 화면을 바로 띄우고, 그 뒤에서 워처가 조용히 그 거래처·납기 앞뒤
-  // 3일 명세서만 열어 본다(사용자 2026-11-24). 찾으면 키워드 화면을 닫고 이지폼에 띄움. 사람이 키워드로 [찾기]를 누르거나
-  // 창을 닫으면 조용한 찾기는 멈춘다(워처 작업은 한 번에 하나).
-  const quickRef = useRef<{ id: number | null; stop: boolean; done: Promise<void> } | null>(null);
-  const stopQuick = async () => {
-    const q = quickRef.current;
-    if (!q) return;
-    q.stop = true;
-    if (q.id != null) void cancelEfBulk(q.id);
-    await Promise.race([q.done, new Promise((r) => setTimeout(r, 8000))]);
-  };
-  const quickOpen = (nos: string[]) => {
+  // 연동 안 된 명세서의 [이지폼에서 열기] — 먼저 '이지폼에서 명세서를 찾고 있어요'(k / n)를 띄우고 워처가 그 거래처의
+  // 납기 앞뒤 1일 명세서만 빠르게 열어 본다. 찾으면 이지폼에 띄움, 못 찾으면 '찾지 못했어요' → 키워드로 찾기 화면(사용자 2026-11-24).
+  const quickOpen = async (nos: string[]) => {
     if (!order) return;
     const where = efFindWhere();
     // 납기 없으면 주문번호 날짜(yyMMdd-n)
     const m6 = orderNoCore(order.orderNumber).match(/^(\d{2})(\d{2})(\d{2})-/);
     const due = where.due || (m6 ? `20${m6[1]}.${m6[2]}.${m6[3]}` : '');
-    setEfBulkOpen(true);
-    if (!due || quickRef.current) return;
-    const job: { id: number | null; stop: boolean; done: Promise<void> } = { id: null, stop: false, done: Promise.resolve() };
-    quickRef.current = job;
-    job.done = (async () => {
-      try {
-        const probe = await probeEasyformAgent();
-        if (!probe?.easyform || job.stop) return;
-        const st0 = await startEfBulk({ phase: 'open_quick', nos, due, client: where.client, clients: where.clients, biz: where.biz });
-        if (!st0.started || !st0.id) return;
-        job.id = st0.id;
-        if (job.stop) void cancelEfBulk(job.id);
-        for (;;) {
-          await new Promise((r) => setTimeout(r, 600));
-          let st: EfBulkStatus;
-          try {
-            st = await pollEfBulk(job.id);
-          } catch {
-            continue;
-          }
-          if (st.state === 'running') continue;
-          const r = st.results?.find((x) => x.key === 'push');
-          if (st.state === 'done' && r?.found && r.date && !job.stop) {
-            setEfBulkOpen(false);
-            void rememberEfLocation(r.date, r.total || '', r.client || undefined, r.biz);
-          }
-          return;
-        }
-      } catch (e) {
-        console.error('이지폼 조용히 찾기 실패', e);
-      } finally {
-        if (quickRef.current === job) quickRef.current = null;
+    const toKeyword = async (why = '이지폼에서 이 명세서를 찾지 못했어요') => {
+      cdlg(
+        `<b style="font-size:15px">${escH(why)}</b>` +
+          `<div style="font-size:13px;margin-top:8px">키워드로 찾아볼게요.</div>`,
+        [],
+      );
+      await new Promise((r) => setTimeout(r, 1200));
+      setDialog(null);
+      setEfBulkOpen(true);
+    };
+    if (!due) {
+      setEfBulkOpen(true);
+      return;
+    }
+    setEfBusy(true);
+    try {
+      const probe = await probeEasyformAgent();
+      if (!probe || !probe.easyform) {
+        cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
+        return;
       }
-    })();
+      let r: EfBulkResult | null = null;
+      try {
+        r = await runEfPush(
+          { phase: 'open_quick', nos, due, days: 1, client: where.client, clients: where.clients, biz: where.biz },
+          '이지폼에서 명세서를 찾고 있어요',
+        );
+      } catch (e) {
+        console.error('이지폼 빠른 찾기 멈춤', e);
+      }
+      if (r?.found && r.date) {
+        setDialog(null);
+        void rememberEfLocation(r.date, r.total || '', r.client || undefined, r.biz);
+        return;
+      }
+      await toKeyword();
+    } finally {
+      setEfBusy(false);
+    }
   };
   // [이지폼에서 열기] — 그 명세서를 찾아서 이지폼 화면에 띄운다(읽기만, 저장 없음).
   const openInEasyform = async () => {
@@ -3286,7 +3282,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     if (own && !nos.includes(own)) nos.push(own);
     const [, kDate, kTotal] = (efSyncRef.current?.efKey || '').split('|');
     if (!order.easyformUploadedAt && !(kDate && kTotal)) {
-      quickOpen(nos); // 아직 홈페이지와 연동 안 된 명세서 → 키워드 화면 + 뒤에서 조용히
+      void quickOpen(nos); // 아직 홈페이지와 연동 안 된 명세서 → 먼저 빠르게 찾고, 없으면 키워드 화면
       return;
     }
     setEfBusy(true);
@@ -4888,11 +4884,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   orders={[order]}
                   single
                   token={token}
-                  beforeStart={stopQuick}
-                  onClose={() => {
-                    void stopQuick();
-                    setEfBulkOpen(false);
-                  }}
+                  onClose={() => setEfBulkOpen(false)}
                   onSaved={() => {
                     onEasyformUploaded?.();
                     setReloadKey((k) => k + 1);

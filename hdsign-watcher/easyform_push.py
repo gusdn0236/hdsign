@@ -948,11 +948,11 @@ def _find_open(body: dict, progress) -> "tuple[dict, int, dict]":
 
 
 def open_quick(body: dict, progress) -> dict:
-    """[이지폼에서 열기] — 홈페이지와 아직 연동 안 된 명세서(사용자 2026-11-24). 웹은 키워드로 찾기 화면을 바로 띄우고,
-    그 뒤에서 이걸 조용히 돌린다: **그 거래처 명세서만**, 납기일 앞뒤 3일(납기일에 가까운 것부터) 열어 본다.
+    """[이지폼에서 열기] — 홈페이지와 아직 연동 안 된 명세서(사용자 2026-11-24). 웹은 '명세서를 찾고 있어요'(k / n)를 띄우고
+    이걸 돌린다: **그 거래처 명세서만**, 납기일 앞뒤 days(기본 1)일(납기일에 가까운 것부터) 빠르게 열어 본다.
       · 비고에 이 주문번호 → 바로 띄움.
       · 없고, 납기일 그날 그 거래처 명세서 중 비고에 주문번호 없는 게 딱 하나 → 띄우고 '이 명세서가 맞나요?'.
-    못 찾으면 {found: False} — 웹은 키워드 화면을 그대로 둔다(에러 아님)."""
+    못 찾으면 {found: False} — 웹이 '찾지 못했어요' → 키워드로 찾기 화면(에러 아님)."""
     want_nos = [n for n in (body.get("nos") or []) if n]
     due = str(body.get("due") or "")
     if not due:
@@ -973,7 +973,8 @@ def open_quick(body: dict, progress) -> dict:
                     return {"found": True, "biz": m["biz"], "date": d, "total": b._digits(t),
                             "client": "", "nos": fnos}
     mains.sort(key=lambda x: 0 if x["biz"] == body.get("biz") else 1)
-    period = (_shift_day(due, -3), _shift_day(due, 3))
+    days = max(0, min(7, int(body.get("days") or 1)))
+    period = (_shift_day(due, -days), _shift_day(due, days))
     cands = []
     for m in mains:
         for r in _list_candidates(m, period, progress, forms_ok=True):

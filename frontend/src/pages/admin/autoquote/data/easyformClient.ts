@@ -387,8 +387,8 @@ export async function startEfBulk(
       }
     // 새 명세서: 새로작성 → 사업자번호로 거래처 1건 선택(OCR 확인) → 입력 → 다시 읽어 같아야 저장
     | { phase: 'new_fill'; biz: string; bizNo: string; client: string; target: EfPushRow[] }
-    // [이지폼에서 열기] 연동 안 된 명세서 — 키워드 찾기 화면 뒤에서 조용히: 그 거래처·납기 앞뒤 3일만
-    | { phase: 'open_quick'; nos: string[]; due: string; client?: string; clients?: string[]; biz?: string }
+    // [이지폼에서 열기] 연동 안 된 명세서 — 그 거래처·납기 앞뒤 days(기본 1)일만 빠르게, 못 찾으면 웹이 키워드 화면
+    | { phase: 'open_quick'; nos: string[]; due: string; days?: number; client?: string; clients?: string[]; biz?: string }
     // [직접 고를게요] — 사람이 이지폼에서 새로작성·거래처 선택 → 워처 [작성 시작하기 ▶] → 입력·저장까지
     | { phase: 'manual_fill'; nos: string[]; target: EfPushRow[] }
     // [이지폼에 적용하기]: 찾아서 이지폼에 띄우고 워처 카드 '이 명세서가 맞나요?' → 네=적용·저장 / 아니오=취소(홈페이지로)
