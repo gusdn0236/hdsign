@@ -4,6 +4,8 @@ import React, { useEffect, useRef, useState } from 'react';
 // 받는 건 작은 설치 .bat — 회사 공유폴더(\Main\현대공유 = Z:)의 바로가기를 이 PC 바탕화면에
 // 복사하고 바로 실행한다. 프로그램 본체는 바로가기 실행 때마다 Z: 에서 최신본으로 자동 갱신되므로
 // 여기서 .exe 를 직접 나눠줄 필요가 없다(회사 네트워크 PC 에서만 동작).
+// 예외: '명세서 작성용' = 이지폼 전용 경량 에이전트 exe 를 그대로 받는다(Z: 없이 집·외부 PC 에서 이지폼 ↔ 홈페이지).
+// exe 원본은 hdsign-watcher/dist_agent(빌드: pyinstaller hdsign_easyform_agent.spec), git 에는 안 넣고 배포 때만 올린다.
 const BASE = import.meta.env.BASE_URL || '/';
 const ITEMS = [
     {
@@ -21,6 +23,14 @@ const ITEMS = [
         logo: `${BASE}downloads/hd-logo-field.png`,
         href: `${BASE}downloads/hdsign-field-setup.bat`,
         file: 'HD사인_현장용_설치.bat',
+    },
+    {
+        key: 'easyform',
+        name: '명세서 작성용',
+        desc: '이지폼 ↔ 홈페이지 명세서 반영만 · 집·외부 PC (Z: 필요 없음)',
+        logo: `${BASE}downloads/hd-logo-easyform.png`,
+        href: `${BASE}downloads/hdsign-easyform-agent.exe`,
+        file: 'HD사인_명세서작성.exe',
     },
 ];
 
@@ -70,8 +80,11 @@ const HdProgramDownload = () => {
                         </a>
                     ))}
                     <p className="hd-dl-note">
-                        받은 파일을 실행하면 바탕화면에 바로가기가 생기고 바로 켜집니다.
+                        사무실용·현장용: 받은 파일을 실행하면 바탕화면에 바로가기가 생기고 바로 켜집니다.
                         회사 공유폴더(Z:)에 연결된 PC에서만 됩니다.
+                        <br />
+                        명세서 작성용: 이지폼이 깔린 PC에서 받은 프로그램을 켜 두면 됩니다(설치 없음).
+                        사무실용이 켜진 PC에선 필요 없어요. 새 버전이 나오면 다시 받아 주세요.
                     </p>
                 </div>
             )}
