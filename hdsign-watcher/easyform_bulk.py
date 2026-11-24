@@ -784,11 +784,13 @@ def _read_items(items: list, progress, on_result, keep_order: bool = False) -> N
                     date, tot = _form_header(form, want)
                     res.update(date=date, total=tot)
                     if date == it.get("date") and _digits(tot) == _digits(want):
-                        ef.ef_guard_start()  # 칸 읽는 동안만 마우스·키보드 잠금(사용자 2026-11-24)
+                        ef.ef_busy("이지폼 칸을 읽는 중이에요. 잠시만 기다려 주세요.")
+                        ef.ef_guard_start()  # 칸 읽는 동안만 화면 가림 + 마우스·키보드 잠금(사용자 2026-11-24)
                         try:
                             rows = _read_form(form)
                         finally:
                             ef.ef_guard_stop()
+                            ef.ef_busy(None)
                         res.update(ok=True, rows=rows, message="")
                         close_form(form, date)
                         break
@@ -1139,11 +1141,13 @@ def _stamp_items(items: list, progress, on_result) -> None:
             if date != it.get("date") or _digits(tot) != _digits(want_total):
                 res["message"] = f"목록이 바뀌어서 다른 명세서({date} {tot}원)가 열렸어요 — 안 적었어요"
             else:
-                ef.ef_guard_start()  # 비고 적는 동안만 마우스·키보드 잠금(사용자 2026-11-24)
+                ef.ef_busy("이지폼 비고에 주문번호를 적는 중이에요. 잠시만 기다려 주세요.")
+                ef.ef_guard_start()  # 비고 적는 동안만 화면 가림 + 마우스·키보드 잠금(사용자 2026-11-24)
                 try:
                     res.update(_stamp_form(main, form, it))
                 finally:
                     ef.ef_guard_stop()
+                    ef.ef_busy(None)
         finally:
             # 저장했으면 그냥 닫힘, 저장 안 했으면 ESC = 변경 버림(실측). 확인창이 떠 있으면 아무것도 안 누름.
             # ESC 는 **우리가 연 창(form)에만** — 사람이 열어 둔 명세서엔 절대 안 보냄.

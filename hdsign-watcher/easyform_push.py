@@ -40,6 +40,70 @@ _INSERT_REL = (745, 412)   # 패널 [삽입]
 _DELETE_REL = (745, 445)   # 패널 [삭제](줄 삭제)
 
 
+# ── 칸 순회 중 잠금 ────────────────────────────────────────────────────────────
+# 사용자 2026-11-24: 작업 내내 잠그면 [정지]를 못 누름 → **이지폼 칸을 실제로 도는 동안만**(명세서 열기·칸 읽기·칸 쓰기)
+# 화면을 가리고(ef_busy) 마우스·키보드를 잠근다. 겹쳐 불러도 되고(횟수), 끝나면 0.5초 뒤 풂(연달아 칸을 돌 때 깜빡임 방지).
+import threading as _th
+
+_LK = _th.Lock()
+_LOCK = {"depth": 0, "on": False, "gen": 0}
+_LOCK_TEXT = "이지폼 칸을 읽고 쓰는 중이에요. 잠시만 기다려 주세요."
+
+
+def _lock_on() -> None:
+    with _LK:
+        _LOCK["depth"] += 1
+        _LOCK["gen"] += 1
+        start = not _LOCK["on"]
+        _LOCK["on"] = True
+    if start:
+        ef.ef_busy(_LOCK_TEXT)
+        ef.ef_guard_start()
+
+
+def _lock_off() -> None:
+    with _LK:
+        _LOCK["depth"] = max(0, _LOCK["depth"] - 1)
+        if _LOCK["depth"]:
+            return
+        g = _LOCK["gen"]
+
+    def later():
+        time.sleep(0.5)
+        with _LK:
+            if _LOCK["depth"] or _LOCK["gen"] != g or not _LOCK["on"]:
+                return
+            _LOCK["on"] = False
+        ef.ef_guard_stop()
+        ef.ef_busy(None)
+
+    _th.Thread(target=later, daemon=True).start()
+
+
+def _lock_release_now() -> None:
+    """사람이 답해야 할 때(확인 카드)·작업 끝 — 남은 잠금·가림을 바로 푼다."""
+    with _LK:
+        on = _LOCK["on"]
+        _LOCK.update(depth=0, on=False)
+        _LOCK["gen"] += 1
+    if on:
+        ef.ef_guard_stop()
+        ef.ef_busy(None)
+
+
+def _locked(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def w(*a, **k):
+        _lock_on()
+        try:
+            return fn(*a, **k)
+        finally:
+            _lock_off()
+    return w
+
+
 # ── 값 정리 ────────────────────────────────────────────────────────────────────
 def _norm_cell(col: str, v) -> str:
     s = " ".join(str(v or "").split())
@@ -199,6 +263,7 @@ def _goto_list_row(main, idx: int):
     return grid
 
 
+@_locked
 def _open_row(main, it: dict, forms_ok: bool = False):
     """목록에서 it(idx·date·total) 명세서를 연다. 사람이 연 명세서가 있으면 멈춤(저장하는 작업이라).
     forms_ok=True([이지폼에서 열기] — 저장 안 함, 사용자 2026-11-23): 열린 명세서가 있어도 연다. 이지폼은 그 창에
@@ -226,6 +291,7 @@ def _open_row(main, it: dict, forms_ok: bool = False):
     return form
 
 
+@_locked
 def _close(main, form) -> None:
     """ESC — 저장 안 한 변경은 버리고 닫힘(실측). 질문창이 떠 있으면 아무것도 안 누름."""
     if b._gone(form) or b._popups(main):
@@ -238,6 +304,7 @@ def _close(main, form) -> None:
         b._wait(lambda: b._gone(form), 2.5, 0.05)
 
 
+@_locked
 def _read_all(form) -> list:
     """표 전체(빈 줄 위치 유지) — 6칸. 첫 칸에 편집칸이 안 뜨면 표 끝. 10줄 넘으면 보기만 한 줄씩 내림."""
     grid = next(iter(b._kids(form, "TAdvStringGrid")), None)
@@ -286,6 +353,7 @@ def _read_all(form) -> list:
     return rows
 
 
+@_locked
 def _read_remarks(form) -> list:
     """비고 칸만 위에서부터(편집칸이 안 뜨면 끝)."""
     grid = next(iter(b._kids(form, "TAdvStringGrid")), None)
@@ -628,6 +696,7 @@ def apply(body: dict, progress) -> dict:
     return _apply_on_form(main, form, raw, target, date, total, progress)
 
 
+@_locked
 def _apply_on_form(main, form, raw: list, target: list, date: str, total: str, progress,
                    plan: "dict | None" = None) -> dict:
     """열려 있는 그 명세서(raw = 지금 표)에 target 을 반영 → 다시 읽어 같을 때만 저장 → 닫기. 결과 {date,total,rows,same}."""
@@ -698,6 +767,7 @@ def _apply_on_form(main, form, raw: list, target: list, date: str, total: str, p
 _FOLDER_REL = (194, 163)
 
 
+@_locked
 def _discard_new(main, form) -> None:
     """저장 안 한 새 명세서 버리고 닫기(ESC → 'Information' [No]). 거래처선택 창이 떠 있으면 [닫기] 먼저.
     OK 하나짜리 안내창이 떠 있으면 그것부터 OK(안 그러면 이지폼 Access violation). 그 밖의 창이면 아무것도 안 누름."""
@@ -726,6 +796,7 @@ def _discard_new(main, form) -> None:
             b._wait(lambda: b._gone(form), 2.5, 0.05)
 
 
+@_locked
 def _fill_new(F: "_Form", target: list, progress) -> None:
     """새 명세서에 줄 넣기 — [삽입]으로 줄 수만큼 빈 줄을 **먼저** 만들고 위에서부터 채운다(예전 자동기입 방식, 사용자
     2026-11-24). 첫 줄(월일=발행일)이 밑으로 밀리지 않게 '현재 □ 줄' 칸에 2를 넣고 삽입 = 둘째 줄부터 끼움. 줄마다 Enter 로 새 줄을 만들면 품목코드가 빈 줄에서 이지폼 경고창("물품코드나 물품명을 기록하지 않고…")이
@@ -770,6 +841,7 @@ def _open_new_form(main):
     raise Stop("이지폼 새 명세서 창이 안 열렸어요.")
 
 
+@_locked
 def _press_new(main, form) -> None:
     """[새로작성] → 발행일이 채워지고 합계가 빈(0) 새 명세서가 될 때까지. 질문창이 뜨면(작성중이던 것) 멈춤."""
     time.sleep(0.6)
@@ -819,6 +891,7 @@ def new_fill(body: dict, progress) -> dict:
     progress("이지폼 새 명세서를 여는 중")
     form = _open_new_form(main)
     saved = False
+    _lock_on()  # 새로작성·거래처 고르기·채우기·저장 동안 화면 가림 + 입력 잠금
     try:
         _press_new(main, form)
         # 거래처 선택 — 사업자번호로 검색해 딱 1건일 때만
@@ -930,6 +1003,7 @@ def new_fill(body: dict, progress) -> dict:
     finally:
         if not saved:
             _discard_new(main, form)
+        _lock_release_now()
 
 
 # ── 이지폼에서 열기(찾아서 열어 둔 채 이지폼을 앞으로) ───────────────────────────────
@@ -1065,6 +1139,7 @@ def open_quick(body: dict, progress) -> dict:
     _bring_front(main, form)
     tag = ("주식회사", "#2563eb") if m["biz"] == "corp" else ("개인", "#d97706")
     amt = int(b._digits(it["total"]) or 0)
+    _lock_release_now()
     ok = ef.ef_ask("이 명세서가 맞나요?", f"{it.get('client') or '이지폼'}  ·  {it['date']}  ·  합계 {amt:,}원",
                    [], tag, yes="네, 이 명세서예요", no="아니오")
     if not ok:
@@ -1107,7 +1182,6 @@ def manual_fill(body: dict, progress) -> dict:
         raise Stop("켜져 있는 이지폼이 없어요.")
     note = ""
     asked_client = False
-    held = ef.ef_guard_suspend()  # 사람이 이지폼에서 새로작성·거래처 선택하고 버튼을 눌러야 함 → 기다리는 동안 잠금 풂
     while True:
         holder = {"ev": threading.Event(), "ans": False}
         ef.ef_manual_show(holder, note)
@@ -1116,10 +1190,8 @@ def manual_fill(body: dict, progress) -> dict:
         while not holder["ev"].wait(0.2):
             if b._aborted() or time.time() - t0 > 1800:
                 ef.ef_manual_hide(holder)
-                ef.ef_guard_resume(held)
                 return {"cancelled": True}
         if not holder["ans"]:
-            ef.ef_guard_resume(held)
             return {"cancelled": True}
         found = _new_forms()
         if not found:
@@ -1142,11 +1214,9 @@ def manual_fill(body: dict, progress) -> dict:
             note = "거래처가 아직 안 보여요. 거래처를 선택하고 다시 눌러주세요."
             continue
         break
-    ef.ef_guard_resume(held)  # 버튼 눌렀음 → 다시 잠그고 칸 채우기
     saved = False
     tag = ("주식회사", "#2563eb") if m["biz"] == "corp" else ("개인", "#d97706")
-    ef.ef_busy("이지폼에 명세서를 작성하는 중이에요. 잠시만 기다려 주세요.")
-    ef.ef_guard_start()
+    _lock_on()  # 칸 채우기·저장 동안 화면 가림 + 입력 잠금
     try:
         _fill_new(_Form(main, form), target, progress)
         progress("입력한 명세서를 다시 읽어 확인하는 중")
@@ -1169,10 +1239,9 @@ def manual_fill(body: dict, progress) -> dict:
         saved = True
         _close(main, form)
     finally:
-        ef.ef_guard_stop()
-        ef.ef_busy(None)
         if not saved:
             _discard_new(main, form)
+        _lock_release_now()
     progress("저장됐는지 확인하는 중")
     lst = b._export_one(m, 0, progress, period=(date, date), forms_ok=True)
     hit = [r for r in lst if b._digits(r["total"]) == b._digits(total)
@@ -1235,18 +1304,14 @@ def push_confirm(body: dict, progress) -> dict:
         ef.ef_notice("이미 홈페이지와 같아요", sub, tag)
         return {**base, "same": True}
     progress("이지폼 화면에서 '이 명세서가 맞나요?'에 답해주세요")
+    _lock_release_now()
     ok = ef.ef_ask("이 명세서가 맞나요?", sub, _plan_lines(plan), tag, yes="네, 적용할게요", no="아니오")
     if not ok:
         _go_home()  # 아니오 = 아무것도 안 바꾸고 홈페이지 화면으로(사용자 2026-11-23)
         return {**base, "cancelled": True}
-    # 적용하는 동안 화면 잠금 안내 + 물리 입력 잠금(ESC = 중단) — 이지폼이 앞에 있어 손대면 꼬일 수 있음
-    ef.ef_busy("이지폼 명세서에 적용하는 중이에요. 잠시만 기다려 주세요.")
-    ef.ef_guard_start()
-    try:
-        res = _apply_on_form(main, form, raw, target, info["date"], info["total"], progress, plan=plan)
-    finally:
-        ef.ef_guard_stop()
-        ef.ef_busy(None)
+    # 적용(칸 고치기·저장)은 _apply_on_form 이 화면을 가리고 입력을 잠근 채로(ESC = 중단)
+    res = _apply_on_form(main, form, raw, target, info["date"], info["total"], progress, plan=plan)
+    _lock_release_now()
     _go_home()
     ef.ef_notice("이지폼에 적용하고 저장했어요", f"{info['client'] or '이지폼'}  ·  {res['date']}  ·  합계 "
                  f"{int(b._digits(res.get('total') or '') or 0):,}원", tag)
@@ -1272,10 +1337,9 @@ def plan_summary(cur_raw: list, target_raw: list) -> dict:
 
 
 def run(phase: str, body: dict, progress, on_result) -> str:
-    """이지폼 칸을 도는 동안 사람 마우스·키보드를 잠근다(사용자 2026-11-24 — 홈페이지 수정 → 이지폼 전달 중 키를 눌렀더니
-    오류). 확인 카드·[작성 시작하기]처럼 사람이 눌러야 할 때만 잠깐 풂(ef_ask·manual_fill). 잠긴 동안 ESC = 정지."""
+    """칸을 도는 동안만 잠금(_locked/_lock_on — 사용자 2026-11-24: 전달 중 키 입력으로 오류, 그러나 [정지]는 눌러야 함).
+    잠긴 동안 ESC = 정지(입력 잠금이 ESC 를 받아 여기서 작업 정지로 넘김). 끝나면 남은 잠금을 바로 푼다."""
     import threading
-    ef.ef_guard_start()
     done = threading.Event()
 
     def esc_relay():
@@ -1289,7 +1353,7 @@ def run(phase: str, body: dict, progress, on_result) -> str:
         return _run(phase, body, progress, on_result)
     finally:
         done.set()
-        ef.ef_guard_stop()
+        _lock_release_now()
 
 
 def _run(phase: str, body: dict, progress, on_result) -> str:

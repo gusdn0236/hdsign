@@ -3125,7 +3125,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         : p
           ? `<div class="aq-efjob-p">${escH(p)}</div>`
           : '') +
-      `<div class="aq-efjob-lock">🔒 끝날 때까지 마우스·키보드가 잠겨요 (멈추려면 ESC)</div>`
+      `<div class="aq-efjob-lock">🔒 이지폼 칸을 도는 동안엔 화면이 가려지고 마우스·키보드가 잠겨요 (멈추려면 ESC)</div>`
     );
   };
   const runEfJob = async (
