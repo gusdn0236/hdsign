@@ -112,16 +112,30 @@ function pastItem(pr: Prediction, client?: string): Omit<ScrapItem, 'addedAt'> {
 }
 
 /** 예전 이지폼 명세서 카드 — 화면에 보일 때 근거(사진+명세서)를 받아 사진·거래처를 채운다. */
+/** 카드 아래 맞은 키워드 태그(사용자 2026-11-24: 가격 대신 무엇이 맞았는지만) — 검색 칩과 같은 색. */
+function MatchTags({ tags }: { tags: { type: Tok['type']; label: string }[] }) {
+  if (!tags.length) return <div className="pf-card-tags none">맞은 키워드 없음</div>;
+  return (
+    <div className="pf-card-tags">
+      {tags.map((t) => (
+        <span key={`${t.type}:${t.label}`} className={`pf-chip pf-chip--${t.type} pf-tag`}>
+          {t.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function PastCard({
   pr,
-  hit,
+  tags,
   token,
   onOpen,
   onData,
   data,
 }: {
   pr: Prediction;
-  hit: string[];
+  tags: { type: Tok['type']; label: string }[];
   token: string | null | undefined;
   onOpen: () => void;
   onData: (d: ViewerData) => void;
@@ -152,12 +166,12 @@ function PastCard({
       <div className="pf-card-img">
         {photo ? <img src={photo} alt="" draggable={false} /> : data ? <span>📄</span> : <span className="sv-spin" />}
       </div>
-      <div className="pf-card-body" title={hit.length ? `맞은 키워드: ${hit.join(', ')}` : undefined}>
-        <div className="pf-card-price">{won(pr.price) || '단가 없음'}</div>
-        <div className="pf-card-line">{[pr.item, pr.size].filter(Boolean).join(' · ')}</div>
-        <div className="pf-card-meta">
-          {client || '이지폼 예전 명세서'} · {shortDate(pr.date)}
+      <div className="pf-card-body">
+        <div className="pf-card-top">
+          <b>{client || '이지폼 예전 명세서'}</b>
+          <span>{shortDate(pr.date)}</span>
         </div>
+        <MatchTags tags={tags} />
       </div>
       <ScrapPin
         item={it}
@@ -170,23 +184,27 @@ function PastCard({
   );
 }
 
-function HomeCard({ h, onOpen }: { h: HomeHit; onOpen: () => void }) {
+function HomeCard({
+  h,
+  tags,
+  onOpen,
+}: {
+  h: HomeHit;
+  tags: { type: Tok['type']; label: string }[];
+  onOpen: () => void;
+}) {
   const { o, hits } = h;
-  const top = hits[0]; // 가장 잘 맞는 줄(정렬에서 맨 앞)
   return (
     <div className="pf-card" onClick={onOpen} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen()}>
       <div className="pf-card-img">
         {o.worksheetThumbnailUrl ? <img src={o.worksheetThumbnailUrl} alt="" loading="lazy" draggable={false} /> : <span>📄</span>}
       </div>
-      <div className="pf-card-body" title={h.hit.length ? `맞은 키워드: ${h.hit.join(', ')}` : undefined}>
-        <div className="pf-card-price">{won(top?.단가) || '단가 없음'}</div>
-        <div className="pf-card-line">
-          {[top?.품목 || top?.품목코드, top?.규격].filter(Boolean).join(' · ') || '—'}
-          {hits.length > 1 && <em> 외 {hits.length - 1}줄</em>}
+      <div className="pf-card-body">
+        <div className="pf-card-top">
+          <b>{o.clientCompanyName || '거래처 없음'}</b>
+          <span>{shortDate(o.dueDate || o.createdAt)}</span>
         </div>
-        <div className="pf-card-meta">
-          {o.clientCompanyName || '거래처 없음'} · {shortDate(o.dueDate || o.createdAt)}
-        </div>
+        <MatchTags tags={tags} />
       </div>
       <ScrapPin item={homeScrap(o, hits)} className="pf-card-pin" />
     </div>
@@ -677,14 +695,44 @@ export default function PriceFinder({
   // 위: '찾은 결과'(품목·키워드와 규격이 한 줄에서 같이 맞음 → 그 거래처 / 다른 거래처 / 규격 다름) 묶음마다 8건 + [더 보기]
   // 아래: '규격만 비슷한 다른 품목'은 접어 두고 건수만. 홈페이지·이지폼 예전 명세서는 같은 묶음 안에 같이(홈페이지 먼저).
   const LIMIT = 6;
+  // 카드 태그 — 가장 잘 맞는 줄 기준: 어떤 품목코드·작업키워드·규격이 맞았는지 + 거래처(키워드 거래처, 없으면 이 지시서 거래처)
+  const kwClients = kw.filter((t) => t.type === 'client').map((t) => t.value);
+  const myName = order?.clientCompanyName || '';
+  const tagsFor = (text: string, size: string | undefined, client: string | undefined, sameClient: boolean) => {
+    const out: { type: Tok['type']; label: string }[] = [];
+    const c = kwClients.find((v) => squeeze(client || '').includes(squeeze(v)));
+    if (c) out.push({ type: 'client', label: c });
+    else if (!kwClients.length && sameClient) out.push({ type: 'client', label: '같은 거래처' });
+    const t = squeezeS(text);
+    kw.forEach((k) => {
+      if ((k.type === 'code' || k.type === 'text') && t.includes(squeezeS(k.value))) out.push({ type: k.type, label: k.value });
+      if (k.type === 'spec') {
+        const n = specNear(k.value, size);
+        if (n > 0) out.push({ type: 'spec', label: n === 1 ? k.value : `${k.value} 근처` });
+      }
+    });
+    return out;
+  };
   type Cell = { key: string; g: number; el: React.ReactElement };
   const cells: Cell[] = [
     ...(home || []).map((x, j) => ({
       key: `h${x.o.id}`,
       g: x.g,
-      el: <HomeCard key={`h${x.o.id}`} h={x} onOpen={() => setDetail(posOf.get(`h${j}`) ?? null)} />,
+      el: (
+        <HomeCard
+          key={`h${x.o.id}`}
+          h={x}
+          tags={tagsFor(
+            `${x.hits[0]?.품목코드 || ''} ${x.hits[0]?.품목 || ''}`,
+            x.hits[0]?.규격,
+            x.o.clientCompanyName,
+            !!myName && squeeze(x.o.clientCompanyName || '') === squeeze(myName),
+          )}
+          onOpen={() => setDetail(posOf.get(`h${j}`) ?? null)}
+        />
+      ),
     })),
-    ...(past || []).map(({ pr, hit, g }, j) => {
+    ...(past || []).map(({ pr, g }, j) => {
       const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
       return {
         key: `p${k}`,
@@ -693,7 +741,7 @@ export default function PriceFinder({
           <PastCard
             key={`p${k}`}
             pr={pr}
-            hit={hit}
+            tags={tagsFor(pr.item, pr.size, pastData[k]?.client, pr.src === '이력')}
             token={token}
             data={pastData[k]}
             onData={(d) => setPastData((m) => ({ ...m, [k]: d }))}

@@ -1114,3 +1114,22 @@ html.scrap-anim .scr-panel {
 .pf-close:hover {
   background: #374151;
 }
+
+/* 카드 = 거래처·날짜 + 맞은 키워드 태그만(2026-11-24, 가격 뺌) */
+.pf-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.pf-card-tags.none {
+  font-size: 11px;
+  color: #8a99a8;
+}
+.pf-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+}
