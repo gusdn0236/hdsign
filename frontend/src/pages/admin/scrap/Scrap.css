@@ -1030,3 +1030,31 @@ html.scrap-anim .scr-panel {
 .pf-sub .pf-grid {
   margin-top: 10px;
 }
+
+/* 닫기 구분(2026-11-24) — 단가찾아보기 전체 닫기 = 빨간 ✕, 찾은 명세서만 닫기 = 담기 옆 검정 ✕ 박스 */
+.pf .pf-close-all {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+  font-weight: 800;
+}
+.pf .pf-close-all:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+.pf-detail-close {
+  margin-left: 8px;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: #111827;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.pf-detail-close:hover {
+  background: #374151;
+}

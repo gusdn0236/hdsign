@@ -558,7 +558,7 @@ export default function PriceFinder({
         </button>
       )}
       {onClose && (
-        <button type="button" className="efb-x" onClick={onClose} aria-label="닫기">
+        <button type="button" className="efb-x pf-close-all" onClick={onClose} aria-label="단가찾아보기 닫기" title="단가찾아보기 닫기">
           ✕
         </button>
       )}
@@ -771,6 +771,15 @@ export default function PriceFinder({
             if (cur.item.kind === 'past' && ph) tinyThumb(ph).then((t) => t && scrap.patch(cur.item.key, { thumb: t }));
           }}
         />
+        <button
+          type="button"
+          className="pf-detail-close"
+          onClick={() => setDetail(null)}
+          aria-label="이 명세서 닫기"
+          title="이 명세서만 닫고 목록으로"
+        >
+          ✕
+        </button>
       </div>
       <ScrapViewer token={token} item={cur.item} data={cur.data || undefined} />
     </div>
