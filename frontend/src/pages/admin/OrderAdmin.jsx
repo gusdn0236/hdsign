@@ -13,6 +13,9 @@ import { homeScrap } from "./scrap/scrapStore.ts";
 import "./OrderAdmin.css";
 import { probeEasyformAgent } from "./autoquote/data/easyformClient";
 
+// 명세서 탭 [📥 이지폼 불러오기](한꺼번에) — 숨김(사용자 2026-11-24: 필요 없음). 코드는 남겨 둠.
+const SHOW_EF_BULK = false;
+
 // 자동견적 명세서작성 — 별도 탭이 아니라 주문 상세/카드에서 모달로 띄운다. 무거운 주석입력 UI 라 lazy.
 // 모달 청크도 배포 뒤 옛 해시 404 → 빈 화면 방지(자동 새로고침)
 import { lazyWithRetry } from "../../utils/lazyWithRetry.js";
@@ -2349,7 +2352,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 <option value="due">납기날짜순</option>
                 <option value="old">오래된순</option>
               </select>
-              {isOrderPage && (
+              {/* 한꺼번에 불러오기는 이제 안 씀 — 숨김(사용자 2026-11-24). 다시 쓰려면 SHOW_EF_BULK 를 true 로. */}
+              {SHOW_EF_BULK && isOrderPage && (
                 <>
                   {/* 명세서작성 화면 [📥 이지폼 불러오기] 와 같은 모양. 여러 건 찾기라 '열어 둔 명세서 가져오기' 메뉴는 없음. */}
                   <span className="statement-efbulk-hint">이지폼에 이미 명세서가 있는지 검색해요.</span>
