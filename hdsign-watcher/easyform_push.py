@@ -227,8 +227,14 @@ def _client_key(s: str) -> str:
 
 
 def _client_like(a: str, bb: str) -> bool:
-    ka, kb = _client_key(a), _client_key(bb)
-    return bool(ka and kb) and (ka in kb or kb in ka or ka[:2] == kb[:2])
+    """같은 거래처인가 — 한쪽 이름이 다른 쪽에 들어 있을 때만((주)·공백 무시). 예전의 '앞 두 글자만 같아도'는 뺐다
+    (사용자 2026-11-24: 에이치디사인 찾다 '에이스…' 같은 다른 업체까지 열었음). 두 글자 미만 이름은 안 맞춤."""
+    def keys(x):  # 그대로 + 괄호 안(지점·담당자 메모 등) 뺀 것 — '디온에이(전홍진실장님)' ↔ '디온에이싸인(D.on.A.Sign)'
+        k1 = _client_key(x)
+        k2 = _client_key(re.sub(r"\([^)]*\)", "", x or ""))
+        return [k for k in {k1, k2} if len(k) >= 2]
+
+    return any(x in y or y in x for x in keys(a) for y in keys(bb))
 
 
 def _names(body: dict) -> list:
