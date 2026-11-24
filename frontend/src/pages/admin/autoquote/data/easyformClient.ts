@@ -328,12 +328,24 @@ export interface EfBulkResult {
   nos?: string[];
   plan?: EfPushPlan;
   same?: boolean;
-  cancelled?: boolean; // push_confirm — '이 명세서가 맞나요?'에 아니오
+  cancelled?: boolean; // push_confirm — '이 명세서가 맞나요?'에 아니오 / manual_fill — 취소
+  found?: boolean; // open_quick — 찾아서 띄웠나(못 찾으면 false, 에러 아님)
+  bizNo?: string; // manual_fill — 저장한 명세서의 거래처 사업자번호
 }
 
 export interface EfBulkStatus {
   state: 'running' | 'done' | 'error' | 'idle' | 'gone';
-  phase?: 'export' | 'read' | 'stamp' | 'push_read' | 'push_apply' | 'new_fill' | 'open_show' | 'push_confirm';
+  phase?:
+    | 'export'
+    | 'read'
+    | 'stamp'
+    | 'push_read'
+    | 'push_apply'
+    | 'new_fill'
+    | 'open_show'
+    | 'push_confirm'
+    | 'open_quick'
+    | 'manual_fill';
   message?: string;
   progress?: string;
   lists?: { biz: 'corp' | 'personal'; name: string; rows: EfListRow[] }[];
@@ -357,6 +369,8 @@ export async function startEfBulk(
         to?: string;
         client?: string;
         biz?: string; // 먼저 볼 이지폼(지난번에 끊은 쪽)
+        clients?: string[]; // 이지폼에서 끊는 다른 이름들(기억해 둔 것) — 이 거래처 명세서만 본다
+        due?: string; // 납기 YYYY.MM.DD — 가까운 날부터
       }
     // 이지폼에서 열기: 같은 방법으로 찾아 비고 주문번호 확인 → 열어 둔 채 이지폼을 앞으로(저장 없음)
     | {
@@ -368,9 +382,15 @@ export async function startEfBulk(
         to?: string;
         client?: string;
         biz?: string;
+        clients?: string[];
+        due?: string;
       }
     // 새 명세서: 새로작성 → 사업자번호로 거래처 1건 선택(OCR 확인) → 입력 → 다시 읽어 같아야 저장
     | { phase: 'new_fill'; biz: string; bizNo: string; client: string; target: EfPushRow[] }
+    // [이지폼에서 열기] 연동 안 된 명세서 — 키워드 찾기 화면 뒤에서 조용히: 그 거래처·납기 앞뒤 3일만
+    | { phase: 'open_quick'; nos: string[]; due: string; client?: string; clients?: string[]; biz?: string }
+    // [직접 고를게요] — 사람이 이지폼에서 새로작성·거래처 선택 → 워처 [작성 시작하기 ▶] → 입력·저장까지
+    | { phase: 'manual_fill'; nos: string[]; target: EfPushRow[] }
     // [이지폼에 적용하기]: 찾아서 이지폼에 띄우고 워처 카드 '이 명세서가 맞나요?' → 네=적용·저장 / 아니오=취소(홈페이지로)
     | {
         phase: 'push_confirm';
@@ -382,6 +402,8 @@ export async function startEfBulk(
         to?: string;
         client?: string;
         biz?: string;
+        clients?: string[];
+        due?: string;
       }
     // 다시 열어 표가 expect(읽었을 때)와 같아야 고침 → 다시 읽어 target 과 같아야 저장
     | {

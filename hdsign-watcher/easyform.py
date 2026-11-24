@@ -1430,6 +1430,22 @@ def ef_ask(title: str, sub: str = "", lines: "list | None" = None, tag: "tuple |
     return bool(holder["ans"])
 
 
+def ef_manual_show(holder: dict, note: str = "") -> None:
+    """[직접 고를게요] 코너 창 — 3단계 안내 + [작성 시작하기 ▶]. 누르면 holder ans=True, ✕ 면 False(사용자 2026-11-24)."""
+    if not _EF_UI_READY[0]:
+        holder["ans"] = ef_confirm("1. 이지폼에서 새로작성을 눌러주세요.\n2. 거래처를 직접 선택해주세요.\n"
+                                   "3. [예]를 누르면 작성을 시작할게요." + (f"\n\n{note}" if note else ""),
+                                   "HD사인 이지폼")
+        holder["ev"].set()
+        return
+    _EF_UI_QUEUE.put(("manual_show", holder, note))
+
+
+def ef_manual_hide(holder: dict) -> None:
+    if _EF_UI_READY[0]:
+        _EF_UI_QUEUE.put(("manual_hide", holder))
+
+
 def ef_busy(text: "str | None") -> None:
     """작업 중 화면 잠금 안내(text) / 끄기(None) — 자동기입 때 쓰는 그 판."""
     if _EF_UI_READY[0]:
@@ -1802,6 +1818,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         busy["v"] = False
 
     def set_staged(count):
+        if manual["holder"]:
+            manual_answer(False)  # [직접 고를게요] 대기 중이었으면 취소
         busy["v"] = False
         mode["v"] = "fill"
         set_info("이지폼 자동기입",
@@ -1843,6 +1861,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         threading.Thread(target=worker, daemon=True).start()
 
     def set_pull(pmode="one"):
+        if manual["holder"]:
+            manual_answer(False)
         busy["v"] = False
         mode["v"] = "pull"
         if pmode == "scan":
@@ -1958,14 +1978,44 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    manual = {"holder": None}  # [직접 고를게요] — 버튼 누르면 일하는 스레드(easyform_push.manual_fill)에 답
+
+    def manual_answer(ans: bool):
+        h = manual["holder"]
+        manual["holder"] = None
+        win.withdraw()
+        if h:
+            h["ans"] = ans
+            h["ev"].set()
+
+    def manual_show(holder, note=""):
+        if manual["holder"] and manual["holder"] is not holder:
+            manual_answer(False)
+        manual["holder"] = holder
+        busy["v"] = False
+        mode["v"] = "manual"
+        text = ("1. 이지폼에서 새로작성을 눌러주세요.\n2. 거래처를 직접 선택해주세요.\n"
+                "3. 아래 버튼을 눌러 작성을 시작할게요.")
+        if note:
+            text += f"\n⚠ {note}"
+        set_info("이지폼 새로작성", text)
+        btn.config(text="작성 시작하기 ▶", state="normal", bg=accent)
+        win.deiconify()
+        win.lift()
+        win.attributes("-topmost", True)
+
     def on_btn():
-        if mode["v"] == "pull":
+        if mode["v"] == "manual":
+            manual_answer(True)
+        elif mode["v"] == "pull":
             on_pull()
         else:
             on_fill()
 
     def on_close():
         win.withdraw()  # X = 숨김(종료 아님). 가져오기 대기 중이었으면 취소로 본다.
+        if mode["v"] == "manual":
+            manual_answer(False)
         if mode["v"] == "pull":
             with _EF_LOCK:
                 if _EF_PULL["state"] == "waiting":
@@ -2293,6 +2343,12 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 elif cmd[0] == "auto_overlay_hide":
                     if not busy["v"]:
                         hide_overlay()
+                elif cmd[0] == "manual_show":  # [직접 고를게요] 3단계 안내 + [작성 시작하기 ▶]
+                    manual_show(cmd[1], cmd[2] if len(cmd) > 2 else "")
+                elif cmd[0] == "manual_hide":
+                    if manual["holder"] is cmd[1]:
+                        manual["holder"] = None
+                        win.withdraw()
                 elif cmd[0] == "ask2":  # 확인 카드(네/아니오)
                     cf_show(*cmd[1:])
                 elif cmd[0] == "ask2_cancel":

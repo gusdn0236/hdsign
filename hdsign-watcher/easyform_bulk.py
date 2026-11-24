@@ -63,6 +63,7 @@ if ef.EASYFORM_AVAILABLE:
     _u.GetWindowLongW.restype = ctypes.c_long
     _u.IsWindowVisible.argtypes = [wintypes.HWND]
     _u.IsWindow.argtypes = [wintypes.HWND]
+    _u.IsWindowEnabled.argtypes = [wintypes.HWND]
     _u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     _u.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
     _u.GetAsyncKeyState.argtypes = [ctypes.c_int]
@@ -162,6 +163,11 @@ def _popups(main) -> list:
         return True
 
     _u.EnumWindows(_ENUM(cb), 0)
+    # 이지폼에 모달 아닌 다른 창(거래처 정보 등)이 따로 떠 있어도 진행(사용자 2026-11-24) — 우리는 창에 직접 메시지를
+    # 보내므로 옆에 떠 있는 창은 상관없다. 메인 창이 눌리는 상태(= 모달 창 없음)면 질문창(TMessageForm)만 본다.
+    # 모달 창이 뜨면 델파이가 메인 창을 막으므로(IsWindowEnabled=0) 그때는 전부 그대로 돌려준다.
+    if out and _u.IsWindowEnabled(main):
+        out = [p for p in out if p[1] == "TMessageForm"]
     return out
 
 
@@ -1162,7 +1168,8 @@ def _run(phase: str, jid: int, body: dict) -> None:
     with _LOCK:
         home = _JOB.get("home")
     watch_stop = threading.Event()
-    if phase not in ("open_show", "push_confirm"):  # 이지폼에서 열기·적용(확인) = 이지폼을 앞으로 띄우는 게 목적 → '앞에 나오면 내리기' 감시 안 함
+    # 이지폼에서 열기·적용(확인)·직접 고르고 작성 = 이지폼을 앞으로 띄우거나 사람이 이지폼을 만지는 게 목적 → '앞에 나오면 내리기' 감시 안 함
+    if phase not in ("open_show", "push_confirm", "open_quick", "manual_fill"):
         threading.Thread(target=_watch_front, args=(watch_stop, home), daemon=True).start()
     _PAUSE.clear()
     try:
@@ -1185,7 +1192,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
             items = [x for x in (body.get("items") or []) if isinstance(x, dict)][:100]
             _stamp_items(items, progress, on_result)
             msg = "비고 적기를 마쳤어요."
-        elif phase in ("push_read", "push_apply", "new_fill", "open_show", "push_confirm"):
+        elif phase in ("push_read", "push_apply", "new_fill", "open_show", "push_confirm", "open_quick", "manual_fill"):
             # 홈페이지 수정 → 이지폼 기존 명세서 반영(easyform_push). 저장은 push_apply 의 검증 통과 때만.
             import easyform_push
             msg = easyform_push.run(phase, body, progress, on_result)
@@ -1211,7 +1218,8 @@ def handle_start(body: "dict | None") -> "tuple[int, dict]":
     if not ef.EASYFORM_AVAILABLE:
         return 200, {"started": False, "message": "이 PC 에서는 이지폼 자동화를 쓸 수 없어요."}
     body = body if isinstance(body, dict) else {}
-    phase = body.get("phase") if body.get("phase") in ("read", "stamp", "push_read", "push_apply", "new_fill", "open_show", "push_confirm") else "export"
+    phase = body.get("phase") if body.get("phase") in ("read", "stamp", "push_read", "push_apply", "new_fill", "open_show",
+                                                       "push_confirm", "open_quick", "manual_fill") else "export"
     with _LOCK:
         if _JOB["state"] == "running":
             return 200, {"started": False, "message": "이미 이지폼 작업이 진행 중이에요."}

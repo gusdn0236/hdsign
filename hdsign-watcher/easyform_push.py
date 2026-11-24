@@ -149,6 +149,32 @@ def _client_like(a: str, bb: str) -> bool:
     return bool(ka and kb) and (ka in kb or kb in ka or ka[:2] == kb[:2])
 
 
+def _names(body: dict) -> list:
+    """이 주문의 거래처 이름들 — 홈페이지 이름 + 이지폼에 끊는 이름(기억해 둔 것, 웹이 clients 로 보냄)."""
+    out = []
+    for s in [body.get("client")] + list(body.get("clients") or []):
+        s = str(s or "").strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _is_client(r: dict, body: dict) -> bool:
+    """목록 줄 r 이 이 거래처 명세서인가 — 사업자번호가 같거나 이름이 비슷(이지폼에서 다른 이름으로 끊는 곳은 그 이름도)."""
+    no = str(body.get("bizNo") or "").replace("-", "")
+    if no and str(r.get("bizNo") or "").replace("-", "") == no:
+        return True
+    return any(_client_like(n, r.get("client", "")) for n in _names(body))
+
+
+def _day_gap(a: str, bb: str) -> int:
+    from datetime import datetime
+    try:
+        return abs((datetime.strptime(a, "%Y.%m.%d") - datetime.strptime(bb, "%Y.%m.%d")).days)
+    except ValueError:
+        return 999
+
+
 def _goto_list_row(main, idx: int):
     """목록(기간으로 조회) 맨 위에서 idx 번째 줄로. 목록 표 hwnd 반환."""
     lst = b._open_list(main)
@@ -297,17 +323,22 @@ def _order_cands(lst: list, body: dict, exact: bool) -> "tuple[list, dict | None
     exact(지문 있음): ① 같은 날·같은 합계 → ② 같은 날 나머지(거래처 비슷한 것 먼저). ②는 **비고 주문번호가 맞아야만**.
       지문 합계가 옛 값일 수 있어서(이지폼에서 고쳐 저장하고 홈페이지 반영 '아니오' 등 — 2026-11-23 실제로 못 찾음).
       lone = ①이 딱 하나이고 거래처도 비슷할 때만.
-    지문 없음: 기간 안에서 거래처 비슷한 것(없으면 전부) 최대 40건, 비고 주문번호로만."""
-    cl = str(body.get("client") or "")
+    지문 없음: 기간 안에서 **그 거래처 것만**(납기에 가까운 날부터) 최대 40건, 비고 주문번호로만.
+    ⚠ 예전엔 거래처가 안 맞으면 전부를 봐서 오늘 다른 거래처 명세서부터 열었음(느림, 사용자 2026-11-24)."""
+    named = bool(_names(body) or body.get("bizNo"))
     if exact:
         date, total = str(body.get("date") or ""), str(body.get("total") or "")
         same_day = [r for r in lst if r["date"] == date]
         first = [r for r in same_day if b._digits(r["total"]) == b._digits(total)]
-        rest = [r for r in same_day if r not in first]
-        rest.sort(key=lambda r: 0 if cl and _client_like(cl, r.get("client", "")) else 1)
-        lone = first[0] if len(first) == 1 and (not cl or _client_like(cl, first[0].get("client", ""))) else None
+        rest = [r for r in same_day if r not in first and (not named or _is_client(r, body))]
+        lone = first[0] if len(first) == 1 and (not named or _is_client(first[0], body)) else None
         return (first + rest)[:40], lone
-    cands = ([r for r in lst if _client_like(cl, r.get("client", ""))] if cl else []) or lst
+    if not named:
+        return lst[:40], None
+    due = str(body.get("due") or "")
+    cands = [r for r in lst if _is_client(r, body)]
+    if due:
+        cands.sort(key=lambda r: _day_gap(r["date"], due))
     return cands[:40], None
 
 
@@ -354,7 +385,7 @@ def _each_candidate(body: dict, progress, forms_ok: bool):
 
     for pi, (period, exact) in enumerate(_passes(body)):
         if pi > 0:
-            progress(f"그날엔 없어서 앞뒤 7일({period[0]}~{period[1]})에서 찾는 중")
+            progress("그날엔 없어서 앞뒤 7일에서 찾는 중")
         per = []
         seen = set()
         # 기억해 둔 이지폼(지난번에 찾은 주식회사/개인)이 있으면 그쪽 목록만 먼저 뽑아 합계 맞는 것부터 —
@@ -362,10 +393,11 @@ def _each_candidate(body: dict, progress, forms_ok: bool):
         if exact and hint and any(m["biz"] == hint for m in mains):
             m, cs, lone = load(next(m for m in mains if m["biz"] == hint), period, pi, exact)
             per.append((m, cs, lone))
-            for it in [x for x in cs if hit_total(x)]:
+            hits = [x for x in cs if hit_total(x)]
+            for it in hits:
                 stop_check()
                 seen.add((m["biz"], it["idx"]))
-                yield m, it, lone, len(cs)
+                yield m, it, lone, len(hits)
         # 나머지 이지폼 목록도 뽑고(각자 자기 목록 창이라 서로 안 섞임) → 합계 맞는 것(양쪽) → 나머지 순
         for m in mains:
             if not any(p[0] is m for p in per):
@@ -378,7 +410,7 @@ def _each_candidate(body: dict, progress, forms_ok: bool):
         order = [x for x in order if (x[0]["biz"], x[1]["idx"]) not in seen]
         for m, it, lone in order:
             stop_check()
-            yield m, it, lone, len(order)
+            yield m, it, lone, len(seen) + len(order)  # 진행 'k / n' 의 n(이 기간에 볼 전체)
 
 
 def find_and_read(body: dict, progress) -> dict:
@@ -389,7 +421,7 @@ def find_and_read(body: dict, progress) -> dict:
     for m, it, lone, n in _each_candidate(body, progress, forms_ok=False):
         main = m["hwnd"]
         k += 1
-        progress(f"이지폼 명세서 확인 중 {k} · {it['date']} {it.get('client', '')}")
+        progress(f"{k} / {max(k, n)}")
         form = _open_row(main, it)
         try:
             # 비고만 먼저, 맞으면 그때 전체
@@ -463,8 +495,10 @@ class _Form:
         for c in ("item_code", "item", "spec"):
             if c in cols:
                 self.put(row, c, to[c], enter=False)
-        self.put(row, "qty", to["qty"], enter=True)
-        self.put(row, "unit_price", to["unit_price"], enter=True)
+        # 내용 있는 줄의 빈 수량·단가 = '0'(사용자 2026-11-24 — 이지폼엔 0 으로 적는다). 비교는 0 = 빈칸이라 그대로 같음.
+        filled = any(to[c] for c in ("item_code", "item", "spec", "qty", "unit_price"))
+        self.put(row, "qty", to["qty"] or ("0" if filled else ""), enter=True)
+        self.put(row, "unit_price", to["unit_price"] or ("0" if filled else ""), enter=True)
         if remark is not None and remark != "":
             self.put(row, "remark", remark, enter=False)
             ix, iy = b._row_cells(self.grid, row)["item"]
@@ -650,6 +684,54 @@ def _discard_new(main, form) -> None:
             b._wait(lambda: b._gone(form), 2.5, 0.05)
 
 
+def _blank_total(form) -> bool:
+    return b._digits(b._form_header(form)[1]).lstrip("0-") == ""
+
+
+def _open_new_form(main):
+    """메뉴 '[매출] 거래명세서 작성' → 명세서 창. 다른 명세서가 이미 열려 있으면 이지폼이 새 창을 띄우거나 그 창을
+    다시 쓸 수 있다(목록 Enter 는 덮어 띄움 — 2026-11-20 실측) → 새 창이 없으면 지금 앞(활성)에 있는 명세서 창."""
+    mid = b._menu_id(main, "거래명세서", "[매출] 거래명세서 작성")
+    if not mid:
+        raise Stop("이지폼 메뉴에서 '[매출] 거래명세서 작성'을 못 찾았어요.")
+    before = b._forms(main)
+    b._u.PostMessageW(main, 0x0111, mid, 0)
+    form = b._wait(lambda: next((x for x in b._kids(main, "TfrmExchange") if x not in before), None), 4.0)
+    if form:
+        return form
+    if b._popups(main):
+        raise Stop("이지폼에 작성중인 명세서가 있어서 저장확인창이 떴어요. 매크로는 아무것도 안 눌렀어요 — "
+                   "이지폼에서 직접 저장(또는 취소)한 뒤 다시 해주세요.")
+    shown = [f for f in b._kids(main, "TfrmExchange") if b._shown(f)]
+    if shown:
+        u32 = ctypes.windll.user32
+        act = u32.SendMessageW(u32.GetParent(shown[0]), 0x0229, 0, 0)  # WM_MDIGETACTIVE
+        hit = next((f for f in shown if f == act), None) or (shown[0] if len(shown) == 1 else None)
+        if hit:
+            logging.info("이지폼 새로작성: 새 창 대신 열린 명세서 창을 씀")
+            return hit
+    raise Stop("이지폼 새 명세서 창이 안 열렸어요.")
+
+
+def _press_new(main, form) -> None:
+    """[새로작성] → 발행일이 채워지고 합계가 빈(0) 새 명세서가 될 때까지. 질문창이 뜨면(작성중이던 것) 멈춤."""
+    time.sleep(0.6)
+    b._click(b._named(form, "TBitBtn", "새로작성"), "새로작성")
+    date_edit = next(iter(b._kids(form, "TMaskEdit")), None)
+
+    def ready():
+        if b._popups(main):
+            return "pop"
+        t = b._txt(date_edit) if date_edit else ""
+        return "_" not in t and t.strip() and _blank_total(form)
+
+    got = b._wait(ready, 3.5)
+    if got == "pop":
+        raise Stop("새로작성을 누르자 이지폼 창이 떠서 멈췄어요(작성중이던 명세서가 있어요). 매크로는 아무것도 안 눌렀어요.")
+    if not got:
+        raise Stop("이지폼 [새로작성]이 안 눌렸어요.")
+
+
 def _same_client(a: str, ocr: str) -> bool:
     import difflib
     ka, ko = _client_key(a), _client_key(ocr)
@@ -675,25 +757,13 @@ def new_fill(body: dict, progress) -> dict:
     target = _strip_tail([norm_target(r) for r in (body.get("target") or []) if isinstance(r, dict)])
     if not target:
         raise Stop("입력할 줄이 없어요.")
-    b._assert_clean(main)  # 열린 명세서·질문창 있으면 멈춤
+    # 다른 명세서가 열려 있어도 진행(사용자 2026-11-24) — 질문창만 있으면 멈춤.
+    b._assert_clean(main, forms_ok=True)
     progress("이지폼 새 명세서를 여는 중")
-    mid = b._menu_id(main, "거래명세서", "[매출] 거래명세서 작성")
-    if not mid:
-        raise Stop("이지폼 메뉴에서 '[매출] 거래명세서 작성'을 못 찾았어요.")
-    before = b._forms(main)
-    b._u.PostMessageW(main, 0x0111, mid, 0)
-    form = b._wait(lambda: next((x for x in b._kids(main, "TfrmExchange") if x not in before), None), 6.0)
-    if not form:
-        raise Stop("이지폼 새 명세서 창이 안 열렸어요.")
+    form = _open_new_form(main)
     saved = False
     try:
-        time.sleep(0.6)
-        b._click(b._named(form, "TBitBtn", "새로작성"), "새로작성")
-        date_edit = next(iter(b._kids(form, "TMaskEdit")), None)
-        if not b._wait(lambda: "_" not in b._txt(date_edit) and b._txt(date_edit).strip(), 3.0):
-            raise Stop("이지폼 [새로작성]이 안 눌렸어요.")
-        if b._popups(main):
-            raise Stop("새로작성 중 이지폼 창이 떠서 멈췄어요.")
+        _press_new(main, form)
         # 거래처 선택 — 사업자번호로 검색해 딱 1건일 때만
         progress(f"거래처 고르는 중 · {client}")
         b._click(form, "거래처 선택", *_FOLDER_REL)
@@ -859,7 +929,7 @@ def _find_open(body: dict, progress) -> "tuple[dict, int, dict]":
     for m, it, lone, n in _each_candidate(body, progress, forms_ok=True):
         main = m["hwnd"]
         k += 1
-        progress(f"이지폼 명세서 찾는 중 {k} · {it['date']} {it.get('client', '')}")
+        progress(f"{k} / {max(k, n)}")  # 웹이 '이지폼에서 명세서를 찾고 있어요 k / n' 으로 보여 줌(사용자 2026-11-24)
         form = _open_row(main, it, forms_ok=True)
         keep = False
         try:
@@ -875,6 +945,193 @@ def _find_open(body: dict, progress) -> "tuple[dict, int, dict]":
             return m, form, {"biz": m["biz"], "date": it["date"], "total": it["total"],
                              "client": it.get("client", ""), "nos": nos}
     raise Stop("주식회사·개인 이지폼 모두에서 이 주문의 명세서를 못 찾았어요. (비고에 이 주문번호가 적힌 명세서가 없어요)")
+
+
+def open_quick(body: dict, progress) -> dict:
+    """[이지폼에서 열기] — 홈페이지와 아직 연동 안 된 명세서(사용자 2026-11-24). 웹은 키워드로 찾기 화면을 바로 띄우고,
+    그 뒤에서 이걸 조용히 돌린다: **그 거래처 명세서만**, 납기일 앞뒤 3일(납기일에 가까운 것부터) 열어 본다.
+      · 비고에 이 주문번호 → 바로 띄움.
+      · 없고, 납기일 그날 그 거래처 명세서 중 비고에 주문번호 없는 게 딱 하나 → 띄우고 '이 명세서가 맞나요?'.
+    못 찾으면 {found: False} — 웹은 키워드 화면을 그대로 둔다(에러 아님)."""
+    want_nos = [n for n in (body.get("nos") or []) if n]
+    due = str(body.get("due") or "")
+    if not due:
+        return {"found": False}
+    mains = b._mains()
+    if not mains:
+        return {"found": False}
+    # 이미 열려 있으면(비고에 이 주문번호) 목록 안 뽑고 바로
+    if want_nos:
+        for m in mains:
+            for f in b._kids(m["hwnd"], "TfrmExchange"):
+                d, t = b._form_header(f)
+                if not d or "_" in d:
+                    continue
+                fnos = _nos([{"remark": x} for x in _read_remarks(f)])
+                if any(n in fnos for n in want_nos):
+                    _bring_front(m["hwnd"], f)
+                    return {"found": True, "biz": m["biz"], "date": d, "total": b._digits(t),
+                            "client": "", "nos": fnos}
+    mains.sort(key=lambda x: 0 if x["biz"] == body.get("biz") else 1)
+    period = (_shift_day(due, -3), _shift_day(due, 3))
+    cands = []
+    for m in mains:
+        for r in _list_candidates(m, period, progress, forms_ok=True):
+            if _is_client(r, body):
+                cands.append((m, r))
+    cands.sort(key=lambda x: (_day_gap(x[1]["date"], due), 0 if x[0]["biz"] == body.get("biz") else 1))
+    cands = cands[:20]
+    lone_pool = []
+    for k, (m, it) in enumerate(cands, 1):
+        if b._aborted():
+            raise Stop("정지했어요.")
+        progress(f"{k} / {len(cands)}")
+        main = m["hwnd"]
+        form = _open_row(main, it, forms_ok=True)
+        keep = False
+        try:
+            nos = _nos([{"remark": x} for x in _read_remarks(form)])
+            keep = bool(want_nos) and any(no in nos for no in want_nos)
+        finally:
+            if not keep:
+                _close(main, form)
+        if keep:
+            ctypes.windll.user32.SendMessageW(next(iter(b._kids(form, "TAdvStringGrid"))), 0x0115, 6, 0)
+            _bring_front(main, form)
+            return {"found": True, "biz": m["biz"], "date": it["date"], "total": it["total"],
+                    "client": it.get("client", ""), "nos": nos}
+        if not nos and it["date"] == due:
+            lone_pool.append((m, it))
+    if len(lone_pool) != 1:
+        return {"found": False}
+    m, it = lone_pool[0]
+    main = m["hwnd"]
+    if b._aborted():
+        raise Stop("정지했어요.")
+    form = _open_row(main, it, forms_ok=True)
+    ctypes.windll.user32.SendMessageW(next(iter(b._kids(form, "TAdvStringGrid"))), 0x0115, 6, 0)
+    _bring_front(main, form)
+    tag = ("주식회사", "#2563eb") if m["biz"] == "corp" else ("개인", "#d97706")
+    amt = int(b._digits(it["total"]) or 0)
+    ok = ef.ef_ask("이 명세서가 맞나요?", f"{it.get('client') or '이지폼'}  ·  {it['date']}  ·  합계 {amt:,}원",
+                   [], tag, yes="네, 이 명세서예요", no="아니오")
+    if not ok:
+        _close(main, form)
+        _go_home()
+        return {"found": False, "asked": True}
+    return {"found": True, "biz": m["biz"], "date": it["date"], "total": it["total"],
+            "client": it.get("client", ""), "nos": []}
+
+
+# ── 직접 고를게요(사람이 이지폼에서 새로작성 → 거래처 선택) → 매크로가 입력하고 저장까지 ────────────────────
+def _new_forms() -> list:
+    """새로작성 중인(발행일 있음·합계 빈) 명세서 창들 → [(m, form)]. 앞에 있는 이지폼·활성 창 먼저."""
+    u32 = ctypes.windll.user32
+    fg_pid = b._pid(u32.GetForegroundWindow() or 0) if u32.GetForegroundWindow() else 0
+    out = []
+    for m in b._mains():
+        forms = [f for f in b._kids(m["hwnd"], "TfrmExchange") if b._shown(f)]
+        act = u32.SendMessageW(u32.GetParent(forms[0]), 0x0229, 0, 0) if forms else 0
+        for f in forms:
+            d = b._form_header(f)[0]
+            if d and "_" not in d and _blank_total(f):
+                out.append((0 if b._pid(m["hwnd"]) == fg_pid else 1, 0 if f == act else 1, m, f))
+    out.sort(key=lambda x: (x[0], x[1]))
+    return [(m, f) for _a, _b, m, f in out]
+
+
+def manual_fill(body: dict, progress) -> dict:
+    """[직접 고를게요] — 워처 코너 창에 3단계 안내 + [작성 시작하기 ▶](사용자 2026-11-24).
+    사람이 이지폼에서 새로작성 → 거래처를 고르고 버튼을 누르면, 그 새 명세서에 줄을 넣고 다시 읽어 같을 때만 **저장까지**
+    → 목록에서 저장됐나 확인 → 홈페이지 화면으로. 사람이 [저장]을 안 누르므로 '홈페이지에 반영할까요?'도 안 뜬다.
+    취소(코너 창 ✕ / 웹 [취소]) = 아무것도 안 함 → {cancelled: True} — 홈페이지는 '작성완료'로 안 바뀜."""
+    import threading
+
+    import easyform_autosync as A
+    target = _strip_tail([norm_target(r) for r in (body.get("target") or []) if isinstance(r, dict)])
+    if not target:
+        raise Stop("입력할 줄이 없어요.")
+    if not b._mains():
+        raise Stop("켜져 있는 이지폼이 없어요.")
+    note = ""
+    asked_client = False
+    while True:
+        holder = {"ev": threading.Event(), "ans": False}
+        ef.ef_manual_show(holder, note)
+        progress("wait")
+        t0 = time.time()
+        while not holder["ev"].wait(0.2):
+            if b._aborted() or time.time() - t0 > 1800:
+                ef.ef_manual_hide(holder)
+                return {"cancelled": True}
+        if not holder["ans"]:
+            return {"cancelled": True}
+        found = _new_forms()
+        if not found:
+            note = "새로작성 창을 못 찾았어요. 이지폼에서 [새로작성]을 눌러주세요."
+            continue
+        m, form = found[0]
+        main = m["hwnd"]
+        if b._popups(main) or b._kids(main, "TfrmSelectComout"):
+            note = "이지폼에 거래처 선택 창(또는 질문창)이 떠 있어요. 닫고 다시 눌러주세요."
+            continue
+        shot = A._capture_client(form)
+        ocr = (A._ocr(shot) if shot else "").strip()
+        logging.info("이지폼 직접 고르기 거래처 OCR='%s'", ocr)
+        if not ocr and not asked_client:  # 거래처를 아직 안 골랐거나 OCR 실패 — 한 번만 묻고, 또 누르면 그대로 진행
+            asked_client = True
+            note = "거래처가 아직 안 보여요. 거래처를 선택하고 다시 눌러주세요."
+            continue
+        break
+    saved = False
+    tag = ("주식회사", "#2563eb") if m["biz"] == "corp" else ("개인", "#d97706")
+    ef.ef_busy("이지폼에 명세서를 작성하는 중이에요. 잠시만 기다려 주세요.")
+    ef.ef_guard_start()
+    try:
+        F = _Form(main, form)
+        for i, row in enumerate(target):
+            progress(f"줄 입력 중 {i + 1}/{len(target)}")
+            if i > 0:
+                F.append_after(i - 1)
+            F.write_row(i, row, cols=[c for c in ("item_code", "item", "spec") if row[c]],
+                        remark=row["remark"] or None)
+        progress("입력한 명세서를 다시 읽어 확인하는 중")
+        after = _strip_tail([norm_row(r) for r in _read_all(form)])
+        if after != target:
+            bad = next((i for i in range(max(len(after), len(target)))
+                        if i >= len(after) or i >= len(target) or after[i] != target[i]), 0)
+            logging.warning("이지폼 직접 고르기 검증 실패 %d번째: %s vs %s", bad + 1,
+                            after[bad] if bad < len(after) else None, target[bad] if bad < len(target) else None)
+            raise Stop(f"입력한 뒤 {bad + 1}번째 줄이 홈페이지와 달라서 저장 안 했어요(새 명세서는 버렸어요).")
+        date, total = b._form_header(form)
+        progress("이지폼에 저장하는 중")
+        save = b._named(form, "TBitBtn", "저장")
+        if not save or not b._u.IsWindowEnabled(save):
+            raise Stop("이지폼 [저장] 버튼을 못 찾았어요.")
+        b._u.PostMessageW(save, 0x00F5, 0, 0)  # BM_CLICK — 새 명세서는 확인창 없이 저장(실측)
+        time.sleep(1.2)
+        if b._popups(main):
+            raise Stop("저장을 눌렀더니 이지폼 창이 떠서 멈췄어요. 이지폼을 직접 확인해주세요.")
+        saved = True
+        _close(main, form)
+    finally:
+        ef.ef_guard_stop()
+        ef.ef_busy(None)
+        if not saved:
+            _discard_new(main, form)
+    progress("저장됐는지 확인하는 중")
+    lst = b._export_one(m, 0, progress, period=(date, date), forms_ok=True)
+    hit = [r for r in lst if b._digits(r["total"]) == b._digits(total)
+           and (r.get("firstItem") or "").strip() == (target[0]["item"] or "").strip()]
+    if ocr and len(hit) > 1:
+        hit.sort(key=lambda r: 0 if _same_client(r.get("client", ""), ocr) else 1)
+    _go_home()
+    if not hit:
+        raise Stop("저장 버튼은 눌렀는데 이지폼 목록에서 새 명세서가 안 보여요. 이지폼을 직접 확인해주세요.")
+    client = hit[0].get("client") or ocr
+    ef.ef_notice("이지폼에 작성하고 저장했어요", f"{client}  ·  {date}  ·  합계 {int(b._digits(total) or 0):,}원", tag)
+    return {"date": date, "total": total, "client": client, "biz": m["biz"], "bizNo": hit[0].get("bizNo", ""),
+            "rows": after}
 
 
 def open_show(body: dict, progress) -> dict:
@@ -973,6 +1230,14 @@ def run(phase: str, body: dict, progress, on_result) -> str:
         res = new_fill(body, progress)
         on_result({"key": "push", "ok": True, **res})
         return "이지폼에 새 명세서를 저장했어요."
+    if phase == "open_quick":
+        res = open_quick(body, progress)
+        on_result({"key": "push", "ok": True, **res})
+        return "이지폼에서 명세서를 열었어요." if res.get("found") else "못 찾았어요."
+    if phase == "manual_fill":
+        res = manual_fill(body, progress)
+        on_result({"key": "push", "ok": True, **res})
+        return "취소했어요." if res.get("cancelled") else "이지폼에 새 명세서를 저장했어요."
     if phase == "push_read":
         found = find_and_read(body, progress)
         found["plan"] = plan_summary(found["rows"], body.get("target") or [])

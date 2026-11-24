@@ -1,5 +1,5 @@
 import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { bandOwners, clientSim, rememberClientAlias } from './data/efMatch';
+import { bandOwners, clientAliases, clientSim, rememberClientAlias } from './data/efMatch';
 import { lazyWithRetry } from '../../../utils/lazyWithRetry.js';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
@@ -46,7 +46,6 @@ import {
 } from './annot/api';
 import {
   probeEasyformAgent,
-  fillEasyform,
   gridToEasyformRows,
   startEasyformPull,
   pollEasyformPull,
@@ -2959,20 +2958,12 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     }
   };
 
-  // ---- 이지폼 자동기입 (slice-14) --------------------------------------
-  // grid 를 로컬 에이전트로 보내 스테이징(arm)만 한다. 실제 기입은 사용자가 이지폼 '매출
-  // 거래명세서' 새로작성 → 거래처 선택 후, 그 창에서 핫키(F6)를 눌렀을 때 에이전트가 수행.
+  // ---- 이지폼 자동기입 ----------------------------------------------------
+  // 워처 manual_fill: 사람이 이지폼 '매출 거래명세서' 새로작성 → 거래처 선택 후 워처 코너 [작성 시작하기 ▶] →
+  // 워처가 줄을 넣고 다시 읽어 같으면 저장까지(2026-11-24, 예전엔 저장을 사람이 눌러 '홈페이지에 반영할까요?'가 또 떴음).
   const [efBusy, setEfBusy] = useState(false);
-  // [이지폼 입력] — 이 주문의 주문번호를 이지폼 첫 줄 비고에 자동으로 적는다(묻지 않음).
-  // 합친 명세서면 같이 묶인 주문번호들도 함께. 나중에 [이지폼에서 찾기] 가 이 번호로 찾는다.
-  const sendToEasyform = () => {
-    if (!order) {
-      cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
-      return;
-    }
-    const own = orderNoCore(order.orderNumber);
-    void doSendToEasyform(linkedOrders.map((l) => orderNoCore(l.orderNumber)).filter((n) => n && n !== own));
-  };
+  // [직접 고를게요] — 이 주문의 주문번호를 이지폼 첫 줄 비고에 자동으로 적는다(묻지 않음).
+  // 합친 명세서면 같이 묶인 주문번호들도 함께. 나중에 [이지폼에서 열기] 가 이 번호로 찾는다.
   const doSendToEasyform = async (extras: string[]) => {
     if (!order) return;
     const grid = buildGrid();
@@ -3018,23 +3009,92 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
         return;
       }
-      const res = await fillEasyform(rows);
-      if (!res.staged) {
-        cdlg(res.message || '이지폼으로 보내지 못했습니다.', [{ label: '확인', sec: true }]);
+      // 사람이 이지폼에서 새로작성 → 거래처 선택 → 워처 코너 [작성 시작하기 ▶] → 워처가 입력하고 **저장까지**
+      // (사용자 2026-11-24). 이지폼에 실제로 저장된 게 확인됐을 때만 '작성완료'로 바꾼다 — 취소·창 닫기면 그대로.
+      const target: EfPushRow[] = rows.map((r) => ({
+        item_code: r.item_code,
+        item: r.item,
+        spec: r.spec,
+        qty: r.qty,
+        unit_price: r.unit_price,
+        remark: r.remark,
+      }));
+      const steps =
+        `<div style="font-size:13px;margin-top:10px;line-height:1.9">` +
+        `1. 이지폼에서 <b>새로작성</b>을 눌러주세요.<br>` +
+        `2. <b>거래처</b>를 직접 선택해주세요.<br>` +
+        `3. 화면 오른쪽 아래 <b>[작성 시작하기 ▶]</b>를 눌러 작성을 시작할게요.</div>`;
+      let done: EfBulkResult | null;
+      try {
+        done = await runEfPush(
+          { phase: 'manual_fill', nos: allNos, target },
+          '이지폼에 작성 중',
+          (p) =>
+            p === 'wait' || !p
+              ? `<b style="font-size:15px">이지폼 새로작성</b>` + steps
+              : efJobHtml('이지폼에 작성하고 있어요', p),
+          '취소',
+        );
+      } catch (e) {
+        cdlg(
+          `<b style="font-size:15px">이지폼에 작성하지 못했어요</b>` +
+            `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH((e as Error).message)}</div>` +
+            `<div style="font-size:12px;color:#6b7785;margin-top:6px">홈페이지 명세서는 저장돼 있어요. 이지폼엔 저장 안 했어요.</div>`,
+          [{ label: '확인', sec: true }],
+        );
         return;
       }
-      // 스테이징 성공 → '명세서작성완료' 배지 점등(이지폼으로 보냄). 별도 [기입 완료] 단계 제거.
-      markEasyformUploaded(token, order.id)
-        .then(() => {
-          setOrder((o) => (o ? { ...o, easyformUploadedAt: new Date().toISOString() } : o));
-          onSaved?.();
-          onEasyformUploaded?.(); // 목록 카드 '명세서작성완료' 배지 즉시 점등(작업중·작업완료 양쪽)
-        })
-        .catch((e) => console.error(e));
+      setDialog(null);
+      if (!done || done.cancelled) {
+        setStatus('이지폼 작성을 취소했어요 — 이지폼엔 저장 안 했어요');
+        return;
+      }
+      if (!done.date) {
+        cdlg('이지폼 작업 결과를 못 받았어요. 이 PC 워처가 옛 버전일 수 있어요 — 바로가기를 껐다 다시 켠 뒤 해주세요.', [
+          { label: '확인', sec: true },
+        ]);
+        return;
+      }
+      const dig = (s: string) => String(s || '').replace(/[^0-9-]/g, '');
+      try {
+        const res = await syncEstimateFromEasyform(token, {
+          orderNumbers: allNos,
+          grid,
+          total,
+          source: 'fill',
+          efDate: done.date,
+          efTotal: done.total,
+          efClient: done.client,
+          efBiz: done.biz,
+        });
+        setLinkedOrders(res.linked.length > 1 ? res.linked : []);
+        efSyncRef.current = {
+          ...(efSyncRef.current || {}),
+          efKey: `x|${done.date}|${dig(done.total || '')}`,
+          efClient: done.client,
+          efBiz: done.biz,
+        };
+        if (done.client) {
+          setEfWhere({ client: done.client, biz: done.biz });
+          rememberClientAlias(order.clientCompanyName, done.client);
+        }
+      } catch (e) {
+        console.error('이지폼 작성 후 홈페이지 동기화 실패', e);
+      }
+      try {
+        await markEasyformUploaded(token, order.id);
+      } catch (e) {
+        console.error(e);
+      }
+      setOrder((o) => (o ? { ...o, hasEstimate: true, easyformUploadedAt: o.easyformUploadedAt || new Date().toISOString() } : o));
+      onSaved?.();
+      onEasyformUploaded?.(); // 목록 카드 '명세서작성완료' 배지 즉시 점등(작업중·작업완료 양쪽)
       cdlg(
-        `이지폼 <b>매출 거래명세서 → 새로작성 → 거래처 선택</b> 후,<br>` +
-          `<b>'이지폼 자동기입 시작하기 ▶'</b> 를 눌러주세요.`,
-        [{ label: '닫기', sec: true }],
+        `<b style="font-size:16px">작성하고 저장했어요</b>` +
+          `<div style="font-size:13px;margin-top:8px;line-height:1.6">이지폼 <b>[${done.biz === 'corp' ? '주식회사' : '개인'}] ${escH(done.client || '')}</b><br>` +
+          `${escH(done.date)} · ${target.length}줄 · 합계 <b>${Number(dig(done.total || '')).toLocaleString()}원</b></div>` +
+          `<div style="font-size:12px;color:#6b7785;margin-top:6px">비고에 주문번호 ${escH(allNos.join(', '))} 도 적었어요.</div>`,
+        [{ label: '확인' }],
       );
     } catch (e) {
       console.error(e);
@@ -3050,20 +3110,40 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // → 4) push_apply: 다시 열어 그대로인지 확인 → 고치기 → 다시 읽어 홈페이지와 같을 때만 [저장] → 5) 지문 갱신.
   const escH = (s: string) =>
     String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] || c);
-  const runEfPush = async (body: Parameters<typeof startEfBulk>[0], title: string): Promise<EfBulkResult | null> =>
-    (await runEfJob(body, title)).results?.find((r) => r.key === 'push') || null;
-  const runEfJob = async (body: Parameters<typeof startEfBulk>[0], title: string): Promise<EfBulkStatus> => {
+  const runEfPush = async (
+    body: Parameters<typeof startEfBulk>[0],
+    title: string,
+    render?: (p: string) => string,
+    stopLabel?: string,
+  ): Promise<EfBulkResult | null> =>
+    (await runEfJob(body, title, render, stopLabel)).results?.find((r) => r.key === 'push') || null;
+  // 진행 창 — 돌아가는 🔄 + 제목 한 줄 + 진행(워처가 'k / n' 을 보내면 크게). 간결하게(사용자 2026-11-24).
+  const efJobHtml = (title: string, p: string) => {
+    const n = /^(\d+) \/ (\d+)$/.exec(p);
+    return (
+      `<div class="aq-efjob"><span class="aq-efjob-spin" aria-hidden="true">🔄</span><b>${title}</b></div>` +
+      (n
+        ? `<div class="aq-efjob-n">${n[1]} <span>/ ${n[2]}</span></div>`
+        : p
+          ? `<div class="aq-efjob-p">${escH(p)}</div>`
+          : '')
+    );
+  };
+  const runEfJob = async (
+    body: Parameters<typeof startEfBulk>[0],
+    title: string,
+    render?: (p: string) => string,
+    stopLabel = '정지',
+  ): Promise<EfBulkStatus> => {
     const st0 = await startEfBulk(body);
     if (!st0.started || !st0.id) throw new Error(st0.message || '이지폼 작업을 시작하지 못했어요.');
     const id = st0.id;
     let last: string | null = null;
     const show = (p: string) =>
-      cdlg(
-        `<b style="font-size:15px">${title}</b>` +
-          (p ? `<div style="font-size:14px;color:#b45309;font-weight:700;margin-top:6px">${escH(p)}</div>` : '') +
-          `<div style="font-size:12px;color:#6b7785;margin-top:6px">이지폼은 화면 뒤에서 움직여요. 끝날 때까지 이지폼을 만지지 마세요.</div>`,
-        [{ label: '정지', sec: true, fn: () => void cancelEfBulk(id) }],
-      );
+      cdlg((render || ((x: string) => efJobHtml(title, x)))(p), [
+        { label: stopLabel, sec: true, fn: () => void cancelEfBulk(id) },
+      ]);
+    show('');
     const t0 = Date.now();
     for (;;) {
       await new Promise((r) => setTimeout(r, 600));
@@ -3095,13 +3175,26 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     const pref = efPrefRef.current;
     const client = efSyncRef.current?.efClient || pref?.client || order?.clientCompanyName || '';
     const biz = efSyncRef.current?.efBiz || pref?.biz || undefined;
-    if (kDate && kTotal) return { date: kDate, total: kTotal, client, biz };
+    // 이 거래처 명세서만 본다 — 홈페이지 이름 + 이지폼에서 끊는 이름들(사용자 2026-11-24: 다른 업체까지 다 열어 느렸음)
+    const clients = [order?.clientCompanyName, efSyncRef.current?.efClient, pref?.client, ...clientAliases(order?.clientCompanyName)]
+      .map((s) => String(s || '').trim())
+      .filter((s, i, a) => s && a.indexOf(s) === i);
+    const dueM = String(order?.dueDate || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const due = dueM ? `${dueM[1]}.${dueM[2]}.${dueM[3]}` : undefined;
+    if (kDate && kTotal) return { date: kDate, total: kTotal, client, biz, clients, due };
     const times = [order?.easyformUploadedAt, order?.dueDate]
       .map((s) => (s ? new Date(s).getTime() : NaN))
       .filter((t) => Number.isFinite(t));
     const base = times.length ? Math.min(...times) : Date.now();
     // 끝 = 오늘 + 한 달 — 발행일을 미래 날짜로 끊은 명세서도 찾게(사용자 2026-11-23)
-    return { from: efDay(new Date(base - 7 * 86400000)), to: efDay(new Date(Date.now() + 31 * 86400000)), client, biz };
+    return {
+      from: efDay(new Date(base - 7 * 86400000)),
+      to: efDay(new Date(Date.now() + 31 * 86400000)),
+      client,
+      biz,
+      clients,
+      due,
+    };
   };
   // 이지폼에서 명세서를 찾은 순간 — 최신 발행일·합계·이지폼 거래처를 홈페이지에 기억(명세서 본문은 그대로).
   // 지문 합계가 옛 값이면 매번 같은 날 명세서를 다 열어 찾게 되므로(2026-11-23 실제로 못 찾음) 찾을 때마다 맞춘다.
@@ -3133,12 +3226,69 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       ],
     );
   };
+  // 연동 안 된 명세서의 [이지폼에서 열기] — 키워드로 찾기 화면을 바로 띄우고, 그 뒤에서 워처가 조용히 그 거래처·납기 앞뒤
+  // 3일 명세서만 열어 본다(사용자 2026-11-24). 찾으면 키워드 화면을 닫고 이지폼에 띄움. 사람이 키워드로 [찾기]를 누르거나
+  // 창을 닫으면 조용한 찾기는 멈춘다(워처 작업은 한 번에 하나).
+  const quickRef = useRef<{ id: number | null; stop: boolean; done: Promise<void> } | null>(null);
+  const stopQuick = async () => {
+    const q = quickRef.current;
+    if (!q) return;
+    q.stop = true;
+    if (q.id != null) void cancelEfBulk(q.id);
+    await Promise.race([q.done, new Promise((r) => setTimeout(r, 8000))]);
+  };
+  const quickOpen = (nos: string[]) => {
+    if (!order) return;
+    const where = efFindWhere();
+    // 납기 없으면 주문번호 날짜(yyMMdd-n)
+    const m6 = orderNoCore(order.orderNumber).match(/^(\d{2})(\d{2})(\d{2})-/);
+    const due = where.due || (m6 ? `20${m6[1]}.${m6[2]}.${m6[3]}` : '');
+    setEfBulkOpen(true);
+    if (!due || quickRef.current) return;
+    const job: { id: number | null; stop: boolean; done: Promise<void> } = { id: null, stop: false, done: Promise.resolve() };
+    quickRef.current = job;
+    job.done = (async () => {
+      try {
+        const probe = await probeEasyformAgent();
+        if (!probe?.easyform || job.stop) return;
+        const st0 = await startEfBulk({ phase: 'open_quick', nos, due, client: where.client, clients: where.clients, biz: where.biz });
+        if (!st0.started || !st0.id) return;
+        job.id = st0.id;
+        if (job.stop) void cancelEfBulk(job.id);
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 600));
+          let st: EfBulkStatus;
+          try {
+            st = await pollEfBulk(job.id);
+          } catch {
+            continue;
+          }
+          if (st.state === 'running') continue;
+          const r = st.results?.find((x) => x.key === 'push');
+          if (st.state === 'done' && r?.found && r.date && !job.stop) {
+            setEfBulkOpen(false);
+            void rememberEfLocation(r.date, r.total || '', r.client || undefined, r.biz);
+          }
+          return;
+        }
+      } catch (e) {
+        console.error('이지폼 조용히 찾기 실패', e);
+      } finally {
+        if (quickRef.current === job) quickRef.current = null;
+      }
+    })();
+  };
   // [이지폼에서 열기] — 그 명세서를 찾아서 이지폼 화면에 띄운다(읽기만, 저장 없음).
   const openInEasyform = async () => {
     if (!order) return;
     const own = orderNoCore(order.orderNumber);
     const nos = (linkedOrders.length > 1 ? linkedOrders.map((l) => orderNoCore(l.orderNumber)) : [own]).filter(Boolean);
     if (own && !nos.includes(own)) nos.push(own);
+    const [, kDate, kTotal] = (efSyncRef.current?.efKey || '').split('|');
+    if (!order.easyformUploadedAt && !(kDate && kTotal)) {
+      quickOpen(nos); // 아직 홈페이지와 연동 안 된 명세서 → 키워드 화면 + 뒤에서 조용히
+      return;
+    }
     setEfBusy(true);
     try {
       const probe = await probeEasyformAgent();
@@ -3146,7 +3296,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         cdlg(EF_AGENT_MISSING_HTML, [{ label: '확인', sec: true }]);
         return;
       }
-      const r = await runEfPush({ phase: 'open_show', nos, ...efFindWhere() }, '이지폼에서 명세서 찾는 중…');
+      const r = await runEfPush({ phase: 'open_show', nos, ...efFindWhere() }, '이지폼에서 명세서를 찾고 있어요');
       setDialog(null);
       if (!r?.date) throw new Error('이 PC 워처가 옛 버전일 수 있어요 — 바로가기를 껐다 다시 켠 뒤 해주세요.');
       void rememberEfLocation(r.date, r.total || '', r.client, r.biz);
@@ -3184,7 +3334,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           `<div style="font-size:12px;color:#6b7785;margin-top:6px">홈페이지 명세서는 저장돼 있어요. 이지폼은 바뀌지 않았어요.</div>`,
         offerNew
           ? [
-              { label: '이지폼에 새로 입력하기', fn: sendToEasyform },
+              { label: '이지폼에 새로 작성하기', fn: () => void newFillEasyform() },
               { label: '닫기', sec: true },
             ]
           : [{ label: '확인', sec: true }],
@@ -3212,7 +3362,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       try {
         done = await runEfPush(
           { phase: 'push_confirm', nos, target, ...efFindWhere() },
-          '이지폼에 명세서를 띄우는 중… 이지폼 화면에서 "이 명세서가 맞나요?"에 답해주세요',
+          '이지폼에서 명세서를 찾고 있어요',
         );
       } catch (e) {
         fail((e as Error).message, /못 찾았/.test((e as Error).message));
@@ -3284,7 +3434,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     total: number;
     history: EfClientChoice[];
     similar: EfClientChoice[];
-    all: EfClientChoice[];
     resolve: (c: EfClientChoice | 'manual' | null) => void;
   }>(null);
   const newFillEasyform = async () => {
@@ -3317,7 +3466,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH(msg)}</div>` +
           `<div style="font-size:12px;color:#6b7785;margin-top:6px">홈페이지 명세서는 저장돼 있어요. 이지폼엔 저장 안 했어요.</div>`,
         [
-          { label: '직접 고를게요(예전 방식)', fn: () => void doSendToEasyform(extras) },
+          { label: '직접 고를게요', fn: () => void doSendToEasyform(extras) },
           { label: '닫기', sec: true },
         ],
       );
@@ -3384,7 +3533,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             .slice(0, 5)
             .map((x) => x.c);
       const choice = await new Promise<EfClientChoice | 'manual' | null>((resolve) =>
-        setEfNew({ webClient, rowsCount: target.length, total, history, similar, all, resolve }),
+        setEfNew({ webClient, rowsCount: target.length, total, history, similar, resolve }),
       );
       setEfNew(null);
       if (choice === 'manual') {
@@ -4739,7 +4888,11 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
                   orders={[order]}
                   single
                   token={token}
-                  onClose={() => setEfBulkOpen(false)}
+                  beforeStart={stopQuick}
+                  onClose={() => {
+                    void stopQuick();
+                    setEfBulkOpen(false);
+                  }}
                   onSaved={() => {
                     onEasyformUploaded?.();
                     setReloadKey((k) => k + 1);
@@ -5838,7 +5991,6 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           total={efNew.total}
           history={efNew.history}
           similar={efNew.similar}
-          all={efNew.all}
           onConfirm={(c) => efNew.resolve(c)}
           onManual={() => efNew.resolve('manual')}
           onCancel={() => efNew.resolve(null)}

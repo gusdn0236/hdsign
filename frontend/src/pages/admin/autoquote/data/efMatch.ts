@@ -151,6 +151,12 @@ export function rememberClientAlias(web: string | null | undefined, ef: string):
   }
 }
 
+/** 이 홈페이지 거래처를 이지폼에서 끊었던 다른 이름들(이 PC 에 기억한 것, 정리된 이름). */
+export function clientAliases(web: string | null | undefined): string[] {
+  const w = normClient(web);
+  return w ? loadAlias()[w] || [] : [];
+}
+
 /** 거래처 닮음 0~1. 같음 1, 한쪽이 다른 쪽을 포함 0.85(지점 괄호 차이 등), 아니면 글자쌍 유사도. */
 export function clientSim(web: string | null | undefined, ef: string, alias = loadAlias()): number {
   const w = normClient(web);

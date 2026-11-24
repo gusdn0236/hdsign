@@ -72,6 +72,8 @@ interface Props {
   onSaved: (orderId: number) => void;
   /** 지시서 1건(명세서 상세카드)에서 연 경우 — 선택 화면 없이 바로 키워드 입력 화면, 키워드 없이 찾기 = 바로 찾기 */
   single?: boolean;
+  /** 찾기 시작 직전 — 부모가 뒤에서 돌리던 조용한 찾기([이지폼에서 열기])를 멈출 때까지 기다린다(워처 작업은 하나씩). */
+  beforeStart?: () => Promise<void>;
 }
 
 type Phase = 'intro' | 'clue' | 'export' | 'read' | 'review' | 'saving' | 'saved';
@@ -92,7 +94,7 @@ const byDate = (a: EfBulkOrder, b: EfBulkOrder) => dateOf(a) - dateOf(b) || a.id
 const etaText = (sec: number) => (sec < 60 ? `약 ${Math.max(5, Math.round(sec / 5) * 5)}초 남음` : `약 ${Math.round(sec / 60)}분 남음`);
 const SEC_PER_READ = 6; // 첫 결과 전 추정(실측 6건 38초)
 
-export default function EasyformBulkImport({ orders: ordersProp, token, onClose, onSaved, single = false }: Props) {
+export default function EasyformBulkImport({ orders: ordersProp, token, onClose, onSaved, single = false, beforeStart }: Props) {
   // 열 때의 목록으로 고정 — 저장하면서 부모 목록이 줄어들어도 화면이 흔들리지 않게.
   // 오래된 날짜순. 찾고 나면 '찾은 것 먼저(왼쪽) → 각각 오래된 날짜순'으로 다시 줄 세운다.
   const [orders, setOrders] = useState(() => [...ordersProp].sort(byDate));
@@ -224,6 +226,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
     const clues = cluesArg ?? cluesState;
     if (cluesArg) setClues(cluesArg);
     setError('');
+    if (beforeStart) await beforeStart();
     const probe = await probeEasyformAgent();
     if (!probe?.easyform) {
       setError('이 PC 에서 워처가 꺼져 있거나 이지폼 자동화를 쓸 수 없어요. 워처를 켜고 다시 해주세요.');

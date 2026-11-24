@@ -11,7 +11,9 @@
  */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import PdfViewerJs from '../../../components/common/PdfViewer.jsx';
+import WorksheetThumbnailJs from '../../../components/common/WorksheetThumbnail.jsx';
 import FitWorksheet from '../scrap/FitWorksheet';
+import '../OrderAdmin.css'; // 지시서 고르기 카드 = 명세서 탭 카드와 같은 모양
 import { useAuth } from '../../../context/AuthContext';
 import {
   findOrdersByNumbers,
@@ -35,6 +37,28 @@ import './EasyformAutoSync.css';
 const AutoQuote = lazy(() => import('./AutoQuote'));
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const PdfViewer = PdfViewerJs as unknown as ComponentType<any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const WorksheetThumbnail = WorksheetThumbnailJs as unknown as ComponentType<any>;
+
+const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
+/** 명세서 탭 카드와 같은 납기 글자 'MM-DD (요일)' */
+function dueText(s: string | null | undefined): string {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '납기 없음';
+  return `${m[2]}-${m[3]} (${WEEK[new Date(+m[1], +m[2] - 1, +m[3]).getDay()]})`;
+}
+/** 명세서 탭 카드와 같은 납기 배지 — 오늘/내일/n일 지남 */
+function dueBadge(s: string | null | undefined): { kind: string; text: string } | null {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const t = new Date();
+  t.setHours(0, 0, 0, 0);
+  const diff = Math.round((new Date(+m[1], +m[2] - 1, +m[3]).getTime() - t.getTime()) / DAY);
+  if (diff < 0) return { kind: 'overdue', text: `${-diff}일 지남` };
+  if (diff === 0) return { kind: 'today', text: '오늘' };
+  if (diff === 1) return { kind: 'tomorrow', text: '내일' };
+  return null;
+}
 
 interface Props {
   ev: EfAutoEvent;
@@ -503,44 +527,85 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             {cands === null ? (
               <p className="efas-empty">지시서를 찾는 중…</p>
             ) : visible.length ? (
-              <ul className="efas-grid">
-                {visible.slice(0, 24).map(({ o }) => (
-                  <li key={o.id} className="efas-cand-li">
-                    <button
-                      type="button"
-                      className="efas-zoombtn"
-                      onClick={() => setZoom(o)}
-                      aria-label={`${orderNoCore(o.orderNumber)} 지시서 크게 보기`}
-                      title="크게 보기"
-                    >
-                      🔍
-                    </button>
-                    <button
-                      type="button"
-                      className={'efas-cand' + (picked?.id === o.id ? ' on' : '')}
+              // 명세서 탭(관리자 주문 목록) 카드와 같은 모양 — 눈에 익어 고르기 쉽게(사용자 2026-11-24).
+              // FS·폴더·공유·명세서 버튼은 없이 카드만. 누르면 고르고(파란 테두리), 아래 [반영하기].
+              <div className="order-card-grid efas-cards">
+                {visible.slice(0, 24).map(({ o }) => {
+                  const on = picked?.id === o.id;
+                  const badge = dueBadge(o.dueDate);
+                  return (
+                    <div
+                      key={o.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={on}
+                      className={`order-card order-card--order${o.hasEstimate ? ' order-card--estimate' : ''}${on ? ' efas-card-on' : ''}`}
                       onClick={() => setPicked(o)}
-                      aria-pressed={picked?.id === o.id}
+                      onDoubleClick={() => {
+                        setPicked(o);
+                        setZoom(o);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setPicked(o);
+                        }
+                      }}
                     >
-                      <div className="efas-thumb">
-                        <FitWorksheet pdfUrl={o.worksheetPdfUrl} thumbUrl={o.worksheetThumbnailUrl} title={o.title} />
-                      </div>
-                      <div className="efas-cand-body">
-                        <span className="efas-cand-client">{o.clientCompanyName || '거래처 없음'}</span>
-                        <span className="efas-cand-sub">
-                          {orderNoCore(o.orderNumber)} · 납기 {fmtDay(o.dueDate) || '없음'}
-                        </span>
-                        {o.title && <span className="efas-cand-title">{o.title}</span>}
+                      <div className="order-card-thumb-wrap">
+                        <WorksheetThumbnail
+                          pdfUrl={o.worksheetPdfUrl || null}
+                          thumbnailUrl={o.worksheetThumbnailUrl || null}
+                          fallback={
+                            <div className="order-card-thumb-empty">
+                              <span className="order-card-thumb-empty-title">{o.title || '지시서 없음'}</span>
+                            </div>
+                          }
+                        />
                         {(o.hasEstimate || o.deletedAt) && (
-                          <span className="efas-badges">
-                            {o.hasEstimate && <i className="b-est">명세서 있음</i>}
-                            {o.deletedAt && <i className="b-done">완료</i>}
+                          <div className="order-card-thumb-badges">
+                            {o.hasEstimate && <span className="row-badge badge-estimate">명세서 있음</span>}
+                            {o.deletedAt && <span className="row-badge badge-evidence">작업완료</span>}
+                          </div>
+                        )}
+                        {on && (
+                          <span className="efas-card-check" aria-hidden="true">
+                            ✓
                           </span>
                         )}
+                        <button
+                          type="button"
+                          className="efas-zoombtn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setZoom(o);
+                          }}
+                          aria-label={`${orderNoCore(o.orderNumber)} 지시서 크게 보기`}
+                          title="크게 보기"
+                        >
+                          🔍
+                        </button>
                       </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                      <div className="order-card-body">
+                        <div className="order-card-meta-row">
+                          <span className="order-card-company">{o.clientCompanyName || '-'}</span>
+                          <span className="order-card-due">
+                            {badge && <span className={`due-badge due-badge--${badge.kind}`}>{badge.text}</span>}
+                            <span className="order-due-text">{dueText(o.dueDate)}</span>
+                          </span>
+                        </div>
+                        <h3 className="order-card-title">{o.title || '지시서'}</h3>
+                        <div className="order-card-foot">
+                          <span className="order-card-foot-left">
+                            <span className="order-card-num">{o.orderNumber}</span>
+                          </span>
+                          <span className="order-card-date">{(o.createdAt || '').split('T')[0]}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
               <p className="efas-empty">
                 {q ? '찾는 지시서가 없어요.' : phase === 'added' ? '같은 거래처 지시서가 없어요.' : '지시서가 없어요.'}
