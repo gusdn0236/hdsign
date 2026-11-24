@@ -207,6 +207,17 @@ function formatDateTime(value) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// 카드 상태 알약 옆 시각 — 오늘이면 "14:20", 아니면 "11/21".
+function formatCardTime(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  if (d.toDateString() === now.toDateString()) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
 function daysLeftUntilPurge(deletedAt) {
   if (!deletedAt) return null;
   const deleted = new Date(deletedAt);
@@ -1900,11 +1911,26 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       if (selecting) toggleBulkSelected(order.id);
       else setSelectedOrderId(order.id);
     };
+    // 명세서 상태 — 썸네일 아래 알약 1개로 표시(예전 초록/주황 테두리 빛 대체).
+    // 명세서 탭은 모든 카드에 표시(아직 안 한 것도 '명세서 전'), 다른 탭은 작성된 것만.
+    const stmtState = editingHolder
+      ? "editing"
+      : easyformUploaded
+        ? "done"
+        : hasEstimate
+          ? "draft"
+          : "none";
+    const showStmtStatus = isStatementView || stmtState !== "none";
+    const doneAt = easyformUploaded ? formatCardTime(order.easyformUploadedAt) : "";
+    const dueBadge = getDueBadge(order.dueDate);
+    const isLargePdf = order.worksheetPdfSize >= WORKSHEET_SIZE_WARN_BYTES;
+    // 명세서 탭은 [명세서] 주 버튼이 있어 FS·폴더·공유를 아이콘만, 다른 탭은 글자까지.
+    const iconTools = isStatementView;
     return (
       <div
         key={order.id}
         data-order-company={order.clientCompanyName || ""}
-        className={`order-card order-card--${typeKey} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""} ${easyformUploaded ? "order-card--ef-done" : hasEstimate ? "order-card--estimate" : ""}`}
+        className={`order-card order-card--v2 order-card--${typeKey} oc2-st-${stmtState} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
         onClick={openCard}
         role="button"
         tabIndex={0}
@@ -1927,7 +1953,21 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </div>
             }
           />
-          <div className="order-card-thumb-top">
+          <div className="oc2-chips oc2-chips--top">
+            <span className="oc2-chip-group">
+              {isTrash ? (
+                <span className="oc2-chip">
+                  <span className="oc2-dot oc2-dot--trash" />
+                  {daysLeft === null ? "작업완료" : `${daysLeft}일 남음`}
+                </span>
+              ) : (
+                <span className="oc2-chip">
+                  <span className={`oc2-dot oc2-dot--${String(order.status || "RECEIVED").toLowerCase()}`} />
+                  {statusMeta.label}
+                </span>
+              )}
+              {typeKey === "quote" && <span className="oc2-chip oc2-chip--quote">견적</span>}
+            </span>
             {selecting ? (
               <span className={`order-card-check ${checked ? "is-checked" : ""}`} aria-hidden="true">
                 {checked ? "✓" : ""}
@@ -1935,7 +1975,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             ) : order.linkedOrderIds?.length > 1 ? (
               <button
                 type="button"
-                className={"order-card-link" + (linkFilter && linkFilter.includes(order.id) ? " on" : "")}
+                className={"oc2-chip oc2-chip--link" + (linkFilter && linkFilter.includes(order.id) ? " on" : "")}
                 title={
                   linkFilter && linkFilter.includes(order.id)
                     ? "누르면 전체 보기로 돌아가요"
@@ -1954,118 +1994,157 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 }}
                 onKeyDown={(e) => e.stopPropagation()}
               >
-                🔗 {order.linkedOrderIds.length}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+                  <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+                </svg>
+                {order.linkedOrderIds.length}장 묶음
               </button>
-            ) : (
-              <span aria-hidden="true" />
-            )}
-            {isTrash ? (
-              <span className="status-badge status-trash">
-                {daysLeft === null ? "작업완료" : `${daysLeft}일 남음`}
-              </span>
-            ) : (
-              <span className={`status-badge ${statusMeta.className}`}>
-                {statusMeta.label}
-              </span>
-            )}
+            ) : null}
           </div>
-          {(hasPhotos || hasWorksheetChange || hasEstimate || easyformUploaded) && (
-            <div className="order-card-thumb-badges">
+          {(hasPhotos || hasWorksheetChange) && (
+            <div className="oc2-chips oc2-chips--bottom">
               {hasPhotos && (
-                <span className="row-badge badge-evidence" title="작업 사진이 등록되어 있습니다">사진</span>
+                <span className="oc2-chip" title="작업 사진이 등록되어 있습니다">
+                  <svg className="oc2-cam" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
+                    <circle cx="12" cy="13" r="3.5" />
+                  </svg>
+                  사진
+                </span>
               )}
               {hasWorksheetChange && (
-                <span className="row-badge badge-worksheet" title={worksheetChangeTitle}>변경</span>
+                <span className="oc2-chip" title={worksheetChangeTitle}>
+                  <span className="oc2-dot oc2-dot--change" />
+                  변경됨
+                </span>
               )}
-              {/* 임시저장(estimate 저장됨) → 이지폼 자동기입 완료(명세서작성완료) 로 진행. 완료면 완료만 표시.
-                  작성자 이름이 있으면 "ㅇㅇㅇ님: 임시저장 / 명세서 완료" 로 누가 했는지 함께 보여준다. */}
-              {easyformUploaded ? (
-                <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">
-                  {estimateAuthor ? `${estimateAuthor}님: 명세서 완료` : "명세서작성완료"}
-                </span>
-              ) : hasEstimate ? (
-                <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">
-                  {estimateAuthor ? `${estimateAuthor}님: 임시저장` : "명세서 임시저장"}
-                </span>
-              ) : null}
-            </div>
-          )}
-          {editingHolder && (
-            <div className="order-card-editing-overlay" title={`${editingHolder}님이 명세서를 작성 중입니다`}>
-              <span className="editing-dot" />
-              {editingHolder}님 작성중
             </div>
           )}
         </div>
 
-        <div className="order-card-body">
-          <div className="order-card-meta-row">
-            <span className="order-card-company">{order.clientCompanyName || "-"}</span>
-            {(() => {
-              const dueBadge = getDueBadge(order.dueDate);
-              return (
-                <span className="order-card-due">
-                  {dueBadge && (
-                    <span className={`due-badge due-badge--${dueBadge.kind}`}>{dueBadge.text}</span>
-                  )}
-                  <span className="order-due-text">
-                    {formatDueDate(order.dueDate, order.deliveryMethod)}
-                  </span>
+        <div className="oc2-body">
+          {showStmtStatus && (
+            <div className="oc2-status">
+              {stmtState === "done" ? (
+                <span className="oc2-pill oc2-pill--done" title="이지폼에 명세서 저장 완료">
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="8" fill="currentColor" />
+                    <path d="M4.6 8.2l2.2 2.2 4.6-4.8" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  명세서 완료
                 </span>
-              );
-            })()}
-          </div>
-          <h3 className="order-card-title">
-            {order.title || requestLabel(order.requestType)}
-          </h3>
-          <div className="order-card-foot">
-            <span className="order-card-foot-left">
-              <span className="order-card-num">{order.orderNumber}</span>
-              {order.worksheetPdfSize ? (
-                <span
-                  className={`order-card-size${order.worksheetPdfSize >= WORKSHEET_SIZE_WARN_BYTES ? " is-large" : ""}`}
-                  title={`지시서 PDF 용량: ${formatFileSize(order.worksheetPdfSize)}${order.worksheetPdfSize >= WORKSHEET_SIZE_WARN_BYTES ? " — 비정상적으로 큽니다(사진 압축 확인)" : ""}`}
-                >
-                  {formatFileSize(order.worksheetPdfSize)}
+              ) : stmtState === "draft" ? (
+                <span className="oc2-pill oc2-pill--draft" title="명세서 임시저장됨 (아직 이지폼 미입력)">
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                    <path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
+                  </svg>
+                  임시저장
+                </span>
+              ) : stmtState === "editing" ? (
+                <span className="oc2-pill oc2-pill--editing" title={`${editingHolder}님이 명세서를 작성 중입니다`}>
+                  <span className="oc2-live" />
+                  작성 중
+                </span>
+              ) : (
+                <span className="oc2-pill oc2-pill--none">
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeDasharray="3 2.2" />
+                  </svg>
+                  명세서 전
+                </span>
+              )}
+              {stmtState === "editing" ? (
+                <span className="oc2-who"><b>{editingHolder}</b></span>
+              ) : (stmtState === "done" || stmtState === "draft") && (estimateAuthor || doneAt) ? (
+                <span className="oc2-who">
+                  {estimateAuthor && <span className="oc2-av" aria-hidden="true">{estimateAuthor.slice(0, 1)}</span>}
+                  {estimateAuthor && <b>{estimateAuthor}</b>}
+                  {doneAt}
                 </span>
               ) : null}
+            </div>
+          )}
+          <div className="oc2-meta">
+            <span className="oc2-co">{order.clientCompanyName || "-"}</span>
+            <span className="oc2-due">
+              {dueBadge && <b className={`oc2-due-${dueBadge.kind}`}>{dueBadge.text}</b>}
+              {formatDueDate(order.dueDate, order.deliveryMethod)}
             </span>
-            <span className="order-card-date">
+          </div>
+          <h3 className="oc2-title">
+            {order.title || requestLabel(order.requestType)}
+          </h3>
+          <div className="oc2-sub">
+            <span className="oc2-num">
+              {order.orderNumber}
+              {order.worksheetPdfSize ? (
+                <>
+                  {" · "}
+                  <span
+                    className={isLargePdf ? "oc2-size-large" : ""}
+                    title={`지시서 PDF 용량: ${formatFileSize(order.worksheetPdfSize)}${isLargePdf ? " — 비정상적으로 큽니다(사진 압축 확인)" : ""}`}
+                  >
+                    {formatFileSize(order.worksheetPdfSize)}
+                  </span>
+                </>
+              ) : null}
+            </span>
+            <span className="oc2-date">
+              {isTrash ? "완료 " : "접수 "}
               {formatDateWithDay(isTrash ? order.deletedAt : order.createdAt)}
             </span>
           </div>
 
           {!selecting && (
-          <div className="order-card-actions" onClick={(e) => e.stopPropagation()}>
-            <div className="order-card-toolrow">
+          <div className="oc2-actions" onClick={(e) => e.stopPropagation()}>
+            {(fsReady || isStatementView) && (
+            <div className={`oc2-tools${iconTools ? "" : " oc2-tools--labeled"}`}>
             {fsReady && (
               <button
                 type="button"
-                className="order-card-tool action-fs"
+                className="oc2-ib action-fs"
                 onClick={(e) => handleOpenFs(e, order)}
                 disabled={openingFs}
-                title="현장 에이전트로 .fs 를 FlexiSIGN 에서 엽니다"
+                title="FlexiSIGN 에서 열기 (현장 에이전트)"
+                aria-label="FlexiSIGN 에서 열기"
               >
-                <span aria-hidden="true">{openingFs ? "⏳" : "🖥️"}</span>
-                <span>FS</span>
+                {openingFs ? (
+                  <span className="oc2-spin" aria-hidden="true" />
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="12" rx="2" />
+                    <path d="M8 20h8M12 16v4" />
+                  </svg>
+                )}
+                {!iconTools && <span>FS</span>}
               </button>
             )}
             {fsReady && (
               <button
                 type="button"
-                className="order-card-tool action-folder"
+                className="oc2-ib action-folder"
                 onClick={(e) => handleOpenFolder(e, order)}
                 disabled={openingFolder}
-                title="거래처/지시서 폴더를 탐색기로 엽니다"
+                title="거래처/지시서 폴더 열기"
+                aria-label="폴더 열기"
               >
-                <span aria-hidden="true">{openingFolder ? "⏳" : "📁"}</span>
-                <span>폴더</span>
+                {openingFolder ? (
+                  <span className="oc2-spin" aria-hidden="true" />
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  </svg>
+                )}
+                {!iconTools && <span>폴더</span>}
               </button>
             )}
             {fsReady && (
               <KakaoShareButton
-                className="order-card-tool order-card-share"
+                className="oc2-ib oc2-share"
                 label="공유"
+                iconOnly={iconTools}
                 getSource={() => ({ type: "pdf", url: order.worksheetPdfUrl })}
                 fileName={() => safeFileName(`${order.title || order.orderNumber || "지시서"}_지시서`, "jpg")}
               />
@@ -2075,19 +2154,29 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
             {isStatementView && (
               <button
                 type="button"
-                className={`order-card-tool action-estimate${order.hasEstimate ? " has" : ""}`}
+                className={`oc2-primary action-estimate${order.hasEstimate ? " is-edit" : ""}`}
                 onClick={() => openEstimate(order)}
                 title={order.hasEstimate ? "명세서 수정 (작성됨)" : "명세서작성"}
               >
-                <span aria-hidden="true">📝</span>
-                <span>명세서</span>
+                {order.hasEstimate ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M4 20h4L19 9l-4-4L4 16z" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 3v5h5M9 13h6M9 17h4" />
+                  </svg>
+                )}
+                <span>{order.hasEstimate ? "명세서 수정" : "명세서 작성"}</span>
               </button>
             )}
             </div>
+            )}
             {/* 작업완료(휴지통) 카드는 복원/영구삭제를 카드에 안 띄운다 — 카드 클릭 시 상세모달에서 처리.
                 카드엔 작업중 탭과 똑같이 도구 4개만 노출. */}
             {!isTrash && (
-              <div className="order-card-statusrow">
+              <div className="oc2-statusrow">
                 {/* 새 워크플로우: 작업완료 / 다음 단계 버튼 제거. IN_PROGRESS 카드는 납기가 지나면
                     자동으로 [완료 검토] 버튼만 노출. RECEIVED 는 지시서 자동작성(파일 있는 ORDER) 또는
                     수동 [다음 단계] (QUOTE/QR-only) 만 유지. COMPLETED 는 검토 누락분 휴지통으로. */}
@@ -2862,12 +2951,20 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 return (
                   <div className="modal-badges">
                     {selectedOrder.easyformUploadedAt ? (
-                      <span className="row-badge badge-easyform" title="이지폼에 자동기입 완료">
-                        {author ? `${author}님: 명세서 완료` : "명세서작성완료"}
+                      <span className="oc2-pill oc2-pill--done" title="이지폼에 명세서 저장 완료">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <circle cx="8" cy="8" r="8" fill="currentColor" />
+                          <path d="M4.6 8.2l2.2 2.2 4.6-4.8" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        명세서 완료{author ? ` · ${author}` : ""}
                       </span>
                     ) : selectedOrder.hasEstimate ? (
-                      <span className="row-badge badge-estimate" title="명세서 임시저장됨 (아직 이지폼 미입력)">
-                        {author ? `${author}님: 임시저장` : "명세서 임시저장"}
+                      <span className="oc2-pill oc2-pill--draft" title="명세서 임시저장됨 (아직 이지폼 미입력)">
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                          <path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
+                        </svg>
+                        임시저장{author ? ` · ${author}` : ""}
                       </span>
                     ) : null}
                   </div>
