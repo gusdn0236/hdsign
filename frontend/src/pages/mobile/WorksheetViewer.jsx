@@ -65,7 +65,7 @@ function getPdfQualityScale(scale) {
 }
 
 const DELIVERY_LABELS = {
-    CARGO: '화물', QUICK: '퀵', DIRECT: '직접배송', PICKUP: '직접수령', LOCAL_CARGO: '용달',
+    CARGO: '화물/택배', QUICK: '퀵', DIRECT: '우리가 납', PICKUP: '찾으러오심', LOCAL_CARGO: '용달',
 };
 
 export default function WorksheetViewer() {

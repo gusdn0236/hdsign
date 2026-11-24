@@ -68,10 +68,10 @@ function formatDateTime(iso) {
 }
 
 const DELIVERY_LABELS = {
-  CARGO: "화물 발송",
+  CARGO: "화물/택배 발송",
   QUICK: "퀵 발송",
-  DIRECT: "직접 배송",
-  PICKUP: "직접 수령",
+  DIRECT: "우리가 납",
+  PICKUP: "찾으러오심",
   LOCAL_CARGO: "지방화물차 배송",
 };
 
