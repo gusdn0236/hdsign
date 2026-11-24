@@ -396,8 +396,9 @@ try:
         def _ef_mouse_proc(nCode, wParam, lParam):
             if nCode >= 0:
                 ms = ctypes.cast(lParam, ctypes.POINTER(_EF_MSLL)).contents
-                if not (ms.flags & _LLMHF_INJECTED):
-                    return 1  # 사용자 물리 마우스 차단(주입된 우리 입력만 통과)
+                # 사람 마우스는 **움직이기만** 됨 — 누르기·휠만 막음(사용자 2026-11-24). 우리 주입 입력은 통과.
+                if not (ms.flags & _LLMHF_INJECTED) and wParam != 0x0200:  # WM_MOUSEMOVE
+                    return 1
             return _user32.CallNextHookEx(None, nCode, wParam, lParam)
 
         def _ef_kbd_proc(nCode, wParam, lParam):
@@ -1840,7 +1841,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         prog_lbl.config(text="")
         panel.update_idletasks()  # 두 줄 문구여도 다 보이게 높이 맞춤
         hh = max(ph, run_frame.winfo_reqheight())
-        panel.geometry(f"{pw}x{hh}+{(sw - pw) // 2}+{(sh - hh) // 2}")
+        # 화면 아래쪽 — 가운데에 뜨는 홈페이지 진행창(k / n)과 안 겹치게(사용자 2026-11-24)
+        panel.geometry(f"{pw}x{hh}+{(sw - pw) // 2}+{max(0, sh - hh - int(90 * s))}")
         run_frame.pack(fill="both", expand=True)
         done_frame.pack_forget()
         dim.deiconify()
@@ -1858,6 +1860,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                         ("" if ok else f"\n{msg}"),
                         fg="#111827" if ok else "#dc2626")
         done_frame.pack(fill="both", expand=True)
+        panel.geometry(f"{pw}x{ph}+{(sw - pw) // 2}+{(sh - ph) // 2}")  # 완료 판은 가운데
         # 완료 화면은 [확인] 클릭을 받아야 하니 클릭통과·비활성 해제.
         _set_exstyle(panel, remove=_WS_EX_NOACTIVATE | _WS_EX_TRANSPARENT)
         panel.lift()
