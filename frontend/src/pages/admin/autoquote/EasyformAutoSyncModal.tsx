@@ -468,7 +468,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         ) : phase === 'pick' ? null : (
           <section className="efas-stmt" aria-label="이지폼 명세서">
             <div className="efas-stmt-meta">
-              <span className="efas-client">{ev.client || '거래처 못 읽음'}</span>
+              <span className="efas-client">{ev.client || '거래처 모름'}</span>
               <span>{fmtDay(ev.date)}</span>
               <b>{won(ev.total || sum)}</b>
             </div>

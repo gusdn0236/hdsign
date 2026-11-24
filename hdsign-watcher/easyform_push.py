@@ -873,7 +873,6 @@ def _same_client(a: str, ocr: str) -> bool:
 
 def new_fill(body: dict, progress) -> dict:
     """body: biz, bizNo, client(이지폼 거래처명), target:[6칸 줄](첫 줄 비고 = 주문번호). → {date,total,client,rows}."""
-    import easyform_autosync as A
     mains = {m["biz"]: m for m in b._mains()}
     m = mains.get(body.get("biz"))
     if not m:
@@ -966,11 +965,8 @@ def new_fill(body: dict, progress) -> dict:
         if not b._wait(lambda: not b._kids(main, "TfrmSelectComout"), 3.0):
             raise Stop("거래처가 안 골라졌어요.")
         time.sleep(0.4)
-        shot = A._capture_client(form)
-        ocr = (A._ocr(shot) if shot else "").strip()
-        logging.info("이지폼 새로작성 거래처 OCR='%s' (원하는 '%s' %s)", ocr, client, biz_no)
-        if not _same_client(client, ocr):
-            raise Stop(f"고른 거래처가 '{ocr}'로 보여서 멈췄어요(원하는 거래처 '{client}'). 저장 안 했어요.")
+        # 거래처는 OCR 로 확인 안 함(사용자 2026-11-24: OCR 이 한 글자씩 틀림 — '건화'→'건하'). 사업자번호로 딱 1건만
+        # 골랐고, 저장 뒤 이지폼 목록에서 사업자번호가 같은지로 확인한다.
         # 줄 입력 — 첫 줄은 이미 있음, 다음 줄은 마지막 줄 비고 Enter 로
         _fill_new(_Form(main, form), target, progress)
         progress("입력한 명세서를 다시 읽어 확인하는 중")
@@ -1174,14 +1170,12 @@ def manual_fill(body: dict, progress) -> dict:
     취소(코너 창 ✕ / 웹 [취소]) = 아무것도 안 함 → {cancelled: True} — 홈페이지는 '작성완료'로 안 바뀜."""
     import threading
 
-    import easyform_autosync as A
     target = _strip_tail([norm_target(r) for r in (body.get("target") or []) if isinstance(r, dict)])
     if not target:
         raise Stop("입력할 줄이 없어요.")
     if not b._mains():
         raise Stop("켜져 있는 이지폼이 없어요.")
     note = ""
-    asked_client = False
     while True:
         holder = {"ev": threading.Event(), "ans": False}
         ef.ef_manual_show(holder, note)
@@ -1206,13 +1200,8 @@ def manual_fill(body: dict, progress) -> dict:
         if b._popups(main) or b._kids(main, "TfrmSelectComout"):
             note = "이지폼에 거래처 선택 창(또는 질문창)이 떠 있어요. 닫고 다시 눌러주세요."
             continue
-        shot = A._capture_client(form)
-        ocr = (A._ocr(shot) if shot else "").strip()
-        logging.info("이지폼 직접 고르기 거래처 OCR='%s'", ocr)
-        if not ocr and not asked_client:  # 거래처를 아직 안 골랐거나 OCR 실패 — 한 번만 묻고, 또 누르면 그대로 진행
-            asked_client = True
-            note = "거래처가 아직 안 보여요. 거래처를 선택하고 다시 눌러주세요."
-            continue
+        # 거래처를 골랐는지는 OCR 로 안 봄(사용자 2026-11-24) — 안 골랐으면 이지폼이 저장 때 창을 띄우고 매크로는 멈춤.
+        # 거래처 이름은 저장 뒤 이지폼 목록에서 정확히 가져온다.
         break
     saved = False
     tag = ("주식회사", "#2563eb") if m["biz"] == "corp" else ("개인", "#d97706")
@@ -1235,7 +1224,7 @@ def manual_fill(body: dict, progress) -> dict:
         b._u.PostMessageW(save, 0x00F5, 0, 0)  # BM_CLICK — 새 명세서는 확인창 없이 저장(실측)
         time.sleep(1.2)
         if b._popups(main):
-            raise Stop("저장을 눌렀더니 이지폼 창이 떠서 멈췄어요. 이지폼을 직접 확인해주세요.")
+            raise Stop("저장을 눌렀더니 이지폼 창이 떠서 멈췄어요(거래처를 골랐는지 확인해주세요). 이지폼을 직접 확인해주세요.")
         saved = True
         _close(main, form)
     finally:
@@ -1246,15 +1235,15 @@ def manual_fill(body: dict, progress) -> dict:
     lst = b._export_one(m, 0, progress, period=(date, date), forms_ok=True)
     hit = [r for r in lst if b._digits(r["total"]) == b._digits(total)
            and (r.get("firstItem") or "").strip() == (target[0]["item"] or "").strip()]
-    if ocr and len(hit) > 1:
-        hit.sort(key=lambda r: 0 if _same_client(r.get("client", ""), ocr) else 1)
     _go_home()
     if not hit:
         raise Stop("저장 버튼은 눌렀는데 이지폼 목록에서 새 명세서가 안 보여요. 이지폼을 직접 확인해주세요.")
-    client = hit[0].get("client") or ocr
+    # 같은 날·합계·첫 품목이 여러 거래처면 이름을 정하지 않는다(틀린 이름보다 빈칸)
+    one = len({r.get("bizNo") for r in hit}) == 1
+    client = hit[0].get("client", "") if one else ""
     ef.ef_notice("이지폼에 작성하고 저장했어요", f"{client}  ·  {date}  ·  합계 {int(b._digits(total) or 0):,}원", tag)
-    return {"date": date, "total": total, "client": client, "biz": m["biz"], "bizNo": hit[0].get("bizNo", ""),
-            "rows": after}
+    return {"date": date, "total": total, "client": client, "biz": m["biz"],
+            "bizNo": hit[0].get("bizNo", "") if one else "", "rows": after}
 
 
 def open_show(body: dict, progress) -> dict:

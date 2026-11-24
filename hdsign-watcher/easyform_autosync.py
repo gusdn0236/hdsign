@@ -372,11 +372,6 @@ def _read_saved(main, form) -> "dict | None":
     except Exception:
         logging.exception("명세서 창 기준 위치 이동 실패(그 자리에서 읽음)")
     date, total = bulk._form_header(form)
-    shot = _capture_client(form)  # 거래처명 영역 이미지(OCR 은 읽는 동안 옆에서)
-    ocr: dict = {}
-    th = threading.Thread(target=lambda: ocr.update(text=_ocr(shot)), daemon=True) if shot else None
-    if th:
-        th.start()
     _overlay("명세서를 읽는 동안 마우스가 잠깁니다.")
     ef.ef_guard_start()
     done = threading.Event()
@@ -420,14 +415,33 @@ def _read_saved(main, form) -> "dict | None":
         ef.ef_guard_stop()
         _overlay(None)
         bulk._ABORT.clear()
-    if th:
-        th.join(timeout=8)
     biz, name = _biz_of(main)
-    client = (ocr.get("text") or "").strip()
-    logging.info("이지폼 저장 자동반영 — 읽음 %s %s원 거래처(OCR)='%s' %d줄 비고번호=%s",
-                 date, total, client, len(rows), nos)
-    return {"biz": biz, "bizName": name, "client": client, "date": date, "total": total,
+    client, biz_no = _client_from_list(main, date, total, rows)
+    logging.info("이지폼 저장 자동반영 — 읽음 %s %s원 거래처(목록)='%s' %s %d줄 비고번호=%s",
+                 date, total, client, biz_no, len(rows), nos)
+    return {"biz": biz, "bizName": name, "client": client, "bizNo": biz_no, "date": date, "total": total,
             "rows": rows, "nos": nos, "form": int(form)}
+
+
+def _client_from_list(main, date: str, total: str, rows: list) -> "tuple[str, str]":
+    """거래처명·사업자번호 = 이지폼 목록(엑셀)에 적힌 그대로(사용자 2026-11-24: OCR 금지 — '건화'를 '건하'로 읽은 일).
+    그날 목록에서 합계(+첫 품목)가 같은 명세서가 한 거래처뿐일 때만. 애매하거나 못 뽑으면 빈칸(틀린 이름보다 나음)."""
+    try:
+        m = next((x for x in bulk._mains() if x["hwnd"] == main), None)
+        if not m or not date or not total:
+            return "", ""
+        lst = bulk._export_one(m, 0, lambda _s: None, period=(date, date), forms_ok=True)
+        hit = [r for r in lst if r["date"] == date and bulk._digits(r["total"]) == bulk._digits(total)]
+        first = next(((r.get("item") or "").strip() for r in rows if (r.get("item") or "").strip()), "")
+        if len({r.get("bizNo") for r in hit}) > 1 and first:
+            hit = [r for r in hit if (r.get("firstItem") or "").strip() == first]
+        if hit and len({r.get("bizNo") for r in hit}) == 1:
+            return hit[0].get("client", ""), hit[0].get("bizNo", "")
+    except bulk.Stop as e:
+        logging.warning("이지폼 저장 자동반영 — 목록에서 거래처 못 찾음: %s", e)
+    except Exception:
+        logging.exception("이지폼 저장 자동반영 — 목록에서 거래처 찾기 실패")
+    return "", ""
 
 
 def _front_admin() -> bool:
