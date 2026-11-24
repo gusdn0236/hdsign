@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ITEM_CODES, normCode, matchCodes } from "./autoquote/itemCodes";
 
 /**
@@ -80,16 +80,23 @@ export function parseInput(line, clientIndex) {
 }
 
 /** 치고 있는 한 단어 → 종류 붙은 추천 목록(거래처·품목코드·주문번호·규격·작업키워드). 단가찾아보기도 같이 씀. */
-export function suggestTokens(q, clientNames) {
+// 자동완성 — 거래처·품목코드는 처음 4개만, 더 있으면 '▾ N개 더 보기' 줄(type 'more', kind=종류)을 붙인다.
+// 그 줄을 고르면 expand 에 그 종류를 넣어 다시 부르면 전부(최대 40) 보여 줌(사용자 2026-11-24: 더 있다는 표시).
+const SUG_LIMIT = 4;
+export function suggestTokens(q, clientNames, expand = []) {
   q = String(q || "").trim();
   if (!q) return [];
   const sq = squeeze(q);
   const out = [];
-  (clientNames || [])
-    .filter((n) => squeeze(n).includes(sq))
-    .slice(0, 4)
-    .forEach((n) => out.push({ type: "client", value: n }));
-  matchCodes(q).slice(0, 4).forEach((c) => out.push({ type: "code", value: c }));
+  const addKind = (type, list) => {
+    const open = expand.includes(type);
+    (open ? list.slice(0, 40) : list.slice(0, SUG_LIMIT)).forEach((v) => out.push({ type, value: v }));
+    if (!open && list.length > SUG_LIMIT) {
+      out.push({ type: "more", kind: type, value: `${TOKEN_LABEL[type]} ${list.length - SUG_LIMIT}개 더 보기` });
+    }
+  };
+  addKind("client", (clientNames || []).filter((n) => squeeze(n).includes(sq)));
+  addKind("code", matchCodes(q));
   if (ORDER_RE.test(q)) out.push({ type: "order", value: q.replace(/^(주문|견적)-/, "") });
   if (SPEC_RE.test(q)) out.push({ type: "spec", value: q.replace(/\s+/g, "") });
   out.push({ type: "text", value: q });
@@ -138,27 +145,23 @@ export default function StatementSmartSearch({
 
   // 자동완성 — 지금 치고 있는 마지막 단어 기준. 종류를 붙여서 보여준다.
   const lastWord = input.split(/\s+/).pop() || "";
-  const suggestions = useMemo(() => {
-    const q = lastWord.trim();
-    if (!q) return [];
-    const sq = squeeze(q);
-    const out = [];
-    (clientNames || [])
-      .filter((n) => squeeze(n).includes(sq))
-      .slice(0, 4)
-      .forEach((n) => out.push({ type: "client", value: n }));
-    matchCodes(q).slice(0, 4).forEach((c) => out.push({ type: "code", value: c }));
-    if (ORDER_RE.test(q)) out.push({ type: "order", value: q.replace(/^(주문|견적)-/, "") });
-    if (SPEC_RE.test(q)) out.push({ type: "spec", value: q.replace(/\s+/g, "") });
-    out.push({ type: "text", value: q });
-    return out.filter((t) => !hasToken(t));
+  const [expand, setExpand] = useState([]); // '더 보기'로 펼친 종류(마지막 단어가 바뀌면 다시 접힘)
+  useEffect(() => setExpand([]), [lastWord]);
+  const suggestions = useMemo(
+    () => suggestTokens(lastWord, clientNames, expand).filter((t) => t.type === "more" || !hasToken(t)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastWord, clientNames, tokens]);
+    [lastWord, clientNames, tokens, expand],
+  );
 
   const showRecent = false; // 최근 검색 목록 — 안 씀(사용자 요청 2026-11-19)
   const showSuggest = open && suggestions.length > 0;
 
   const pickSuggestion = (s) => {
+    if (s.type === "more") {
+      setExpand((prev) => [...prev, s.kind]);
+      inputRef.current?.focus();
+      return;
+    }
     // 마지막 단어 앞부분(이미 친 다른 단어들)은 자동 분류, 마지막 단어는 고른 종류로.
     const head = input.trim().split(/\s+/).slice(0, -1).join(" ");
     addTokens([...parseInput(head, clientIndex), s]);
@@ -254,15 +257,26 @@ export default function StatementSmartSearch({
           <ul className="ss-pop" onMouseDown={(e) => e.preventDefault()}>
             {showSuggest
               ? suggestions.map((s, k) => (
-                  <li
-                    key={`${s.type}:${s.value}`}
-                    className={k === hi ? "is-hi" : ""}
-                    onMouseEnter={() => setHi(k)}
-                    onClick={() => pickSuggestion(s)}
-                  >
-                    <span className={`ss-pop-type ss-pop-type--${s.type}`}>{TOKEN_LABEL[s.type]}</span>
-                    {s.value}
-                  </li>
+                  s.type === "more" ? (
+                    <li
+                      key={`more:${s.kind}`}
+                      className={"ss-more" + (k === hi ? " is-hi" : "")}
+                      onMouseEnter={() => setHi(k)}
+                      onClick={() => pickSuggestion(s)}
+                    >
+                      ▾ {s.value}
+                    </li>
+                  ) : (
+                    <li
+                      key={`${s.type}:${s.value}`}
+                      className={k === hi ? "is-hi" : ""}
+                      onMouseEnter={() => setHi(k)}
+                      onClick={() => pickSuggestion(s)}
+                    >
+                      <span className={`ss-pop-type ss-pop-type--${s.type}`}>{TOKEN_LABEL[s.type]}</span>
+                      {s.value}
+                    </li>
+                  )
                 ))
               : (
                 <>

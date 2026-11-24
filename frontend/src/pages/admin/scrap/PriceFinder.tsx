@@ -452,17 +452,25 @@ export default function PriceFinder({
   };
   // 치는 동안 아래에 종류 추천(똑똑한 검색창과 같음) — 마지막 단어 기준
   const lastWord = text.split(/\s+/).pop() || '';
+  // '더 보기'(type 'more') 줄 — 고르면 그 종류를 다 펼침. 마지막 단어가 바뀌면 다시 접힘.
+  const [expand, setExpand] = useState<string[]>([]);
+  useEffect(() => setExpand([]), [lastWord]);
   const suggestions = useMemo(
     () =>
-      (suggestTokens(lastWord, clientNames) as Tok[]).filter(
-        (t) => t.type !== 'order' && !kw.some((x) => tokKey(x) === tokKey(t)),
+      (suggestTokens(lastWord, clientNames, expand) as (Tok | { type: 'more'; kind: string; value: string })[]).filter(
+        (t) => t.type === 'more' || (t.type !== 'order' && !kw.some((x) => tokKey(x) === tokKey(t as Tok))),
       ),
-    [lastWord, clientNames, kw],
+    [lastWord, clientNames, kw, expand],
   );
   const showSuggest = sugOpen && suggestions.length > 0;
-  const pickSuggestion = (t: Tok) => {
+  const pickSuggestion = (t: Tok | { type: 'more'; kind: string; value: string }) => {
+    if (t.type === 'more') {
+      setExpand((prev) => [...prev, (t as { kind: string }).kind]);
+      input.current?.focus();
+      return;
+    }
     const head = text.trim().split(/\s+/).slice(0, -1).join(' ');
-    addTokens([...(parseInput(head, clientIndex) as Tok[]), t]);
+    addTokens([...(parseInput(head, clientIndex) as Tok[]), t as Tok]);
     input.current?.focus();
   };
   const cycleType = (i: number) =>
@@ -633,17 +641,28 @@ export default function PriceFinder({
         />
         {showSuggest && (
           <ul className="pf-pop" onMouseDown={(e) => e.preventDefault()}>
-            {suggestions.map((t, k) => (
-              <li
-                key={tokKey(t)}
-                className={k === hi ? 'is-hi' : ''}
-                onMouseEnter={() => setHi(k)}
-                onClick={() => pickSuggestion(t)}
-              >
-                <span className={`pf-chip pf-chip--${t.type} pf-pop-type`}>{TOKEN_LABEL[t.type]}</span>
-                {t.value}
-              </li>
-            ))}
+            {suggestions.map((t, k) =>
+              t.type === 'more' ? (
+                <li
+                  key={`more:${(t as { kind: string }).kind}`}
+                  className={'pf-more-sug' + (k === hi ? ' is-hi' : '')}
+                  onMouseEnter={() => setHi(k)}
+                  onClick={() => pickSuggestion(t)}
+                >
+                  ▾ {t.value}
+                </li>
+              ) : (
+                <li
+                  key={tokKey(t as Tok)}
+                  className={k === hi ? 'is-hi' : ''}
+                  onMouseEnter={() => setHi(k)}
+                  onClick={() => pickSuggestion(t)}
+                >
+                  <span className={`pf-chip pf-chip--${t.type} pf-pop-type`}>{TOKEN_LABEL[t.type]}</span>
+                  {t.value}
+                </li>
+              ),
+            )}
           </ul>
         )}
       </div>

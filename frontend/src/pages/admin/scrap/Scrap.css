@@ -1133,3 +1133,13 @@ html.scrap-anim .scr-panel {
   font-weight: 700;
   line-height: 18px;
 }
+
+/* 자동완성 '▾ N개 더 보기' 줄(2026-11-24) */
+.ss-pop li.ss-more,
+.pf-pop li.pf-more-sug {
+  justify-content: center;
+  color: #0a7d80;
+  font-size: 12.5px;
+  font-weight: 700;
+  border-top: 1px dashed #e4e4e7;
+}
