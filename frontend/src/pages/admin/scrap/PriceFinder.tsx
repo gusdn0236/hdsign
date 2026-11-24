@@ -35,9 +35,9 @@ type PastHit = { pr: Prediction; hit: string[]; score: number; g: number };
 // 1 그 거래처 + 같은 품목·비슷한 규격 → 2 다른 거래처 + 같은 품목·비슷한 규격 → 3 같은 품목(규격 다름) → 4 규격만 비슷한 다른 품목
 const GROUP_LABEL = (g: number, who: string, hasSpec: boolean) =>
   g === 1
-    ? `${who || '이 거래처'} · 같은 품목${hasSpec ? '·비슷한 규격' : ''}`
+    ? `${who || '이 거래처'} · ${hasSpec ? '품목·규격 딱 맞음' : '같은 품목'}`
     : g === 2
-      ? `다른 거래처 · 같은 품목${hasSpec ? '·비슷한 규격' : ''}`
+      ? `다른 거래처 · ${hasSpec ? '품목·규격 딱 맞음' : '같은 품목'}`
       : g === 3
         ? '같은 품목 · 규격은 다름'
         : '규격만 비슷한 다른 품목';
@@ -152,18 +152,12 @@ function PastCard({
       <div className="pf-card-img">
         {photo ? <img src={photo} alt="" draggable={false} /> : data ? <span>📄</span> : <span className="sv-spin" />}
       </div>
-      <div className="pf-card-body">
-        <div className="pf-card-top">
-          <b>{client || pr.src || ' '}</b>
-          <span>{shortDate(pr.date)}</span>
+      <div className="pf-card-body" title={hit.length ? `맞은 키워드: ${hit.join(', ')}` : undefined}>
+        <div className="pf-card-price">{won(pr.price) || '단가 없음'}</div>
+        <div className="pf-card-line">{[pr.item, pr.size].filter(Boolean).join(' · ')}</div>
+        <div className="pf-card-meta">
+          {client || '이지폼 예전 명세서'} · {shortDate(pr.date)}
         </div>
-        <div className="pf-card-row">
-          <span>
-            {pr.item} {pr.size}
-          </span>
-          <i>{won(pr.price)}</i>
-        </div>
-        {hit.length > 0 && <div className="pf-card-hit">✓ {hit.join(' · ')}</div>}
       </div>
       <ScrapPin
         item={it}
@@ -178,26 +172,21 @@ function PastCard({
 
 function HomeCard({ h, onOpen }: { h: HomeHit; onOpen: () => void }) {
   const { o, hits } = h;
+  const top = hits[0]; // 가장 잘 맞는 줄(정렬에서 맨 앞)
   return (
     <div className="pf-card" onClick={onOpen} role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen()}>
       <div className="pf-card-img">
         {o.worksheetThumbnailUrl ? <img src={o.worksheetThumbnailUrl} alt="" loading="lazy" draggable={false} /> : <span>📄</span>}
       </div>
-      <div className="pf-card-body">
-        <div className="pf-card-top">
-          <b>{o.clientCompanyName || '거래처 없음'}</b>
-          <span>{shortDate(o.dueDate || o.createdAt)}</span>
+      <div className="pf-card-body" title={h.hit.length ? `맞은 키워드: ${h.hit.join(', ')}` : undefined}>
+        <div className="pf-card-price">{won(top?.단가) || '단가 없음'}</div>
+        <div className="pf-card-line">
+          {[top?.품목 || top?.품목코드, top?.규격].filter(Boolean).join(' · ') || '—'}
+          {hits.length > 1 && <em> 외 {hits.length - 1}줄</em>}
         </div>
-        {hits.slice(0, 3).map((r, k) => (
-          <div key={k} className="pf-card-row">
-            <span>
-              {r.품목 || r.품목코드} {r.규격}
-            </span>
-            <i>{won(r.단가)}</i>
-          </div>
-        ))}
-        {hits.length > 3 && <div className="pf-card-more">외 {hits.length - 3}줄</div>}
-        {h.hit.length > 0 && <div className="pf-card-hit">✓ {h.hit.join(' · ')}</div>}
+        <div className="pf-card-meta">
+          {o.clientCompanyName || '거래처 없음'} · {shortDate(o.dueDate || o.createdAt)}
+        </div>
       </div>
       <ScrapPin item={homeScrap(o, hits)} className="pf-card-pin" />
     </div>
@@ -681,7 +670,7 @@ export default function PriceFinder({
   // 결과 화면(사용자 2026-11-24: 규격만 맞는 지시서가 주르륵 나와 보기 힘듦) —
   // 위: '찾은 결과'(품목·키워드와 규격이 한 줄에서 같이 맞음 → 그 거래처 / 다른 거래처 / 규격 다름) 묶음마다 8건 + [더 보기]
   // 아래: '규격만 비슷한 다른 품목'은 접어 두고 건수만. 홈페이지·이지폼 예전 명세서는 같은 묶음 안에 같이(홈페이지 먼저).
-  const LIMIT = 8;
+  const LIMIT = 6;
   type Cell = { key: string; g: number; el: React.ReactElement };
   const cells: Cell[] = [
     ...(home || []).map((x, j) => ({
