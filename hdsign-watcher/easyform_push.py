@@ -61,9 +61,7 @@ def norm_target(r: dict) -> dict:
     out = norm_row(r)
     if out["unit_price"] and not out["qty"]:
         out["qty"] = "1"
-    # 품목코드·품목이 둘 다 빈 줄은 이지폼이 저장 때 경고창을 띄워 멈춘다 → 품목코드에 '0'(사용자 2026-11-24)
-    if not out["item_code"] and not out["item"] and any(out[c] for c in ("spec", "qty", "unit_price", "remark")):
-        out["item_code"] = "0"
+    # 품목코드는 빈 채로 둔다(보통 비어 있음, 사용자 2026-11-24) — 빈 품목코드 경고창은 _Form._check 가 [OK]로 넘김
     return out
 
 
@@ -79,7 +77,9 @@ def _strip_tail(rows: list) -> list:
 
 
 def _sig(r: dict) -> tuple:
-    return tuple(r[c] for c in BODY)
+    # 품목코드 '0'(빈 품목코드 대신 넣는 값) = 빈칸 — 옛 명세서의 품목코드 빈 줄을 0 때문에 '바뀐 줄'로 안 보게.
+    # 고치거나 새로 넣는 줄은 그대로 '0'을 적는다(경고창 방지).
+    return tuple("" if c == "item_code" and r[c] == "0" else r[c] for c in BODY)
 
 
 def _nos(rows: list) -> list:
@@ -442,6 +442,22 @@ def find_and_read(body: dict, progress) -> dict:
 
 
 # ── 고치기 ─────────────────────────────────────────────────────────────────────
+def _ok_code_warning(main) -> bool:
+    """품목코드가 빈 줄에서 다음 줄로 넘어가면 이지폼이 띄우는 안내창 — 'Easyformnetc' "물품코드나 물품명을 기록하지 않고
+    저장하면 …오류가 생길 수 있습니다" [OK] 하나(2026-11-24 실측, 명세서마다 처음 한 번). 사람처럼 [OK] 누르고 계속 —
+    누르고 넘어가도 저장은 잘 됨(실측). 줄 입력 중에 뜨는 OK 하나짜리 이지폼 안내창만 누른다."""
+    hit = False
+    for h, c, t in b._popups(main):
+        if c == "TMessageForm" and t == "Easyformnetc" and                 [b._txt(x).replace("&", "") for x in b._kids(h, "TButton")] == ["OK"]:
+            logging.info("이지폼 빈 품목코드 안내창 → OK")
+            b._click(b._named(h, "TButton", "OK"), "OK")
+            b._wait(lambda: b._gone(h), 2.0, 0.05)
+            hit = True
+    if hit:
+        time.sleep(0.25)
+    return hit
+
+
 class _Form:
     def __init__(self, main, form):
         self.main, self.form = main, form
@@ -546,11 +562,33 @@ class _Form:
         if (b._txt(e) or "").strip():
             raise Stop(f"{row + 1}번째에 빈 줄이 안 생겨서 멈췄어요.")
 
+    def insert_below_first(self, n: int) -> None:
+        """새 명세서 — '현재 □ 줄 선택됨' 칸에 2 → [삽입] n번 = 둘째 줄 자리에 빈 줄 n개(첫 줄 월일은 그대로 맨 위).
+        그냥 첫 줄에서 [삽입]하면 월일 적힌 줄이 밑으로 밀린다(사용자 2026-11-24). 예전 자동기입도 이 방식."""
+        self.editor(0, "item")  # 표 활성화(첫 줄 월일 자동 기입)
+        b._u.SendMessageW(self.box, 0x000C, 0, ctypes.c_wchar_p("2"))  # WM_SETTEXT
+        time.sleep(0.15)
+        if b._txt(self.box).strip() != "2":
+            raise Stop("'현재 □ 줄' 칸에 2를 못 넣어서 멈췄어요.")
+        for _ in range(n):
+            self._panel_click(_INSERT_REL, "삽입")
+            time.sleep(0.3)
+            self._check()
+        e = self.editor(n, "item")  # 끼운 뒤 줄 수 확인 — n+1 번째 줄이 있어야
+        if (b._txt(e) or "").strip():
+            raise Stop("빈 줄이 안 생겨서 멈췄어요.")
+
+    def month_day(self, row: int) -> str:
+        x, y = b._row_cells(self.grid, row)["month_day"]
+        return (b._cell_text(self.grid, x, y, 0.3) or "").strip()
+
     def append_after(self, last: int) -> None:
         """마지막 줄(last) 비고 칸 Enter → 맨 밑 새 줄."""
         e = self.editor(last, "remark")
         b._key(e, 0x0D)
         time.sleep(0.45)
+        # 기존 명세서에 맨 밑 줄 추가 — 바로 윗줄 품목코드가 비었으면 이 Enter 순간에만 그 안내창이 뜬다 → 이때만 [OK]
+        _ok_code_warning(self.main)
         self._check()
         e2 = self.editor(last + 1, "item")
         if (b._txt(e2) or "").strip():
@@ -685,6 +723,21 @@ def _discard_new(main, form) -> None:
         if b._txt(pop) == "Information" and btns == ["No", "Yes"]:
             b._click(b._named(pop, "TButton", "No"), "No")  # No = 저장하지 않고 닫기(실측)
             b._wait(lambda: b._gone(form), 2.5, 0.05)
+
+
+def _fill_new(F: "_Form", target: list, progress) -> None:
+    """새 명세서에 줄 넣기 — [삽입]으로 줄 수만큼 빈 줄을 **먼저** 만들고 위에서부터 채운다(예전 자동기입 방식, 사용자
+    2026-11-24). 첫 줄(월일=발행일)이 밑으로 밀리지 않게 '현재 □ 줄' 칸에 2를 넣고 삽입 = 둘째 줄부터 끼움. 줄마다 Enter 로 새 줄을 만들면 품목코드가 빈 줄에서 이지폼 경고창("물품코드나 물품명을 기록하지 않고…")이
+    떠서 멈췄다. 기존 명세서 고치기는 줄 위치가 바뀌면 안 되므로 예전대로(_apply_on_form: 끼우기·맨 밑 Enter)."""
+    if len(target) > 1:
+        progress("빈 줄 만드는 중")
+        F.insert_below_first(len(target) - 1)
+    for i, row in enumerate(target):
+        progress(f"줄 입력 중 {i + 1}/{len(target)}")
+        F.write_row(i, row, cols=[c for c in ("item_code", "item", "spec") if row[c]],
+                    remark=row["remark"] or None)
+    if not F.month_day(0):
+        raise Stop("첫 줄 월일(날짜)이 밑으로 밀려서 저장 안 했어요(새 명세서는 버렸어요).")
 
 
 def _blank_total(form) -> bool:
@@ -845,13 +898,7 @@ def new_fill(body: dict, progress) -> dict:
         if not _same_client(client, ocr):
             raise Stop(f"고른 거래처가 '{ocr}'로 보여서 멈췄어요(원하는 거래처 '{client}'). 저장 안 했어요.")
         # 줄 입력 — 첫 줄은 이미 있음, 다음 줄은 마지막 줄 비고 Enter 로
-        F = _Form(main, form)
-        for i, row in enumerate(target):
-            progress(f"줄 입력 중 {i + 1}/{len(target)}")
-            if i > 0:
-                F.append_after(i - 1)
-            F.write_row(i, row, cols=[c for c in ("item_code", "item", "spec") if row[c]],
-                        remark=row["remark"] or None)
+        _fill_new(_Form(main, form), target, progress)
         progress("입력한 명세서를 다시 읽어 확인하는 중")
         after = _strip_tail([norm_row(r) for r in _read_all(form)])
         if after != target:
@@ -1076,6 +1123,10 @@ def manual_fill(body: dict, progress) -> dict:
             continue
         m, form = found[0]
         main = m["hwnd"]
+        first = _read_all(form)[:1]
+        if first and any(first[0].get(c) for c in COLS):
+            note = "이미 내용이 있는 명세서예요. 이지폼에서 [새로작성]을 눌러주세요."
+            continue
         if b._popups(main) or b._kids(main, "TfrmSelectComout"):
             note = "이지폼에 거래처 선택 창(또는 질문창)이 떠 있어요. 닫고 다시 눌러주세요."
             continue
@@ -1092,13 +1143,7 @@ def manual_fill(body: dict, progress) -> dict:
     ef.ef_busy("이지폼에 명세서를 작성하는 중이에요. 잠시만 기다려 주세요.")
     ef.ef_guard_start()
     try:
-        F = _Form(main, form)
-        for i, row in enumerate(target):
-            progress(f"줄 입력 중 {i + 1}/{len(target)}")
-            if i > 0:
-                F.append_after(i - 1)
-            F.write_row(i, row, cols=[c for c in ("item_code", "item", "spec") if row[c]],
-                        remark=row["remark"] or None)
+        _fill_new(_Form(main, form), target, progress)
         progress("입력한 명세서를 다시 읽어 확인하는 중")
         after = _strip_tail([norm_row(r) for r in _read_all(form)])
         if after != target:
