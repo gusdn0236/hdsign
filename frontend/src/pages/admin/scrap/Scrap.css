@@ -947,3 +947,86 @@ html.scrap-anim .scr-panel {
   padding: 8px 0;
   font-size: 11.5px;
 }
+
+/* 단가찾아보기 결과 묶음(2026-11-24) — 1 그 거래처·같은 품목·비슷한 규격 → 2 다른 거래처 → 3 규격 다름 → 4 규격만 */
+.pf-group + .pf-group {
+  margin-top: 16px;
+}
+.pf-group-h {
+  margin: 0 0 8px;
+  padding: 4px 10px;
+  border-left: 3px solid #0a9396;
+  font-size: 13px;
+  font-weight: 700;
+  color: #cfe8ea;
+  background: rgba(10, 147, 150, 0.12);
+  border-radius: 0 6px 6px 0;
+}
+.pf-group-h b {
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+}
+.pf-group.best .pf-group-h {
+  border-left-color: #22c55e;
+  background: rgba(34, 197, 94, 0.14);
+  color: #dcfce7;
+}
+.pf-more {
+  display: block;
+  margin: 10px auto 0;
+  padding: 6px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background: transparent;
+  color: #cfe8ea;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pf-more:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.pf-warn {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fca5a5;
+}
+/* 규격만 비슷한 다른 품목 — 접어 두는 후순위 묶음 */
+.pf-sub {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.18);
+  opacity: 0.85;
+}
+.pf-sub-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #b8c4cf;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.pf-sub-toggle b {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+}
+.pf-sub-toggle small {
+  margin-left: auto;
+  font-weight: 500;
+  color: #8a99a8;
+}
+.pf-sub .pf-grid {
+  margin-top: 10px;
+}

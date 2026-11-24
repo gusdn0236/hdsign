@@ -28,8 +28,36 @@ type Tok = { type: 'client' | 'code' | 'spec' | 'text' | 'order'; value: string 
 const KINDS: Tok['type'][] = ['code', 'client', 'text', 'spec'];
 const tokKey = (t: Tok) => `${t.type}:${String(t.value).replace(/\s+/g, '').toLowerCase()}`;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type HomeHit = { o: any; hits: ScrapRow[]; hit: string[]; score: number };
-type PastHit = { pr: Prediction; hit: string[]; score: number };
+type HomeHit = { o: any; hits: ScrapRow[]; hit: string[]; score: number; g: number };
+type PastHit = { pr: Prediction; hit: string[]; score: number; g: number };
+
+// 결과 묶음(사용자 2026-11-24) — 키워드를 사람마다 다르게 넣어도 '한 줄에서' 품목·규격이 같이 맞는 걸 먼저:
+// 1 그 거래처 + 같은 품목·비슷한 규격 → 2 다른 거래처 + 같은 품목·비슷한 규격 → 3 같은 품목(규격 다름) → 4 규격만 비슷한 다른 품목
+const GROUP_LABEL = (g: number, who: string, hasSpec: boolean) =>
+  g === 1
+    ? `${who || '이 거래처'} · 같은 품목${hasSpec ? '·비슷한 규격' : ''}`
+    : g === 2
+      ? `다른 거래처 · 같은 품목${hasSpec ? '·비슷한 규격' : ''}`
+      : g === 3
+        ? '같은 품목 · 규격은 다름'
+        : '규격만 비슷한 다른 품목';
+const squeezeS = (s: string) => String(s || '').replace(/\s+/g, '').toLowerCase();
+/** 한 줄 평가 — 품목코드·품목에 들어간 품목 키워드 수, 규격 가까움(0~1, 규격 키워드가 여럿이면 가장 안 맞는 것). */
+function lineFit(text: string, size: string | undefined, itemToks: string[], specToks: string[]) {
+  const t = squeezeS(text);
+  const item = itemToks.filter((k) => t.includes(squeezeS(k))).length;
+  const spec = specToks.length ? Math.min(...specToks.map((sv) => specNear(sv, size))) : 0;
+  return { item, spec };
+}
+/** 묶음 번호(1~4). 0 = 어느 키워드와도 안 맞음. */
+function groupOf(fit: { item: number; spec: number }, mine: boolean, hasItem: boolean, hasSpec: boolean): number {
+  if (hasItem) {
+    if (fit.item > 0 && (!hasSpec || fit.spec > 0)) return mine ? 1 : 2;
+    if (fit.item > 0) return 3;
+    return hasSpec && fit.spec > 0 ? 4 : 0;
+  }
+  return hasSpec && fit.spec > 0 ? (mine ? 1 : 2) : 0;
+}
 
 // 정렬 가중치 — 맞은 키워드 종류별 점수 합이 큰 순(거래처 > 품목코드 > 품목(작업키워드) > 규격)
 const W = { client: 8, code: 4, text: 2, spec: 1 } as const;
@@ -209,6 +237,8 @@ export default function PriceFinder({
   const [pastErr, setPastErr] = useState('');
   const [pastData, setPastData] = useState<Record<string, ViewerData>>({});
   const [detail, setDetail] = useState<number | null>(null); // 합친 목록(home → past) 안의 위치
+  const [specOpen, setSpecOpen] = useState(false); // '규격만 비슷한 다른 품목' 펼침(처음엔 접힘)
+  const [moreG, setMoreG] = useState<Record<number, boolean>>({}); // 묶음별 [더 보기]
   const seq = useRef(0);
   const input = useRef<HTMLInputElement>(null);
   const hasWs = !!(order && (order.worksheetPdfUrl || order.worksheetThumbnailUrl));
@@ -235,6 +265,8 @@ export default function PriceFinder({
     setPast(null);
     setPastErr('');
     setPastData({});
+    setSpecOpen(false);
+    setMoreG({});
     const toks: Tok[] = list;
     const pick = (t: Tok['type']) => toks.filter((x) => x.type === t).map((x) => x.value);
     const codes = pick('code');
@@ -286,8 +318,27 @@ export default function PriceFinder({
             });
           });
         });
+        const itemToks = [...codes, ...texts];
+        const hasItem = itemToks.length > 0;
+        const hasSpec = specs.length > 0;
+        const isMine = (name?: string | null) =>
+          clients.length ? cliHit(name) : !!myClient && squeeze(name || '') === squeeze(myClient);
         const out: HomeHit[] = [...agg.values()].map((a) => {
-          let score = a.toks.reduce((sum, t) => sum + W[t.type as keyof typeof W], 0);
+          // 줄마다 평가 → 가장 잘 맞는 줄로 묶음을 정하고, 카드에도 잘 맞는 줄부터 보여 줌
+          const mineA = isMine(a.o.clientCompanyName);
+          const fits = a.rows.map((r) => ({ r, f: lineFit(`${r.품목코드 || ''} ${r.품목 || ''}`, r.규격, itemToks, specs) }));
+          const gOf = (f: { item: number; spec: number }) => groupOf(f, mineA, hasItem, hasSpec) || 9;
+          fits.sort((x, y) => gOf(x.f) - gOf(y.f) || y.f.item - x.f.item || y.f.spec - x.f.spec);
+          a.rows = fits.map((x) => x.r);
+          const best = fits[0]?.f || { item: 0, spec: 0 };
+          const g = groupOf(best, mineA, hasItem, hasSpec) || 4;
+          // 묶음 안 순서: 품목코드로 맞은 줄 > 작업키워드로만 맞은 줄 > 규격 더 가까움 > (그 거래처) > 최신
+          const bestRow = fits[0]?.r;
+          const codeHit = bestRow
+            ? lineFit(`${bestRow.품목코드 || ''} ${bestRow.품목 || ''}`, bestRow.규격, codes, []).item
+            : 0;
+          let score = codeHit * 20 + best.item * W.code + best.spec * W.spec * 2 + (mineA ? W.client : 0);
+          score += a.toks.reduce((sum, t) => sum + W[t.type as keyof typeof W], 0) / 100; // 동점 정리용
           const hit = a.toks.map((t) => t.value);
           // 규격 키워드로는 안 걸렸어도 걸린 줄 규격이 가까우면 반점
           specs.forEach((sv) => {
@@ -298,11 +349,12 @@ export default function PriceFinder({
             score += W.client;
             hit.unshift(a.o.clientCompanyName);
           }
-          return { o: a.o, hits: a.rows, hit, score };
+          return { o: a.o, hits: a.rows, hit, score, g };
         });
         const mine = (h: HomeHit) => (myClient && h.o.clientCompanyName === myClient ? 0 : 1);
         out.sort(
           (a, b) =>
+            a.g - b.g ||
             b.score - a.score ||
             mine(a) - mine(b) ||
             dnum(String(b.o.dueDate || b.o.createdAt)) - dnum(String(a.o.dueDate || a.o.createdAt)),
@@ -346,8 +398,12 @@ export default function PriceFinder({
         }
       }),
     );
+    const pItem = [...codes, ...texts];
     const scored: PastHit[] = [...agg.values()].map(({ pr, toks: ts }) => {
-      let score = 0;
+      // 예전 이지폼 명세서 — '이력'(그 거래처 명세서)이면 그 거래처로 봄
+      const fit = lineFit(pr.item, pr.size, pItem, specs);
+      const g = groupOf(fit, pr.src === '이력', pItem.length > 0, specs.length > 0) || 4;
+      let score = lineFit(pr.item, pr.size, codes, []).item * 20; // 품목코드로 맞은 것 먼저
       const hit: string[] = [];
       ts.forEach((t) => {
         const full = squeeze(pr.item).includes(squeeze(t.value));
@@ -363,9 +419,9 @@ export default function PriceFinder({
         score += W.client;
         hit.unshift(clients[0]);
       }
-      return { pr, hit, score };
+      return { pr, hit, score, g };
     });
-    scored.sort((a, b) => b.score - a.score || (b.pr.score ?? 0) - (a.pr.score ?? 0) || dnum(b.pr.date) - dnum(a.pr.date));
+    scored.sort((a, b) => a.g - b.g || b.score - a.score || (b.pr.score ?? 0) - (a.pr.score ?? 0) || dnum(b.pr.date) - dnum(a.pr.date));
     setPast(scored.slice(0, 50));
   };
 
@@ -603,51 +659,82 @@ export default function PriceFinder({
     </div>
   );
 
+  // 묶음 제목용 — 거래처 키워드가 있으면 그 이름, 없으면 이 지시서 거래처
+  const who = kw.find((t) => t.type === 'client')?.value || order?.clientCompanyName || '';
+  const hasSpecKw = kw.some((t) => t.type === 'spec');
+  // 결과 화면(사용자 2026-11-24: 규격만 맞는 지시서가 주르륵 나와 보기 힘듦) —
+  // 위: '찾은 결과'(품목·키워드와 규격이 한 줄에서 같이 맞음 → 그 거래처 / 다른 거래처 / 규격 다름) 묶음마다 8건 + [더 보기]
+  // 아래: '규격만 비슷한 다른 품목'은 접어 두고 건수만. 홈페이지·이지폼 예전 명세서는 같은 묶음 안에 같이(홈페이지 먼저).
+  const LIMIT = 8;
+  type Cell = { key: string; g: number; el: React.ReactElement };
+  const cells: Cell[] = [
+    ...(home || []).map((x, j) => ({
+      key: `h${x.o.id}`,
+      g: x.g,
+      el: <HomeCard key={`h${x.o.id}`} h={x} onOpen={() => setDetail(j)} />,
+    })),
+    ...(past || []).map(({ pr, hit, g }, j) => {
+      const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
+      return {
+        key: `p${k}`,
+        g,
+        el: (
+          <PastCard
+            key={`p${k}`}
+            pr={pr}
+            hit={hit}
+            token={token}
+            data={pastData[k]}
+            onData={(d) => setPastData((m) => ({ ...m, [k]: d }))}
+            onOpen={() => setDetail((home?.length || 0) + j)}
+          />
+        ),
+      };
+    }),
+  ];
+  const loading = home == null || past == null;
+  const mainCells = cells.filter((c) => c.g <= 3);
+  const specCells = cells.filter((c) => c.g >= 4);
+  const groupBox = (g: number, list: Cell[]) => {
+    const open = !!moreG[g];
+    const shown = open ? list : list.slice(0, LIMIT);
+    return (
+      <div key={`g${g}`} className={'pf-group' + (g === 1 ? ' best' : '')}>
+        <div className="pf-group-h">
+          {GROUP_LABEL(g, who, hasSpecKw)}
+          <b>{list.length}</b>
+        </div>
+        <div className="pf-grid">{shown.map((c) => c.el)}</div>
+        {list.length > LIMIT && (
+          <button type="button" className="pf-more" onClick={() => setMoreG((m) => ({ ...m, [g]: !open }))}>
+            {open ? '접기' : `${list.length - LIMIT}건 더 보기`}
+          </button>
+        )}
+      </div>
+    );
+  };
   const results = (
     <div className="pf-results">
-      <section>
+      <section className="pf-main">
         <h4>
-          홈페이지 명세서 {home ? <b>{home.length}</b> : null}
+          찾은 결과 {!loading ? <b>{mainCells.length}</b> : null}
+          {(homeErr || pastErr) && <span className="pf-warn">{homeErr ? '홈페이지 명세서를 못 찾았어요' : pastErr}</span>}
         </h4>
-        {home == null ? (
-          pending
-        ) : home.length === 0 ? (
-          <div className="pf-none">{homeErr ? '검색하지 못했어요' : '없어요'}</div>
-        ) : (
-          <div className="pf-grid">
-            {home.map((h, i) => (
-              <HomeCard key={h.o.id} h={h} onOpen={() => setDetail(i)} />
-            ))}
-          </div>
-        )}
+        {[1, 2, 3].map((g) => {
+          const list = mainCells.filter((c) => c.g === g);
+          return list.length ? groupBox(g, list) : null;
+        })}
+        {loading ? pending : !mainCells.length && <div className="pf-none">키워드와 규격이 같이 맞는 명세서가 없어요</div>}
       </section>
-      <section>
-        <h4>
-          이지폼 예전 명세서 {past ? <b>{past.length}</b> : null}
-        </h4>
-        {past == null ? (
-          pending
-        ) : past.length === 0 ? (
-          <div className="pf-none">{pastErr || '없어요'}</div>
-        ) : (
-          <div className="pf-grid">
-            {past.map(({ pr, hit }, j) => {
-              const k = pastKey(pr.ref_file, pr.ref_invoice_idx);
-              return (
-                <PastCard
-                  key={k}
-                  pr={pr}
-                  hit={hit}
-                  token={token}
-                  data={pastData[k]}
-                  onData={(d) => setPastData((m) => ({ ...m, [k]: d }))}
-                  onOpen={() => setDetail((home?.length || 0) + j)}
-                />
-              );
-            })}
-          </div>
-        )}
-      </section>
+      {specCells.length > 0 && (
+        <section className="pf-sub">
+          <button type="button" className="pf-sub-toggle" onClick={() => setSpecOpen((v) => !v)}>
+            <span>{specOpen ? '▾' : '▸'}</span> 규격만 비슷한 다른 품목 <b>{specCells.length}</b>
+            <small>{specOpen ? '접기' : '펼쳐 보기'}</small>
+          </button>
+          {specOpen && <div className="pf-grid">{specCells.map((c) => c.el)}</div>}
+        </section>
+      )}
     </div>
   );
 
