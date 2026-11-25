@@ -418,6 +418,12 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const confirm = () => {
     if (phase === 'confirm') {
       if (!extra.length) {
+        // 비고에 지시서 여러 개가 적혔는데 지시서마다 '혼자 적힌 줄'(구간 시작)이 없으면(예: 한 줄에 번호가 다 같이)
+        // → 어디부터 어느 지시서인지 고르게 한다. '이미 같아요'로 끝나 범위 창이 안 뜨던 것(사용자 2026-11-25).
+        if (ev.nos.length > 1 && linked && linked.length === ev.nos.length && !bandsKnown()) {
+          startAssign(linked, [...ev.nos]);
+          return;
+        }
         setPhase('check'); // 같은 지시서 — 예전처럼 비교해서 반영(같으면 '이미 같아요')
         return;
       }
@@ -449,6 +455,15 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   };
 
   // ── 지시서마다 시작 줄 고르기 ──
+  /** 비고의 지시서마다 그 번호만 혼자 적힌 줄이 서로 다른 곳에 있나(= 구간을 이미 앎) */
+  function bandsKnown(): boolean {
+    const seen = new Set<string>();
+    ev.rows.forEach((r) => {
+      const ns = extractOrderNos(r.remark || '');
+      if (ns.length === 1) seen.add(ns[0]);
+    });
+    return ev.nos.every((no) => seen.has(no));
+  }
   function startAssign(orders: EasyformCandidateOrder[], orderNumbers: string[]) {
     // 비고에 이미 그 번호가 '혼자' 적힌 줄이 있으면 그 줄을 미리 골라 둔다. 첫 지시서는 없으면 첫 줄.
     const used = new Set<number>();
@@ -927,8 +942,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                 </button>
               )}
               {phase === 'confirm' ? (
-                <button type="button" className="efas-btn primary" onClick={confirm}>
-                  {extra.length ? `지시서 ${ev.nos.length + extra.length}개 묶어서 반영` : '이 지시서가 맞아요'}
+                <button type="button" className="efas-btn primary" disabled={linked === null} onClick={confirm}>
+                  {linked === null ? '지시서 확인 중…' : extra.length ? `지시서 ${ev.nos.length + extra.length}개 묶어서 반영` : '이 지시서가 맞아요'}
                 </button>
               ) : phase === 'pick' ? (
                 <button type="button" className="efas-btn primary" disabled={!extra.length} onClick={confirm}>
