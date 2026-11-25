@@ -3323,7 +3323,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           `<div style="font-size:12px;color:#6b7785;margin-top:6px">홈페이지 명세서는 저장돼 있어요. 이지폼은 바뀌지 않았어요.</div>`,
         offerNew
           ? [
-              { label: '이지폼에 새로 작성하기', fn: () => void newFillEasyform() },
+              { label: '이지폼에 새로 작성하기', fn: () => newFillDirect() },
               { label: '닫기', sec: true },
             ]
           : [{ label: '확인', sec: true }],
@@ -3425,6 +3425,18 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     similar: EfClientChoice[];
     resolve: (c: EfClientChoice | 'manual' | null) => void;
   }>(null);
+  // [이지폼 새로 작성] = 묻거나 찾지 않고 바로 워처 새로작성 안내(사람이 새로작성·거래처 고름 → 워처가 입력·저장).
+  // 예전엔 이지폼 목록을 먼저 뽑아 거래처·기존 명세서를 확인했는데, 없는 걸 아는 경우엔 오히려 번거로움 →
+  // 있는지는 사람이 [이지폼에서 열기]로 직접 확인(사용자 2026-11-25). 아래 newFillEasyform(자동 거래처 선택)은 지금 안 씀.
+  const newFillDirect = () => {
+    if (!order) {
+      cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
+      return;
+    }
+    const own = orderNoCore(order.orderNumber);
+    void doSendToEasyform(linkedOrders.map((l) => orderNoCore(l.orderNumber)).filter((n) => n && n !== own));
+  };
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const newFillEasyform = async () => {
     if (!order) {
       cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
@@ -5152,9 +5164,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
             ) : (
               <button
                 className="aq-btn ef"
-                onClick={() => void newFillEasyform()}
+                onClick={() => newFillDirect()}
                 disabled={efBusy || !order}
-                title="예전에 끊은 이지폼 거래처를 골라 두고, 확인하면 이지폼에 새로 작성해 저장까지 해요"
+                title="이지폼에서 [새로작성] → 거래처를 고르면 나머지 입력과 저장은 자동으로 해요. 이미 있는지는 [이지폼에서 열기]로 확인하세요"
               >
                 {efBusy ? '이지폼 작성 중…' : '이지폼 새로 작성'}
               </button>
