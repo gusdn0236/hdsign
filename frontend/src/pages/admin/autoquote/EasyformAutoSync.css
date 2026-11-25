@@ -731,3 +731,204 @@
 .efas-cards .order-card.efas-card-locked {
   cursor: default;
 }
+
+/* ── 지시서 여러 개 → 하나씩 시작 줄 고르기(왼쪽 지시서 · 오른쪽 명세서, 2026-11-25) ── */
+.efas-assign {
+  --c0: #7c3aed;
+  --c1: #0284c7;
+  --c2: #ea580c;
+  --c3: #059669;
+  --c4: #db2777;
+  --c5: #ca8a04;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 22px 4px;
+  gap: 10px;
+}
+.efas-assign .c0 { --cc: var(--c0); }
+.efas-assign .c1 { --cc: var(--c1); }
+.efas-assign .c2 { --cc: var(--c2); }
+.efas-assign .c3 { --cc: var(--c3); }
+.efas-assign .c4 { --cc: var(--c4); }
+.efas-assign .c5 { --cc: var(--c5); }
+.efas-assign-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.efas-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 5px;
+  border-radius: 999px;
+  border: 1.5px solid var(--efas-line);
+  background: var(--efas-bg);
+  color: var(--efas-sub);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.efas-step i {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--efas-line);
+  color: var(--efas-sub);
+  font-style: normal;
+  font-size: 12px;
+}
+.efas-step small {
+  font-weight: 500;
+  color: var(--efas-mute);
+}
+.efas-step.set i {
+  background: var(--cc);
+  color: #fff;
+}
+.efas-step.on {
+  border-color: var(--cc);
+  color: var(--efas-ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc) 18%, transparent);
+}
+.efas-assign-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 16px;
+}
+.efas-assign-ws {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+.efas-assign-wsimg {
+  position: relative;
+  flex: 1;
+  min-height: 300px;
+  border: 1px solid var(--efas-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+.efas-assign-wsimg .efas-zoombtn {
+  opacity: 1;
+}
+.efas-assign-name {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--efas-sub);
+}
+.efas-assign-name b {
+  color: var(--efas-ink);
+}
+.efas-assign-stmt {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+.efas-assign-help {
+  margin: 0;
+  font-size: 13px;
+  color: var(--efas-sub);
+}
+.efas-assign-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--efas-line);
+  border-radius: 10px;
+}
+.efas-assign-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.efas-assign-table th {
+  position: sticky;
+  top: 0;
+  background: #f9fafb;
+  color: var(--efas-mute);
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--efas-line);
+}
+.efas-assign-table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #f1f5f9;
+  color: var(--efas-ink);
+}
+.efas-assign-table .num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.efas-assign-table tbody tr {
+  cursor: pointer;
+  box-shadow: inset 4px 0 0 transparent;
+}
+.efas-assign-table tbody tr:hover {
+  background: #f5f3ff;
+}
+.efas-assign-table tbody tr.own {
+  box-shadow: inset 4px 0 0 var(--cc);
+  background: color-mix(in srgb, var(--cc) 5%, transparent);
+}
+.efas-assign-table tbody tr.start td {
+  border-top: 2px solid var(--cc);
+}
+.efas-assign-table tbody tr.mine {
+  background: color-mix(in srgb, var(--cc) 14%, transparent);
+}
+.efas-assign-table tbody tr:focus-visible {
+  outline: 2px solid var(--efas-accent);
+  outline-offset: -2px;
+}
+.efas-assign-table td.tag {
+  white-space: nowrap;
+}
+.efas-tagchip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--cc, var(--efas-accent));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.efas-tagdot {
+  color: var(--efas-mute);
+  font-size: 12px;
+}
+.efas-assign-warn {
+  margin: 0;
+  font-size: 12px;
+  color: var(--efas-warn);
+}
+@media (max-width: 760px) {
+  .efas-assign {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .efas-assign-body {
+    grid-template-columns: 1fr;
+  }
+  .efas-assign-wsimg {
+    min-height: 220px;
+  }
+}
+
+.efas-card:has(.efas-assign) {
+  height: min(820px, calc(100vh - 32px));
+}

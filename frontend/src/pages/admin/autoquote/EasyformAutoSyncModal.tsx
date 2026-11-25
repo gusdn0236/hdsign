@@ -68,7 +68,16 @@ interface Props {
 }
 
 // check = 비고 번호 있음 → 새 줄 확인 중 / added = 새 줄이 어느 지시서인지 묻는 중 / pick = 지시서 고르기
-type Phase = 'confirm' | 'check' | 'added' | 'pick' | 'saving' | 'done' | 'error';
+// assign = 지시서 여러 개 → 하나씩 '명세서에서 이 지시서가 시작하는 줄' 고르기(사용자 2026-11-25)
+type Phase = 'confirm' | 'check' | 'added' | 'pick' | 'assign' | 'saving' | 'done' | 'error';
+
+/** 지시서마다 시작 줄 고르기. starts[k] = orders[k] 가 시작하는 이지폼 표 줄(ev.rows 기준). */
+interface Assign {
+  orders: EasyformCandidateOrder[];
+  starts: (number | null)[];
+  step: number;
+  orderNumbers: string[]; // 홈페이지에 묶을 순서(맨 앞 = 대표)
+}
 
 const DAY = 86400000;
 function dayOf(s: string | null | undefined): number | null {
@@ -100,6 +109,11 @@ function sameSig(r: any): string {
   if (/^0+$/.test(q)) q = '';
   if (p && !q) q = '1';
   return [t(r?.품목코드), t(r?.품목), t(r?.규격), q, p].join('\u0001');
+}
+
+/** 내용 있는 줄(워처 bulk._has_content 와 같은 규칙) — 빈 줄은 시작 줄로 못 고름 */
+function hasContent(r: { item_code?: string; item?: string; spec?: string; unit_price?: string }): boolean {
+  return [r.item_code, r.item, r.spec].some((v) => (v || '').trim()) || !['', '0'].includes((r.unit_price || '').trim());
 }
 
 interface Ranked {
@@ -145,6 +159,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const [other, setOther] = useState(false); // 새 줄 = 다른 지시서 → 고르기 목록 펼침
   const [zoom, setZoom] = useState<EasyformCandidateOrder | null>(null); // 🔍 지시서 크게 보기
   const [msg, setMsg] = useState<{ main: string; sub?: string; warn?: string }>({ main: '' });
+  const [assign, setAssign] = useState<Assign | null>(null);
   const baseRef = useRef<EasyformCandidateOrder | null>(null); // 비고 번호의 (첫) 지시서
 
   // 이지폼 표 줄 ↔ 홈페이지 그리드 줄(빈 줄은 그리드에서 빠짐)
@@ -153,6 +168,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     [ev.rows],
   );
   const grid = useMemo(() => pairs.map((p) => p.g), [pairs]);
+  const contentRows = useMemo(() => ev.rows.map((r, i) => ({ r, i })).filter(({ r }) => hasContent(r)), [ev.rows]);
   const sum = useMemo(() => grid.reduce((a, r) => a + (Number(r.공급가액) || 0), 0), [grid]);
 
   // 이 창이 떠 있는 동안 뒤 홈페이지는 스크롤 안 되게(끝까지 내리면 뒤가 따라 내려가던 것 — 사용자 2026-11-24)
@@ -186,13 +202,16 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
 
   /** 반영. stamp = 이지폼 비고에 먼저 적을 것(지시서·번호·줄). 못 적어도 홈페이지 반영은 한다. */
   const save = useCallback(
-    async (orderNumbers: string[], stamp?: { o: EasyformCandidateOrder; row?: number; move?: boolean; nos?: string[] }) => {
+    async (
+      orderNumbers: string[],
+      stamp?: { o: EasyformCandidateOrder; row?: number; move?: boolean; nos?: string[]; places?: { row: number; no: string }[] },
+    ) => {
       setPhase('saving');
       let rows = ev.rows;
       let warn = '';
       if (stamp) {
         const no = orderNoCore(stamp.o.orderNumber);
-        const st = await stampEfAuto(ev.id, stamp.nos?.length ? stamp.nos : [no], stamp.row, !!stamp.move);
+        const st = await stampEfAuto(ev.id, stamp.nos?.length ? stamp.nos : [no], stamp.row, !!stamp.move, stamp.places);
         if (st.ok && Array.isArray(st.rows) && st.rows.length === rows.length) {
           rows = st.rows; // 워처가 비고(적기·옮기기) 반영한 줄들
         } else if (st.ok && !st.skipped && typeof st.row === 'number' && rows[st.row]) {
@@ -201,7 +220,20 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           warn = `이지폼 비고의 주문번호를 맨 위로 못 옮겼어요 — ${st.message || '알 수 없는 이유'}`;
         } else if (!st.ok) {
           warn = `이지폼 비고엔 주문번호를 못 적었어요 — ${st.message || '알 수 없는 이유'}`;
-          if (typeof stamp.row === 'number' && rows[stamp.row]) {
+          if (stamp.places?.length) {
+            // 홈페이지에선 고른 구간대로 보이게 — 옛 자리 번호는 빼고 고른 줄에 번호
+            const places = stamp.places;
+            const all = places.map((p) => p.no);
+            rows = rows.map((r, i) => {
+              const keep = (r.remark || '')
+                .split(/([\s,]+)/)
+                .filter((t) => !all.includes(t))
+                .join('')
+                .replace(/^[\s,]+|[\s,]+$/g, '');
+              const mine = places.filter((p) => p.row === i).map((p) => p.no);
+              return { ...r, remark: [keep, ...mine].filter(Boolean).join(' ') };
+            });
+          } else if (typeof stamp.row === 'number' && rows[stamp.row]) {
             // 홈페이지에선 구간이 맞게 보이도록 그 줄 비고에 번호를 넣어 둔다
             rows = rows.map((r, i) => (i === stamp.row ? { ...r, remark: `${(r.remark || '').trim()} ${no}`.trim() } : r));
           }
@@ -390,12 +422,21 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         return;
       }
       const nos = extra.map((o) => orderNoCore(o.orderNumber));
+      // 비고에 적힌 지시서를 다 찾았으면 지시서마다 시작 줄을 고르게, 못 찾았으면 예전처럼(번호 줄 뒤에 붙임)
+      if (linked && linked.length === ev.nos.length) {
+        startAssign([...linked, ...extra], [...ev.nos, ...nos]);
+        return;
+      }
       save([...ev.nos, ...nos], { o: extra[0], nos, row: holderRow >= 0 ? holderRow : undefined });
       return;
     }
     if (phase === 'pick') {
       if (!extra.length) return;
       const nos = extra.map((o) => orderNoCore(o.orderNumber));
+      if (extra.length > 1) {
+        startAssign(extra, nos);
+        return;
+      }
       save(nos, { o: extra[0], nos });
       return;
     }
@@ -407,12 +448,68 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     }
   };
 
+  // ── 지시서마다 시작 줄 고르기 ──
+  function startAssign(orders: EasyformCandidateOrder[], orderNumbers: string[]) {
+    // 비고에 이미 그 번호가 '혼자' 적힌 줄이 있으면 그 줄을 미리 골라 둔다. 첫 지시서는 없으면 첫 줄.
+    const used = new Set<number>();
+    const starts: (number | null)[] = orders.map((o) => {
+      const no = orderNoCore(o.orderNumber);
+      const at = ev.rows.findIndex((r, i) => {
+        const ns = extractOrderNos(r.remark || '');
+        return !used.has(i) && hasContent(r) && ns.length === 1 && ns[0] === no;
+      });
+      if (at >= 0) used.add(at);
+      return at >= 0 ? at : null;
+    });
+    if (starts[0] == null && contentRows.length && !used.has(contentRows[0].i)) starts[0] = contentRows[0].i;
+    setAssign({ orders, starts, step: 0, orderNumbers });
+    setPhase('assign');
+  }
+  const pickStart = (row: number) =>
+    setAssign((a) => {
+      if (!a) return a;
+      const starts = a.starts.map((s, k) => (k !== a.step && s === row ? null : s)); // 한 줄엔 지시서 하나만
+      starts[a.step] = row;
+      return { ...a, starts };
+    });
+  /** 줄마다 어느 지시서 몫인지(시작 줄부터 다음 시작 줄 전까지) — 고른 것만으로 */
+  const owners = useMemo(() => {
+    const out = new Map<number, number>();
+    if (!assign) return out;
+    const marks = assign.starts
+      .map((s, k) => ({ s, k }))
+      .filter((m): m is { s: number; k: number } => m.s != null)
+      .sort((a, b) => a.s - b.s);
+    for (const { i } of contentRows) {
+      let own = -1;
+      for (const m of marks) if (m.s <= i) own = m.k;
+      if (own >= 0) out.set(i, own);
+    }
+    return out;
+  }, [assign, contentRows]);
+  const assignDone = !!assign && assign.starts.every((s) => s != null);
+  const assignNext = () => {
+    if (!assign) return;
+    if (assign.step < assign.orders.length - 1) {
+      setAssign({ ...assign, step: assign.step + 1 });
+      return;
+    }
+    if (!assignDone) {
+      setAssign({ ...assign, step: assign.starts.findIndex((s) => s == null) });
+      return;
+    }
+    const places = assign.orders.map((o, k) => ({ row: assign.starts[k] as number, no: orderNoCore(o.orderNumber) }));
+    save(assign.orderNumbers, { o: assign.orders[0], nos: places.map((p) => p.no), places });
+  };
+
   const busy = phase === 'saving' || phase === 'check';
   const choosing = phase === 'pick' || phase === 'confirm' || (phase === 'added' && other); // 지시서 카드 목록을 보여줄 때
   const title =
     phase === 'pick' || phase === 'confirm'
       ? '어느 지시서인지 선택해주세요'
-      : phase === 'added'
+      : phase === 'assign' && assign
+        ? `${assign.step + 1}번째 지시서 — 명세서에서 이 지시서가 시작하는 줄을 클릭해주세요`
+        : phase === 'added'
         ? `추가한 ${added?.count}줄은 어느 지시서 건가요?`
         : phase === 'done' || phase === 'error'
           ? msg.main
@@ -574,7 +671,108 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               </tbody>
             </table>
           </section>
-        ) : phase === 'pick' || phase === 'confirm' ? null : (
+        ) : phase === 'pick' || phase === 'confirm' ? null : phase === 'assign' && assign ? (
+          <section className="efas-assign" aria-label="지시서마다 시작 줄 고르기">
+            <div className="efas-assign-steps">
+              {assign.orders.map((o, k) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  aria-pressed={k === assign.step}
+                  className={`efas-step c${k % 6}${k === assign.step ? ' on' : ''}${assign.starts[k] != null ? ' set' : ''}`}
+                  onClick={() => setAssign({ ...assign, step: k })}
+                >
+                  <i>{k + 1}</i>
+                  {orderNoCore(o.orderNumber)}
+                  {assign.starts[k] != null && <small>{(assign.starts[k] as number) + 1}행부터</small>}
+                </button>
+              ))}
+            </div>
+            <div className="efas-assign-body">
+              <div className="efas-assign-ws">
+                <div className="efas-assign-wsimg">
+                  <FitWorksheet
+                    key={assign.orders[assign.step].id}
+                    pdfUrl={assign.orders[assign.step].worksheetPdfUrl}
+                    thumbUrl={assign.orders[assign.step].worksheetThumbnailUrl}
+                    title={assign.orders[assign.step].title}
+                  />
+                  <button
+                    type="button"
+                    className="efas-zoombtn"
+                    onClick={() => setZoom(assign.orders[assign.step])}
+                    aria-label="지시서 크게 보기"
+                    title="크게 보기"
+                  >
+                    🔍
+                  </button>
+                </div>
+                <p className="efas-assign-name">
+                  <span className={`efas-tagchip c${assign.step % 6}`}>{assign.step + 1}</span>
+                  <b>{orderNoCore(assign.orders[assign.step].orderNumber)}</b>
+                  {assign.orders[assign.step].title ? ` · ${assign.orders[assign.step].title}` : ''}
+                </p>
+              </div>
+              <div className="efas-assign-stmt">
+                <p className="efas-assign-help">
+                  이 지시서 내용이 <b>시작하는 첫 줄</b>을 눌러주세요. 다음 지시서가 시작하는 줄 전까지가 이 지시서 몫이에요.
+                </p>
+                <div className="efas-assign-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th className="num">행</th>
+                        <th>품목</th>
+                        <th>규격</th>
+                        <th className="num">수량</th>
+                        <th className="num">단가</th>
+                        <th>지시서</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contentRows.map(({ r, i }) => {
+                        const own = owners.get(i);
+                        const startK = assign.starts.findIndex((s) => s === i);
+                        return (
+                          <tr
+                            key={i}
+                            className={`${own != null ? `own c${own % 6}` : ''}${startK >= 0 ? ' start' : ''}${startK === assign.step ? ' mine' : ''}`}
+                            onClick={() => pickStart(i)}
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                pickStart(i);
+                              }
+                            }}
+                          >
+                            <td className="num">{i + 1}</td>
+                            <td>{r.item || r.item_code}</td>
+                            <td>{r.spec}</td>
+                            <td className="num">{r.qty}</td>
+                            <td className="num">{price(r.unit_price || '')}</td>
+                            <td className="tag">
+                              {startK >= 0 ? (
+                                <span className={`efas-tagchip c${startK % 6}`}>
+                                  {startK + 1} · {orderNoCore(assign.orders[startK].orderNumber)}
+                                </span>
+                              ) : own != null ? (
+                                <span className="efas-tagdot">{own + 1}</span>
+                              ) : null}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {contentRows.length > 0 && !owners.has(contentRows[0].i) && assign.starts.some((s) => s != null) && (
+                  <p className="efas-assign-warn">맨 위 줄이 어느 지시서에도 안 들어가요 — 보통 첫 지시서는 1행부터예요.</p>
+                )}
+              </div>
+            </div>
+          </section>
+        ) : (
           <section className="efas-stmt" aria-label="이지폼 명세서">
             <div className="efas-stmt-meta">
               <span className="efas-client">{ev.client || '거래처 모름'}</span>
@@ -686,7 +884,26 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
         {busy && <div className="efas-busy">{phase === 'check' ? '확인하는 중…' : '반영하는 중…'}</div>}
 
         <footer className="efas-foot">
-          {phase === 'added' && !other ? (
+          {phase === 'assign' && assign ? (
+            <>
+              <button
+                type="button"
+                className="efas-btn ghost"
+                onClick={() => (assign.step > 0 ? setAssign({ ...assign, step: assign.step - 1 }) : setPhase(ev.nos.length ? 'confirm' : 'pick'))}
+              >
+                ← {assign.step > 0 ? '이전 지시서' : '지시서 다시 고르기'}
+              </button>
+              <button type="button" className="efas-btn primary" disabled={assign.starts[assign.step] == null} onClick={assignNext}>
+                {assign.starts[assign.step] == null
+                  ? '시작 줄을 클릭해주세요'
+                  : assign.step < assign.orders.length - 1
+                    ? '다음 지시서 →'
+                    : assignDone
+                      ? `지시서 ${assign.orders.length}개 묶어서 반영`
+                      : '안 고른 지시서로'}
+              </button>
+            </>
+          ) : phase === 'added' && !other ? (
             <button type="button" className="efas-btn ghost" onClick={onClose}>
               반영 안 함
             </button>
@@ -806,7 +1023,9 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               type="button"
               className="efas-btn primary"
               onClick={() => {
-                if (phase === 'added') setPicked(zoom);
+                if (phase === 'assign') {
+                  /* 시작 줄 고르기 중엔 보기만 */
+                } else if (phase === 'added') setPicked(zoom);
                 else if (!extra.some((x) => x.id === zoom.id) && !ev.nos.includes(orderNoCore(zoom.orderNumber))) toggle(zoom);
                 setZoom(null);
               }}

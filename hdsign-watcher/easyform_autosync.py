@@ -788,6 +788,28 @@ def _plan(rows: list, nos: list, move: bool, want_row: "int | None"):
     return {"ok": True}, [(row, rows[row].get("item") or "", base, f"{base} {text}".strip() if base else text)], row
 
 
+def _plan_places(rows: list, places: list):
+    """합친 명세서 — 지시서마다 직원이 고른 시작 줄 비고에 그 번호(사용자 2026-11-25).
+    places=[(줄, 번호)]. 다른 줄에 붙어 있던 같은 번호들은 지우고(구간이 꼬이지 않게), 고른 줄엔 기존 비고 뒤에 붙임."""
+    nos = [no for _r, no in places]
+    want_at: dict = {}
+    for r, no in places:
+        if not (0 <= r < len(rows)):
+            return {"ok": False, "message": f"{r + 1}행이 명세서에 없어요"}, [], None
+        want_at.setdefault(r, []).append(no)
+    edits = []
+    for i, r in enumerate(rows):
+        old = (r.get("remark") or "").strip()
+        new = bulk._strip_nos(old, nos)
+        if i in want_at:
+            new = f"{new} {', '.join(want_at[i])}".strip() if new else ", ".join(want_at[i])
+        if new != old:
+            edits.append((i, r.get("item") or "", old, new))
+    if not edits:
+        return {"ok": True, "message": "이미 그 줄들 비고에 적혀 있어요", "skipped": True}, [], places[0][0]
+    return {"ok": True}, edits, places[0][0]
+
+
 def _quick_set(main, grid, row: int, item: str, base: str, want: str) -> "str | None":
     """한 줄 비고 base → want. 품목·비고가 읽은 것과 같아야 적고, 적은 뒤 비고 1칸만 확인. 문제면 이유 글자."""
     cells = bulk._row_cells(grid, row)
@@ -863,6 +885,15 @@ def handle_stamp(body: dict) -> dict:
     except (TypeError, ValueError):
         eid = 0
     nos = [str(n) for n in ((body or {}).get("nos") or []) if n][:10]
+    places = []
+    for p in ((body or {}).get("places") or [])[:10]:
+        try:
+            if p.get("no"):
+                places.append((int(p.get("row")), str(p.get("no"))))
+        except (TypeError, ValueError, AttributeError):
+            pass
+    if places and not nos:
+        nos = [no for _r, no in places]
     with _LOCK:
         ev = next((e for e in _STATE["events"] if e["id"] == eid), None)
         if _STATE["busy"]:
@@ -882,8 +913,11 @@ def handle_stamp(body: dict) -> dict:
             return {"ok": False, "message": "이지폼에 질문창이 떠 있어서 비고엔 못 적었어요."}
         rows = ev["rows"]
         want_row = (body or {}).get("row")
-        res, edits, row = _plan(rows, nos, bool((body or {}).get("move")),
-                                want_row if isinstance(want_row, int) else None)
+        if places:
+            res, edits, row = _plan_places(rows, places)
+        else:
+            res, edits, row = _plan(rows, nos, bool((body or {}).get("move")),
+                                    want_row if isinstance(want_row, int) else None)
         if edits:
             _overlay("이지폼 비고에 주문번호만 적고 있어요.", ef.EF_SUB_NOESC)
             ef.ef_guard_start()

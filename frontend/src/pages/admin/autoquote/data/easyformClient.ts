@@ -515,10 +515,11 @@ export const frontEfAuto = (title: string) => efAutoPost<{ ok: boolean }>('front
 
 /** 아직 열려 있는 그 이지폼 명세서 비고에 주문번호를 적고 저장. row = 그 줄에(합친 명세서의 새 지시서 시작 줄), 없으면 첫 빈 비고.
  *  move = 지시서 1개짜리 — 번호를 '위에서부터 비고가 빈 첫 줄'로 옮겨 적기(맨 위에 줄 끼우면 밀리므로). rows = 비고 반영된 줄들. */
-export const stampEfAuto = (id: number, nos: string[], row?: number, move = false) =>
+export const stampEfAuto = (id: number, nos: string[], row?: number, move = false, places?: { row: number; no: string }[]) =>
   efAutoPost<{ ok: boolean; message?: string; row?: number; remark?: string; skipped?: boolean; rows?: EasyformPulledRow[] }>(
     'stamp',
-    { id, nos, row, move },
+    // places = 합친 명세서에서 지시서마다 고른 시작 줄(그 줄 비고에 그 번호, 사용자 2026-11-25)
+    { id, nos, row, move, places },
   ).then(
     (r) => r || { ok: false, message: '워처가 응답하지 않아요' },
   );
