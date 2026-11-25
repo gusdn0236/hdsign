@@ -181,6 +181,35 @@
     opacity: 0.85;
 }
 
+.hd-dl-btn {
+    position: relative;
+}
+
+/* 명세서 작성용이 옛 버전일 때 버튼 오른쪽 위 주황 점 */
+.hd-dl-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #F57C00;
+    border: 2px solid #fff;
+}
+
+/* 메뉴 안 '업데이트 필요' 알약 */
+.hd-dl-update {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #F57C00;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    vertical-align: 1px;
+}
+
 .hd-dl-menu {
     position: absolute;
     top: calc(100% + 8px);

@@ -469,6 +469,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
     setStmtOrder(v);
     try { localStorage.setItem("hd.stmtOrder2", v); } catch { /* 저장 불가 무시 */ }
   };
+  // 명세서 탭 '명세서 안 끊은 것만' — 이지폼 저장(명세서 완료) 안 된 카드만(임시저장·명세서 전). 순서 드롭다운과 같이 먹음. 이 PC 에 기억.
+  const [stmtOnlyUncut, setStmtOnlyUncut] = useState(() => {
+    try { return localStorage.getItem("hd.stmtOnlyUncut") === "1"; } catch { return false; }
+  });
+  const changeStmtOnlyUncut = (v) => {
+    setStmtOnlyUncut(v);
+    try { localStorage.setItem("hd.stmtOnlyUncut", v ? "1" : "0"); } catch { /* 저장 불가 무시 */ }
+  };
   const [allClientNames, setAllClientNames] = useState([]); // 전체 거래처(자동완성·분류) — 30일치 화면과 무관
   const [stmtRecent, setStmtRecent] = useState(() => {
     try {
@@ -1021,9 +1029,10 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           return clientToks.some((t) => name.includes(t));
         });
     // 🔗 합친 명세서 묶음만 보기 — 검색·거래처 필터와 상관없이 그 묶음 지시서만
-    const base = linkFilter
+    const base1 = linkFilter
       ? statusFilteredOrders.filter((o) => linkFilter.includes(o.id))
       : base0;
+    const base = stmtOnlyUncut ? base1.filter((o) => !o.easyformUploadedAt) : base1;
     const byNew = (x, y) => {
       const ta = x.createdAt ? new Date(x.createdAt).getTime() : 0;
       const tb = y.createdAt ? new Date(y.createdAt).getTime() : 0;
@@ -1067,7 +1076,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       });
     }
     return [...base].sort(byNew);
-  }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort, stmtOrder, linkFilter]);
+  }, [isStatementView, statusFilteredOrders, stmtResult, stmtTokens, stmtSort, stmtOrder, linkFilter, stmtOnlyUncut]);
 
   // 납기날짜순일 때 — 납기 날짜별 묶음(묶음 사이에 얇은 선). 가격순 검색 정렬 중엔 묶지 않음.
   const stmtDueGroups = useMemo(() => {
@@ -2452,6 +2461,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                 <option value="due">납기날짜순</option>
                 <option value="old">오래된순</option>
               </select>
+              <label className="stmt-uncut-toggle" title="이지폼에 아직 저장 안 된(명세서 완료 아닌) 카드만 — 임시저장·명세서 전">
+                <input
+                  type="checkbox"
+                  checked={stmtOnlyUncut}
+                  onChange={(e) => changeStmtOnlyUncut(e.target.checked)}
+                />
+                명세서 안 끊은 것만
+              </label>
               {/* 한꺼번에 불러오기는 이제 안 씀 — 숨김(사용자 2026-11-24). 다시 쓰려면 SHOW_EF_BULK 를 true 로. */}
               {SHOW_EF_BULK && isOrderPage && (
                 <>
@@ -2528,7 +2545,9 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               <div className="order-empty">요청 목록을 불러오는 중입니다.</div>
             ) : statementOrders.length === 0 ? (
               <div className="order-empty">
-                {stmtResult
+                {stmtOnlyUncut
+                  ? "명세서 안 끊은 카드가 없습니다. (체크를 풀면 전부 보여요)"
+                  : stmtResult
                   ? "검색 조건에 맞는 명세서 행이 있는 지시서가 없습니다."
                   : stmtTokens.length > 0
                     ? "필터에 맞는 작업중·작업완료 카드가 없습니다."

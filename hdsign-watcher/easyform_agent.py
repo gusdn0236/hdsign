@@ -21,6 +21,14 @@ import easyform  # 같은 폴더의 자동기입 모듈(단일 소스 — 워처
 
 PORT = 5577
 
+# 빌드 버전 — build_easyform_agent.py 가 빌드 직전에 _agent_build.py 를 만들어 박는다.
+# 홈페이지(HD프로그램 다운로드)가 /ping 의 version 을 최신 배포본(downloads/easyform-agent-version.json)과
+# 비교해 다르면 '업데이트 필요' 를 띄운다. 직접 python 으로 돌리면 'dev'.
+try:
+    from _agent_build import BUILD_VERSION
+except Exception:  # noqa: BLE001
+    BUILD_VERSION = "dev"
+
 
 class _Handler(BaseHTTPRequestHandler):
     def _cors(self):
@@ -45,7 +53,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         if self.path == "/ping":
-            self._json(200, {"ok": True, "app": "hdsign_easyform_agent"})
+            self._json(200, {"ok": True, "app": "hdsign_easyform_agent", "version": BUILD_VERSION})
         elif self.path == "/easyform/probe":
             self._json(200, easyform.handle_probe())
         elif self.path.startswith("/easyform/autosync"):
@@ -184,7 +192,7 @@ def main():
     ORANGE_DARK = "#E65100"
 
     root = tk.Tk()
-    root.title("명세서 자동작성")
+    root.title(f"명세서 자동작성  (버전 {BUILD_VERSION})")
     root.resizable(False, False)
     root.geometry("460x184")
     root.configure(bg="#ffffff")

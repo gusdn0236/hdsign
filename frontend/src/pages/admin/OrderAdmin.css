@@ -2442,6 +2442,33 @@
   font-weight: 600;
   cursor: pointer;
 }
+/* 명세서 탭 '명세서 안 끊은 것만' 체크 */
+.stmt-uncut-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 5px 9px;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  background: #fff;
+  color: #18181b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+.stmt-uncut-toggle:has(input:checked) {
+  border-color: #F57C00;
+  background: #fff4e5;
+  color: #c2410c;
+}
+.stmt-uncut-toggle input {
+  margin: 0;
+  accent-color: #F57C00;
+  cursor: pointer;
+}
 .stmt-order-select:focus {
   outline: 2px solid #93c5fd;
   outline-offset: 1px;

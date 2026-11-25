@@ -34,9 +34,48 @@ const ITEMS = [
     },
 ];
 
+// 이 PC 에 켜진 '명세서 작성용' 이 최신 배포본보다 옛것인지 확인.
+// 최신 = downloads/easyform-agent-version.json(build_easyform_agent.py 가 exe 와 함께 기록),
+// 켜진 것 = 127.0.0.1:5577/ping 의 version(버전 없는 옛 빌드도 '옛것'으로 본다).
+// 사무실용 워처(app=hdsign_worksheet)가 떠 있으면 Z: 에서 자동 갱신되므로 표시 안 함. 안 켜져 있으면 알 수 없으니 표시 안 함.
+const EF_VERSION_URL = `${BASE}downloads/easyform-agent-version.json`;
+
+async function checkEasyformOutdated() {
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 1500);
+        const res = await fetch('http://127.0.0.1:5577/ping', { signal: ctrl.signal, cache: 'no-store' });
+        clearTimeout(timer);
+        if (!res.ok) return false;
+        const ping = await res.json();
+        if (ping?.app !== 'hdsign_easyform_agent' || ping?.version === 'dev') return false;
+        const latestRes = await fetch(EF_VERSION_URL, { cache: 'no-store' });
+        if (!latestRes.ok) return false;
+        const latest = (await latestRes.json())?.version;
+        return !!latest && ping.version !== latest;
+    } catch {
+        return false;
+    }
+}
+
 const HdProgramDownload = () => {
     const [open, setOpen] = useState(false);
+    const [efOutdated, setEfOutdated] = useState(false);
     const ref = useRef(null);
+
+    useEffect(() => {
+        let alive = true;
+        const run = () => { checkEasyformOutdated().then((v) => { if (alive) setEfOutdated(v); }); };
+        run();
+        const onFocus = () => run();
+        window.addEventListener('focus', onFocus);
+        const iv = setInterval(run, 5 * 60 * 1000);
+        return () => {
+            alive = false;
+            window.removeEventListener('focus', onFocus);
+            clearInterval(iv);
+        };
+    }, []);
 
     useEffect(() => {
         if (!open) return undefined;
@@ -60,6 +99,7 @@ const HdProgramDownload = () => {
                 onClick={() => setOpen((v) => !v)}
             >
                 HD프로그램 다운로드 <span className="hd-dl-caret">▾</span>
+                {efOutdated && <span className="hd-dl-dot" title="명세서 작성용 업데이트 필요" />}
             </button>
             {open && (
                 <div className="hd-dl-menu" role="menu">
@@ -74,8 +114,17 @@ const HdProgramDownload = () => {
                         >
                             <img className="hd-dl-logo" src={it.logo} alt="" width="36" height="36" />
                             <span className="hd-dl-text">
-                                <strong>{it.name}</strong>
-                                <small>{it.desc}</small>
+                                <strong>
+                                    {it.name}
+                                    {it.key === 'easyform' && efOutdated && (
+                                        <span className="hd-dl-update">⬆ 업데이트 필요</span>
+                                    )}
+                                </strong>
+                                <small>
+                                    {it.key === 'easyform' && efOutdated
+                                        ? '켜진 프로그램이 옛 버전이에요. 창을 닫고 새로 받은 걸 켜 주세요.'
+                                        : it.desc}
+                                </small>
                             </span>
                         </a>
                     ))}
