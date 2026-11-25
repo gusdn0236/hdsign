@@ -325,6 +325,40 @@ def _close(main, form) -> None:
         b._wait(lambda: b._gone(form), 2.5, 0.05)
 
 
+def _header_amounts(form, target: list) -> set:
+    """저장 뒤 목록에서 찾을 금액 후보(숫자만). 이지폼은 세액이 붙을 수도 안 붙을 수도 있고(주식회사·개인·거래처마다),
+    표 위 금액칸(합계·공급가·세액·잔액…) 순서도 명세서마다 달라 첫 칸 하나로는 목록 합계와 안 맞을 때가 있었다
+    (2026-11-25 '저장은 됐는데 목록에서 안 보여요'). → 표 위 금액칸 전부 + 줄 공급가 합(수량×단가)과 그 1.1배."""
+    out = set()
+    grid = next(iter(b._kids(form, "TAdvStringGrid")), None)
+    gtop = b._rect(grid)[1] if grid else 10 ** 6
+    for e in b._kids(form, "TAdvEdit"):
+        if b._rect(e)[3] <= gtop:
+            d = b._digits(b._txt(e)).lstrip("0")
+            if d:
+                out.add(d)
+    def num(v) -> float:
+        try:
+            return float(re.sub(r"[^0-9.\-]", "", str(v or "")) or 0)
+        except ValueError:
+            return 0.0
+
+    sup = 0
+    for r in target:
+        price = num(r.get("unit_price"))
+        q = num(r.get("qty")) or (1.0 if price else 0.0)
+        sup += round(q * price)
+    if sup:
+        out.add(str(int(sup)))
+        out.add(str(int(sup + int(sup * 0.1))))  # 세액 = 공급가 10% 버림
+        out.add(str(int(round(sup * 1.1))))
+    return out
+
+
+def _same_amount(r: dict, amounts: set) -> bool:
+    return b._digits(r.get("total") or "").lstrip("0") in amounts
+
+
 @_locked
 def _read_all(form) -> list:
     """표 전체(빈 줄 위치 유지) — 6칸. 첫 칸에 편집칸이 안 뜨면 표 끝. 10줄 넘으면 보기만 한 줄씩 내림."""
@@ -1019,6 +1053,7 @@ def new_fill(body: dict, progress) -> dict:
                             after[bad] if bad < len(after) else None, target[bad] if bad < len(target) else None)
             raise Stop(f"입력한 뒤 {bad + 1}번째 줄이 홈페이지와 달라서 저장 안 했어요(새 명세서는 버렸어요).")
         date, total = b._form_header(form)
+        amounts = _header_amounts(form, target)
         if due:
             if date != due:
                 raise Stop(f"발행일이 납기({due})가 아니라 {date or '빈칸'}이라 저장 안 했어요(새 명세서는 버렸어요).")
@@ -1038,10 +1073,13 @@ def new_fill(body: dict, progress) -> dict:
         saved = True  # 여기부터는 버리지 않는다(이미 눌렀음)
         _close(main, form)
         lst = b._export_one(m, 0, progress, period=(date, date), forms_ok=True)
-        hit = [r for r in lst if b._digits(r["total"]) == b._digits(total) and r.get("bizNo") == biz_no
+        hit = [r for r in lst if _same_amount(r, amounts) and r.get("bizNo") == biz_no
                and (r.get("firstItem") or "").strip() == (target[0]["item"] or "").strip()]
         if not hit:
+            logging.warning("이지폼 새로작성 저장확인 실패 — 금액후보 %s / 목록 %s", amounts,
+                            [(r.get("total"), r.get("firstItem"), r.get("bizNo")) for r in lst][:20])
             raise Stop("저장 버튼은 눌렀는데 이지폼 목록에서 새 명세서가 안 보여요. 이지폼을 직접 확인해주세요.")
+        total = hit[0]["total"]  # 목록에 보이는 합계(세액 포함 여부 그대로) = 나중에 찾을 지문
         return {"date": date, "total": total, "client": hit[0].get("client") or client, "rows": after}
     finally:
         if not saved:
@@ -1264,6 +1302,7 @@ def manual_fill(body: dict, progress) -> dict:
                             after[bad] if bad < len(after) else None, target[bad] if bad < len(target) else None)
             raise Stop(f"입력한 뒤 {bad + 1}번째 줄이 홈페이지와 달라서 저장 안 했어요(새 명세서는 버렸어요).")
         date, total = b._form_header(form)
+        amounts = _header_amounts(form, target)
         progress("이지폼에 저장하는 중")
         save = b._named(form, "TBitBtn", "저장")
         if not save or not b._u.IsWindowEnabled(save):
@@ -1286,12 +1325,15 @@ def manual_fill(body: dict, progress) -> dict:
         lst = b._export_one(m, 0, progress, period=(date, date), forms_ok=True)
     finally:
         _lock_release_now()
-    hit = [r for r in lst if b._digits(r["total"]) == b._digits(total)
+    hit = [r for r in lst if _same_amount(r, amounts)
            and (r.get("firstItem") or "").strip() == (target[0]["item"] or "").strip()]
     _go_home()
     if not hit:
+        logging.warning("이지폼 직접 고르기 저장확인 실패 — 금액후보 %s / 목록 %s", amounts,
+                        [(r.get("total"), r.get("firstItem")) for r in lst][:20])
         raise Stop("저장 버튼은 눌렀는데 이지폼 목록에서 새 명세서가 안 보여요. 이지폼을 직접 확인해주세요.")
     # 같은 날·합계·첫 품목이 여러 거래처면 이름을 정하지 않는다(틀린 이름보다 빈칸)
+    total = hit[0]["total"]  # 목록에 보이는 합계(세액 포함 여부 그대로) = 나중에 찾을 지문
     one = len({r.get("bizNo") for r in hit}) == 1
     client = hit[0].get("client", "") if one else ""
     ef.ef_notice("이지폼에 작성하고 저장했어요", f"{client}  ·  {date}  ·  합계 {int(b._digits(total) or 0):,}원", tag)
