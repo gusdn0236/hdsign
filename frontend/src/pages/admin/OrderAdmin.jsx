@@ -288,7 +288,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   // 명세서를 비워 임시저장을 해제했을 때 — '임시저장' 배지를 즉시 제거(원래 빈 상태로).
   const markEstimateCleared = useCallback((id) => {
     const patch = (o) =>
-      o.id === id ? { ...o, hasEstimate: false, estimateEditorName: null } : o;
+      o.id === id ? { ...o, hasEstimate: false, estimateEditorName: null, easyformUploadedAt: null } : o; // 완전 초기화 — 작성완료 배지도
     setOrders((prev) => prev.map(patch));
     setTrashOrders((prev) => prev.map(patch));
   }, []);

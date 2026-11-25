@@ -2929,9 +2929,20 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         // 행을 전부 지운 채 임시저장 → 임시저장 자체를 해제(원래 빈 상태로). 기존 임시저장이 있으면
         // 서버에서 지우고 '임시저장' 라벨을 뗀다. 없으면 deleteEstimate 가 404 를 조용히 흡수.
         await deleteEstimate(token, order.id);
-        setOrder((o) => (o ? { ...o, hasEstimate: false } : o));
+        // 새 명세서로 완전히 초기화(사용자 2026-11-25) — 서버는 명세서 행(이지폼 연결 지문·거래처·합친 명세서·
+        // 작성완료 시각)을 통째로 지웠으니 화면에 남은 연결도 다 뗀다. 안 떼면 이지폼 거래처 칩·[이지폼에 적용하기]가
+        // 그대로 남아 옛 이지폼 명세서를 찾아감.
+        efSyncRef.current = null;
+        efPrefRef.current = null;
+        setEfWhere({});
+        setLinkedOrders([]);
+        setOrder((o) => (o ? { ...o, hasEstimate: false, easyformUploadedAt: null } : o));
         onCleared?.();
-        cdlg('명세서가 비어 있어 임시저장을 해제했어요. 주문 카드의 “임시저장” 라벨이 사라집니다.', [{ label: '확인' }]);
+        cdlg(
+          '명세서가 비어 있어 새 명세서로 초기화했어요.' +
+            '<br><span style="font-size:12px;color:#6b7785">임시저장·작성완료 표시, 이지폼 거래처 연결, 합친 명세서 묶음이 모두 풀렸어요. 이지폼에 있는 명세서는 그대로예요.</span>',
+          [{ label: '확인' }],
+        );
         return;
       }
       let refPhotos: string[];
