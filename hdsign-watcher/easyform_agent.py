@@ -63,6 +63,10 @@ class _Handler(BaseHTTPRequestHandler):
             except ValueError:
                 after = 0
             self._json(200, easyform_autosync.handle_events(after))
+        elif self.path.startswith("/easyform/log"):
+            # 이지폼 작업 기록 끝부분 — 홈페이지 실패창 '실패 원인 복사하기'
+            import easyform_bulk
+            self._json(200, easyform_bulk.handle_log())
         elif self.path.startswith("/easyform/bulk"):
             # 이지폼 일괄 가져오기(명세서 탭) — 진행/결과 폴링
             import easyform_bulk

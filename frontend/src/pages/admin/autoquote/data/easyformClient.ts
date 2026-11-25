@@ -426,6 +426,17 @@ export async function startEfBulk(
   return res.json();
 }
 
+/** 이 PC 워처의 이지폼 작업 기록 끝부분(실패 원인 복사용). 워처가 옛 버전이거나 꺼져 있으면 null. */
+export async function getEfLog(): Promise<{ text: string; pc?: string; path?: string } | null> {
+  try {
+    const res = await fetch(`${AGENT_URL}/easyform/log`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function pollEfBulk(id: number): Promise<EfBulkStatus> {
   const res = await fetch(`${AGENT_URL}/easyform/bulk?id=${id}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`이지폼 작업 상태 확인 실패 (${res.status}).`);

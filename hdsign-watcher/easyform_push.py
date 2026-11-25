@@ -1434,6 +1434,8 @@ def run(phase: str, body: dict, progress, on_result) -> str:
                 return
 
     threading.Thread(target=esc_relay, daemon=True).start()
+    b._ensure_file_log()  # 이 PC 에 작업 기록(easyform.log)
+    logging.info("이지폼 작업 시작: %s", phase)
     _lock_text(T_NEW if phase in ("new_fill", "manual_fill") else T_APPLY if phase == "push_apply" else T_FIND)
     try:
         return _run(phase, body, progress, on_result)

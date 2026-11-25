@@ -932,3 +932,13 @@
 .efas-card:has(.efas-assign) {
   height: min(820px, calc(100vh - 32px));
 }
+
+.efas-failcopy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--efas-sub);
+}

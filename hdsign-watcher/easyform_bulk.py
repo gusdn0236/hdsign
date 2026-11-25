@@ -35,6 +35,43 @@ _LOCK = threading.Lock()
 _JOB = {"id": 0, "state": "idle", "phase": "", "message": "", "progress": "",
         "lists": [], "results": [], "at": 0.0}
 _CSV_DIR_HINT = "easyformnetc\\temp"
+
+
+def handle_log(lines: int = 300) -> dict:
+    """GET /easyform/log — 이 PC 이지폼 작업 기록 끝부분(홈페이지 '실패 원인 복사하기', 사용자 2026-11-25)."""
+    _ensure_file_log()
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or "."
+    path = os.path.join(base, "HDSignWorksheet", "easyform.log")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            tail = f.readlines()[-lines:]
+    except OSError:
+        tail = []
+    return {"ok": True, "path": path, "text": "".join(tail),
+            "pc": os.environ.get("COMPUTERNAME", "")}
+
+
+def _ensure_file_log() -> None:
+    """이지폼 자동화 기록을 %LOCALAPPDATA%\\HDSignWorksheet\\easyform.log 에(1MB×2). 실패해도 무시.
+    예전엔 콘솔에만 찍혀서 다른 PC 에서 '왜 실패했나'를 볼 수 없었음(사용자 2026-11-25)."""
+    try:
+        from logging.handlers import RotatingFileHandler
+        root = logging.getLogger()
+        if any(getattr(h, "_hd_ef", False) for h in root.handlers):
+            return
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or "."
+        d = os.path.join(base, "HDSignWorksheet")
+        os.makedirs(d, exist_ok=True)
+        h = RotatingFileHandler(os.path.join(d, "easyform.log"), maxBytes=1_000_000, backupCount=1, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        h.setLevel(logging.INFO)
+        h._hd_ef = True
+        root.addHandler(h)
+        if root.level > logging.INFO or root.level == logging.NOTSET:
+            root.setLevel(logging.INFO)
+    except Exception:
+        pass
+
 _ABORT = threading.Event()
 _PAUSE = threading.Event()
 _LAST_LISTS: dict = {}  # biz → 마지막 export 목록(읽기에서 줄 어긋남 보정용)
@@ -431,6 +468,7 @@ def _export_one(m: dict, year: int, progress, period: "tuple[str, str] | None" =
                 forms_ok: bool = True) -> list:
     """period=('YYYY.MM.DD', 'YYYY.MM.DD') 면 그 기간만(홈페이지 → 이지폼 반영: 그날 하루치). 없으면 year 1/1~12/31.
     forms_ok=False: 명세서 창이 열려 있으면 멈춤(저장하는 작업용)."""
+    _ensure_file_log()
     main = m["hwnd"]
     label = "주식회사" if m["biz"] == "corp" else "개인"
     progress(f"{label} 이지폼에서 명세서 목록을 뽑고 있어요")
@@ -514,25 +552,54 @@ def _export_one(m: dict, year: int, progress, period: "tuple[str, str] | None" =
                 return h
         return None
 
-    pop = _wait(info_popup, 8.0, 0.05)
-    if pop:
+    def answer_info(pop):
         btns = sorted(_txt(b).replace("&", "") for b in _kids(pop, "TButton"))
         if _txt(pop) != "Information" or btns != ["No", "Yes"]:
             raise Stop("이지폼에 예상과 다른 창이 떠서 멈췄어요. 직접 확인해주세요.")
         _click(_named(pop, "TButton", "No"), "No")
         _wait(lambda: not _u.IsWindowVisible(pop), 3.0, 0.05)
-    last = -1
-    for _ in range(30):  # 파일 다 써질 때까지(크기 변화 없음)
-        sz = os.path.getsize(path)
-        if sz == last and sz > 0:
-            break
+
+    # '파일을 열까요?'(Information Yes/No) = 이지폼이 엑셀 파일을 다 썼다는 신호. 느린 PC 는 이 창이 8초 넘게 걸려서
+    # 덜 써진 파일을 읽고(새 명세서가 빠진 목록) 지워 버린 뒤 늦게 뜬 창 때문에 멈췄음(2026-11-25) → 30초까지 기다림.
+    t_save = time.time()
+    pop = _wait(info_popup, 30.0, 0.05)
+    if pop:
+        answer_info(pop)
+    logging.info("이지폼 엑셀 저장 완료창 %s (%.1f초)", "뜸" if pop else "안 뜸", time.time() - t_save)
+    # 파일 크기가 1초 동안 안 바뀌고, 다른 프로그램이 안 잡고 있을 때 읽는다(최대 20초)
+    last, same_since = -1, None
+    t0 = time.time()
+    while time.time() - t0 < 20.0:
+        sz = os.path.getsize(path) if os.path.exists(path) else -1
+        if sz > 0 and sz == last:
+            same_since = same_since or time.time()
+            if time.time() - same_since >= 1.0:
+                try:
+                    os.close(os.open(path, os.O_RDWR))  # 이지폼이 아직 쓰는 중이면 공유 위반으로 실패
+                    break
+                except OSError:
+                    same_since = None
+        else:
+            same_since = None
         last = sz
         time.sleep(0.15)
+    raw = b""
     try:
-        with open(path, "rb") as f:
-            raw = f.read()
+        for _ in range(20):
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+                break
+            except OSError:
+                time.sleep(0.25)
+        else:
+            raise Stop("엑셀 파일을 열지 못했어요(이지폼이 아직 쓰는 중). 잠시 뒤 다시 해주세요.")
     finally:
         _delete_csv(path)
+    if not pop:  # 완료창이 늦게 뜨면 마저 닫아 둔다(남아 있으면 다음 단계가 멈춤)
+        late = _wait(info_popup, 5.0, 0.1)
+        if late:
+            answer_info(late)
     rows = _parse_csv(raw, m)
     # 경로창은 조금 늦게 닫힐 때가 있다(다른 창 — 예: 거래처 정보 — 이 열려 있으면 더, 실측 2026-11-23) → 잠깐 기다림
     _wait(lambda: not _popups(main) and not _kids(main, "TfrmSavePath"), 4.0, 0.1)
@@ -1240,6 +1307,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
             msg = "읽기를 마쳤어요."
     except Stop as e:
         ok, msg = False, str(e)
+        logging.warning("이지폼 작업 %s 멈춤: %s", phase, msg)
     except Exception as e:  # noqa: BLE001
         logging.exception("이지폼 일괄 %s 실패", phase)
         ok, msg = False, f"오류: {e}"

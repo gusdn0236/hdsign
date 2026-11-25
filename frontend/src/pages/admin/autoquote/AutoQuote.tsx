@@ -61,6 +61,10 @@ import {
   type EfPushRow,
   type EfListRow,
 } from './data/easyformClient';
+import { copyText, prepareFailReport } from '../../../utils/failReport';
+import { FailCopyButton } from '../../../components/common/FailCopy';
+
+const FAIL_RE = /실패|못했어요|못 열었어요|못 찾았어요|오류|멈췄어요|안 됐어요/;
 import EasyformNewFill, { type EfClientChoice } from './EasyformNewFill';
 import { learnFromLists } from './data/efLearn';
 import { normClue, rankByClues } from './data/clueMatch';
@@ -775,6 +779,32 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   const ocrColorRef = useRef('#0a9396');
 
   const cdlg = useCallback((html: string, buttons: DialogButton[]) => setDialog({ html, buttons }), []);
+
+  // ---- 이지폼 실패창 — [실패 원인 복사하기] → 담당자에게 카톡(사용자 2026-11-25). 로그는 화면에 안 띄우고 복사만.
+  // 창을 띄울 때 워처 기록을 미리 받아 둔다(버튼 누른 순간 바로 복사되게 — 늦게 받으면 브라우저가 복사를 막음).
+  const efLogRef = useRef<{ text: string } | null>(null);
+  const efFail = (title: string, msg: string, note: string, buttons: DialogButton[]) => {
+    efLogRef.current = prepareFailReport(title, msg, `주문: ${order?.orderNumber || '-'} · ${order?.clientCompanyName || ''}`);
+    cdlg(
+      `<b style="font-size:15px">${escH(title)}</b>` +
+        `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH(msg)}</div>` +
+        (note ? `<div style="font-size:12px;color:#6b7785;margin-top:6px">${note}</div>` : '') +
+        `<div style="font-size:12px;color:#b45309;margin-top:10px;line-height:1.6">` +
+        `<b>[실패 원인 복사하기]</b>를 눌러서 담당자(현우)에게 카톡으로 붙여넣어 전달해주세요.</div>`,
+      [
+        {
+          label: '📋 실패 원인 복사하기',
+          fn: () => {
+            copyText(efLogRef.current?.text || '');
+            cdlg('실패 원인을 복사했어요.<br><span style="font-size:12px;color:#6b7785">카톡 대화창에 붙여넣기(Ctrl+V) 해서 담당자(현우)에게 보내주세요.</span>', [
+              { label: '확인' },
+            ]);
+          },
+        },
+        ...buttons,
+      ],
+    );
+  };
 
   // ---- ?order=ID 진입 시 지시서 이미지 + 저장된 명세서 자동 로드 -----------
   useEffect(() => {
@@ -3046,10 +3076,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           '취소',
         );
       } catch (e) {
-        cdlg(
-          `<b style="font-size:15px">이지폼에 작성하지 못했어요</b>` +
-            `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH((e as Error).message)}</div>` +
-            `<div style="font-size:12px;color:#6b7785;margin-top:6px">홈페이지 명세서는 저장돼 있어요. 이지폼엔 저장 안 했어요.</div>`,
+        efFail(
+          '이지폼에 작성하지 못했어요',
+          (e as Error).message,
+          '홈페이지 명세서는 저장돼 있어요. 저장 버튼까지 눌렀다면 이지폼에 저장됐을 수 있으니 이지폼에서 한 번 확인해주세요.',
           [{ label: '확인', sec: true }],
         );
         return;
@@ -3301,10 +3331,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       if (!r?.date) throw new Error('이 PC 워처가 옛 버전일 수 있어요 — 바로가기를 껐다 다시 켠 뒤 해주세요.');
       void rememberEfLocation(r.date, r.total || '', r.client, r.biz);
     } catch (e) {
-      cdlg(
-        `<b style="font-size:15px">이지폼에서 못 열었어요</b>` +
-          `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH((e as Error).message)}</div>`,
-        [
+      efFail('이지폼에서 못 열었어요', (e as Error).message, '', [
           { label: '이지폼에서 찾아 가져오기', fn: () => setEfBulkOpen(true) },
           { label: '닫기', sec: true },
         ],
@@ -3328,10 +3355,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     const nos = (linkedOrders.length > 1 ? linkedOrders.map((l) => orderNoCore(l.orderNumber)) : [own]).filter(Boolean);
     if (own && !nos.includes(own)) nos.push(own);
     const fail = (msg: string, offerNew = false) =>
-      cdlg(
-        `<b style="font-size:15px">이지폼에 반영하지 못했어요</b>` +
-          `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH(msg)}</div>` +
-          `<div style="font-size:12px;color:#6b7785;margin-top:6px">홈페이지 명세서는 저장돼 있어요. 이지폼은 바뀌지 않았어요.</div>`,
+      efFail(
+        '이지폼에 반영하지 못했어요',
+        msg,
+        '홈페이지 명세서는 저장돼 있어요. 이지폼은 바뀌지 않았어요.',
         offerNew
           ? [
               { label: '이지폼에 새로 작성하기', fn: () => newFillDirect() },
@@ -3473,11 +3500,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       remark: r.remark,
     }));
     const fail = (msg: string) =>
-      cdlg(
-        `<b style="font-size:15px">이지폼에 작성하지 못했어요</b>` +
-          `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH(msg)}</div>` +
-          `<div style="font-size:12px;color:#6b7785;margin-top:6px">홈페이지 명세서는 저장돼 있어요. 이지폼엔 저장 안 했어요.</div>`,
-        [
+      efFail('이지폼에 작성하지 못했어요', msg, '홈페이지 명세서는 저장돼 있어요.', [
           { label: '직접 고를게요', fn: () => void doSendToEasyform(extras) },
           { label: '닫기', sec: true },
         ],
@@ -6009,6 +6032,10 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
           <div className="aq-cdbox">
             <div className="aq-cdmsg" dangerouslySetInnerHTML={{ __html: dialog.html }} />
             <div className="aq-cdbtns">
+              {/* 실패로 보이는 창이면 [실패 원인 복사하기]를 자동으로 붙인다(사용자 2026-11-25) */}
+              {FAIL_RE.test(dialog.html) && !/복사했어요/.test(dialog.html) && !dialog.buttons.some((b) => b.label.includes('실패 원인')) && (
+                <FailCopyButton title={dialog.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)} className="sec" />
+              )}
               {dialog.buttons.map((b, i) => (
                 <button
                   key={i}

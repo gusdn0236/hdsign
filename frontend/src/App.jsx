@@ -1,3 +1,4 @@
+import { FailCopyChip } from './components/common/FailCopy';
 import './App.css'
 import React, { Suspense } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
@@ -77,6 +78,8 @@ function App() {
         <AuthProvider>
             <div className="app-wrapper">
                 {!hideHeaderFooter && <Header />}
+                {/* 관리자·현장 — 뭔가 실패하면 왼쪽 아래 [실패 원인 복사하기] (사용자 2026-11-25) */}
+                {(isAdmin || isField) && <FailCopyChip />}
                 <main className="content">
                     <ScrollToTop />
                     <Suspense fallback={<RouteFallback />}>

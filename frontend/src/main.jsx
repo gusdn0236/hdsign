@@ -3,10 +3,13 @@ import ReactDOM from 'react-dom/client';
 import {BrowserRouter} from 'react-router-dom';
 import App from './App';
 import {installDemoGuard} from './utils/demoGuard';
+import {installFailCapture} from './utils/failReport';
 
 // 데모(둘러보기) 계정 가드 — window.fetch 를 감싸 데모 세션의 쓰기 요청을
 // 가로채 안내 토스트를 띄운다. 어떤 컴포넌트보다 먼저 설치되도록 최상단에서 호출.
 installDemoGuard();
+// 실패 원인 복사하기용 — 이 페이지의 최근 오류를 모아 둔다(utils/failReport)
+installFailCapture();
 
 // 빌드 버전 마커 — 배포 반영 확인용. F12 콘솔에 한 줄 찍힌다(vite.config 의 define 으로 주입).
 // 같은 정보가 /version.json 으로도 노출된다(브라우저/curl 확인).

@@ -7,6 +7,7 @@
  *       ④ 명세서를 눌러 지시서와 나란히 보고 [맞아요]/[아니에요] → 체크
  *       ⑤ [n건 저장] → 홈페이지 명세서에 일괄 입력(이지폼은 안 건드림)
  */
+import { FailCopyButton } from '../../../components/common/FailCopy';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import FitWorksheet from '../scrap/FitWorksheet';
 import PdfViewerJs from '../../../components/common/PdfViewer.jsx';
@@ -847,6 +848,7 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
       {error && (
         <div className="efb-error" role="alert">
           {error}
+          <FailCopyButton title="이지폼 일괄 가져오기" msg={error} style={{ marginLeft: 8 }} />
           <button type="button" onClick={() => setError('')} aria-label="닫기">✕</button>
         </div>
       )}
@@ -1117,6 +1119,13 @@ export default function EasyformBulkImport({ orders: ordersProp, token, onClose,
               <li key={f.order.id}>{orderNoCore(f.order.orderNumber)} {f.order.clientCompanyName} — {f.msg}</li>
             ))}
           </ul>
+        )}
+        {((saveMsg && saveMsg.fail.length > 0) || /못 적음/.test(saveMsg?.stampMsg || '')) && (
+          <FailCopyButton
+            title="이지폼 일괄 가져오기 — 저장 실패"
+            msg={[...(saveMsg?.fail || []).map((f) => `${orderNoCore(f.order.orderNumber)}: ${f.msg}`), saveMsg?.stampMsg || ''].filter(Boolean).join(' / ')}
+            style={{ marginTop: 6 }}
+          />
         )}
       </footer>
         </>
