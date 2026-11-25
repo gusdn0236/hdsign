@@ -3926,3 +3926,38 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
 @media (prefers-reduced-motion: reduce) {
   .oc2-done-check { transition: none; }
 }
+
+/* 다른 PC 가 명세서 작성 중 — 카드 전체를 흐리게 + 썸네일 가운데 보라 띠(2026-11-25, 세 탭 공통) */
+.order-card--v2.oc2-editing .order-card-thumb-wrap .ws-thumb-frame {
+  opacity: 0.4;
+  filter: grayscale(0.6) blur(1px);
+}
+.order-card--v2.oc2-editing .order-card-body {
+  opacity: 0.55;
+}
+.oc2-editing-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: rgba(109, 40, 217, 0.92);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  text-align: center;
+}
+.oc2-editing-band b {
+  font-weight: 800;
+}
+.oc2-editing-band .oc2-live {
+  background: #ffffff;
+}

@@ -1939,7 +1939,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       <div
         key={order.id}
         data-order-company={order.clientCompanyName || ""}
-        className={`order-card order-card--v2 order-card--${typeKey} oc2-st-${isStatementView ? stmtState : "none"} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
+        className={`order-card order-card--v2 order-card--${typeKey} oc2-st-${isStatementView ? stmtState : "none"} ${editingHolder ? "oc2-editing" : ""} ${isTrash ? "order-card--trash" : ""} ${checked ? "order-card--checked" : ""}`}
         onClick={openCard}
         role="button"
         tabIndex={0}
@@ -1970,6 +1970,15 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               </div>
             }
           />
+          {/* 다른 PC 가 지금 명세서 작성 중 — 카드 흐리게 + 가운데 띠(사용자 2026-11-25, 세 탭 공통) */}
+          {editingHolder && (
+            <div className="oc2-editing-band" title={`${editingHolder}님이 명세서를 작성 중입니다`}>
+              <span className="oc2-live" />
+              <span>
+                <b>{editingHolder}</b>님 명세서 작성중
+              </span>
+            </div>
+          )}
           <div className="oc2-chips oc2-chips--top">
             <span className="oc2-chip-group">
               {isTrash ? (
