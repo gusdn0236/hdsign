@@ -30,7 +30,7 @@ import {
   stampEfAuto,
   type EfAutoEvent,
 } from './data/easyformClient';
-import { clientSim, efRowsToGrid, normClient, rememberClientAlias } from './data/efMatch';
+import { bandOwners, clientSim, efRowsToGrid, normClient, rememberClientAlias } from './data/efMatch';
 import './EasyformAutoSync.css';
 import { FailCopyButton } from '../../../components/common/FailCopy';
 import { FAIL_COPY_GUIDE } from '../../../utils/failReport';
@@ -73,10 +73,11 @@ interface Props {
 // assign = 지시서 여러 개 → 하나씩 '명세서에서 이 지시서가 시작하는 줄' 고르기(사용자 2026-11-25)
 type Phase = 'confirm' | 'check' | 'added' | 'pick' | 'assign' | 'saving' | 'done' | 'error';
 
-/** 지시서마다 시작 줄 고르기. starts[k] = orders[k] 가 시작하는 이지폼 표 줄(ev.rows 기준). */
+/** 지시서마다 줄 고르기. own[줄] = 그 줄이 든 지시서 번호(orders 의 k). 줄 = 이지폼 표 줄(ev.rows 기준).
+ *  클릭 = 그 줄 선택/해제, 드래그 = 여러 줄(사용자 2026-11-25). 한 줄엔 지시서 하나만. */
 interface Assign {
   orders: EasyformCandidateOrder[];
-  starts: (number | null)[];
+  own: Record<number, number>;
   step: number;
   orderNumbers: string[]; // 홈페이지에 묶을 순서(맨 앞 = 대표)
 }
@@ -467,44 +468,71 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     return ev.nos.every((no) => seen.has(no));
   }
   function startAssign(orders: EasyformCandidateOrder[], orderNumbers: string[]) {
-    // 비고에 이미 그 번호가 '혼자' 적힌 줄이 있으면 그 줄을 미리 골라 둔다. 첫 지시서는 없으면 첫 줄.
-    const used = new Set<number>();
-    const starts: (number | null)[] = orders.map((o) => {
-      const no = orderNoCore(o.orderNumber);
-      const at = ev.rows.findIndex((r, i) => {
-        const ns = extractOrderNos(r.remark || '');
-        return !used.has(i) && hasContent(r) && ns.length === 1 && ns[0] === no;
-      });
-      if (at >= 0) used.add(at);
-      return at >= 0 ? at : null;
+    // 비고에 이미 적힌 구간(그 번호부터 다음 번호 전까지 / 여러 줄에 적힌 번호는 그 줄들)을 미리 골라 둔다
+    const nos = orders.map((o) => orderNoCore(o.orderNumber));
+    const band = bandOwners(ev.rows.map((r) => r.remark || ''), nos);
+    const own: Record<number, number> = {};
+    contentRows.forEach(({ i }) => {
+      const k = band[i] ? nos.indexOf(band[i] as string) : -1;
+      if (k >= 0) own[i] = k;
     });
-    if (starts[0] == null && contentRows.length && !used.has(contentRows[0].i)) starts[0] = contentRows[0].i;
-    setAssign({ orders, starts, step: 0, orderNumbers });
+    setAssign({ orders, own, step: 0, orderNumbers });
     setPhase('assign');
   }
-  const pickStart = (row: number) =>
-    setAssign((a) => {
-      if (!a) return a;
-      const starts = a.starts.map((s, k) => (k !== a.step && s === row ? null : s)); // 한 줄엔 지시서 하나만
-      starts[a.step] = row;
-      return { ...a, starts };
+  // 드래그 — 누른 줄(anchor)부터 지금 줄까지(표 순서). 놓을 때 적용: 그 범위가 전부 이 지시서면 해제, 아니면 전부 선택.
+  const [drag, setDrag] = useState<{ a: number; b: number } | null>(null);
+  const dragRef = useRef<{ a: number; b: number } | null>(null);
+  const applyRange = (a: number, b: number) =>
+    setAssign((x) => {
+      if (!x) return x;
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      const rows = contentRows.slice(lo, hi + 1).map((c) => c.i);
+      const own = { ...x.own };
+      const allMine = rows.every((i) => own[i] === x.step);
+      rows.forEach((i) => {
+        if (allMine) delete own[i];
+        else own[i] = x.step; // 다른 지시서 줄이었으면 이 지시서로 옮김
+      });
+      return { ...x, own };
     });
-  /** 줄마다 어느 지시서 몫인지(시작 줄부터 다음 시작 줄 전까지) — 고른 것만으로 */
+  useEffect(() => {
+    if (!drag) return undefined;
+    const up = () => {
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDrag(null);
+      if (d) applyRange(d.a, d.b);
+    };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!drag]);
   const owners = useMemo(() => {
     const out = new Map<number, number>();
-    if (!assign) return out;
-    const marks = assign.starts
-      .map((s, k) => ({ s, k }))
-      .filter((m): m is { s: number; k: number } => m.s != null)
-      .sort((a, b) => a.s - b.s);
-    for (const { i } of contentRows) {
-      let own = -1;
-      for (const m of marks) if (m.s <= i) own = m.k;
-      if (own >= 0) out.set(i, own);
-    }
+    if (assign) Object.entries(assign.own).forEach(([i, k]) => out.set(Number(i), k));
     return out;
-  }, [assign, contentRows]);
-  const assignDone = !!assign && assign.starts.every((s) => s != null);
+  }, [assign]);
+  const countOf = (k: number) => (assign ? Object.values(assign.own).filter((x) => x === k).length : 0);
+  const assignDone = !!assign && assign.orders.every((_, k) => countOf(k) > 0);
+  /** 이지폼 비고에 적을 곳. 지시서 줄이 한 덩어리이고 바로 밑이 끝이거나 다른 지시서 줄이면 첫 줄에만(밑으로 이어짐),
+   *  아니면(떨어져 있거나 밑에 안 고른 줄) 고른 줄마다 적는다 — 명세서 화면 구간(bandOwners)과 같은 규칙. */
+  const assignPlaces = (a: Assign) => {
+    const pos = new Map(contentRows.map((c, n) => [c.i, n]));
+    const places: { row: number; no: string }[] = [];
+    a.orders.forEach((o, k) => {
+      const no = orderNoCore(o.orderNumber);
+      const rows = contentRows.filter((c) => a.own[c.i] === k).map((c) => c.i);
+      if (!rows.length) return;
+      const first = pos.get(rows[0]) as number;
+      const last = pos.get(rows[rows.length - 1]) as number;
+      const oneRun = last - first + 1 === rows.length;
+      const next = contentRows[last + 1];
+      const closed = !next || a.own[next.i] != null;
+      (oneRun && closed ? [rows[0]] : rows).forEach((row) => places.push({ row, no }));
+    });
+    return places.sort((x, y) => x.row - y.row);
+  };
   const assignNext = () => {
     if (!assign) return;
     if (assign.step < assign.orders.length - 1) {
@@ -512,11 +540,11 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
       return;
     }
     if (!assignDone) {
-      setAssign({ ...assign, step: assign.starts.findIndex((s) => s == null) });
+      setAssign({ ...assign, step: assign.orders.findIndex((_, k) => countOf(k) === 0) });
       return;
     }
-    const places = assign.orders.map((o, k) => ({ row: assign.starts[k] as number, no: orderNoCore(o.orderNumber) }));
-    save(assign.orderNumbers, { o: assign.orders[0], nos: places.map((p) => p.no), places });
+    const places = assignPlaces(assign);
+    save(assign.orderNumbers, { o: assign.orders[0], nos: assign.orders.map((o) => orderNoCore(o.orderNumber)), places });
   };
 
   const busy = phase === 'saving' || phase === 'check';
@@ -525,7 +553,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
     phase === 'pick' || phase === 'confirm'
       ? '어느 지시서인지 선택해주세요'
       : phase === 'assign' && assign
-        ? `${assign.step + 1}번째 지시서 — 명세서에서 이 지시서가 시작하는 줄을 클릭해주세요`
+        ? `${assign.step + 1}번째 지시서 — 해당되는 줄을 클릭 or 드래그해서 선택해주세요`
         : phase === 'added'
         ? `추가한 ${added?.count}줄은 어느 지시서 건가요?`
         : phase === 'done' || phase === 'error'
@@ -696,12 +724,12 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                   key={o.id}
                   type="button"
                   aria-pressed={k === assign.step}
-                  className={`efas-step c${k % 6}${k === assign.step ? ' on' : ''}${assign.starts[k] != null ? ' set' : ''}`}
+                  className={`efas-step c${k % 6}${k === assign.step ? ' on' : ''}${countOf(k) > 0 ? ' set' : ''}`}
                   onClick={() => setAssign({ ...assign, step: k })}
                 >
                   <i>{k + 1}</i>
                   {orderNoCore(o.orderNumber)}
-                  {assign.starts[k] != null && <small>{(assign.starts[k] as number) + 1}행부터</small>}
+                  {countOf(k) > 0 && <small>{countOf(k)}줄</small>}
                 </button>
               ))}
             </div>
@@ -732,7 +760,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               </div>
               <div className="efas-assign-stmt">
                 <p className="efas-assign-help">
-                  이 지시서 내용이 <b>시작하는 첫 줄</b>을 눌러주세요. 다음 지시서가 시작하는 줄 전까지가 이 지시서 몫이에요.
+                  해당되는 줄을 <b>클릭 or 드래그</b>해서 선택해주세요. 다시 클릭하면 해제, 이미 고른 줄을 드래그하면 그 줄들이 해제돼요.
                 </p>
                 <div className="efas-assign-table">
                   <table>
@@ -747,19 +775,31 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                       </tr>
                     </thead>
                     <tbody>
-                      {contentRows.map(({ r, i }) => {
+                      {contentRows.map(({ r, i }, n) => {
                         const own = owners.get(i);
-                        const startK = assign.starts.findIndex((s) => s === i);
+                        const prevOwn = n > 0 ? owners.get(contentRows[n - 1].i) : undefined;
+                        const head = own != null && own !== prevOwn; // 이 지시서 덩어리의 첫 줄
+                        const inDrag = !!drag && n >= Math.min(drag.a, drag.b) && n <= Math.max(drag.a, drag.b);
                         return (
                           <tr
                             key={i}
-                            className={`${own != null ? `own c${own % 6}` : ''}${startK >= 0 ? ' start' : ''}${startK === assign.step ? ' mine' : ''}`}
-                            onClick={() => pickStart(i)}
+                            className={`${own != null ? `own c${own % 6}` : ''}${head ? ' start' : ''}${own === assign.step ? ' mine' : ''}${inDrag ? ' dragging' : ''}`}
+                            onMouseDown={(e) => {
+                              if (e.button !== 0) return;
+                              e.preventDefault(); // 글자 선택 안 되게
+                              dragRef.current = { a: n, b: n };
+                              setDrag({ a: n, b: n });
+                            }}
+                            onMouseEnter={() => {
+                              if (!dragRef.current) return;
+                              dragRef.current = { ...dragRef.current, b: n };
+                              setDrag({ ...dragRef.current });
+                            }}
                             tabIndex={0}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                pickStart(i);
+                                applyRange(n, n);
                               }
                             }}
                           >
@@ -769,9 +809,9 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                             <td className="num">{r.qty}</td>
                             <td className="num">{price(r.unit_price || '')}</td>
                             <td className="tag">
-                              {startK >= 0 ? (
-                                <span className={`efas-tagchip c${startK % 6}`}>
-                                  {startK + 1} · {orderNoCore(assign.orders[startK].orderNumber)}
+                              {head ? (
+                                <span className={`efas-tagchip c${(own as number) % 6}`}>
+                                  {(own as number) + 1} · {orderNoCore(assign.orders[own as number].orderNumber)}
                                 </span>
                               ) : own != null ? (
                                 <span className="efas-tagdot">{own + 1}</span>
@@ -783,8 +823,8 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                     </tbody>
                   </table>
                 </div>
-                {contentRows.length > 0 && !owners.has(contentRows[0].i) && assign.starts.some((s) => s != null) && (
-                  <p className="efas-assign-warn">맨 위 줄이 어느 지시서에도 안 들어가요 — 보통 첫 지시서는 1행부터예요.</p>
+                {owners.size > 0 && owners.size < contentRows.length && (
+                  <p className="efas-assign-warn">{contentRows.length - owners.size}줄이 어느 지시서에도 안 들어가 있어요.</p>
                 )}
               </div>
             </div>
@@ -916,9 +956,9 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               >
                 ← {assign.step > 0 ? '이전 지시서' : '지시서 다시 고르기'}
               </button>
-              <button type="button" className="efas-btn primary" disabled={assign.starts[assign.step] == null} onClick={assignNext}>
-                {assign.starts[assign.step] == null
-                  ? '시작 줄을 클릭해주세요'
+              <button type="button" className="efas-btn primary" disabled={countOf(assign.step) === 0} onClick={assignNext}>
+                {countOf(assign.step) === 0
+                  ? '줄을 골라주세요'
                   : assign.step < assign.orders.length - 1
                     ? '다음 지시서 →'
                     : assignDone
