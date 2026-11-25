@@ -306,6 +306,9 @@ def _handle_save(form, t_click: float) -> None:
             ok2, why2 = _wait_saved(main, t_click)
             logging.info("이지폼 저장 감지(늦은 질문창) — %s", why2)
             if not ok2:
+                # [예]를 눌렀는데 아무 일도 없는 것처럼 보이지 않게 알려 줌(사용자 2026-11-25)
+                ef.ef_notice("이지폼에 저장이 안 돼서 홈페이지에 반영하지 않았어요",
+                             "이지폼에서 [저장] → [Yes]까지 눌러 저장하면 다시 물어볼게요.")
                 return
         if not bulk._shown(form) or bulk._popups(main):
             ef.ef_messagebox("명세서 창이 닫혀서 읽지 못했어요.\n명세서를 다시 열고 [저장]을 눌러주세요.", "홈페이지 반영")
