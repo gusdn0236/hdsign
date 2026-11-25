@@ -3932,8 +3932,10 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   opacity: 0.4;
   filter: grayscale(0.6) blur(1px);
 }
-.order-card--v2.oc2-editing .order-card-body {
-  opacity: 0.55;
+.order-card--v2.oc2-editing .oc2-meta,
+.order-card--v2.oc2-editing .oc2-title,
+.order-card--v2.oc2-editing .oc2-sub {
+  opacity: 0.5;
 }
 .oc2-editing-band {
   position: absolute;
