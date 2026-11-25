@@ -421,9 +421,9 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const confirm = () => {
     if (phase === 'confirm') {
       if (!extra.length) {
-        // 비고에 지시서 여러 개가 적혔는데 지시서마다 '혼자 적힌 줄'(구간 시작)이 없으면(예: 한 줄에 번호가 다 같이)
-        // → 어디부터 어느 지시서인지 고르게 한다. '이미 같아요'로 끝나 범위 창이 안 뜨던 것(사용자 2026-11-25).
-        if (ev.nos.length > 1 && linked && linked.length === ev.nos.length && !bandsKnown()) {
+        // 비고에 지시서가 여러 개면 매번 줄 고르기 화면(지금 구간이 미리 골라져 있음) — 구간을 다시 잡으려고 저장했는데
+        // '이미 같아요'로 끝나 버리던 것(사용자 2026-11-25). 구간을 안 바꾸고 넘기면 예전처럼 비교만 한다.
+        if (ev.nos.length > 1 && linked && linked.length === ev.nos.length) {
           startAssign(linked, [...ev.nos]);
           return;
         }
@@ -458,15 +458,6 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   };
 
   // ── 지시서마다 시작 줄 고르기 ──
-  /** 비고의 지시서마다 그 번호만 혼자 적힌 줄이 서로 다른 곳에 있나(= 구간을 이미 앎) */
-  function bandsKnown(): boolean {
-    const seen = new Set<string>();
-    ev.rows.forEach((r) => {
-      const ns = extractOrderNos(r.remark || '');
-      if (ns.length === 1) seen.add(ns[0]);
-    });
-    return ev.nos.every((no) => seen.has(no));
-  }
   function startAssign(orders: EasyformCandidateOrder[], orderNumbers: string[]) {
     // 비고에 이미 적힌 구간(그 번호부터 다음 번호 전까지 / 여러 줄에 적힌 번호는 그 줄들)을 미리 골라 둔다
     const nos = orders.map((o) => orderNoCore(o.orderNumber));
@@ -544,6 +535,17 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
       return;
     }
     const places = assignPlaces(assign);
+    // 비고 번호 자리가 지금과 똑같으면(구간 안 바꿈) 적을 게 없음 → 예전처럼 내용만 비교(같으면 '이미 같아요')
+    const nos = assign.orders.map((o) => orderNoCore(o.orderNumber));
+    const unchanged = ev.rows.every((r, i) => {
+      const now = extractOrderNos(r.remark || '').filter((n) => nos.includes(n)).sort().join(',');
+      const want = places.filter((p) => p.row === i).map((p) => p.no).sort().join(',');
+      return now === want;
+    });
+    if (unchanged && assign.orderNumbers.length === ev.nos.length) {
+      setPhase('check');
+      return;
+    }
     save(assign.orderNumbers, { o: assign.orders[0], nos: assign.orders.map((o) => orderNoCore(o.orderNumber)), places });
   };
 
