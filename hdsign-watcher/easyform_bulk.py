@@ -649,37 +649,44 @@ def _decode_csv(raw: bytes) -> "tuple[str, str]":
 
 
 def _parse_csv(raw: bytes, m: dict) -> list:
-    """이지폼 매출거래목록 엑셀(csv). 열 = 사업자번호, 거래처명, 발행일자, 품목, 합계금액, 공급가액, 세액, 면세금액,
-    작성일자, …, 비고. 머리줄('사업자번호')을 찾아 그 밑부터 읽는다. 쉼표·탭 구분, 날짜 모양 차이도 받아 준다."""
+    """이지폼 매출거래목록 엑셀(csv). **머리줄 이름으로** 칸을 찾는다 — PC 마다 목록에 보이는 열이 달라
+    (2026-11-25 다른 PC: '사업자번호' 열 없이 거래처명,발행일자,품목,합계금액,…) 열 순서·개수가 다를 수 있다.
+    쉼표·탭 구분, 날짜 모양 차이도 받아 준다. 거래처명에 쉼표가 들어가 칸이 늘면 거래처명이 늘어난 칸을 먹는다."""
     text, enc = _decode_csv(raw)
     text = text.replace("\ufeff", "")
     out: list = []
     for delim in (",", "\t", ";"):
         rows = list(csv.reader(io.StringIO(text), delimiter=delim))
         hi = next((i for i, r in enumerate(rows)
-                   if any(c.strip() == "사업자번호" for c in r[:3])), None)
+                   if {"발행일자", "합계금액"} <= {c.strip() for c in r}), None)
         if hi is None:
             continue
         hdr = [c.strip() for c in rows[hi]]
-        lead = hdr.index("사업자번호")
+        col = {name: hdr.index(name) for name in hdr if name}
+        ci = col.get("거래처명")
         for r in rows[hi + 1:]:
-            r = r[lead:]
-            if len(r) < 9:
+            extra = len(r) - len(hdr)
+            if extra < 0:
+                r = r + [""] * (-extra)
+                extra = 0
+
+            def at(name: str) -> str:
+                i = col.get(name)
+                if i is None:
+                    return ""
+                if ci is not None and i > ci:
+                    i += extra
+                return r[i].strip() if i < len(r) else ""
+
+            date = _norm_date(at("발행일자"))
+            if not date:
                 continue
-            # 거래처명에 쉼표가 들어가 칸이 밀리는 경우 — 뒤 9칸은 고정이라 뒤에서 센다(머리줄 칸 수 기준).
-            extra = max(0, len(r) - (len(hdr) - lead))
-            n_tail = len(hdr) - lead - 2  # 사업자번호·거래처명 뒤 칸 수
-            tail = r[2 + extra:]
-            head = r[:2 + extra]
-            date = _norm_date(tail[0] if tail else "")
-            if not date or len(tail) < 3:
-                continue
+            client = ",".join(r[ci:ci + 1 + extra]).strip() if ci is not None else ""
             out.append({
                 "biz": m["biz"], "bizName": m["name"], "idx": len(out),
-                "bizNo": head[0].strip() if head else "",
-                "client": ",".join(head[1:]).strip() if len(head) > 1 else "",
-                "date": date, "firstItem": tail[1].strip(), "total": tail[2].strip(),
-                "written": _norm_date(tail[6]) if len(tail) > 6 and n_tail > 6 else "",
+                "bizNo": at("사업자번호"), "client": client,
+                "date": date, "firstItem": at("품목"), "total": at("합계금액"),
+                "written": _norm_date(at("작성일자")),
             })
         break
     if not out:
