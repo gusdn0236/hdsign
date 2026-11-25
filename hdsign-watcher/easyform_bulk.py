@@ -619,34 +619,73 @@ def _delete_csv(path: str) -> None:
             logging.warning("이지폼 CSV 삭제 실패: %s", p)
 
 
-def _parse_csv(raw: bytes, m: dict) -> list:
-    text = None
-    for enc in ("cp949", "utf-8-sig"):
+_CSV_DATE = re.compile(r"(\d{4})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})")
+
+
+def _norm_date(v: str) -> str:
+    """'2026-11-25' · '2026/11/25' · '2026.11.25' · '2026년 11월 25일' → '2026.11.25'.
+    PC 마다 윈도우 날짜 형식이 달라 이지폼 엑셀 날짜 모양이 다를 수 있다(2026-11-25 다른 PC 에서 목록 0줄)."""
+    mm = _CSV_DATE.search(v or "")
+    return f"{mm.group(1)}.{int(mm.group(2)):02d}.{int(mm.group(3)):02d}" if mm else ""
+
+
+def _decode_csv(raw: bytes) -> "tuple[str, str]":
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff") or (raw[:200].count(b"\x00") > 20):
         try:
-            text = raw.decode(enc)
-            break
+            return raw.decode("utf-16"), "utf-16"
+        except UnicodeDecodeError:
+            pass
+    if raw[:3] == b"\xef\xbb\xbf":
+        try:
+            return raw.decode("utf-8-sig"), "utf-8-sig"
+        except UnicodeDecodeError:
+            pass
+    for enc in ("cp949", "utf-8"):
+        try:
+            return raw.decode(enc), enc
         except UnicodeDecodeError:
             continue
-    if text is None:
-        text = raw.decode("cp949", errors="replace")
+    return raw.decode("cp949", errors="replace"), "cp949?"
+
+
+def _parse_csv(raw: bytes, m: dict) -> list:
+    """이지폼 매출거래목록 엑셀(csv). 열 = 사업자번호, 거래처명, 발행일자, 품목, 합계금액, 공급가액, 세액, 면세금액,
+    작성일자, …, 비고. 머리줄('사업자번호')을 찾아 그 밑부터 읽는다. 쉼표·탭 구분, 날짜 모양 차이도 받아 준다."""
+    text, enc = _decode_csv(raw)
+    text = text.replace("\ufeff", "")
     out: list = []
-    started = False
-    for r in csv.reader(io.StringIO(text)):
-        if not started:
-            started = bool(r) and r[0].strip() == "사업자번호"
+    for delim in (",", "\t", ";"):
+        rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+        hi = next((i for i, r in enumerate(rows)
+                   if any(c.strip() == "사업자번호" for c in r[:3])), None)
+        if hi is None:
             continue
-        if len(r) < 9 or not re.match(r"\d{4}\.\d{2}\.\d{2}", r[2].strip()):
-            continue
-        # 거래처명에 쉼표가 들어가 칸이 밀리는 경우 — 뒤 9칸은 고정이라 뒤에서 센다.
-        tail = r[-9:]
-        head = r[:-9]
-        out.append({
-            "biz": m["biz"], "bizName": m["name"], "idx": len(out),
-            "bizNo": head[0].strip() if head else "",
-            "client": ",".join(head[1:]).strip() if len(head) > 1 else "",
-            "date": tail[0].strip(), "firstItem": tail[1].strip(), "total": tail[2].strip(),
-            "written": tail[6].strip(),
-        })
+        hdr = [c.strip() for c in rows[hi]]
+        lead = hdr.index("사업자번호")
+        for r in rows[hi + 1:]:
+            r = r[lead:]
+            if len(r) < 9:
+                continue
+            # 거래처명에 쉼표가 들어가 칸이 밀리는 경우 — 뒤 9칸은 고정이라 뒤에서 센다(머리줄 칸 수 기준).
+            extra = max(0, len(r) - (len(hdr) - lead))
+            n_tail = len(hdr) - lead - 2  # 사업자번호·거래처명 뒤 칸 수
+            tail = r[2 + extra:]
+            head = r[:2 + extra]
+            date = _norm_date(tail[0] if tail else "")
+            if not date or len(tail) < 3:
+                continue
+            out.append({
+                "biz": m["biz"], "bizName": m["name"], "idx": len(out),
+                "bizNo": head[0].strip() if head else "",
+                "client": ",".join(head[1:]).strip() if len(head) > 1 else "",
+                "date": date, "firstItem": tail[1].strip(), "total": tail[2].strip(),
+                "written": _norm_date(tail[6]) if len(tail) > 6 and n_tail > 6 else "",
+            })
+        break
+    if not out:
+        lines = text.splitlines()
+        logging.warning("이지폼 엑셀 목록 0줄 — %d바이트 %s, %d줄, 앞부분: %s", len(raw), enc, len(lines),
+                        [ln[:160] for ln in lines[:6]])
     return out
 
 
