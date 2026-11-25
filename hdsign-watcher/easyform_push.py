@@ -1279,7 +1279,13 @@ def manual_fill(body: dict, progress) -> dict:
             _discard_new(main, form)
         _lock_release_now()
     progress("저장됐는지 확인하는 중")
-    lst = b._export_one(m, 0, progress, period=(date, date), forms_ok=True)
+    # 목록 조회·엑셀 뽑는 몇 초 동안도 마우스·키보드 잠금 — 느린 PC 에서 그새 클릭하면 꼬였음(사용자 2026-11-25)
+    _lock_text("이지폼에 저장됐는지 확인하는 중이에요", "몇 초면 끝나요 — 잠시만 기다려 주세요")
+    _lock_on()
+    try:
+        lst = b._export_one(m, 0, progress, period=(date, date), forms_ok=True)
+    finally:
+        _lock_release_now()
     hit = [r for r in lst if b._digits(r["total"]) == b._digits(total)
            and (r.get("firstItem") or "").strip() == (target[0]["item"] or "").strip()]
     _go_home()

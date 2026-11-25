@@ -457,7 +457,8 @@ def _export_one(m: dict, year: int, progress, period: "tuple[str, str] | None" =
         time.sleep(0.3)
     before = _count_text(lst)
     _click(_named(sheet, "TButton", "조회"), "조회")
-    _wait(lambda: _count_text(lst) and _count_text(lst) != before, 3.0)  # 조건 같으면 안 바뀜 → 시간만
+    # 느린 PC 는 조회가 몇 초 걸림(2026-11-25 다른 사무실 PC 실측) → 6초까지. 조건 같으면 안 바뀜 → 시간만
+    _wait(lambda: _count_text(lst) and _count_text(lst) != before, 6.0)
     time.sleep(0.6)
     _assert_clean(main, forms_ok=True)
     # 그 기간 명세서가 0건이면 엑셀을 안 누른다 — 누르면 이지폼이 '저장할 자료가 없습니다' 창을 띄워
@@ -472,7 +473,8 @@ def _export_one(m: dict, year: int, progress, period: "tuple[str, str] | None" =
         return None
 
     _click(_named(lst, "TBitBtn", "엑셀(csv)"), "엑셀(csv)")
-    dlg = _wait(lambda: next(iter(_kids(main, "TfrmSavePath")), None) or nodata_popup(), 5.0)
+    # 느린 PC 는 경로창이 늦게 뜬다 — 15초까지 기다림(예전 5초 → 그 사이 '안 떴어요'로 포기했음, 2026-11-25)
+    dlg = _wait(lambda: next(iter(_kids(main, "TfrmSavePath")), None) or nodata_popup(), 15.0)
     if dlg and _cls(dlg) == "TMessageForm":
         _click(_named(dlg, "TButton", "OK"), "OK")
         _wait(lambda: not nodata_popup(), 2.0, 0.05)
@@ -480,14 +482,30 @@ def _export_one(m: dict, year: int, progress, period: "tuple[str, str] | None" =
     if not dlg:
         _assert_clean(main, forms_ok=True)
         raise Stop("엑셀(csv) 저장 창이 안 떴어요.")
-    edit = next(iter(_kids(dlg, "TEdit")), None)
-    path = _txt(edit).strip() if edit else ""
+    # 경로 칸이 창보다 늦게 채워질 때가 있음(느린 PC) → 경로가 들어올 때까지 5초 기다림
+    def csv_path():
+        e = next(iter(_kids(dlg, "TEdit")), None)
+        t = _txt(e).strip() if e else ""
+        return t if t.lower().endswith(".csv") else None
+
+    path = _wait(csv_path, 5.0, 0.1) or ""
+    if not path:
+        edit = next(iter(_kids(dlg, "TEdit")), None)
+        path = _txt(edit).strip() if edit else ""
     if not (path.lower().endswith(".csv") and _CSV_DIR_HINT in path.lower()):
         raise Stop(f"저장 경로가 예상과 달라서 멈췄어요({path or '경로 없음'}). 이지폼 경로창에서 [닫기]를 눌러주세요.")
     if os.path.exists(path):
         raise Stop("같은 이름의 엑셀 파일이 이미 있어서 멈췄어요.")
+    time.sleep(0.3)  # 경로창이 다 그려진 뒤 누름(느린 PC 에서 막 뜬 창은 클릭을 흘림)
     _click(_named(dlg, "TBitBtn", "저장"), "저장")
-    if not _wait(lambda: os.path.exists(path), 20.0, 0.15):
+    # 클릭이 먹혔나 — 4초 안에 파일이 없고 경로창이 그대로면 한 번 더 누름(사람이 대신 눌러도 그대로 이어감)
+    if not _wait(lambda: os.path.exists(path), 4.0, 0.15) and _shown(dlg) and _kids(main, "TfrmSavePath"):
+        logging.info("이지폼 엑셀 저장 클릭 재시도")
+        try:
+            _click(_named(dlg, "TBitBtn", "저장"), "저장")
+        except Stop:
+            pass  # 그새 닫힘(사람이 눌렀음) — 파일만 기다린다
+    if not _wait(lambda: os.path.exists(path), 25.0, 0.15):
         raise Stop("엑셀 파일이 만들어지지 않았어요.")
 
     def info_popup():
