@@ -1667,8 +1667,39 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     panel.attributes("-alpha", 0.995)  # 살짝만 투명 → WS_EX_LAYERED 적용(클릭통과 전제), 보기엔 불투명
 
     run_frame = tk.Frame(panel, bg="#ffffff")
-    tk.Label(run_frame, text="🔒", font=("Segoe UI Emoji", int(26 * s)),
-             fg="#111827", bg="#ffffff").pack(pady=(int(22 * s), int(6 * s)))
+    # 🔒 옆에 도는 동그라미 — 멈춘 게 아니라 진행 중이라는 표시(사용자 2026-11-25)
+    lock_row = tk.Frame(run_frame, bg="#ffffff")
+    lock_row.pack(pady=(int(22 * s), int(6 * s)))
+    tk.Label(lock_row, text="🔒", font=("Segoe UI Emoji", int(26 * s)),
+             fg="#111827", bg="#ffffff").pack(side="left")
+    spin_sz = int(32 * s)
+    spin_w = max(3, int(4 * s))
+    spin_pad = spin_w
+    spin = tk.Canvas(lock_row, width=spin_sz, height=spin_sz, bg="#ffffff", highlightthickness=0, bd=0)
+    spin.pack(side="left", padx=(int(12 * s), 0))
+    spin.create_oval(spin_pad, spin_pad, spin_sz - spin_pad, spin_sz - spin_pad, outline="#e5e7eb", width=spin_w)
+    spin_arc = spin.create_arc(spin_pad, spin_pad, spin_sz - spin_pad, spin_sz - spin_pad, start=90, extent=110,
+                               style="arc", outline="#2563eb", width=spin_w)
+    spin_state = {"a": 90, "on": False}
+
+    def spin_tick():
+        if not spin_state["on"]:
+            return
+        spin_state["a"] = (spin_state["a"] - 14) % 360
+        try:
+            spin.itemconfig(spin_arc, start=spin_state["a"])
+        except Exception:
+            spin_state["on"] = False
+            return
+        root.after(40, spin_tick)
+
+    def spin_start():
+        if not spin_state["on"]:
+            spin_state["on"] = True
+            spin_tick()
+
+    def spin_stop():
+        spin_state["on"] = False
     run_lbl = tk.Label(run_frame, text="자동입력 중에는 마우스가 잠깁니다.", font=("맑은 고딕", int(14 * s), "bold"),
                        fg="#111827", bg="#ffffff", justify="center")
     run_lbl.pack()
@@ -1853,8 +1884,10 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         _set_exstyle(panel, add=over)
         dim.lift()
         panel.lift()
+        spin_start()
 
     def show_done(ok, msg, ok_text="✅ 자동작성이 완료되었습니다."):
+        spin_stop()
         run_frame.pack_forget()
         done_lbl.config(text=(ok_text if ok else "⏹ 중단되었습니다.") +
                         ("" if ok else f"\n{msg}"),
@@ -1867,6 +1900,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         panel.attributes("-topmost", True)
 
     def hide_overlay():
+        spin_stop()
         kw_hide()
         panel.withdraw()
         dim.withdraw()

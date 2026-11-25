@@ -260,7 +260,9 @@ def _wait_saved(main, t_click: float) -> "tuple[bool, str]":
     """저장 클릭 뒤 — 질문창이 뜨면 사람이 답할 때까지 기다린다. (저장됐나, 이유)."""
     t0 = time.time()
     seen = None
-    while time.time() - t0 < 1.2:  # 새 명세서는 묻는 창 없이 바로 저장
+    # 기존 명세서의 '동일한 고유번호' 질문창은 클릭 직후 뜬다 → 0.5초만 보고 바로 묻기(예전 1.2초, 사용자 2026-11-25
+    # '반영할까요?가 늦게 뜬다'). 느린 PC 에서 더 늦게 뜨면 _handle_save 가 [예] 뒤에 마저 기다린다.
+    while time.time() - t0 < 0.5:
         pops = [p for p in bulk._popups(main) if p[1] == "TMessageForm"]
         if pops:
             seen = pops[0][0]
@@ -273,12 +275,12 @@ def _wait_saved(main, t_click: float) -> "tuple[bool, str]":
         if time.time() - t0 > 600:
             return False, "질문창에 답이 없음"
         time.sleep(0.05)
-    time.sleep(0.15)  # 답 버튼 클릭이 감시 스레드에서 기록될 틈
+    time.sleep(0.08)  # 답 버튼 클릭이 감시 스레드에서 기록될 틈
     ans = _ANSWER["text"] if _ANSWER["at"] >= t_click else ""
     if btns != ["No", "Yes"]:
         return False, f"예상 밖 창({', '.join(btns)}) — 저장 안 된 것으로 봄"
     if ans == "Yes":
-        time.sleep(0.3)
+        time.sleep(0.1)
         while bulk._popups(main):  # 저장 뒤 또 뜨는 창이 있으면 그것도 끝날 때까지
             if time.time() - t0 > 600:
                 return False, "저장 뒤 창이 안 닫힘"
@@ -299,6 +301,12 @@ def _handle_save(form, t_click: float) -> None:
         if not _ask_reflect(form):
             logging.info("이지폼 저장 자동반영 — 사람이 [아니오]")
             return
+        if bulk._shown(form) and bulk._popups(main):
+            # 이지폼 질문창이 늦게 뜬 경우(느린 PC) — 사람이 답할 때까지 기다렸다가 저장됐을 때만 이어감
+            ok2, why2 = _wait_saved(main, t_click)
+            logging.info("이지폼 저장 감지(늦은 질문창) — %s", why2)
+            if not ok2:
+                return
         if not bulk._shown(form) or bulk._popups(main):
             ef.ef_messagebox("명세서 창이 닫혀서 읽지 못했어요.\n명세서를 다시 열고 [저장]을 눌러주세요.", "홈페이지 반영")
             return

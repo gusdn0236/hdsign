@@ -929,8 +929,20 @@
   }
 }
 
+/* 줄 고르기 화면은 거의 꽉 차게 — 지시서 사진을 크게(사용자 2026-11-25) */
 .efas-card:has(.efas-assign) {
-  height: min(820px, calc(100vh - 32px));
+  /* 명세서 상세창(.aq-modal-overlay)처럼 화면 전체 — 여백·둥근 모서리 없이 */
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border-radius: 0;
+}
+.efas:has(.efas-assign) {
+  padding: 0;
+}
+.efas-card:has(.efas-assign) .efas-assign-body {
+  grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
 }
 
 .efas-failcopy {
@@ -954,4 +966,9 @@
 }
 .efas-assign-table tbody tr.mine td:first-child {
   font-weight: 700;
+}
+@media (max-width: 760px) {
+  .efas-card:has(.efas-assign) .efas-assign-body {
+    grid-template-columns: 1fr;
+  }
 }
