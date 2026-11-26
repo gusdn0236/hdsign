@@ -2326,14 +2326,17 @@ def _homepage_company_name(order_number: str) -> str:
         return ""
 
 
-def _ask_kakao_send_blocking(rooms: list[str], company: str) -> bool:
-    """작업 스레드에서 호출 — UI 스레드에 예/아니오 창을 띄우고 답을 기다림. Enter=예, ESC/X=아니오."""
+def _ask_kakao_send_blocking(rooms: list[str], company: str,
+                             done_title: str = "", done_body: str = "", warn: bool = False) -> bool:
+    """작업 스레드에서 호출 — UI 스레드에 예/아니오 창을 띄우고 답을 기다림. Enter=예, ESC/X=아니오.
+    done_title/done_body 가 있으면 매크로 끝 '처리 완료(웹 반영 + 종이 인쇄 완료)' 알림창 자체에 질문을 붙임
+    (사용자 2026-11-26: 중간에 따로 물으면 애매 → 마지막 완료 알림창 시점에)."""
     holder: dict = {"v": False, "done": threading.Event()}
 
     def _ask():
         try:
             win = tk.Toplevel()
-            win.title("카톡으로 전달")
+            win.title(done_title or "카톡으로 전달")
             win.configure(bg="#ffffff")
             win.resizable(False, False)
             try:
@@ -2342,6 +2345,13 @@ def _ask_kakao_send_blocking(rooms: list[str], company: str) -> bool:
                 pass
             frm = tk.Frame(win, bg="#ffffff")
             frm.pack(padx=26, pady=22, fill="both")
+            if done_body:
+                tk.Label(frm, text=("⚠ " if warn else "✓ ") + done_title, bg="#ffffff",
+                         fg="#d97706" if warn else "#16a34a", font=("맑은 고딕", 12, "bold"),
+                         anchor="w").pack(fill="x")
+                tk.Label(frm, text=done_body, bg="#ffffff", fg="#3f3f46", font=("맑은 고딕", 10),
+                         justify="left", anchor="w", wraplength=420).pack(fill="x", pady=(6, 0))
+                tk.Frame(frm, bg="#e4e4e7", height=1).pack(fill="x", pady=14)
             room_txt = ", ".join(f"'{r}'" for r in rooms)
             tk.Label(frm, text=f"카톡방 {room_txt}에도\n작업지시서를 전달할까요?", bg="#ffffff", fg="#18181b",
                      font=("맑은 고딕", 13, "bold"), justify="left", anchor="w").pack(fill="x")
@@ -2386,15 +2396,17 @@ def _ask_kakao_send_blocking(rooms: list[str], company: str) -> bool:
     return bool(holder["v"])
 
 
-def send_worksheet_to_kakao(order_number: str, pdf_path: Path) -> None:
-    """웹반영 끝난 지시서를 고른 카톡방에 보냄. 켜져 있을 때만. 실패하면 알림만(인쇄 흐름엔 영향 없음)."""
+def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
+                            done_title: str = "", done_body: str = "", warn: bool = False) -> None:
+    """웹반영 끝난 지시서를 고른 카톡방에 보냄. 켜져 있을 때만. 실패하면 알림만(인쇄 흐름엔 영향 없음).
+    done_* = 매크로 끝 완료 알림 내용 — 그 알림창에 질문을 같이 붙여 한 번에 묻는다."""
     if not _get_kakao_enabled():
         return
     rooms = _get_kakao_rooms()
     company = _homepage_company_name(order_number)
     text = company or order_number
     # 보내기 전에 묻기(사용자 2026-11-26) — "카톡방 'HD사인'에도 작업지시서를 전달할까요?" [예]/[아니오]
-    if not _ask_kakao_send_blocking(rooms, text):
+    if not _ask_kakao_send_blocking(rooms, text, done_title, done_body, warn):
         ui_log(f"카톡 보내기 — 아니오 선택 ({text})")
         return
     img = None
@@ -5616,6 +5628,19 @@ def _send_save_keystroke_to(hwnd: int) -> bool:
         return False
 
 
+def _combined_done_text(alert_kind: str, ops_msg: str) -> tuple[str, str, bool]:
+    """완료 알림 (제목, 본문, 경고여부) — _show_combined_done_modal 과 같은 문구(카톡 질문 붙인 창에서 재사용)."""
+    if alert_kind == 'saved':
+        return "처리 완료", f"FlexiSIGN 자동 저장 완료.\n{ops_msg}", False
+    if alert_kind == 'failed':
+        return ("처리 완료 (저장 확인 필요)",
+                "FlexiSIGN 자동 저장에 실패했습니다.\n"
+                "[✓ 적용] 직후 다른 창으로 포커스가 옮겨갔을 수 있습니다.\n"
+                "FlexiSIGN 으로 돌아가 Ctrl+S 로 직접 저장해주세요.\n\n"
+                f"{ops_msg}", True)
+    return "처리 완료", ops_msg, False
+
+
 def _show_combined_done_modal(alert_kind: str, ops_msg: str) -> None:
     """자동저장 결과 + 처리 결과를 한 모달에 합쳐서 사용자에게 띄움.
 
@@ -7056,20 +7081,21 @@ def _process_printed_pdf(pdf_path: Path):
     # 처리 결과 알림 직전 — '웹에 반영 중' 창 닫고 결과 모달로 교체.
     _ui_queue.put(("run", _close_busy))
 
-    # 카톡방 자동 전달(켜져 있을 때만, 묻고 예일 때) — 웹반영 성공한 지시서만. 실패해도 아래 흐름엔 영향 없음.
-    if upload_ok:
-        try:
-            send_worksheet_to_kakao(order_number, pdf_path)
-        except Exception as e:
-            ui_log(f"카톡 보내기 예외(무시): {e}")
-
     # 처리 결과 알림 — 자동저장 결과까지 한 모달에 합쳐서 끝에 한 번만 띄움.
     if upload_ok:
         if print_done:
             ops_msg = f"웹 반영 + 종이 인쇄 완료 ({copies}장)."
         else:
             ops_msg = "웹 반영 완료 (종이 인쇄 없이 업로드만 진행)."
-        _show_combined_done_modal(alert_kind, ops_msg)
+        if _get_kakao_enabled():
+            # 카톡 전달 켜져 있으면 — 이 마지막 완료 알림창에 "카톡방에도 전달할까요?" 를 같이 붙여 한 번에(사용자 2026-11-26).
+            d_title, d_body, d_warn = _combined_done_text(alert_kind, ops_msg)
+            try:
+                send_worksheet_to_kakao(order_number, pdf_path, d_title, d_body, d_warn)
+            except Exception as e:
+                ui_log(f"카톡 보내기 예외(무시): {e}")
+        else:
+            _show_combined_done_modal(alert_kind, ops_msg)
     else:
         # 업로드 자체가 실패한 경우 — 자동저장 결과는 부차적이므로 prefix 만 짧게.
         save_prefix = ""
