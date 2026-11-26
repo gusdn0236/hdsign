@@ -8746,27 +8746,23 @@ class App(tk.Tk):
             if old and u32.IsIconic(old[0]):
                 self.iconify()  # 옛 창이 최소화였으면 새 창도 최소화 상태로(작업표시줄에만)
                 return
-            fg = u32.GetForegroundWindow()
-            fg_pid = ctypes.c_ulong()
-            u32.GetWindowThreadProcessId(fg, ctypes.byref(fg_pid))
             if old:
                 self.geometry(f"+{old[1]}+{old[2]}")
-            try:
-                self.attributes("-alpha", 0.0)
-            except Exception:
-                pass
-            self.deiconify()
             self.update_idletasks()
             frame = int(self.wm_frame(), 16)
+            # 활성화 안 되게(사용자 2026-11-26: 바뀌는 순간 타이핑이 끊기거나 잘못 눌릴 수 있음) — '활성화 불가' 표시를 잠깐
+            # 붙이고 '포커스 없이 보이기'로 띄운 뒤, 1초 뒤 표시를 떼서 평소처럼 클릭하면 앞으로 오게.
+            # (Tk deiconify 는 자기 창을 활성화해서 안 씀. 실측: 이 방식은 Tk 상태도 'normal' 로 맞게 따라옴)
+            u32.GetWindowLongW.restype = ctypes.c_long
+            ex = u32.GetWindowLongW(frame, -20)  # GWL_EXSTYLE
+            u32.SetWindowLongW(frame, -20, ex | 0x08000000)  # WS_EX_NOACTIVATE
             # 옛 창 바로 뒤(z순서) — 옛 창이 꺼지기 전까지는 가려져 안 보임. 못 찾으면 맨 뒤.
-            u32.SetWindowPos(frame, old[0] if old else 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
-            # 사람이 다른 창(홈페이지 등)을 쓰고 있었으면 포커스는 그 창에 그대로
-            if fg and fg_pid.value != _TAKEOVER["pid"] and u32.GetForegroundWindow() != fg:
-                u32.SetForegroundWindow(fg)
+            # SWP_NOSIZE|NOMOVE|NOACTIVATE|SHOWWINDOW
+            u32.SetWindowPos(frame, old[0] if old else 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
+            self.after(1000, lambda: u32.SetWindowLongW(frame, -20, ex))
+            _give_focus_back()
         except Exception:
             self.deiconify()
-        finally:
-            self.after(150, lambda: self.attributes("-alpha", 1.0))
 
     # ── layout ──
 
@@ -9375,7 +9371,21 @@ class App(tk.Tk):
         self.destroy()
 
 
-_TAKEOVER = {"pid": 0, "saved_printer": ""}
+_TAKEOVER = {"pid": 0, "saved_printer": "", "fg": 0}
+
+
+def _give_focus_back() -> None:
+    """무중단 업데이트로 켜진 새 워처 — Tk 가 창을 만들 때(숨긴 창이어도) 포커스를 가져가 버리므로(실측), 켜지기 직전에
+    쓰던 창(홈페이지·카톡 등)에 바로 돌려준다. 이미 포커스를 가진 쪽이라 SetForegroundWindow 가 허용된다."""
+    fg = _TAKEOVER.get("fg") or 0
+    if not _TAKEOVER["pid"] or not fg:
+        return
+    try:
+        u32 = ctypes.windll.user32
+        if u32.IsWindow(fg) and u32.GetForegroundWindow() != fg:
+            u32.SetForegroundWindow(fg)
+    except Exception:
+        pass
 
 
 def _start_autosync() -> None:
@@ -9390,6 +9400,8 @@ def _start_autosync() -> None:
 def main():
     global _saved_default_printer
     _TAKEOVER.update(self_update.takeover_args(sys.argv[1:]))
+    if _TAKEOVER["pid"]:
+        _TAKEOVER["fg"] = ctypes.windll.user32.GetForegroundWindow() or 0  # 지금 쓰던 창 — 창 만들기 전에 기억
     if _TAKEOVER["saved_printer"]:
         # 옛 워처가 보관하던 '원래 기본 프린터' 이어받기 — 이미 PDF24 라 새로 보관할 수 없으니(끌 때 복구용)
         _saved_default_printer = _TAKEOVER["saved_printer"]
@@ -9400,6 +9412,8 @@ def main():
         easyform.install(app)
     except Exception as e:  # noqa: BLE001 — easyform 실패해도 워처 본기능은 계속.
         ui_log(f"이지폼 자동기입 UI 설치 실패: {e}")
+    _give_focus_back()  # 창(과 이지폼 판들)을 만들며 가져간 포커스 → 쓰던 창으로 바로
+    app.after(0, _give_focus_back)
     if not _TAKEOVER["pid"]:
         _start_autosync()  # 이어받기면 옛 워처가 놓은 뒤에(start_watcher)
     app.after(300, app.start_watcher)
