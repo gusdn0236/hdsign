@@ -2310,6 +2310,14 @@ def _show_fail_copy_dialog(title: str, message: str, detail: str) -> None:
         ui_log(f"실패 알림창 오류: {e}")
 
 
+def _ef_overlay(text: "str | None", sub: "str | None" = None) -> None:
+    """이지폼 잠금 화면 표시/숨김(easyform UI 스레드 큐로 — easyform_autosync 와 같은 방식). 실패는 무시."""
+    try:
+        easyform._EF_UI_QUEUE.put(("auto_overlay", text, sub) if text else ("auto_overlay_hide",))
+    except Exception:
+        pass
+
+
 def _homepage_company_name(order_number: str) -> str:
     """카톡에 올릴 거래처명 = 홈페이지 지시서 카드에 보이는 이름(관리자 주문 목록의 clientCompanyName, 사용자 2026-11-26).
     못 읽으면 공개 상세의 companyName(같은 DB 값) 폴백. 둘 다 실패면 ''."""
@@ -2442,7 +2450,13 @@ def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
             g_start, g_stop, g_abort = _dx.input_guard_start, _dx.input_guard_stop, _dx.input_guard_aborted
         except Exception:
             g_start = g_stop = g_abort = None
-        results = kakao_notify.send_worksheet(rooms, img, text, g_start, g_stop, g_abort)
+        # 보내는 동안 이지폼 자동화 때 쓰던 잠금 화면(어둡게 + 아래 안내판)을 그대로 띄움(사용자 2026-11-26).
+        # 그 화면은 클릭 통과·포커스 안 뺏음이라 카톡 입력칸 클릭/Enter 에 방해 없음. 실제 입력 차단은 g_start 훅.
+        _ef_overlay("카톡방에 지시서를 보내는 중이에요…", getattr(easyform, "EF_SUB_ESC", None))
+        try:
+            results = kakao_notify.send_worksheet(rooms, img, text, g_start, g_stop, g_abort)
+        finally:
+            _ef_overlay(None)
         try:
             img.unlink()
         except Exception:
