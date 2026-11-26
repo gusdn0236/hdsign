@@ -2418,88 +2418,200 @@ def send_worksheet_to_kakao(order_number: str, pdf_path: Path) -> None:
 
 
 def open_kakao_room_dialog(app) -> None:
-    """[알림카톡방 설정] — 지금 열려 있는 카톡방 중 체크 + 이름 직접 입력. PC마다 따로 저장."""
+    """[알림카톡방 설정] — 고른 방(위) + 찾기/추가 + 스크롤 목록(지금 열린 방·고른 방). PC마다 따로 저장.
+    ⚠ 카톡은 채팅방 전체 목록을 밖에 안 보여줌(접근성 정보로도 안 읽힘, 2026-11-26 실측) → 열린 방 창 + 이름 직접 추가."""
     try:
         import kakao_notify
-        open_rooms = kakao_notify.list_open_rooms()
-        running = kakao_notify.is_running()
     except Exception:
         kakao_notify = None  # type: ignore
-        open_rooms, running = [], False
-    saved = _get_kakao_rooms()
+
+    def _open_rooms() -> list[str]:
+        try:
+            return kakao_notify.list_open_rooms() if kakao_notify else []
+        except Exception:
+            return []
+
+    def _running() -> bool:
+        try:
+            return bool(kakao_notify and kakao_notify.is_running())
+        except Exception:
+            return False
+
+    BG, LINE, SUB, INK, ACC = "#ffffff", "#e4e4e7", "#71717a", "#18181b", "#fee500"
+    state = {"open": _open_rooms(), "chosen": list(_get_kakao_rooms()), "status": {}}
 
     win = tk.Toplevel(app)
     win.title("알림카톡방 설정")
-    win.configure(bg="#ffffff")
-    win.resizable(False, False)
+    win.configure(bg=BG)
+    win.resizable(False, True)
     win.transient(app)
-    frm = tk.Frame(win, bg="#ffffff")
-    frm.pack(padx=22, pady=18, fill="both")
-    tk.Label(frm, text="지시서를 보낼 카톡방", bg="#ffffff", fg="#18181b",
-             font=("맑은 고딕", 12, "bold"), anchor="w").pack(fill="x")
-    tk.Label(frm, text="인쇄(웹반영)가 끝나면 고른 방에 지시서 사진 + 거래처명을 보냅니다.\n"
-                       "방 이름은 카톡에 보이는 이름과 똑같아야 해요. 여러 개 골라도 돼요.",
-             bg="#ffffff", fg="#71717a", font=("맑은 고딕", 9), justify="left", anchor="w").pack(fill="x", pady=(4, 10))
-    if not running:
-        tk.Label(frm, text="⚠ 카카오톡이 안 켜져 있어요 — 켜고 로그인하면 열린 방 목록이 보여요.",
-                 bg="#ffffff", fg="#d97706", font=("맑은 고딕", 9), anchor="w").pack(fill="x", pady=(0, 8))
+    win.minsize(460, 520)
 
-    list_fr = tk.Frame(frm, bg="#fafafa", highlightbackground="#e4e4e7", highlightthickness=1)
-    list_fr.pack(fill="x")
-    vars_: dict[str, tk.BooleanVar] = {}
+    frm = tk.Frame(win, bg=BG)
+    frm.pack(padx=22, pady=18, fill="both", expand=True)
+    tk.Label(frm, text="지시서를 보낼 카톡방", bg=BG, fg=INK,
+             font=("맑은 고딕", 13, "bold"), anchor="w").pack(fill="x")
+    tk.Label(frm, text="인쇄(웹반영)가 끝나면 고른 방에 지시서 사진 + 거래처명을 보내요. 여러 개 골라도 돼요.",
+             bg=BG, fg=SUB, font=("맑은 고딕", 9), justify="left", anchor="w", wraplength=420).pack(fill="x", pady=(3, 8))
+    warn_lbl = tk.Label(frm, text="", bg=BG, fg="#d97706", font=("맑은 고딕", 9), anchor="w", justify="left",
+                        wraplength=420)
+    warn_lbl.pack(fill="x")
 
-    def _render():
-        for c in list_fr.winfo_children():
-            c.destroy()
-        names = list(dict.fromkeys(saved + open_rooms + [n for n in vars_ if n not in saved + open_rooms]))
-        if not names:
-            tk.Label(list_fr, text="열려 있는 카톡방이 없어요. 카톡에서 방을 열어두고 [새로고침] 하거나,\n아래에 방 이름을 직접 적어 추가하세요.",
-                     bg="#fafafa", fg="#a1a1aa", font=("맑은 고딕", 9), justify="left").pack(padx=12, pady=10, anchor="w")
-        for n in names:
-            v = vars_.setdefault(n, tk.BooleanVar(value=n in saved))
-            tag = "" if n in open_rooms else "  (지금 안 열려 있음 — 보낼 때 자동으로 열어요)"
-            tk.Checkbutton(list_fr, text=n + tag, variable=v, bg="#fafafa", activebackground="#fafafa",
-                           selectcolor="#ffffff", font=("맑은 고딕", 10), anchor="w",
-                           bd=0, highlightthickness=0).pack(fill="x", padx=10, pady=2)
+    # ── 찾기/추가 줄 ──
+    tk.Label(frm, text="방 이름 찾기 · 추가", bg=BG, fg=INK, font=("맑은 고딕", 9, "bold"),
+             anchor="w").pack(fill="x", pady=(8, 4))
+    srow = tk.Frame(frm, bg=BG)
+    srow.pack(fill="x")
+    q = tk.StringVar()
+    ent = tk.Entry(srow, textvariable=q, font=("맑은 고딕", 11), relief="solid", bd=1,
+                   highlightthickness=0)
+    ent.pack(side="left", fill="x", expand=True, ipady=4)
+    add_btn = tk.Button(srow, text="+ 이 이름으로 추가", font=("맑은 고딕", 9, "bold"), bg=ACC, fg="#3c1e1e",
+                        activebackground="#f5d800", relief="flat", bd=0, padx=10, pady=5, cursor="hand2")
+    add_btn.pack(side="left", padx=(6, 0))
+    tk.Label(frm, text="카톡에 보이는 방 이름과 글자 하나까지 똑같아야 해요. 목록에 없으면 이름을 적고 [추가].",
+             bg=BG, fg="#a1a1aa", font=("맑은 고딕", 8), anchor="w", justify="left",
+             wraplength=420).pack(fill="x", pady=(3, 0))
 
-    def _refresh():
-        nonlocal open_rooms
-        try:
-            open_rooms = kakao_notify.list_open_rooms() if kakao_notify else []
-        except Exception:
-            open_rooms = []
+    # ── 스크롤 목록 ──
+    lhdr = tk.Frame(frm, bg=BG)
+    lhdr.pack(fill="x", pady=(12, 4))
+    count_lbl = tk.Label(lhdr, text="", bg=BG, fg=INK, font=("맑은 고딕", 9, "bold"), anchor="w")
+    count_lbl.pack(side="left")
+    tk.Button(lhdr, text="↻ 열린 방 다시 읽기", font=("맑은 고딕", 8), bg="#f4f4f5", fg="#3f3f46",
+              relief="flat", bd=0, padx=8, pady=2, cursor="hand2",
+              command=lambda: (state.__setitem__("open", _open_rooms()), _render())).pack(side="right")
+
+    box = tk.Frame(frm, bg=BG, highlightbackground=LINE, highlightthickness=1)
+    box.pack(fill="both", expand=True)
+    canvas = tk.Canvas(box, bg=BG, highlightthickness=0, height=280)
+    sb = ttk.Scrollbar(box, orient="vertical", command=canvas.yview)
+    inner = tk.Frame(canvas, bg=BG)
+    inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+    inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+    canvas.bind("<Configure>", lambda e: canvas.itemconfigure(inner_id, width=e.width))
+    canvas.configure(yscrollcommand=sb.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    sb.pack(side="right", fill="y")
+
+    def _wheel(e):
+        canvas.yview_scroll(int(-e.delta / 120) * 2, "units")
+        return "break"
+
+    win.bind_all("<MouseWheel>", _wheel)
+    win.bind("<Destroy>", lambda e: win.unbind_all("<MouseWheel>") if e.widget is win else None)
+
+    def _toggle(name: str):
+        if name in state["chosen"]:
+            state["chosen"].remove(name)
+        else:
+            state["chosen"].append(name)
         _render()
 
-    _render()
+    def _row(parent, name: str, chosen: bool, is_open: bool):
+        bg = "#fffbe6" if chosen else BG
+        r = tk.Frame(parent, bg=bg, cursor="hand2")
+        r.pack(fill="x")
+        mark = tk.Label(r, text="☑" if chosen else "☐", bg=bg, fg="#ca8a04" if chosen else "#a1a1aa",
+                        font=("맑은 고딕", 13))
+        mark.pack(side="left", padx=(10, 6), pady=5)
+        nm = tk.Label(r, text=name, bg=bg, fg=INK, font=("맑은 고딕", 10, "bold" if chosen else "normal"),
+                      anchor="w")
+        nm.pack(side="left", fill="x", expand=True)
+        st = state["status"].get(name)
+        if st is not None:
+            ok, why = st
+            tk.Label(r, text="✓ 찾음" if ok else "✗ 못 찾음", bg=bg, fg="#16a34a" if ok else "#dc2626",
+                     font=("맑은 고딕", 8, "bold")).pack(side="right", padx=(0, 10))
+        elif not is_open:
+            tk.Label(r, text="안 열려 있음 · 보낼 때 자동으로 열어요", bg=bg, fg="#a1a1aa",
+                     font=("맑은 고딕", 8)).pack(side="right", padx=(0, 10))
+        for w in (r, mark, nm):
+            w.bind("<Button-1>", lambda _e, n=name: _toggle(n))
+        tk.Frame(parent, bg="#f4f4f5", height=1).pack(fill="x")
 
-    add_fr = tk.Frame(frm, bg="#ffffff")
-    add_fr.pack(fill="x", pady=(10, 0))
-    ent = tk.Entry(add_fr, font=("맑은 고딕", 10), relief="solid", bd=1)
-    ent.pack(side="left", fill="x", expand=True, ipady=3)
+    def _section(text: str):
+        tk.Label(inner, text=text, bg="#fafafa", fg=SUB, font=("맑은 고딕", 8, "bold"), anchor="w").pack(
+            fill="x", ipady=3, ipadx=10)
 
-    def _add():
-        n = unicodedata.normalize("NFC", ent.get().strip())
-        if n:
-            vars_.setdefault(n, tk.BooleanVar(value=True)).set(True)
-            ent.delete(0, "end")
-            _render()
+    def _render(*_):
+        for c in inner.winfo_children():
+            c.destroy()
+        flt = unicodedata.normalize("NFC", q.get().strip()).casefold()
+        chosen = state["chosen"]
+        opens = [n for n in state["open"] if n not in chosen]
 
-    ent.bind("<Return>", lambda _e: _add())
-    tk.Button(add_fr, text="이름으로 추가", font=("맑은 고딕", 9), bg="#f4f4f5", relief="flat", bd=0,
-              padx=10, pady=4, cursor="hand2", command=_add).pack(side="left", padx=(6, 0))
-    tk.Button(add_fr, text="새로고침", font=("맑은 고딕", 9), bg="#f4f4f5", relief="flat", bd=0,
-              padx=10, pady=4, cursor="hand2", command=_refresh).pack(side="left", padx=(6, 0))
+        def hit(n):
+            return not flt or flt in unicodedata.normalize("NFC", n).casefold()
 
-    btns = tk.Frame(frm, bg="#ffffff")
-    btns.pack(fill="x", pady=(16, 0))
+        ch = [n for n in chosen if hit(n)]
+        op = [n for n in opens if hit(n)]
+        if ch:
+            _section(f"고른 방 {len(ch)}")
+            for n in ch:
+                _row(inner, n, True, n in state["open"])
+        if op:
+            _section(f"지금 열려 있는 카톡방 {len(op)}")
+            for n in op:
+                _row(inner, n, False, True)
+        if not ch and not op:
+            msg = (f"'{q.get().strip()}' 이(가) 목록에 없어요.\n[+ 이 이름으로 추가]를 누르면 그 이름으로 보내요."
+                   if flt else "카톡에서 보낼 방을 열어두고 [↻ 열린 방 다시 읽기]를 누르거나,\n위에 방 이름을 적어 추가하세요.")
+            tk.Label(inner, text=msg, bg=BG, fg="#a1a1aa", font=("맑은 고딕", 9), justify="left").pack(
+                padx=12, pady=16, anchor="w")
+        count_lbl.config(text=f"고른 방 {len(chosen)}개" + (f"  ·  {', '.join(chosen)}" if chosen else ""))
+        if len(count_lbl.cget("text")) > 48:
+            count_lbl.config(text=count_lbl.cget("text")[:47] + "…")
+        warn_lbl.config(text="" if _running() else
+                        "⚠ 카카오톡이 안 켜져 있어요 — 켜고 로그인하면 열린 방 목록이 보여요.")
+        canvas.yview_moveto(0)
+
+    def _add(*_):
+        n = unicodedata.normalize("NFC", q.get().strip())
+        if not n:
+            ent.focus_set()
+            return
+        if n not in state["chosen"]:
+            state["chosen"].append(n)
+        q.set("")
+        _render()
+
+    add_btn.config(command=_add)
+    ent.bind("<Return>", _add)
+    q.trace_add("write", _render)
+
+    # ── 아래 버튼 ──
+    btns = tk.Frame(frm, bg=BG)
+    btns.pack(fill="x", pady=(14, 0))
+    note = tk.Label(btns, text="", bg=BG, fg=SUB, font=("맑은 고딕", 8), anchor="w")
+    note.pack(side="left")
 
     def _save():
-        chosen = [n for n, v in vars_.items() if v.get()]
+        chosen = list(state["chosen"])
+        bad = []
+        if chosen and _running() and kakao_notify:
+            note.config(text="방 이름 확인 중…")
+            win.update_idletasks()
+            for n in chosen:
+                ok, why = kakao_notify.check_room(n)
+                state["status"][n] = (ok, why)
+                if not ok:
+                    bad.append(n)
+            try:
+                win.lift()
+                win.focus_force()
+            except Exception:
+                pass
+            if bad:
+                note.config(text="")
+                _render()
+                if not messagebox.askyesno(
+                        "방 이름 확인",
+                        "카톡에서 이 방을 못 찾았어요:\n\n" + "\n".join(f"· {b}" for b in bad) +
+                        "\n\n이름이 정확한지 확인해 주세요. 그래도 이대로 저장할까요?", parent=win):
+                    return
         _set_kakao_rooms(chosen)
-        if chosen:
-            _set_kakao_enabled(True)  # 방을 고르고 저장하면 켜짐(체크박스로 끌 수 있음)
-        else:
-            _set_kakao_enabled(False)
+        _set_kakao_enabled(bool(chosen))  # 방을 고르고 저장하면 켜짐(체크박스로 끌 수 있음)
         ui_log(f"알림카톡방 설정: {', '.join(chosen) or '(없음)'}")
         try:
             app.refresh_kakao_label()
@@ -2507,17 +2619,22 @@ def open_kakao_room_dialog(app) -> None:
             pass
         win.destroy()
 
-    tk.Button(btns, text="저장", font=("맑은 고딕", 10, "bold"), bg="#18181b", fg="white",
-              activebackground="#3f3f46", relief="flat", bd=0, padx=18, pady=7, cursor="hand2",
+    tk.Button(btns, text="저장", font=("맑은 고딕", 10, "bold"), bg=INK, fg="white",
+              activebackground="#3f3f46", relief="flat", bd=0, padx=20, pady=7, cursor="hand2",
               command=_save).pack(side="right")
     tk.Button(btns, text="취소", font=("맑은 고딕", 10), bg="#e4e4e7", relief="flat", bd=0,
               padx=14, pady=7, cursor="hand2", command=win.destroy).pack(side="right", padx=(0, 8))
     win.bind("<Escape>", lambda _e: win.destroy())
+
+    _render()
     win.update_idletasks()
-    w, h = max(440, win.winfo_reqwidth()), win.winfo_reqheight()
+    w, h = 480, max(600, win.winfo_reqheight())
     x = app.winfo_rootx() + (app.winfo_width() - w) // 2
-    y = app.winfo_rooty() + 60
-    win.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+    y = max(0, app.winfo_rooty() - 40)
+    sh = win.winfo_screenheight()
+    h = min(h, sh - 80)
+    win.geometry(f"{w}x{h}+{max(0, x)}+{min(y, max(0, sh - h - 40))}")
+    ent.focus_set()
     win.grab_set()
 
 
@@ -9199,7 +9316,7 @@ class App(tk.Tk):
         kakao_row.pack(fill="x", padx=24, pady=(8, 0))
         self._kakao_var = tk.BooleanVar(value=_get_kakao_enabled())
         tk.Checkbutton(
-            kakao_row, text="지시서 인쇄하면 카톡방에 자동 보내기",
+            kakao_row, text="지시서 인쇄하면 단톡방에 전달하기",
             variable=self._kakao_var,
             bg=self.CARD, fg="#3f3f46",
             activebackground=self.CARD,
@@ -9403,7 +9520,7 @@ class App(tk.Tk):
     def refresh_kakao_label(self):
         rooms = _get_kakao_rooms()
         if not rooms:
-            t = "(보낼 방 없음)"
+            t = "(알림카톡방을 설정해주세요.)"
         else:
             t = "→ " + ", ".join(rooms)
             if len(t) > 34:

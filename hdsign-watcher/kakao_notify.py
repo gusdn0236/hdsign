@@ -210,6 +210,21 @@ def _open_room(name: str, timeout: float = 4.0) -> int:
     return h
 
 
+def check_room(name: str) -> tuple[bool, str]:
+    """방 이름이 실제로 찾아지는지 확인만(보내지 않음). 안 열려 있으면 검색으로 열어보고 다시 닫음."""
+    if not is_running():
+        return False, "카카오톡이 안 켜져 있음"
+    was_open = bool(_find_room(name))
+    try:
+        h = _open_room(name)
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)
+    if not was_open:
+        time.sleep(0.3)
+        u.PostMessageW(h, 0x0010, 0, 0)  # WM_CLOSE
+    return True, ""
+
+
 # ── 사진 ─────────────────────────────────────────────────────────────────────
 
 def render_pdf_image(pdf_path: Path, out_path: Path, long_side: int = 1600, quality: int = 85) -> Path:
