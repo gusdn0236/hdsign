@@ -8700,7 +8700,73 @@ class App(tk.Tk):
         # 작업이 활발해도 가려지지 않게 별도 섹션에 표시한다.
         self._alert_history: list[dict] = []
         self._build_ui()
+        if _TAKEOVER["pid"]:
+            # 무중단 업데이트로 켜진 새 창 — 맨 앞에 '팍' 뜨지 않게(사용자 2026-11-26: 잘못 누를 수 있음).
+            # 숨겨 두었다가 옛 창 자리·상태(최소화 여부) 그대로, 옛 창 바로 뒤에 포커스 없이 놓는다 → 옛 창이 꺼지면 그 자리.
+            self.withdraw()
+            self.after(30, self._show_quiet)
         self.after(100, self._poll_queue)
+
+    def _show_quiet(self):
+        try:
+            self._show_quiet_inner()
+        except Exception:
+            # 무슨 일이 있어도 창은 보이게(2026-11-26: 예외로 창이 숨은 채 남았던 일)
+            try:
+                self.deiconify()
+                self.attributes("-alpha", 1.0)
+            except Exception:
+                pass
+
+    def _show_quiet_inner(self):
+        from ctypes import wintypes as _wt  # ⚠ 'import ctypes.wintypes' 는 함수 안 ctypes 를 지역변수로 만들어 터짐
+        u32 = ctypes.windll.user32
+        old = None
+        try:
+            found = []
+
+            def cb(h, _l):
+                p = ctypes.c_ulong()
+                u32.GetWindowThreadProcessId(h, ctypes.byref(p))
+                if p.value == _TAKEOVER["pid"] and u32.IsWindowVisible(h) and u32.GetWindowTextLengthW(h) > 0:
+                    r = _wt.RECT()
+                    u32.GetWindowRect(h, ctypes.byref(r))
+                    if u32.IsIconic(h) or 300 < r.right - r.left < 800:
+                        found.append((h, r.left, r.top))
+                return True
+
+            proto = ctypes.WINFUNCTYPE(ctypes.c_bool, _wt.HWND, _wt.LPARAM)
+            u32.EnumWindows(proto(cb), 0)
+            old = found[0] if found else None
+        except Exception:
+            old = None
+        # ⚠ 밖에서 ShowWindow 로 띄우면 Tk 가 '숨김' 상태로 알고 다시 숨겨 창이 안 보였음(2026-11-26 실측) → Tk 로 띄우되
+        #   투명하게 띄워 → 옛 창 바로 뒤로 → 포커스는 원래 쓰던 창에 돌려줌 → 다시 불투명.
+        try:
+            if old and u32.IsIconic(old[0]):
+                self.iconify()  # 옛 창이 최소화였으면 새 창도 최소화 상태로(작업표시줄에만)
+                return
+            fg = u32.GetForegroundWindow()
+            fg_pid = ctypes.c_ulong()
+            u32.GetWindowThreadProcessId(fg, ctypes.byref(fg_pid))
+            if old:
+                self.geometry(f"+{old[1]}+{old[2]}")
+            try:
+                self.attributes("-alpha", 0.0)
+            except Exception:
+                pass
+            self.deiconify()
+            self.update_idletasks()
+            frame = int(self.wm_frame(), 16)
+            # 옛 창 바로 뒤(z순서) — 옛 창이 꺼지기 전까지는 가려져 안 보임. 못 찾으면 맨 뒤.
+            u32.SetWindowPos(frame, old[0] if old else 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+            # 사람이 다른 창(홈페이지 등)을 쓰고 있었으면 포커스는 그 창에 그대로
+            if fg and fg_pid.value != _TAKEOVER["pid"] and u32.GetForegroundWindow() != fg:
+                u32.SetForegroundWindow(fg)
+        except Exception:
+            self.deiconify()
+        finally:
+            self.after(150, lambda: self.attributes("-alpha", 1.0))
 
     # ── layout ──
 
