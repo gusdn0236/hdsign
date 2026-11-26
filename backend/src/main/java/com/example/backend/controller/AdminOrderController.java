@@ -746,6 +746,32 @@ public class AdminOrderController {
     // date = 'YYYY.MM.DD'(이지폼 발행일), days = 앞뒤 며칠(기본 7, 최대 45).
     // sameAs = 주문 id → 그 주문과 **같은 거래처** 지시서만, 발행일 앞뒤 days(최대 120)일. 합친 명세서에 다른 지시서를
     // 더할 때 — 일주일 넘게 지난 현장 건에 다음 주 추가 발주를 같이 끊는 경우가 있어 날짜보다 거래처로(사용자 2026-11-20).
+    /** 이지폼 저장 반영 [＋ 다른 지시서 추가] — 거래처·날짜 상관없이 거래처명/주문번호/제목으로 찾기(사용자 2026-11-26).
+     *  띄어쓴 낱말은 모두 맞아야(AND). 최신 등록순 60건. */
+    @GetMapping("/estimate/easyform-search")
+    public ResponseEntity<?> easyformSearch(@RequestParam String q) {
+        List<String> words = java.util.Arrays.stream(q.trim().split("\\s+"))
+                .filter(w -> !w.isBlank()).toList();
+        if (words.isEmpty()) return ResponseEntity.ok(Map.of("items", List.of()));
+        String first = words.stream().max(java.util.Comparator.comparingInt(String::length)).orElse(words.get(0));
+        Map<Long, Order> found = new LinkedHashMap<>();
+        for (Order o : orderRepository.findTop300ByOrderNumberContainingOrderByCreatedAtDesc(first)) found.putIfAbsent(o.getId(), o);
+        for (Order o : orderRepository.findTop200ByClient_CompanyNameContainingIgnoreCaseOrderByCreatedAtDesc(first)) found.putIfAbsent(o.getId(), o);
+        for (Order o : orderRepository.findTop200ByTitleContainingIgnoreCaseOrderByCreatedAtDesc(first)) found.putIfAbsent(o.getId(), o);
+        List<Order> list = found.values().stream()
+                .filter(o -> o.getRequestType() == null || o.getRequestType() == Order.RequestType.ORDER)
+                .filter(o -> {
+                    String hay = ((o.getOrderNumber() == null ? "" : o.getOrderNumber()) + " "
+                            + (o.getClient() == null || o.getClient().getCompanyName() == null ? "" : o.getClient().getCompanyName()) + " "
+                            + (o.getTitle() == null ? "" : o.getTitle())).toUpperCase(java.util.Locale.ROOT);
+                    return words.stream().allMatch(w -> hay.contains(w.toUpperCase(java.util.Locale.ROOT)));
+                })
+                .sorted((a, b) -> a.getCreatedAt() == null || b.getCreatedAt() == null ? 0 : b.getCreatedAt().compareTo(a.getCreatedAt()))
+                .limit(60)
+                .toList();
+        return ResponseEntity.ok(Map.of("items", toResponsesWithEstimates(list)));
+    }
+
     @GetMapping("/estimate/easyform-candidates")
     public ResponseEntity<?> easyformCandidates(
             @RequestParam String date,

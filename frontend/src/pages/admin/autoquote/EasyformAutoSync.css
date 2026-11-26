@@ -973,36 +973,86 @@
   }
 }
 
-/* [＋ 다른 지시서 추가] 카드 — 지시서 카드 자리에 점선 카드(사용자 2026-11-26) */
+/* [＋ 다른 지시서 추가] 카드 — 지시서 카드와 같은 크기(order-card 틀 그대로), 썸네일 자리에 큰 ＋ (사용자 2026-11-26) */
 .efas-addcard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 200px;
-  border: 2px dashed #93c5fd;
-  background: #f8fbff;
-  color: #1e3a8a;
   cursor: pointer;
-  font: inherit;
-  text-align: center;
-  padding: 16px;
+  border: 2px dashed #93c5fd !important;
+  background: #f8fbff;
 }
 .efas-addcard:hover,
 .efas-addcard:focus-visible {
-  border-color: #2563eb;
+  border-color: #2563eb !important;
   background: #eff6ff;
 }
+.efas-addcard-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef4ff;
+}
 .efas-addcard-plus {
-  font-size: 34px;
+  font-size: 56px;
   line-height: 1;
   color: #2563eb;
+  font-weight: 300;
 }
-.efas-addcard b {
-  font-size: 15px;
+.efas-addcard .order-card-title {
+  color: #1e3a8a;
 }
-.efas-addcard span:last-child {
+.efas-addcard-sub {
+  margin: 4px 0 0;
   font-size: 12px;
   color: #64748b;
+}
+
+/* 다른 지시서 찾기 창 — 어두운 바탕 위 흰 카드 */
+.efas-finder {
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 22, 32, 0.72);
+  padding: 24px 16px;
+}
+.efas-finder-card {
+  width: min(1100px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: #111827;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+.efas-finder-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px 6px;
+  font-size: 17px;
+}
+.efas-finder-bar {
+  display: flex;
+  gap: 8px;
+  padding: 6px 18px 12px;
+}
+.efas-finder-bar input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 15px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+.efas-finder-bar input:focus {
+  outline: 2px solid #2563eb;
+  border-color: transparent;
+}
+.efas-finder-body {
+  flex: 1;
+  min-height: 180px;
+  overflow: auto;
+  padding: 4px 18px 12px;
+}
+.efas-finder .efas-zoom-foot {
+  border-top: 1px solid #e5e7eb;
 }

@@ -19,6 +19,7 @@ import {
   findOrdersByNumbers,
   getEasyformCandidates,
   getEstimate,
+  searchEasyformOrders,
   syncEstimateFromEasyform,
   type EasyformCandidateOrder,
 } from './annot/api';
@@ -153,15 +154,27 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   // 추가 발주를 같이 끊는 경우가 있어 날짜보다 거래처로 찾고, 다른 거래처를 같이 끊는 일은 없음(사용자 2026-11-20).
   const [clientDays, setClientDays] = useState(60);
   const [q, setQ] = useState('');
-  const searchRef = useRef<HTMLInputElement>(null);
-  /** [＋ 다른 지시서 추가] — 목록에 없으면 다른 거래처·30일까지 넓히고 찾기 칸으로(사용자 2026-11-26) */
+  // [＋ 다른 지시서 추가] 찾기 창 — 거래처·날짜 상관없이 거래처명/주문번호/제목으로(사용자 2026-11-26)
+  const [finder, setFinder] = useState(false);
+  const [fq, setFq] = useState('');
+  const [found, setFound] = useState<EasyformCandidateOrder[] | null>(null);
+  const [finding, setFinding] = useState(false);
   const openAddSearch = () => {
-    setShowAll(true);
-    setDays((d) => Math.max(d, 30));
-    setTimeout(() => {
-      searchRef.current?.focus();
-      searchRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }, 0);
+    setFinder(true);
+    setFound(null);
+    setFq('');
+  };
+  const runFind = async () => {
+    const t = fq.trim();
+    if (!t) return;
+    setFinding(true);
+    try {
+      setFound(await searchEasyformOrders(tk, t));
+    } catch {
+      setFound([]);
+    } finally {
+      setFinding(false);
+    }
   };
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null); // 추가한 줄 고르기(하나)
   const [extra, setExtra] = useState<EasyformCandidateOrder[]>([]); // 고르기·확인 화면에서 고른 지시서(여럿 = 묶기)
@@ -886,55 +899,38 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                   </>
                 )}
               </span>
-              <input
-                ref={searchRef}
-                className="efas-search"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="거래처·주문번호 찾기"
-                aria-label="거래처나 주문번호로 지시서 찾기"
-              />
             </div>
             {cands === null ? (
               <p className="efas-empty">지시서를 찾는 중…</p>
-            ) : visible.length || (phase === 'confirm' && linked?.length) ? (
+            ) : (
               // 명세서 탭(관리자 주문 목록) 카드와 같은 모양 — 눈에 익어 고르기 쉽게(사용자 2026-11-24).
               // FS·폴더·공유·명세서 버튼은 없이 카드만. 누르면 고르고(파란 테두리), 아래 [반영하기].
+              // 목록에 없는 지시서는 끝의 [＋ 다른 지시서 추가] 카드로 찾아서(거래처·날짜 무관) 더한다(사용자 2026-11-26).
               <div className="order-card-grid efas-cards">
                 {phase === 'confirm' && (linked || []).map((o) => card(o, true))}
+                {extra.filter((o) => !visible.slice(0, 24).some((r) => r.o.id === o.id)).map((o) => card(o))}
                 {visible.slice(0, 24).map(({ o }) => card(o))}
                 {(phase === 'confirm' || phase === 'pick') && (
-                  <button type="button" className="order-card efas-addcard" onClick={openAddSearch}>
-                    <span className="efas-addcard-plus" aria-hidden="true">＋</span>
-                    <b>다른 지시서 추가</b>
-                    <span>목록에 없으면 눌러서 거래처·주문번호로 찾아요</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              <p className="efas-empty">
-                {q ? '찾는 지시서가 없어요.' : phase === 'added' ? '같은 거래처 지시서가 없어요.' : '지시서가 없어요.'}
-              </p>
-            )}
-            {phase === 'added' ? (
-              <div className="efas-wider">
-                {clientDays < 120 && (
-                  <button type="button" onClick={() => setClientDays(120)}>
-                    날짜 넓혀 보기
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="efas-wider">
-                {!q && hiddenCount > 0 && (
-                  <button type="button" onClick={() => setShowAll(true)}>
-                    다른 거래처도 보기
-                  </button>
-                )}
-                {days < 30 && (
-                  <button type="button" onClick={() => setDays(30)}>
-                    날짜 넓혀 보기
-                  </button>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className="order-card order-card--order efas-addcard"
+                    onClick={openAddSearch}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openAddSearch();
+                      }
+                    }}
+                  >
+                    <div className="order-card-thumb-wrap efas-addcard-thumb">
+                      <span className="efas-addcard-plus" aria-hidden="true">＋</span>
+                    </div>
+                    <div className="order-card-body">
+                      <h3 className="order-card-title">다른 지시서 추가</h3>
+                      <p className="efas-addcard-sub">거래처·날짜 상관없이 찾아서 추가해요</p>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -1069,6 +1065,53 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               </button>
               <button type="button" className="efas-ask-no" onClick={() => setAsk(null)}>
                 아니요
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {finder && (
+        // [＋ 다른 지시서 추가] — 거래처명·주문번호·제목으로 찾아 카드를 눌러 고르기(여러 개 가능)
+        <div className="efas-zoom efas-finder" role="dialog" aria-modal="true" aria-label="다른 지시서 찾기">
+          <div className="efas-finder-card">
+            <div className="efas-finder-head">
+              <b>다른 지시서 찾기</b>
+              <button type="button" className="efas-x" onClick={() => setFinder(false)} aria-label="닫기">
+                ✕
+              </button>
+            </div>
+            <form
+              className="efas-finder-bar"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void runFind();
+              }}
+            >
+              <input
+                autoFocus
+                value={fq}
+                onChange={(e) => setFq(e.target.value)}
+                placeholder="거래처명, 주문번호, 제목 (예: 숨 / 261124-11)"
+                aria-label="거래처명이나 주문번호로 지시서 찾기"
+              />
+              <button type="submit" className="efas-btn primary" disabled={!fq.trim() || finding}>
+                {finding ? '찾는 중…' : '찾기'}
+              </button>
+            </form>
+            <div className="efas-finder-body">
+              {found === null ? (
+                <p className="efas-empty">거래처명이나 주문번호를 넣고 [찾기]를 눌러주세요. 날짜·거래처 상관없이 찾아요.</p>
+              ) : found.filter((o) => !ev.nos.includes(orderNoCore(o.orderNumber))).length === 0 ? (
+                <p className="efas-empty">찾는 지시서가 없어요.</p>
+              ) : (
+                <div className="order-card-grid efas-cards">
+                  {found.filter((o) => !ev.nos.includes(orderNoCore(o.orderNumber))).map((o) => card(o))}
+                </div>
+              )}
+            </div>
+            <div className="efas-zoom-foot">
+              <button type="button" className="efas-btn primary" onClick={() => setFinder(false)}>
+                {extra.length ? `고른 지시서 ${extra.length}개로 돌아가기` : '닫기'}
               </button>
             </div>
           </div>

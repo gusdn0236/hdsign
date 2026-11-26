@@ -663,6 +663,16 @@ export interface EasyformCandidateOrder {
   deletedAt?: string | null;
 }
 
+/** 이지폼 저장 반영 [＋ 다른 지시서 추가] — 거래처명/주문번호/제목으로 찾기(거래처·날짜 무관, 최신 60건). */
+export async function searchEasyformOrders(token: string | null | undefined, q: string): Promise<EasyformCandidateOrder[]> {
+  const res = await fetch(`${BASE_URL}/api/admin/orders/estimate/easyform-search?q=${encodeURIComponent(q)}`, {
+    headers: authHeaders(token),
+  });
+  if (!res.ok) throw new Error(`지시서를 못 찾았어요 (${res.status})`);
+  const j = await res.json();
+  return Array.isArray(j?.items) ? j.items : [];
+}
+
 /** 주문번호들 → 지시서 카드(3년 보관분 전체). 명세서 탭 똑똑한 검색과 같은 API(주문번호만). */
 export async function findOrdersByNumbers(
   token: string | null | undefined,

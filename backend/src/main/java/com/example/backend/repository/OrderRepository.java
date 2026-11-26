@@ -72,6 +72,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     // 명세서 탭 똑똑한 검색 — 주문번호 칩만 있을 때(부분일치, 최신 등록순 300건).
     List<Order> findTop300ByOrderNumberContainingOrderByCreatedAtDesc(String part);
 
+    // 이지폼 저장 반영 [＋ 다른 지시서 추가] 찾기 — 거래처명/제목 부분일치(최신 등록순 200건, 날짜 무관).
+    List<Order> findTop200ByClient_CompanyNameContainingIgnoreCaseOrderByCreatedAtDesc(String part);
+    List<Order> findTop200ByTitleContainingIgnoreCaseOrderByCreatedAtDesc(String part);
+
     // 백필 — worksheetPdfUrl 은 있는데 worksheetThumbnailUrl 이 비어있는 주문.
     // admin POST /backfill-worksheet-thumbnails 에서 페이지 단위로 처리.
     List<Order> findByWorksheetPdfUrlIsNotNullAndWorksheetThumbnailUrlIsNullOrderByCreatedAtDesc(
