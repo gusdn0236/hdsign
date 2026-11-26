@@ -9048,10 +9048,18 @@ class App(tk.Tk):
         try:
             if old and u32.IsIconic(old[0]):
                 # 옛 창이 최소화였으면([업데이트하기] → 예 = 최소화) 새 창도 **포커스 없이** 최소화로 + 작업표시줄 깜빡임
-                # (사용자 2026-11-26: 끝난 걸 작업표시줄 색으로 알게). Tk iconify 는 활성화될 수 있어 직접 SW_SHOWMINNOACTIVE.
+                # (사용자 2026-11-26: 끝난 걸 작업표시줄 색으로 알게 — **작업표시줄엔 꼭 떠 있어야 함**).
+                # ⚠ 밖에서 ShowWindow(SW_SHOWMINNOACTIVE) 하면 Tk 는 '숨김'으로 알고 다시 숨겨 작업표시줄에서 사라졌음
+                #   (사용자 2026-11-26 보고) → Tk iconify 로 내리되, 그동안만 '활성화 불가'를 붙여 포커스 안 뺏고,
+                #   APPWINDOW 를 붙여 작업표시줄 버튼을 강제로 둠. 1.5초 뒤 안 보이면 한 번 더 내림.
                 self.update_idletasks()
                 frame = int(self.wm_frame(), 16)
-                u32.ShowWindow(frame, 7)  # SW_SHOWMINNOACTIVE
+                u32.GetWindowLongW.restype = ctypes.c_long
+                ex = u32.GetWindowLongW(frame, -20)  # GWL_EXSTYLE
+                u32.SetWindowLongW(frame, -20, ex | 0x08000000 | 0x00040000)  # WS_EX_NOACTIVATE | WS_EX_APPWINDOW
+                self.iconify()
+                self.after(1000, lambda: u32.SetWindowLongW(frame, -20, ex | 0x00040000))
+                self.after(1500, lambda: self._ensure_on_taskbar(frame))
                 _flash_taskbar(frame)
                 _give_focus_back()
                 return
@@ -9064,15 +9072,30 @@ class App(tk.Tk):
             # (Tk deiconify 는 자기 창을 활성화해서 안 씀. 실측: 이 방식은 Tk 상태도 'normal' 로 맞게 따라옴)
             u32.GetWindowLongW.restype = ctypes.c_long
             ex = u32.GetWindowLongW(frame, -20)  # GWL_EXSTYLE
-            u32.SetWindowLongW(frame, -20, ex | 0x08000000)  # WS_EX_NOACTIVATE
+            # NOACTIVATE 창은 작업표시줄 버튼이 안 생겨서 APPWINDOW 를 같이 붙여 둠(계속 유지)
+            u32.SetWindowLongW(frame, -20, ex | 0x08000000 | 0x00040000)  # WS_EX_NOACTIVATE | WS_EX_APPWINDOW
             # 옛 창 바로 뒤(z순서) — 옛 창이 꺼지기 전까지는 가려져 안 보임. 못 찾으면 맨 뒤.
             # SWP_NOSIZE|NOMOVE|NOACTIVATE|SHOWWINDOW
             u32.SetWindowPos(frame, old[0] if old else 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
-            self.after(1000, lambda: u32.SetWindowLongW(frame, -20, ex))
+            self.after(1000, lambda: u32.SetWindowLongW(frame, -20, ex | 0x00040000))
             _flash_taskbar(frame)
             _give_focus_back()
         except Exception:
             self.deiconify()
+
+    def _ensure_on_taskbar(self, frame: int):
+        """업데이트 후 최소화로 켠 새 창이 작업표시줄에서 사라졌으면(숨김) 다시 최소화로 — 포커스는 안 뺏음."""
+        try:
+            u32 = ctypes.windll.user32
+            if not u32.IsWindowVisible(frame):
+                u32.GetWindowLongW.restype = ctypes.c_long
+                ex = u32.GetWindowLongW(frame, -20)
+                u32.SetWindowLongW(frame, -20, ex | 0x08000000 | 0x00040000)
+                self.iconify()
+                self.after(1000, lambda: u32.SetWindowLongW(frame, -20, ex | 0x00040000))
+                _flash_taskbar(frame)
+        except Exception:
+            pass
 
     # ── layout ──
 
