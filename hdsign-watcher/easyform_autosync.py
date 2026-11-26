@@ -419,13 +419,20 @@ def _read_saved(main, form) -> "dict | None":
             except Exception:
                 logging.exception("이지폼 저장 자동반영 — 번호 맨 위로 옮기기 실패(그대로 반영)")
     except bulk.Stop as e:
-        ef.ef_messagebox(f"명세서를 다 못 읽어서 홈페이지에 반영 안 했어요.\n{e}", "홈페이지 반영")
-        return None
-    finally:
+        # 잠금·가림을 **먼저** 풀고 알림(사용자 2026-11-26: [정지]/ESC 뒤 '멈췄어요' 창을 닫아야 잠금이 풀렸음 —
+        # 알림창은 닫힐 때까지 기다리는 창이라, 예전엔 그동안 잠금이 그대로였다)
         done.set()
         ef.ef_guard_stop()
         _overlay(None)
         bulk._ABORT.clear()
+        ef.ef_messagebox(f"명세서를 다 못 읽어서 홈페이지에 반영 안 했어요.\n{e}", "홈페이지 반영")
+        return None
+    finally:
+        if not done.is_set():
+            done.set()
+            ef.ef_guard_stop()
+            _overlay(None)
+            bulk._ABORT.clear()
     biz, name = _biz_of(main)
     client, biz_no = _client_from_list(main, date, total, rows)
     logging.info("이지폼 저장 자동반영 — 읽음 %s %s원 거래처(목록)='%s' %s %d줄 비고번호=%s",
