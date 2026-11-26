@@ -2244,6 +2244,16 @@ def _get_kakao_enabled() -> bool:
     return bool(_load_config().get("kakao_auto_send")) and bool(_get_kakao_rooms())
 
 
+def _get_kakao_no_ask() -> bool:
+    return bool(_load_config().get("kakao_no_ask"))
+
+
+def _set_kakao_no_ask(on: bool) -> None:
+    cfg = _load_config()
+    cfg["kakao_no_ask"] = bool(on)
+    _save_config(cfg)
+
+
 def _set_kakao_enabled(enabled: bool) -> None:
     cfg = _load_config()
     cfg["kakao_auto_send"] = bool(enabled)
@@ -2397,18 +2407,20 @@ def _ask_kakao_send_blocking(rooms: list[str], company: str,
 
 
 def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
-                            done_title: str = "", done_body: str = "", warn: bool = False) -> None:
+                            done_title: str = "", done_body: str = "", warn: bool = False,
+                            ask: bool = True) -> list[str]:
     """웹반영 끝난 지시서를 고른 카톡방에 보냄. 켜져 있을 때만. 실패하면 알림만(인쇄 흐름엔 영향 없음).
-    done_* = 매크로 끝 완료 알림 내용 — 그 알림창에 질문을 같이 붙여 한 번에 묻는다."""
+    done_* = 매크로 끝 완료 알림 내용 — 그 알림창에 질문을 같이 붙여 한 번에 묻는다.
+    ask=False = [자동] 체크 — 묻지 않고 바로 보냄. 반환 = 보낸 방 목록."""
     if not _get_kakao_enabled():
-        return
+        return []
     rooms = _get_kakao_rooms()
     company = _homepage_company_name(order_number)
     text = company or order_number
     # 보내기 전에 묻기(사용자 2026-11-26) — "카톡방 'HD사인'에도 작업지시서를 전달할까요?" [예]/[아니오]
-    if not _ask_kakao_send_blocking(rooms, text, done_title, done_body, warn):
+    if ask and not _ask_kakao_send_blocking(rooms, text, done_title, done_body, warn):
         ui_log(f"카톡 보내기 — 아니오 선택 ({text})")
-        return
+        return []
     img = None
     reasons: list[str] = []
     try:
@@ -2448,6 +2460,7 @@ def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
                "카톡이 켜져 있고 로그인돼 있는지, 방 이름이 바뀌지 않았는지 확인해주세요.")
         detail = f"주문번호: {order_number}\n결과: {results}"
         _ui_queue.put(("run", lambda m=msg, d=detail: _show_fail_copy_dialog("카톡 보내기 실패", m, d)))
+    return ok
 
 
 def open_kakao_room_dialog(app) -> None:
@@ -7087,7 +7100,17 @@ def _process_printed_pdf(pdf_path: Path):
             ops_msg = f"웹 반영 + 종이 인쇄 완료 ({copies}장)."
         else:
             ops_msg = "웹 반영 완료 (종이 인쇄 없이 업로드만 진행)."
-        if _get_kakao_enabled():
+        if _get_kakao_enabled() and _get_kakao_no_ask():
+            # [자동] — 묻지 않고 먼저 보내고, 평소 완료 알림에 결과 한 줄(실패는 따로 실패 알림창).
+            try:
+                sent = send_worksheet_to_kakao(order_number, pdf_path, ask=False)
+            except Exception as e:
+                ui_log(f"카톡 보내기 예외(무시): {e}")
+                sent = []
+            if sent:
+                ops_msg += "\n카톡 전송까지 완료했어요."
+            _show_combined_done_modal(alert_kind, ops_msg)
+        elif _get_kakao_enabled():
             # 카톡 전달 켜져 있으면 — 이 마지막 완료 알림창에 "카톡방에도 전달할까요?" 를 같이 붙여 한 번에(사용자 2026-11-26).
             d_title, d_body, d_warn = _combined_done_text(alert_kind, ops_msg)
             try:
@@ -9348,6 +9371,21 @@ class App(tk.Tk):
         self._kakao_rooms_lbl = tk.Label(kakao_row, text="", bg=self.CARD, fg="#a1a1aa",
                                          font=("맑은 고딕", 8), anchor="w")
         self._kakao_rooms_lbl.pack(side="left", padx=(6, 0))
+        # 자동 — 다음부터 묻지 않고 바로 전송(사용자 2026-11-26). 위 체크가 꺼져 있으면 비활성.
+        auto_row = tk.Frame(self._card, bg=self.CARD)
+        auto_row.pack(fill="x", padx=(44, 24), pady=(2, 0))
+        self._kakao_auto_var = tk.BooleanVar(value=_get_kakao_no_ask())
+        self._kakao_auto_cb = tk.Checkbutton(
+            auto_row, text="자동(다음부터 물어보지 않고 전송해요)",
+            variable=self._kakao_auto_var,
+            bg=self.CARD, fg="#3f3f46", disabledforeground="#c4c4c8",
+            activebackground=self.CARD,
+            selectcolor=self.CARD,
+            font=("맑은 고딕", 9),
+            bd=0, highlightthickness=0,
+            command=lambda: _set_kakao_no_ask(bool(self._kakao_auto_var.get())),
+        )
+        self._kakao_auto_cb.pack(side="left")
         self.refresh_kakao_label()
 
         # 새 발주/견적 알림 토글 — config.json 에 영속. 폴러 스레드가 매 사이클 _get_notify_enabled 를 읽어
@@ -9547,6 +9585,10 @@ class App(tk.Tk):
                 t = t[:33] + "…"
         self._kakao_rooms_lbl.config(text=t)
         self._kakao_var.set(_get_kakao_enabled())
+        try:
+            self._kakao_auto_cb.config(state="normal" if _get_kakao_enabled() else "disabled")
+        except Exception:
+            pass
 
     def _test_alert(self):
         """[테스트] 버튼 — 실제 폴러를 거치지 않고 알림 표시만 즉시 확인."""
