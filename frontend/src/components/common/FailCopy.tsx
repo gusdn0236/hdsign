@@ -3,7 +3,7 @@
  * 내용은 utils/failReport 참고. 화면엔 로그를 안 띄우고 복사만 한다(사용자 2026-11-25).
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { FAIL_COPY_GUIDE, copyText, onFail, prepareFailReport } from '../../utils/failReport';
+import { FAIL_COPY_GUIDE, copyText, isExpectedMiss, onFail, prepareFailReport } from '../../utils/failReport';
 
 export function FailCopyButton({ title, msg = '', className, style }: { title: string; msg?: string; className?: string; style?: CSSProperties }) {
   const rep = useRef<{ text: string } | null>(null);
@@ -12,6 +12,8 @@ export function FailCopyButton({ title, msg = '', className, style }: { title: s
     rep.current = prepareFailReport(title, msg);
     setDone(false);
   }, [title, msg]);
+  // 못 찾음·취소 같은 정상 결과는 버그가 아니라 버튼 안 띄움(사용자 2026-11-26)
+  if (isExpectedMiss(title, msg)) return null;
   return (
     <button
       type="button"

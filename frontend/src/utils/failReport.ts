@@ -146,3 +146,15 @@ export function copyText(text: string): boolean {
 }
 
 export const FAIL_COPY_GUIDE = '[실패 원인 복사하기]를 눌러서 담당자(현우)에게 카톡으로 붙여넣어 전달해주세요.';
+
+/**
+ * 정상적인 결과(못 찾음·취소·프로그램 안 켜짐 등)인지 — 이런 건 버그가 아니라 [실패 원인 복사하기]를 안 띄운다
+ * (사용자 2026-11-26: "이지폼에서 열기 찾기 실패는 정상 루트, 실제 시스템 오류·버그일 때만").
+ * 단, 오류/예외/HTTP 코드/멈춤 같은 시스템 흔적이 같이 있으면 버그로 본다.
+ */
+const EXPECTED_RE = /못 찾|찾지 못|찾을 수 없|켜져 있지 않|취소했|취소됐/;
+const SYSTEM_RE = /오류|에러|error|exception|예외|traceback|HTTP\s?\d{3}|시간 초과|timeout|멈췄|옛 버전|failed to fetch|구조/i;
+export function isExpectedMiss(...texts: (string | undefined | null)[]): boolean {
+  const t = texts.filter(Boolean).join(' ');
+  return EXPECTED_RE.test(t) && !SYSTEM_RE.test(t);
+}

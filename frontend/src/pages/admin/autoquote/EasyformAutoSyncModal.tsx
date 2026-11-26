@@ -33,7 +33,7 @@ import {
 import { bandOwners, clientSim, efRowsToGrid, normClient, rememberClientAlias } from './data/efMatch';
 import './EasyformAutoSync.css';
 import { FailCopyButton } from '../../../components/common/FailCopy';
-import { FAIL_COPY_GUIDE } from '../../../utils/failReport';
+import { FAIL_COPY_GUIDE, isExpectedMiss } from '../../../utils/failReport';
 
 // 추가한 줄 묻기 때 뒤에 '그 명세서' 화면을 미리보기로 깐다(사용자 2026-11-20: 명세서를 열어 추가된 줄 표시)
 const AutoQuote = lazy(() => import('./AutoQuote'));
@@ -937,7 +937,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             </p>
             {msg.sub && <p className="efas-result-sub">{msg.sub}</p>}
             {msg.warn && <p className="efas-result-warn">{msg.warn}</p>}
-            {(phase === 'error' || msg.warn) && (
+            {(phase === 'error' || msg.warn) && !isExpectedMiss(msg.main, msg.sub, msg.warn) && (
               <div className="efas-failcopy">
                 <FailCopyButton title={`이지폼 저장 반영 — ${msg.main}`} msg={[msg.sub, msg.warn].filter(Boolean).join(' / ')} />
                 <span>{FAIL_COPY_GUIDE}</span>

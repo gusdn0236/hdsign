@@ -2473,7 +2473,14 @@ def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
         msg = (f"'{text}' 지시서를 아래 카톡방에 못 보냈어요. 직접 올려주세요.\n\n{lines}\n\n"
                "카톡이 켜져 있고 로그인돼 있는지, 방 이름이 바뀌지 않았는지 확인해주세요.")
         detail = f"주문번호: {order_number}\n결과: {results}"
-        _ui_queue.put(("run", lambda m=msg, d=detail: _show_fail_copy_dialog("카톡 보내기 실패", m, d)))
+        # 방 못 찾음·로그인 안 됨·ESC 중단·다른 창 끼어듦 = 정상적인 상황 → 안내만. 그 밖(클립보드·전송창 안 뜸·
+        # 모듈/사진 실패 등 시스템 오류)일 때만 [실패 원인 복사하기](사용자 2026-11-26).
+        _normal = all(re.search(r"못 열었어요|검색칸을 못 찾음|개 열려 있어요|다른 창이 앞으로|ESC 로 중단|안 켜져 있음", w or "")
+                      for _, w in bad)
+        if _normal:
+            _ui_queue.put(("run", lambda m=msg: messagebox.showwarning("카톡 보내기", m)))
+        else:
+            _ui_queue.put(("run", lambda m=msg, d=detail: _show_fail_copy_dialog("카톡 보내기 실패", m, d)))
     return ok
 
 

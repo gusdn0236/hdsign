@@ -61,10 +61,10 @@ import {
   type EfPushRow,
   type EfListRow,
 } from './data/easyformClient';
-import { copyText, prepareFailReport } from '../../../utils/failReport';
+import { copyText, isExpectedMiss, prepareFailReport } from '../../../utils/failReport';
 import { FailCopyButton } from '../../../components/common/FailCopy';
 
-const FAIL_RE = /실패|못했어요|못 열었어요|못 찾았어요|오류|멈췄어요|안 됐어요/;
+const FAIL_RE = /실패|못했어요|못 열었어요|오류|멈췄어요|안 됐어요/; // '못 찾았어요'=정상 결과(isExpectedMiss)
 import EasyformNewFill, { type EfClientChoice } from './EasyformNewFill';
 import { learnFromLists } from './data/efLearn';
 import { normClue, rankByClues } from './data/clueMatch';
@@ -784,6 +784,16 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 창을 띄울 때 워처 기록을 미리 받아 둔다(버튼 누른 순간 바로 복사되게 — 늦게 받으면 브라우저가 복사를 막음).
   const efLogRef = useRef<{ text: string } | null>(null);
   const efFail = (title: string, msg: string, note: string, buttons: DialogButton[]) => {
+    // 못 찾음·취소 같은 정상 결과 → 그냥 안내만(복사 버튼·담당자 안내 없음). 시스템 오류일 때만 복사(사용자 2026-11-26)
+    if (isExpectedMiss(title, msg)) {
+      cdlg(
+        `<b style="font-size:15px">${escH(title)}</b>` +
+          `<div style="font-size:13px;margin-top:8px;line-height:1.6">${escH(msg)}</div>` +
+          (note ? `<div style="font-size:12px;color:#6b7785;margin-top:6px">${note}</div>` : ''),
+        buttons.length ? buttons : [{ label: '확인', sec: true }],
+      );
+      return;
+    }
     efLogRef.current = prepareFailReport(title, msg, `주문: ${order?.orderNumber || '-'} · ${order?.clientCompanyName || ''}`);
     cdlg(
       `<b style="font-size:15px">${escH(title)}</b>` +
