@@ -2225,6 +2225,302 @@ def _set_notify_sound_enabled(enabled: bool) -> None:
     _save_config(cfg)
 
 
+# ── 카톡 자동 보내기(사용자 2026-11-26) ──────────────────────────────────────────
+# 지시서 웹반영(인쇄)이 끝나면 PC 카톡의 고른 방(1개+)에 '지시서 사진 + 거래처명'. PC마다 각자 설정(config.json).
+# 카톡 꺼짐·로그아웃·업데이트로 창 인식 실패·방 이름 바뀜 → 안 보내고 알림만(사용자 요청).
+
+def _get_kakao_rooms() -> list[str]:
+    rooms = _load_config().get("kakao_rooms") or []
+    return [str(r).strip() for r in rooms if str(r).strip()]
+
+
+def _set_kakao_rooms(rooms: list[str]) -> None:
+    cfg = _load_config()
+    cfg["kakao_rooms"] = list(rooms)
+    _save_config(cfg)
+
+
+def _get_kakao_enabled() -> bool:
+    return bool(_load_config().get("kakao_auto_send")) and bool(_get_kakao_rooms())
+
+
+def _set_kakao_enabled(enabled: bool) -> None:
+    cfg = _load_config()
+    cfg["kakao_auto_send"] = bool(enabled)
+    _save_config(cfg)
+
+
+def _kakao_log(msg: str) -> None:
+    _diag_log(f"[카톡] {msg}")
+
+
+def _show_fail_copy_dialog(title: str, message: str, detail: str) -> None:
+    """실패 알림 + [📋 실패 원인 복사하기] — 담당자(현우)에게 카톡으로 보내게. UI 스레드에서 호출."""
+    try:
+        win = tk.Toplevel()
+        win.title(title)
+        win.configure(bg="#ffffff")
+        win.resizable(False, False)
+        try:
+            win.attributes("-topmost", True)
+        except Exception:
+            pass
+        frm = tk.Frame(win, bg="#ffffff")
+        frm.pack(padx=24, pady=20, fill="both")
+        tk.Label(frm, text=title, bg="#ffffff", fg="#dc2626", font=("맑은 고딕", 12, "bold"),
+                 anchor="w").pack(fill="x")
+        tk.Label(frm, text=message, bg="#ffffff", fg="#18181b", font=("맑은 고딕", 10),
+                 justify="left", anchor="w", wraplength=420).pack(fill="x", pady=(8, 10))
+        tk.Label(frm, text="계속 안 되면 아래 버튼으로 실패 원인을 복사해서 담당자(현우)에게 카톡으로 보내주세요.",
+                 bg="#ffffff", fg="#71717a", font=("맑은 고딕", 8), justify="left", anchor="w",
+                 wraplength=420).pack(fill="x", pady=(0, 12))
+        btns = tk.Frame(frm, bg="#ffffff")
+        btns.pack(fill="x")
+        copy_btn = tk.Button(btns, text="📋 실패 원인 복사하기", font=("맑은 고딕", 9),
+                             bg="#f4f4f5", fg="#18181b", relief="flat", bd=0, padx=12, pady=7, cursor="hand2")
+
+        def _copy():
+            report = (f"[{title}]\n{message}\n\n시각: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                      f"PC: {os.environ.get('COMPUTERNAME', '')}\n\n{detail}")
+            win.clipboard_clear()
+            win.clipboard_append(report)
+            copy_btn.config(text="✓ 복사됨")
+
+        copy_btn.config(command=_copy)
+        copy_btn.pack(side="left")
+        tk.Button(btns, text="확인", font=("맑은 고딕", 9, "bold"), bg="#18181b", fg="white",
+                  activebackground="#3f3f46", relief="flat", bd=0, padx=16, pady=7, cursor="hand2",
+                  command=win.destroy).pack(side="right")
+        win.bind("<Escape>", lambda _e: win.destroy())
+        win.update_idletasks()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
+    except Exception as e:
+        ui_log(f"실패 알림창 오류: {e}")
+
+
+def _ask_kakao_send_blocking(rooms: list[str], company: str) -> bool:
+    """작업 스레드에서 호출 — UI 스레드에 예/아니오 창을 띄우고 답을 기다림. Enter=예, ESC/X=아니오."""
+    holder: dict = {"v": False, "done": threading.Event()}
+
+    def _ask():
+        try:
+            win = tk.Toplevel()
+            win.title("카톡으로 전달")
+            win.configure(bg="#ffffff")
+            win.resizable(False, False)
+            try:
+                win.attributes("-topmost", True)
+            except Exception:
+                pass
+            frm = tk.Frame(win, bg="#ffffff")
+            frm.pack(padx=26, pady=22, fill="both")
+            room_txt = ", ".join(f"'{r}'" for r in rooms)
+            tk.Label(frm, text=f"카톡방 {room_txt}에도\n작업지시서를 전달할까요?", bg="#ffffff", fg="#18181b",
+                     font=("맑은 고딕", 13, "bold"), justify="left", anchor="w").pack(fill="x")
+            tk.Label(frm, text=f"지시서 사진 + '{company}'", bg="#ffffff", fg="#71717a",
+                     font=("맑은 고딕", 10), anchor="w").pack(fill="x", pady=(8, 16))
+            btns = tk.Frame(frm, bg="#ffffff")
+            btns.pack(fill="x")
+
+            def _close(v: bool):
+                holder["v"] = v
+                try:
+                    win.destroy()
+                except Exception:
+                    pass
+
+            tk.Button(btns, text="아니오", command=lambda: _close(False), font=("맑은 고딕", 10),
+                      bg="#e4e4e7", fg="#18181b", activebackground="#d4d4d8", relief="flat", bd=0,
+                      padx=18, pady=9, cursor="hand2").pack(side="right")
+            tk.Button(btns, text="예 — 보내기", command=lambda: _close(True), font=("맑은 고딕", 10, "bold"),
+                      bg="#fee500", fg="#3c1e1e", activebackground="#f5d800", relief="flat", bd=0,
+                      padx=18, pady=9, cursor="hand2").pack(side="right", padx=(0, 8))
+            win.protocol("WM_DELETE_WINDOW", lambda: _close(False))
+            win.bind("<Escape>", lambda _e: _close(False))
+            win.bind("<Return>", lambda _e: _close(True))
+            win.update_idletasks()
+            w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
+            try:
+                win.grab_set()
+                win.focus_force()
+            except Exception:
+                pass
+            win.wait_window()
+        except Exception as e:
+            ui_log(f"카톡 전달 확인창 오류: {e}")
+        finally:
+            holder["done"].set()
+
+    _ui_queue.put(("run", _ask))
+    holder["done"].wait()
+    return bool(holder["v"])
+
+
+def send_worksheet_to_kakao(order_number: str, pdf_path: Path) -> None:
+    """웹반영 끝난 지시서를 고른 카톡방에 보냄. 켜져 있을 때만. 실패하면 알림만(인쇄 흐름엔 영향 없음)."""
+    if not _get_kakao_enabled():
+        return
+    rooms = _get_kakao_rooms()
+    company = ""
+    try:
+        detail = fetch_public_worksheet_detail(order_number) or {}
+        company = (detail.get("companyName") or "").strip()
+    except Exception as e:
+        _kakao_log(f"거래처명 조회 실패 {order_number}: {e}")
+    text = company or order_number
+    # 보내기 전에 묻기(사용자 2026-11-26) — "카톡방 'HD사인'에도 작업지시서를 전달할까요?" [예]/[아니오]
+    if not _ask_kakao_send_blocking(rooms, text):
+        ui_log(f"카톡 보내기 — 아니오 선택 ({text})")
+        return
+    img = None
+    reasons: list[str] = []
+    try:
+        import kakao_notify
+    except Exception as e:
+        reasons.append(f"카톡 모듈 로드 실패: {e}")
+        kakao_notify = None  # type: ignore
+    if kakao_notify is not None:
+        try:
+            img = kakao_notify.render_pdf_image(
+                pdf_path, Path(tempfile.gettempdir()) / f"hdsign_kakao_{order_number}.jpg")
+        except Exception as e:
+            reasons.append(f"지시서 사진 만들기 실패: {e}")
+    if kakao_notify is None or img is None:
+        results = [(r, False, "; ".join(reasons)) for r in rooms]
+    else:
+        try:
+            import dxf_export as _dx
+            g_start, g_stop, g_abort = _dx.input_guard_start, _dx.input_guard_stop, _dx.input_guard_aborted
+        except Exception:
+            g_start = g_stop = g_abort = None
+        results = kakao_notify.send_worksheet(rooms, img, text, g_start, g_stop, g_abort)
+        try:
+            img.unlink()
+        except Exception:
+            pass
+    ok = [r for r, s, _ in results if s]
+    bad = [(r, why) for r, s, why in results if not s]
+    for r in ok:
+        ui_log(f"카톡 보냄: {r} ← {text}")
+    for r, why in bad:
+        ui_log(f"카톡 못 보냄: {r} — {why}")
+    _kakao_log(f"order={order_number} text={text!r} ok={ok} bad={bad}")
+    if bad:
+        lines = "\n".join(f"· {r}: {why}" for r, why in bad)
+        msg = (f"'{text}' 지시서를 아래 카톡방에 못 보냈어요. 직접 올려주세요.\n\n{lines}\n\n"
+               "카톡이 켜져 있고 로그인돼 있는지, 방 이름이 바뀌지 않았는지 확인해주세요.")
+        detail = f"주문번호: {order_number}\n결과: {results}"
+        _ui_queue.put(("run", lambda m=msg, d=detail: _show_fail_copy_dialog("카톡 보내기 실패", m, d)))
+
+
+def open_kakao_room_dialog(app) -> None:
+    """[알림카톡방 설정] — 지금 열려 있는 카톡방 중 체크 + 이름 직접 입력. PC마다 따로 저장."""
+    try:
+        import kakao_notify
+        open_rooms = kakao_notify.list_open_rooms()
+        running = kakao_notify.is_running()
+    except Exception:
+        kakao_notify = None  # type: ignore
+        open_rooms, running = [], False
+    saved = _get_kakao_rooms()
+
+    win = tk.Toplevel(app)
+    win.title("알림카톡방 설정")
+    win.configure(bg="#ffffff")
+    win.resizable(False, False)
+    win.transient(app)
+    frm = tk.Frame(win, bg="#ffffff")
+    frm.pack(padx=22, pady=18, fill="both")
+    tk.Label(frm, text="지시서를 보낼 카톡방", bg="#ffffff", fg="#18181b",
+             font=("맑은 고딕", 12, "bold"), anchor="w").pack(fill="x")
+    tk.Label(frm, text="인쇄(웹반영)가 끝나면 고른 방에 지시서 사진 + 거래처명을 보냅니다.\n"
+                       "방 이름은 카톡에 보이는 이름과 똑같아야 해요. 여러 개 골라도 돼요.",
+             bg="#ffffff", fg="#71717a", font=("맑은 고딕", 9), justify="left", anchor="w").pack(fill="x", pady=(4, 10))
+    if not running:
+        tk.Label(frm, text="⚠ 카카오톡이 안 켜져 있어요 — 켜고 로그인하면 열린 방 목록이 보여요.",
+                 bg="#ffffff", fg="#d97706", font=("맑은 고딕", 9), anchor="w").pack(fill="x", pady=(0, 8))
+
+    list_fr = tk.Frame(frm, bg="#fafafa", highlightbackground="#e4e4e7", highlightthickness=1)
+    list_fr.pack(fill="x")
+    vars_: dict[str, tk.BooleanVar] = {}
+
+    def _render():
+        for c in list_fr.winfo_children():
+            c.destroy()
+        names = list(dict.fromkeys(saved + open_rooms + [n for n in vars_ if n not in saved + open_rooms]))
+        if not names:
+            tk.Label(list_fr, text="열려 있는 카톡방이 없어요. 카톡에서 방을 열어두고 [새로고침] 하거나,\n아래에 방 이름을 직접 적어 추가하세요.",
+                     bg="#fafafa", fg="#a1a1aa", font=("맑은 고딕", 9), justify="left").pack(padx=12, pady=10, anchor="w")
+        for n in names:
+            v = vars_.setdefault(n, tk.BooleanVar(value=n in saved))
+            tag = "" if n in open_rooms else "  (지금 안 열려 있음 — 보낼 때 자동으로 열어요)"
+            tk.Checkbutton(list_fr, text=n + tag, variable=v, bg="#fafafa", activebackground="#fafafa",
+                           selectcolor="#ffffff", font=("맑은 고딕", 10), anchor="w",
+                           bd=0, highlightthickness=0).pack(fill="x", padx=10, pady=2)
+
+    def _refresh():
+        nonlocal open_rooms
+        try:
+            open_rooms = kakao_notify.list_open_rooms() if kakao_notify else []
+        except Exception:
+            open_rooms = []
+        _render()
+
+    _render()
+
+    add_fr = tk.Frame(frm, bg="#ffffff")
+    add_fr.pack(fill="x", pady=(10, 0))
+    ent = tk.Entry(add_fr, font=("맑은 고딕", 10), relief="solid", bd=1)
+    ent.pack(side="left", fill="x", expand=True, ipady=3)
+
+    def _add():
+        n = unicodedata.normalize("NFC", ent.get().strip())
+        if n:
+            vars_.setdefault(n, tk.BooleanVar(value=True)).set(True)
+            ent.delete(0, "end")
+            _render()
+
+    ent.bind("<Return>", lambda _e: _add())
+    tk.Button(add_fr, text="이름으로 추가", font=("맑은 고딕", 9), bg="#f4f4f5", relief="flat", bd=0,
+              padx=10, pady=4, cursor="hand2", command=_add).pack(side="left", padx=(6, 0))
+    tk.Button(add_fr, text="새로고침", font=("맑은 고딕", 9), bg="#f4f4f5", relief="flat", bd=0,
+              padx=10, pady=4, cursor="hand2", command=_refresh).pack(side="left", padx=(6, 0))
+
+    btns = tk.Frame(frm, bg="#ffffff")
+    btns.pack(fill="x", pady=(16, 0))
+
+    def _save():
+        chosen = [n for n, v in vars_.items() if v.get()]
+        _set_kakao_rooms(chosen)
+        if chosen:
+            _set_kakao_enabled(True)  # 방을 고르고 저장하면 켜짐(체크박스로 끌 수 있음)
+        else:
+            _set_kakao_enabled(False)
+        ui_log(f"알림카톡방 설정: {', '.join(chosen) or '(없음)'}")
+        try:
+            app.refresh_kakao_label()
+        except Exception:
+            pass
+        win.destroy()
+
+    tk.Button(btns, text="저장", font=("맑은 고딕", 10, "bold"), bg="#18181b", fg="white",
+              activebackground="#3f3f46", relief="flat", bd=0, padx=18, pady=7, cursor="hand2",
+              command=_save).pack(side="right")
+    tk.Button(btns, text="취소", font=("맑은 고딕", 10), bg="#e4e4e7", relief="flat", bd=0,
+              padx=14, pady=7, cursor="hand2", command=win.destroy).pack(side="right", padx=(0, 8))
+    win.bind("<Escape>", lambda _e: win.destroy())
+    win.update_idletasks()
+    w, h = max(440, win.winfo_reqwidth()), win.winfo_reqheight()
+    x = app.winfo_rootx() + (app.winfo_width() - w) // 2
+    y = app.winfo_rooty() + 60
+    win.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+    win.grab_set()
+
+
 def _fetch_admin_orders() -> list[dict] | None:
     """admin 토큰으로 /api/admin/orders 호출. 실패 시 None.
     백엔드가 createdAt 내림차순으로 반환하므로 첫 항목이 최신."""
@@ -6649,6 +6945,13 @@ def _process_printed_pdf(pdf_path: Path):
     # 처리 결과 알림 직전 — '웹에 반영 중' 창 닫고 결과 모달로 교체.
     _ui_queue.put(("run", _close_busy))
 
+    # 카톡방 자동 전달(켜져 있을 때만, 묻고 예일 때) — 웹반영 성공한 지시서만. 실패해도 아래 흐름엔 영향 없음.
+    if upload_ok:
+        try:
+            send_worksheet_to_kakao(order_number, pdf_path)
+        except Exception as e:
+            ui_log(f"카톡 보내기 예외(무시): {e}")
+
     # 처리 결과 알림 — 자동저장 결과까지 한 모달에 합쳐서 끝에 한 번만 띄움.
     if upload_ok:
         if print_done:
@@ -8830,36 +9133,31 @@ class App(tk.Tk):
         # Action row — 거래처 폴더 목록을 즉시 백엔드에 동기화 (관리자 모달 자동완성 용도)
         act = tk.Frame(self._card, bg=self.CARD)
         act.pack(fill="x", padx=24, pady=(12, 0))
-        sync_btn = tk.Button(
-            act, text="거래처 폴더 동기화",
+        # 개발자 탭(사용자 2026-11-26) — 평소 안 쓰는 설정 3개는 드롭다운 안으로.
+        dev_btn = tk.Menubutton(
+            act, text="개발자 ▾",
             bg="#f4f4f5", fg="#3f3f46",
             activebackground="#e4e4e7",
             font=("맑은 고딕", 9),
             relief="flat", bd=0, highlightthickness=0,
             cursor="hand2", padx=12, pady=6,
-            command=trigger_folder_sync_async,
         )
-        sync_btn.pack(side="left")
-        change_btn = tk.Button(
-            act, text="추적 폴더 변경",
-            bg="#f4f4f5", fg="#3f3f46",
-            activebackground="#e4e4e7",
-            font=("맑은 고딕", 9),
+        dev_menu = tk.Menu(dev_btn, tearoff=0, font=("맑은 고딕", 9))
+        dev_menu.add_command(label="거래처 폴더 동기화", command=trigger_folder_sync_async)
+        dev_menu.add_command(label="추적 폴더 변경", command=change_tracked_folder_async)
+        dev_menu.add_command(label="FlexSign 위치 지정", command=change_flexsign_path_async)
+        dev_btn.config(menu=dev_menu)
+        dev_btn.pack(side="left")
+        kakao_btn = tk.Button(
+            act, text="알림카톡방 설정",
+            bg="#fee500", fg="#3c1e1e",
+            activebackground="#f5d800",
+            font=("맑은 고딕", 9, "bold"),
             relief="flat", bd=0, highlightthickness=0,
             cursor="hand2", padx=12, pady=6,
-            command=change_tracked_folder_async,
+            command=lambda: open_kakao_room_dialog(self),
         )
-        change_btn.pack(side="left", padx=(8, 0))
-        flex_btn = tk.Button(
-            act, text="FlexSign 위치 지정",
-            bg="#f4f4f5", fg="#3f3f46",
-            activebackground="#e4e4e7",
-            font=("맑은 고딕", 9),
-            relief="flat", bd=0, highlightthickness=0,
-            cursor="hand2", padx=12, pady=6,
-            command=change_flexsign_path_async,
-        )
-        flex_btn.pack(side="left", padx=(8, 0))
+        kakao_btn.pack(side="left", padx=(8, 0))
         # 메인 액션 — 손작업 지시서를 위한 QR 코드를 인쇄 흐름과 무관하게 즉시 발급.
         # 액센트 컬러로 강조해 사장님/직원이 자주 쓰는 버튼임을 시각적으로 구분.
         qr_btn = tk.Button(
@@ -8882,6 +9180,25 @@ class App(tk.Tk):
         self._tracked_lbl.pack(fill="x", padx=24, pady=(6, 0))
         self._refresh_tracked_label()
 
+        # 카톡 자동 보내기 켜기/끄기 — 웹반영(인쇄) 끝나면 고른 방에 지시서 사진 + 거래처명.
+        kakao_row = tk.Frame(self._card, bg=self.CARD)
+        kakao_row.pack(fill="x", padx=24, pady=(8, 0))
+        self._kakao_var = tk.BooleanVar(value=_get_kakao_enabled())
+        tk.Checkbutton(
+            kakao_row, text="지시서 인쇄하면 카톡방에 자동 보내기",
+            variable=self._kakao_var,
+            bg=self.CARD, fg="#3f3f46",
+            activebackground=self.CARD,
+            selectcolor=self.CARD,
+            font=("맑은 고딕", 9),
+            bd=0, highlightthickness=0,
+            command=self._on_toggle_kakao,
+        ).pack(side="left")
+        self._kakao_rooms_lbl = tk.Label(kakao_row, text="", bg=self.CARD, fg="#a1a1aa",
+                                         font=("맑은 고딕", 8), anchor="w")
+        self._kakao_rooms_lbl.pack(side="left", padx=(6, 0))
+        self.refresh_kakao_label()
+
         # 새 발주/견적 알림 토글 — config.json 에 영속. 폴러 스레드가 매 사이클 _get_notify_enabled 를 읽어
         # 즉시 반영된다. 테스트 버튼은 사운드/배너 동작을 한 번 확인할 때 쓴다.
         notify_cfg = _load_config()
@@ -8892,8 +9209,9 @@ class App(tk.Tk):
             value=True if notify_cfg.get("notify_sound") is None
             else bool(notify_cfg.get("notify_sound")))
 
+        # 사용자 2026-11-26: [새 주문 알림]·[알림음]·[테스트] 는 화면에서 숨김(만들기만 하고 pack 안 함).
+        # 알림 자체는 저장된 설정(기본 켜짐)대로 계속 동작.
         notify_row = tk.Frame(self._card, bg=self.CARD)
-        notify_row.pack(fill="x", padx=24, pady=(10, 0))
 
         tk.Checkbutton(
             notify_row, text="🔔 새 주문 알림",
@@ -9055,6 +9373,29 @@ class App(tk.Tk):
 
     def _on_toggle_sound(self):
         _set_notify_sound_enabled(self._notify_sound_var.get())
+
+    # ── 카톡 자동 보내기 ──
+
+    def _on_toggle_kakao(self):
+        on = bool(self._kakao_var.get())
+        if on and not _get_kakao_rooms():
+            self._kakao_var.set(False)
+            messagebox.showinfo("알림카톡방 설정", "먼저 [알림카톡방 설정]에서 보낼 카톡방을 골라주세요.", parent=self)
+            open_kakao_room_dialog(self)
+            return
+        _set_kakao_enabled(on)
+        self.refresh_kakao_label()
+
+    def refresh_kakao_label(self):
+        rooms = _get_kakao_rooms()
+        if not rooms:
+            t = "(보낼 방 없음)"
+        else:
+            t = "→ " + ", ".join(rooms)
+            if len(t) > 34:
+                t = t[:33] + "…"
+        self._kakao_rooms_lbl.config(text=t)
+        self._kakao_var.set(_get_kakao_enabled())
 
     def _test_alert(self):
         """[테스트] 버튼 — 실제 폴러를 거치지 않고 알림 표시만 즉시 확인."""
