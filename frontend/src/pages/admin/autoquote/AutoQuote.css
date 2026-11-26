@@ -3012,3 +3012,11 @@ tr.efnew td:first-child {
 .aq-btn.ef.aq-btn-review:hover:not(:disabled) {
   background: #fef2f2;
 }
+.aq-btn.ef.aq-btn-review.on {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+.aq-btn.ef.aq-btn-review.on:hover:not(:disabled) {
+  background: #b91c1c;
+}

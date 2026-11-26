@@ -3925,6 +3925,11 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   background: #dc2626;
   box-shadow: 0 0 0 2.5px #fff, 0 3px 8px rgba(220, 38, 38, 0.35);
 }
+/* 작성완료 카드 — 초록 체크 바로 왼쪽에 나란히 */
+.oc2-review-mark--beside {
+  right: 22px;
+  z-index: 6;
+}
 .order-card--v2:hover .oc2-done-check {
   transform: translateY(-1px);
 }

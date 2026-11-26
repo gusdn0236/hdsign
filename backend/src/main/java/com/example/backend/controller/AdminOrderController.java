@@ -388,9 +388,23 @@ public class AdminOrderController {
         est.setGridJson(body.toString());
         est.setSavedAt(LocalDateTime.now());
         est.setEditorName(normalizeEditorName(editorName));
-        // [확인요청](review=true)만 켜고, 그 밖의 저장(일반 임시저장·이지폼 단계)은 끔 — 확인한 사람이 임시저장하면 풀림
-        est.setReviewRequested(Boolean.TRUE.equals(review) ? Boolean.TRUE : null);
+        // [확인요청] 켜고 저장(review=true)일 때만 켬. 일반 저장은 그대로 둠 — 끄기는 [확인요청] 토글 또는
+        // 이지폼 → 홈페이지 저장(easyform-sync)에서(사용자 2026-11-26)
+        if (Boolean.TRUE.equals(review)) est.setReviewRequested(Boolean.TRUE);
         return ResponseEntity.ok(estimateResponse(estimateRepository.save(est)));
+    }
+
+    /** [확인요청] 붙였다 떼기(사용자 2026-11-26) — 명세서 내용은 안 건드림. 명세서가 없으면 404(화면이 먼저 임시저장). */
+    @PutMapping("/{id}/estimate/review")
+    public ResponseEntity<?> setEstimateReview(@PathVariable Long id, @RequestParam boolean on) {
+        AutoQuoteEstimate est = estimateRepository.findByOrderId(id).orElse(null);
+        if (est == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "estimate_not_found", "message", "먼저 명세서를 저장해야 합니다."));
+        }
+        est.setReviewRequested(on ? Boolean.TRUE : null);
+        estimateRepository.save(est);
+        return ResponseEntity.ok(Map.of("orderId", id, "reviewRequested", on));
     }
 
     /** 작성자 표시이름 정리 — 공백 trim, 비면 null, 최대 30자. */
@@ -632,6 +646,7 @@ public class AdminOrderController {
         if (changed || est.getSavedAt() == null) est.setSavedAt(now);
         if (est.getEasyformUploadedAt() == null) est.setEasyformUploadedAt(now); // 이지폼에 있으니 완료
         if (editor != null) est.setEditorName(editor);
+        est.setReviewRequested(null); // 이지폼 → 홈페이지 저장 = 확인요청 풀림(사용자 2026-11-26)
         estimateRepository.save(est);
         // 딸린 주문 → 포인터. 카드엔 '명세서 완료' 배지가 똑같이 뜬다.
         for (Order o : orders.subList(1, orders.size())) {
@@ -646,6 +661,7 @@ public class AdminOrderController {
             p.setSavedAt(est.getSavedAt());
             p.setEasyformUploadedAt(est.getEasyformUploadedAt());
             if (editor != null) p.setEditorName(editor);
+            p.setReviewRequested(null);
             estimateRepository.save(p);
         }
         List<Map<String, Object>> linkedOut = new ArrayList<>();

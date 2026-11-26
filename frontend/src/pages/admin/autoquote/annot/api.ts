@@ -299,6 +299,7 @@ export interface OrderContext {
   worksheetObjectsUrl?: string | null;
   hasEstimate?: boolean;
   easyformUploadedAt?: string | null;
+  estimateReviewRequested?: boolean | null; // [확인요청] 켜짐(카드 빨간 느낌표)
   dueDate?: string | null; // 마감일 'YYYY-MM-DD' — [이지폼에서 찾기] 범위 기준
 }
 
@@ -360,6 +361,15 @@ export async function putEstimate(
   );
   if (!res.ok) throw new Error(`명세서 저장 실패 (${res.status})`);
   return res.json();
+}
+
+/** [확인요청] 붙였다 떼기 — 명세서 내용은 그대로. 명세서가 없으면 404(먼저 임시저장). */
+export async function setEstimateReview(token: string | null | undefined, orderId: number | string, on: boolean): Promise<void> {
+  const res = await fetch(
+    `${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate/review?on=${on ? 'true' : 'false'}`,
+    { method: 'PUT', headers: authHeaders(token) },
+  );
+  if (!res.ok) throw new Error(`확인요청 ${on ? '붙이기' : '떼기'} 실패 (${res.status})`);
 }
 
 export interface EasyformSyncResult {

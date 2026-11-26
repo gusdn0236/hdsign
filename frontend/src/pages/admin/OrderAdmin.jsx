@@ -282,7 +282,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   const markEstimateSaved = useCallback((id, review = false) => {
     const patch = (o) =>
       o.id === id
-        ? { ...o, hasEstimate: true, estimateEditorName: editorName || o.estimateEditorName, estimateReviewRequested: !!review }
+        ? { ...o, hasEstimate: true, estimateEditorName: editorName || o.estimateEditorName, ...(review ? { estimateReviewRequested: true } : {}) }
         : o;
     setOrders((prev) => prev.map(patch));
     setTrashOrders((prev) => prev.map(patch));
@@ -1933,7 +1933,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           : "none";
     const showStmtStatus = isStatementView || stmtState !== "none";
     // [확인요청] — 임시저장&확인필요(사용자 2026-11-26). 카드 색은 임시저장 그대로, 우측 상단 빨간 느낌표만.
-    const needsReview = stmtState === "draft" && !!order.estimateReviewRequested;
+    // 작성완료(초록)여도 느낌표만 붙음(사용자 2026-11-26)
+    const needsReview = (stmtState === "draft" || stmtState === "done") && !!order.estimateReviewRequested;
     const doneAt = easyformUploaded ? formatCardTime(order.easyformUploadedAt) : "";
     const dueBadge = getDueBadge(order.dueDate);
     const isLargePdf = order.worksheetPdfSize >= WORKSHEET_SIZE_WARN_BYTES;
@@ -1956,7 +1957,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
       >
         {/* 카드 바탕색·완료 체크는 명세서 탭에서만 (작업중·작업완료 탭은 흰 카드 그대로) */}
         {isStatementView && needsReview && (
-          <span className="oc2-done-check oc2-review-mark" title="임시저장 · 확인필요" aria-label="확인필요">
+          <span
+            className={`oc2-done-check oc2-review-mark${stmtState === "done" ? " oc2-review-mark--beside" : ""}`}
+            title="확인필요"
+            aria-label="확인필요"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 5v9" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" />
               <circle cx="12" cy="19" r="1.9" fill="currentColor" />
@@ -2072,7 +2077,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                     <circle cx="8" cy="8" r="8" fill="currentColor" />
                     <path d="M4.6 8.2l2.2 2.2 4.6-4.8" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  명세서 완료
+                  {needsReview ? "명세서 완료&확인필요" : "명세서 완료"}
                 </span>
               ) : stmtState === "draft" ? (
                 <span className="oc2-pill oc2-pill--draft" title={needsReview ? "임시저장 · 확인이 필요해요" : "명세서 임시저장됨 (아직 이지폼 미입력)"}>
@@ -3007,7 +3012,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           <circle cx="8" cy="8" r="8" fill="currentColor" />
                           <path d="M4.6 8.2l2.2 2.2 4.6-4.8" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
-                        명세서 완료{author ? ` · ${author}` : ""}
+                        {selectedOrder.estimateReviewRequested ? "명세서 완료&확인필요" : "명세서 완료"}{author ? ` · ${author}` : ""}
                       </span>
                     ) : selectedOrder.hasEstimate ? (
                       <span className="oc2-pill oc2-pill--draft" title="명세서 임시저장됨 (아직 이지폼 미입력)">
@@ -3547,6 +3552,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               onClose={() => setEstimateOrderId(null)}
               onOpenOrder={(id) => setEstimateOrderId(id)}
               onSaved={(review) => markEstimateSaved(estimateOrderId, review)}
+              onReview={(on) => {
+                const patch = (o) => (o.id === estimateOrderId ? { ...o, estimateReviewRequested: on } : o);
+                setOrders((prev) => prev.map(patch));
+                setTrashOrders((prev) => prev.map(patch));
+              }}
               onCleared={() => markEstimateCleared(estimateOrderId)}
               onEasyformUploaded={() => markEasyformDone(estimateOrderId)}
             />

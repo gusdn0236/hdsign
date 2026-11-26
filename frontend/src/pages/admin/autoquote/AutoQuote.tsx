@@ -27,6 +27,7 @@ import {
   getOrder,
   getEstimate,
   putEstimate,
+  setEstimateReview,
   uploadEstimateRefPhoto,
   deleteEstimate,
   markEasyformUploaded,
@@ -450,6 +451,8 @@ interface AutoQuoteProps {
   onClose?: () => void;
   /** 저장 성공 시 호출 — 부모가 주문 목록의 명세서 배지를 즉시 갱신. */
   onSaved?: (review?: boolean) => void;
+  /** [확인요청] 붙였다 뗐을 때 — 부모가 카드 느낌표를 바로 맞춤 */
+  onReview?: (on: boolean) => void;
   /** 명세서를 비워 임시저장을 해제했을 때 호출 — 부모가 '임시저장' 배지를 즉시 제거. */
   onCleared?: () => void;
   /** 이지폼 입력(확정) 시 호출 — 부모가 목록 카드의 '명세서작성완료' 배지를 즉시 점등(작업중·작업완료 양쪽). */
@@ -461,7 +464,7 @@ interface AutoQuoteProps {
   efPreview?: { rows: Record<string, string>[]; newRows: number[] };
 }
 
-export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCleared, onEasyformUploaded, onOpenOrder, efPreview }: AutoQuoteProps = {}) {
+export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onReview, onCleared, onEasyformUploaded, onOpenOrder, efPreview }: AutoQuoteProps = {}) {
   const efPreviewRef = useRef(efPreview);
   efPreviewRef.current = efPreview;
   const { token } = useAuth();
@@ -2959,6 +2962,24 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     return out;
   };
 
+  // [확인요청] 붙였다 떼기(사용자 2026-11-26) — 명세서가 아직 없으면 임시저장하면서 붙인다.
+  const reviewOn = !!order?.estimateReviewRequested;
+  const toggleReview = async () => {
+    if (!order) return;
+    if (!reviewOn && !order.hasEstimate) {
+      await save(true);
+      return;
+    }
+    try {
+      await setEstimateReview(token, order.id, !reviewOn);
+      setOrder((o) => (o ? { ...o, estimateReviewRequested: !reviewOn } : o));
+      onReview?.(!reviewOn);
+      if (!reviewOn) cdlg('확인요청 스티커를 붙여놓았어요.', [{ label: '확인' }]);
+      else setStatus('확인요청 스티커를 뗐어요');
+    } catch (e) {
+      cdlg(escH((e as Error).message), [{ label: '확인', sec: true }]);
+    }
+  };
   const save = async (review = false) => {
     if (!order) {
       cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
@@ -2998,11 +3019,9 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
       await putEstimate(token, order.id, { grid, total, savedFrom: 'autoquote', refPhotos }, review);
       setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
       onSaved?.(review);
+      if (review) setOrder((o) => (o ? { ...o, estimateReviewRequested: true } : o));
       cdlg(
-        (review
-          ? '확인요청과 함께 임시저장했어요. 카드에 “임시저장&확인필요”와 빨간 느낌표가 떠요.' +
-            '<br><span style="font-size:12px;color:#6b7785">확인한 사람이 [임시저장]이나 이지폼 작성을 하면 느낌표가 사라져요.</span>'
-          : '임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.') +
+        (review ? '확인요청 스티커를 붙여놓았어요.' : '임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.') +
           (refPhotos.length ? `<br><span style="font-size:12px;color:#6b7785">참고사진 ${refPhotos.length}장도 같이 저장했어요.</span>` : ''),
         [{ label: '확인' }],
       );
@@ -5195,12 +5214,17 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               <b>{total.toLocaleString()}원</b>
             </div>
             <button
-              className="aq-btn ef aq-btn-review"
-              onClick={() => void save(true)}
+              className={'aq-btn ef aq-btn-review' + (reviewOn ? ' on' : '')}
+              onClick={() => void toggleReview()}
               disabled={saving || !order}
-              title="임시저장하면서 카드에 빨간 느낌표(확인필요)를 달아요 — 다른 사람에게 확인을 부탁할 때"
+              aria-pressed={reviewOn}
+              title={
+                reviewOn
+                  ? '누르면 확인요청(카드 빨간 느낌표)을 떼요'
+                  : '카드에 빨간 느낌표(확인필요)를 붙여요 — 다른 사람에게 확인을 부탁할 때. 다시 누르면 떼요'
+              }
             >
-              확인요청
+              {reviewOn ? '❗ 확인요청 중' : '확인요청'}
             </button>
             <button className="aq-btn ef" onClick={() => void save()} disabled={saving || !order}>
               {saving ? '임시저장 중…' : '임시저장'}
