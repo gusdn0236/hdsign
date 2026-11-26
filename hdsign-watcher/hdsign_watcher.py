@@ -50,6 +50,7 @@ except Exception:  # noqa: BLE001 — certifi 미설치/번들 누락 시 시스
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import easyform  # 이지폼 자동기입(명세서 → 이지폼 셀 자동입력). 워처가 호스트(같은 프로세스).
+import self_update  # 껐다 켜지 않는 업데이트([업데이트하기])
 from pathlib import Path
 
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -295,7 +296,11 @@ def ui_log(msg: str):
     _ui_queue.put(("log", msg))
 
 
+_LAST_STATUS = ["starting"]  # 무중단 업데이트가 '하던 작업 있나' 볼 때(processing 이면 끝날 때까지 기다림)
+
+
 def ui_status(state: str, detail: str = ""):
+    _LAST_STATUS[0] = state
     _ui_queue.put(("status", state, detail))
 
 
@@ -715,13 +720,21 @@ class _PingHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _updating(self) -> bool:
+        """새 워처로 넘기는 몇 초 — 모든 요청에 503 '업데이트 중'. 홈페이지는 이걸 보면 기다렸다 다시 보낸다."""
+        if not self_update.blocking():
+            return False
+        self._send_json(503, {"ok": False, "updating": True,
+                              "message": "워처를 새 버전으로 바꾸는 중이에요. 잠시만요."})
+        return True
+
     def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler 규약)
+        if self._updating():
+            return
         if self.path == "/ping":
-            self.send_response(200)
-            self._cors()
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"ok":true,"app":"hdsign_worksheet"}')
+            u = self_update.snapshot()
+            self._send_json(200, {"ok": True, "app": "hdsign_worksheet", "version": u["current"],
+                                  "update": {"phase": u["phase"], "pct": u["pct"]}})
         elif self.path == "/easyform/probe":
             # 이지폼 자동기입 feature-detect — 관리자 명세서작성 모달이 호출.
             self._send_json(200, easyform.handle_probe())
@@ -762,6 +775,8 @@ class _PingHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         from urllib.parse import urlparse, parse_qs
+        if self._updating():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/easyform/pull":
             # body = {} (상세명세서 1건 가져오기) 또는 {mode:'scan', stopBefore, max} (목록에서 찾기)
@@ -894,17 +909,41 @@ class _PingHandler(BaseHTTPRequestHandler):
         pass
 
 
-def start_ping_server():
+_PING_SRV = [None]
+
+
+def start_ping_server(retry_for: float = 0.0):
+    """retry_for 초 동안 포트가 비길 기다리며 다시 시도 — 무중단 업데이트 때 옛 워처가 막 놓은 포트를 바로 잡는다."""
     def _run():
+        t0 = time.time()
+        while True:
+            try:
+                srv = HTTPServer(("127.0.0.1", PING_PORT), _PingHandler)
+                break
+            except OSError as e:
+                if time.time() - t0 < retry_for:
+                    time.sleep(0.05)
+                    continue
+                ui_log(f"ping 서버 시작 실패(포트 {PING_PORT} 사용 중?): {e}")
+                return
+        _PING_SRV[0] = srv
         try:
-            srv = HTTPServer(("127.0.0.1", PING_PORT), _PingHandler)
             srv.serve_forever()
-        except OSError as e:
-            ui_log(f"ping 서버 시작 실패(포트 {PING_PORT} 사용 중?): {e}")
         except Exception as e:
             ui_log(f"ping 서버 오류: {e}")
 
     threading.Thread(target=_run, daemon=True).start()
+
+
+def stop_ping_server():
+    srv = _PING_SRV[0]
+    if srv:
+        _PING_SRV[0] = None
+        try:
+            srv.shutdown()
+            srv.server_close()
+        except Exception:
+            pass
 
 
 def notify_worksheet_acknowledged(order_number: str):
@@ -8685,6 +8724,20 @@ class App(tk.Tk):
         self._card = tk.Frame(self, bg=self.CARD)
         self._card.pack(fill="both", expand=True, padx=20, pady=20)
 
+        # 업데이트 띠(헤더 밑) — 새 버전이 있을 때만 보임. [업데이트하기] → 받는 중 % → 바꾸기(껐다 켤 필요 없음)
+        self._upd_bar = tk.Frame(self, bg="#1d4ed8")
+        self._upd_lbl = tk.Label(self._upd_bar, text="", bg="#1d4ed8", fg="white",
+                                 font=("맑은 고딕", 9, "bold"), anchor="w", justify="left", wraplength=270)
+        self._upd_lbl.pack(side="left", padx=(20, 8), pady=8, fill="x", expand=True)
+        self._upd_btn = tk.Button(self._upd_bar, text="업데이트하기", bg="white", fg="#1d4ed8",
+                                  activebackground="#dbeafe", font=("맑은 고딕", 9, "bold"),
+                                  relief="flat", bd=0, highlightthickness=0, cursor="hand2",
+                                  padx=12, pady=4, command=self._on_update_click)
+        self._upd_btn.pack(side="right", padx=(0, 20), pady=8)
+        self._upd_key = None
+        self._dialog_open = False
+        self.after(500, self._poll_update)
+
         # Status row
         row = tk.Frame(self._card, bg=self.CARD)
         row.pack(fill="x", padx=24, pady=(22, 0))
@@ -9069,6 +9122,87 @@ class App(tk.Tk):
         self._alert_banner_after_id = self.after(
             8000, lambda b=banner: b.destroy() if b.winfo_exists() else None)
 
+    # ── 무중단 업데이트 ──
+
+    def _on_update_click(self):
+        self_update.begin()
+        self._poll_update(once=True)
+
+    def _poll_update(self, once: bool = False):
+        try:
+            # 열린 대화창(인쇄 매칭·QR 만들기 등) = 사람이 하던 작업 → 끝날 때까지 안 바꿈. 이지폼 판(테두리 없는 창)은 제외
+            dlg = False
+            for w in self.winfo_children():
+                if isinstance(w, tk.Toplevel) and w.winfo_viewable() and not w.wm_overrideredirect():
+                    dlg = True
+                    break
+            self._dialog_open = dlg
+            u = self_update.snapshot()
+            ph = u["phase"]
+            key = (ph, u["pct"], u["message"])
+            if key != self._upd_key:
+                self._upd_key = key
+                btn = None
+                bg = "#1d4ed8"
+                if ph == "available":
+                    txt, btn = "새 버전이 있어요. 껐다 켤 필요 없이 바로 업데이트돼요.", "업데이트하기"
+                elif ph == "downloading":
+                    txt = f"업데이트 받는 중 {u['pct']}%\n그동안 계속 쓰셔도 돼요."
+                elif ph == "waiting":
+                    txt = "다 받았어요. 지금 하던 작업이 끝나면 바로 바꿀게요."
+                elif ph == "swapping":
+                    txt = "새 버전으로 바꾸는 중이에요… (몇 초)"
+                elif ph == "failed":
+                    txt, btn, bg = f"업데이트 못 했어요: {u['message']}", "다시 시도", "#b91c1c"
+                else:
+                    txt = ""
+                if txt:
+                    self._upd_bar.config(bg=bg)
+                    self._upd_lbl.config(text=txt, bg=bg)
+                    if btn:
+                        self._upd_btn.config(text=btn, fg=bg)
+                        if not self._upd_btn.winfo_ismapped():
+                            self._upd_btn.pack(side="right", padx=(0, 20), pady=8)
+                    else:
+                        self._upd_btn.pack_forget()
+                    if not self._upd_bar.winfo_ismapped():
+                        self._upd_bar.pack(fill="x", before=self._card)
+                elif self._upd_bar.winfo_ismapped():
+                    self._upd_bar.pack_forget()
+        except Exception:
+            pass
+        if not once:
+            self.after(500, self._poll_update)
+
+    def is_busy(self) -> bool:
+        """바꾸기 전에 기다릴 '하던 작업' — 지시서 파일 처리·이지폼 작업·열린 대화창."""
+        if _LAST_STATUS[0] in ("processing", "starting"):
+            return True
+        if self._dialog_open:
+            return True
+        try:
+            import easyform_bulk
+            if easyform_bulk._JOB.get("state") == "running":
+                return True
+        except Exception:
+            pass
+        try:
+            if easyform._EF_GUARD_DEPTH[0] > 0:
+                return True
+        except Exception:
+            pass
+        return False
+
+    def release_for_update(self):
+        """옛 워처 — 새 워처에게 넘기기: 폴더 감시 멈춤 → 포트 놓기. 기본 프린터는 복구 안 함(새 워처가 이어받음)."""
+        try:
+            if self._observer:
+                self._observer.stop()
+                self._observer.join(timeout=5)
+        except Exception:
+            pass
+        stop_ping_server()
+
     # ── queue polling ──
 
     def _poll_queue(self):
@@ -9117,6 +9251,13 @@ class App(tk.Tk):
             DONE_DIR.mkdir(parents=True, exist_ok=True)
             PRINTED_PDF_DIR.mkdir(parents=True, exist_ok=True)
 
+            # 무중단 업데이트로 켜진 새 워처 — 옛 워처가 폴더 감시·포트를 놓을 때까지 기다렸다 이어받는다
+            # (둘이 같은 지시서를 동시에 처리하지 않게). 이지폼 저장 감지도 그 뒤에 켠다.
+            if _TAKEOVER["pid"]:
+                ui_status("starting", "새 버전으로 이어받는 중이에요")
+                self_update.takeover_handshake()
+                _start_autosync()
+
             # 이전 세션의 인쇄 매칭 큐 복구 — 워처가 잠깐 꺼졌다 켜져도 다이얼로그가 뜨도록.
             load_recent_orders()
 
@@ -9130,7 +9271,11 @@ class App(tk.Tk):
             self._observer.schedule(PrintedPdfHandler(), str(PRINTED_PDF_DIR), recursive=False)
             self._observer.start()
 
-            start_ping_server()
+            start_ping_server(retry_for=10.0 if _TAKEOVER["pid"] else 0.0)
+
+            # 껐다 켜지 않는 업데이트 — 1분마다 새 버전 확인
+            self_update.start(busy=self.is_busy, release=self.release_for_update,
+                              saved_printer=lambda: _saved_default_printer)
 
             # 거래처 폴더 목록을 백엔드에 주기적으로 푸시 — 관리자 모달 자동완성용.
             start_folder_sync_loop()
@@ -9161,7 +9306,24 @@ class App(tk.Tk):
         self.destroy()
 
 
+_TAKEOVER = {"pid": 0, "saved_printer": ""}
+
+
+def _start_autosync() -> None:
+    # 이지폼 '매출 거래명세서' [저장] 감지 → 홈페이지 반영(묻고, 예일 때만).
+    try:
+        import easyform_autosync
+        easyform_autosync.start()
+    except Exception as e:  # noqa: BLE001
+        ui_log(f"이지폼 저장 자동반영 시작 실패: {e}")
+
+
 def main():
+    global _saved_default_printer
+    _TAKEOVER.update(self_update.takeover_args(sys.argv[1:]))
+    if _TAKEOVER["saved_printer"]:
+        # 옛 워처가 보관하던 '원래 기본 프린터' 이어받기 — 이미 PDF24 라 새로 보관할 수 없으니(끌 때 복구용)
+        _saved_default_printer = _TAKEOVER["saved_printer"]
     app = App()
     app.protocol("WM_DELETE_WINDOW", app.on_close)
     # 이지폼 자동기입 '채우기' UI 를 워처 GUI(같은 tk root)에 붙인다(별도 exe 없음).
@@ -9169,12 +9331,8 @@ def main():
         easyform.install(app)
     except Exception as e:  # noqa: BLE001 — easyform 실패해도 워처 본기능은 계속.
         ui_log(f"이지폼 자동기입 UI 설치 실패: {e}")
-    # 이지폼 '매출 거래명세서' [저장] 감지 → 홈페이지 반영(묻고, 예일 때만).
-    try:
-        import easyform_autosync
-        easyform_autosync.start()
-    except Exception as e:  # noqa: BLE001
-        ui_log(f"이지폼 저장 자동반영 시작 실패: {e}")
+    if not _TAKEOVER["pid"]:
+        _start_autosync()  # 이어받기면 옛 워처가 놓은 뒤에(start_watcher)
     app.after(300, app.start_watcher)
     app.mainloop()
 

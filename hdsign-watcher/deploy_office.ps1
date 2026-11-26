@@ -82,16 +82,28 @@ if (-not $DeployOnly) {
     Write-Host "`n빌드 완료: $exe" -ForegroundColor Green
 }
 
+# 버전 표시(무중단 업데이트용) — 각 PC 워처가 Z: 의 이 파일이 자기 것과 다르면 [업데이트하기]를 띄운다.
+$verFile = Join-Path $distDir 'hdsign_version.txt'
+$gitRev = ''
+try { $gitRev = (& git -C $here rev-parse --short HEAD 2>$null) } catch {}
+$version = (Get-Date -Format 'yyyyMMdd-HHmm') + $(if ($gitRev) { "-$gitRev" } else { '' })
+[System.IO.File]::WriteAllText($verFile, $version, (New-Object System.Text.UTF8Encoding($false)))
+Write-Host "  버전: $version"
+
 if ($BuildOnly) { Write-Host "`n(-BuildOnly: 네트워크 배포는 생략)"; return }
 
 Step "네트워크 마스터로 미러 복사 → $netMaster"
 if (-not (Test-Path $exe)) { throw "배포할 빌드가 없음: $exe  (먼저 빌드하세요)" }
 $netParent = Split-Path -Parent $netMaster
 if (-not (Test-Path $netParent)) { throw "네트워크 공유에 접근 불가: $netParent  (Z: 매핑/네트워크 확인)" }
+# 버전 표시는 복사 동안 치워 두고 **맨 마지막에** 올린다 — 반쯤 올라간 걸 PC 워처가 받아 가지 않게.
+$netVer = Join-Path $netMaster 'hdsign_version.txt'
+if (Test-Path $netVer) { Remove-Item $netVer -Force }
 # robocopy: /MIR 미러(추가·변경·삭제 반영), /R:2 /W:2 재시도 짧게, /MT:8 멀티스레드.
-& robocopy $distDir $netMaster /MIR /R:2 /W:2 /MT:8 /NFL /NDL /NJH /NJS /NP
+& robocopy $distDir $netMaster /MIR /XF hdsign_version.txt /R:2 /W:2 /MT:8 /NFL /NDL /NJH /NJS /NP
 $rc = $LASTEXITCODE
 # robocopy: 0~7 = 성공(8 이상이 진짜 실패). 0=변경없음, 1=복사함, 3=복사+삭제 등.
 if ($rc -ge 8) { throw "robocopy 실패. exit=$rc" }
+Copy-Item $verFile -Destination $netVer -Force
 Write-Host "`n배포 완료 (robocopy rc=$rc).  → $netMaster" -ForegroundColor Green
 Write-Host "각 사무실 PC: 바탕화면 'HD사인 지시서(사무실)' 바로가기를 껐다가 다시 실행하면 새 버전으로 갱신됩니다." -ForegroundColor Yellow
