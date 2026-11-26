@@ -19,8 +19,10 @@ import unicodedata
 from ctypes import wintypes
 from pathlib import Path
 
-u = ctypes.windll.user32
-k = ctypes.windll.kernel32
+# ⚠ 전용 DLL 객체 — ctypes.windll.user32 는 워처 전체가 같이 쓰는 객체라 여기서 argtypes 를 바꾸면
+#   dxf_export(치수 추출) 등이 깨짐(2026-11-26 실사고: GetWindowRect LP_RECT 충돌 → 외부파일 저장창 안 닫힘).
+u = ctypes.WinDLL("user32", use_last_error=True)
+k = ctypes.WinDLL("kernel32", use_last_error=True)
 
 u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 u.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
