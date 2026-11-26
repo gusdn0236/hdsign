@@ -106,6 +106,28 @@ def _lock_release_now() -> None:
         ef.ef_busy(None)
 
 
+def _lock_release_all() -> None:
+    """작업 끝(성공·실패·ESC·정지 모두) — 횟수와 상관없이 입력 잠금·화면 가림을 전부 푼다(2026-11-26: ESC 로 멈췄다는
+    알림은 떴는데 잠금이 안 풀려 애먹음)."""
+    _lock_release_now()
+    try:
+        ef.ef_guard_reset()
+    except Exception:  # noqa: BLE001
+        logging.exception("이지폼 입력 잠금 풀기 실패")
+    ef.ef_busy(None)
+
+
+def _wait_any(cond, timeout: float, step: float = 0.05):
+    """정지·ESC 뒤에도 쓰는 기다리기(b._wait 는 정지면 바로 Stop) — 버리고 닫기 같은 뒷정리용."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        v = cond()
+        if v:
+            return v
+        time.sleep(step)
+    return None
+
+
 def _locked(fn):
     import functools
 
@@ -320,9 +342,9 @@ def _close(main, form) -> None:
     fgrid = next(iter(b._kids(form, "TAdvStringGrid")), None)
     target = next(iter(b._kids(fgrid, "TAdvInplaceEdit")), None) if fgrid else None
     b._key(target or fgrid or form, 0x1B)
-    if not b._wait(lambda: b._gone(form), 2.0, 0.05) and fgrid and not b._popups(main):
+    if not _wait_any(lambda: b._gone(form), 2.0) and fgrid and not b._popups(main):
         b._key(fgrid, 0x1B)
-        b._wait(lambda: b._gone(form), 2.5, 0.05)
+        _wait_any(lambda: b._gone(form), 2.5)
 
 
 def _header_amounts(form, target: list) -> set:
@@ -581,6 +603,12 @@ def _ok_code_warning(main) -> bool:
     return hit
 
 
+def _view_cells() -> list:
+    """화면에 보이는 10줄 칸 좌표(표 왼위 기준) [[(x, y) × EF_COLS] × 10]."""
+    ref = ef.EF_GRID_REF
+    return [[(c[0] - ref[0], c[1] - ref[1]) for c in r] for r in ef.EF_CELLS]
+
+
 class _Form:
     def __init__(self, main, form):
         self.main, self.form = main, form
@@ -601,24 +629,63 @@ class _Form:
         if b._popups(self.main):
             raise Stop("고치는 중에 이지폼 창이 떠서 멈췄어요. 저장하지 말고 직접 닫아주세요.")
 
-    def editor(self, row: int, col: str):
-        """row 줄 col 칸을 눌러 편집칸을 띄우고, 상자 줄 번호로 맞는 줄인지 확인."""
-        self._check()
-        cells = b._row_cells(self.grid, row)
-        x, y = cells[col]
-        b._click(self.grid, col, x, y)
+    def _sel(self) -> str:
+        return b._txt(self.box).strip()
+
+    def _editor_slot(self) -> "int | None":
+        """지금 떠 있는 편집칸이 화면의 몇 번째 칸 줄(0~9)에 있나. 없으면 None."""
         gl, gt, _r, _b = b._rect(self.grid)
-
-        def at(e):
+        ys = [r[0][1] for r in _view_cells()]
+        for e in b._kids(self.grid, "TAdvInplaceEdit"):
+            if not b._u.IsWindowVisible(e):
+                continue
             l, t, r, bb = b._rect(e)
-            return l - 2 <= gl + x <= r + 2 and t - 2 <= gt + y <= bb + 2
+            cy = (t + bb) / 2 - gt
+            k = min(range(len(ys)), key=lambda i: abs(ys[i] - cy))
+            if abs(ys[k] - cy) <= 9:
+                return k
+        return None
 
-        e = b._wait(lambda: next((e for e in b._kids(self.grid, "TAdvInplaceEdit") if at(e)), None), 1.2, 0.03)
+    def editor(self, row: int, col: str):
+        """row 줄 col 칸을 눌러 편집칸을 띄우고, 상자 줄 번호로 맞는 줄인지 확인.
+        2026-11-26 실측(12줄 넘는 명세서): 11번째 줄부터 품목코드·품목·규격이 안 써지고 금액만 들어감 → 글자칸은
+        WM_SETTEXT 만 하고 다음 칸을 눌러야 확정되는데, 그 사이 표 보기를 맨 위로 올렸다 내리면(10줄 넘을 때) 확정 안 된
+        글자가 사라진다. 그래서 **이미 그 줄이 선택돼 편집칸이 떠 있으면 표를 안 움직이고 그 화면 줄에서 바로** 누른다.
+        또 줄 번호 칸이 클릭 전부터 이미 그 번호(단가 Enter 로 선택이 넘어감)면 확인이 공짜로 통과하므로, 그럴 땐 다른 줄을
+        먼저 눌러 번호를 바꾼 뒤 확인한다. 안 맞으면 다시 맞춰 최대 3번."""
+        self._check()
+        want = str(row + 1)
+        view = _view_cells()
+        ci = ef.EF_COLS.index(col)
+        gl, gt, _r, _b = b._rect(self.grid)
+        slot = self._editor_slot() if self._sel() == want else None
+        for attempt in range(3):
+            if slot is not None:
+                x, y = view[slot][ci]
+            else:
+                x, y = b._row_cells(self.grid, row)[col]
+                if self._sel() == want:  # 클릭 전부터 같은 번호 → 다른 줄을 먼저 눌러 번호를 바꿔 둠
+                    vis = min(row, len(view) - 1)
+                    ax, ay = view[0 if vis else 1][ef.EF_COLS.index("item")]
+                    b._click(self.grid, "품목", ax, ay)
+                    b._wait(lambda: self._sel() != want, 0.8, 0.03)
+            b._click(self.grid, col, x, y)
+
+            def at(e, x=x, y=y):
+                l, t, r, bb = b._rect(e)
+                return l - 2 <= gl + x <= r + 2 and t - 2 <= gt + y <= bb + 2
+
+            e = b._wait(lambda: next((e for e in b._kids(self.grid, "TAdvInplaceEdit") if at(e)), None), 1.2, 0.03)
+            if e and b._wait(lambda: self._sel() == want, 0.8, 0.03) is not None:
+                return e
+            logging.info("이지폼 %s번째 줄 맞추기 다시(%d) — 편집칸 %s, 선택된 줄 %s", want, attempt + 1,
+                         bool(e), self._sel() or "?")
+            slot = None
+            time.sleep(0.15)
+            self._check()
         if not e:
             raise Stop(f"{row + 1}번째 줄 칸이 안 눌려서 멈췄어요.")
-        if b._wait(lambda: b._txt(self.box).strip() == str(row + 1), 0.8, 0.03) is None:
-            raise Stop(f"{row + 1}번째 줄을 못 맞춰서 멈췄어요(선택된 줄 {b._txt(self.box).strip() or '?'}).")
-        return e
+        raise Stop(f"{row + 1}번째 줄을 못 맞춰서 멈췄어요(선택된 줄 {self._sel() or '?'}).")
 
     def put(self, row: int, col: str, val: str, enter: bool) -> None:
         e = self.editor(row, col)
@@ -644,8 +711,8 @@ class _Form:
         self.put(row, "unit_price", to["unit_price"] or ("0" if filled else ""), enter=True)
         if remark is not None and remark != "":
             self.put(row, "remark", remark, enter=False)
-            ix, iy = b._row_cells(self.grid, row)["item"]
-            b._click(self.grid, "품목", ix, iy)  # 같은 줄 다른 칸 = 비고 확정(Enter 금지)
+            # 같은 줄 다른 칸 = 비고 확정(Enter 금지). 표를 움직이지 않고 그 화면 줄에서 누름(움직이면 비고가 사라짐)
+            self.editor(row, "item")
             time.sleep(0.15)
             self._check()
 
@@ -830,25 +897,25 @@ def _discard_new(main, form) -> None:
         btns = [b._txt(x).replace("&", "") for x in b._kids(h, "TButton")]
         if c == "TMessageForm" and btns == ["OK"]:
             b._click(b._named(h, "TButton", "OK"), "OK")
-            b._wait(lambda: b._gone(h), 2.0, 0.05)
+            _wait_any(lambda: b._gone(h), 2.0)
     if b._popups(main):
         return
     for s in b._kids(main, "TfrmSelectComout"):
         btn = b._named(s, "TBitBtn", "닫기")
         if btn:
             b._click(btn, "닫기")
-            b._wait(lambda: b._gone(s), 2.0, 0.05)
+            _wait_any(lambda: b._gone(s), 2.0)
     if b._gone(form):
         return
     fgrid = next(iter(b._kids(form, "TAdvStringGrid")), None)
     b._key(fgrid or form, 0x1B)
-    pop = b._wait(lambda: next((h for h, c, _t in b._popups(main) if c == "TMessageForm"), None)
-                  or (b._gone(form) and -1), 4.0, 0.05)  # 확인창이 2.5초 넘게 늦게 뜬 적 있음(2026-11-24)
+    pop = _wait_any(lambda: next((h for h, c, _t in b._popups(main) if c == "TMessageForm"), None)
+                    or (b._gone(form) and -1), 4.0)  # 확인창이 2.5초 넘게 늦게 뜬 적 있음(2026-11-24)
     if pop and pop != -1:
         btns = sorted(b._txt(x).replace("&", "") for x in b._kids(pop, "TButton"))
         if b._txt(pop) == "Information" and btns == ["No", "Yes"]:
             b._click(b._named(pop, "TButton", "No"), "No")  # No = 저장하지 않고 닫기(실측)
-            b._wait(lambda: b._gone(form), 2.5, 0.05)
+            _wait_any(lambda: b._gone(form), 2.5)
 
 
 @_locked
@@ -1298,8 +1365,9 @@ def manual_fill(body: dict, progress) -> dict:
         if after != target:
             bad = next((i for i in range(max(len(after), len(target)))
                         if i >= len(after) or i >= len(target) or after[i] != target[i]), 0)
-            logging.warning("이지폼 직접 고르기 검증 실패 %d번째: %s vs %s", bad + 1,
-                            after[bad] if bad < len(after) else None, target[bad] if bad < len(target) else None)
+            logging.warning("이지폼 직접 고르기 검증 실패 %d번째: %s vs %s (읽은 %d줄 / 홈페이지 %d줄)", bad + 1,
+                            after[bad] if bad < len(after) else None, target[bad] if bad < len(target) else None,
+                            len(after), len(target))
             raise Stop(f"입력한 뒤 {bad + 1}번째 줄이 홈페이지와 달라서 저장 안 했어요(새 명세서는 버렸어요).")
         date, total = b._form_header(form)
         amounts = _header_amounts(form, target)
@@ -1441,7 +1509,7 @@ def run(phase: str, body: dict, progress, on_result) -> str:
         return _run(phase, body, progress, on_result)
     finally:
         done.set()
-        _lock_release_now()
+        _lock_release_all()
 
 
 def _run(phase: str, body: dict, progress, on_result) -> str:

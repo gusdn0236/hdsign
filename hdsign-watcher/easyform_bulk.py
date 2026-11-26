@@ -1361,7 +1361,7 @@ def _run(phase: str, jid: int, body: dict) -> None:
         watch_stop.set()
         try:
             import easyform_push
-            easyform_push._lock_release_now()  # 남은 칸 잠금·가림이 있으면 바로 풂
+            easyform_push._lock_release_all()  # 남은 칸 잠금·가림이 있으면 횟수 상관없이 전부 풂
         except Exception:  # noqa: BLE001
             logging.exception("이지폼 잠금 풀기 실패")
         with _LOCK:

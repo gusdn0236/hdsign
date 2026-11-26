@@ -392,40 +392,80 @@ try:
         _EF_ABORT = threading.Event()
         _EF_GUARD_TID = 0
         _ef_hook_refs: list = []  # 콜백 GC 방지(살아 있어야 훅이 유효)
+        # 지금 켜져 있어야 하는 잠금 번호(0 = 꺼짐). 훅 스레드마다 자기 번호를 들고 있다가 번호가 바뀌면 **그 즉시**
+        # 입력을 통과시키고 0.2초 안에 스스로 훅을 뺀다(2026-11-26 — 느린 PC 에서 스레드가 TID 를 적기 전에 끄기가
+        # 오면 WM_QUIT 이 못 가서 잠금이 영영 안 풀리던 것: '멈췄어요' 알림은 떴는데 마우스·키보드가 계속 잠김).
+        _EF_GUARD_WANT = [0]
+        _EF_GUARD_GEN = [0]
+        # 잠금 판의 [정지] 버튼 화면 영역(l, t, r, b) — 잠금 중에도 여기 누르는 클릭만 받아 ESC 와 똑같이 멈추고 잠금 풂
+        # (사용자 2026-11-26). 판은 클릭이 통과하는 창이라 버튼은 그림이고, 실제 클릭은 이 훅이 받는다.
+        _EF_STOP_RECT = [None]
+        _EF_STOP_CB = [None]  # 눌렸을 때 판 글자 바꾸기(UI 스레드로 넘김)
+        _user32.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
+        _user32.SetTimer.restype = ctypes.c_size_t
+        _user32.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
+        _user32.KillTimer.restype = wintypes.BOOL
 
-        def _ef_mouse_proc(nCode, wParam, lParam):
-            if nCode >= 0:
-                ms = ctypes.cast(lParam, ctypes.POINTER(_EF_MSLL)).contents
-                # 사람 마우스는 **움직이기만** 됨 — 누르기·휠만 막음(사용자 2026-11-24). 우리 주입 입력은 통과.
-                if not (ms.flags & _LLMHF_INJECTED) and wParam != 0x0200:  # WM_MOUSEMOVE
-                    return 1
-            return _user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-        def _ef_kbd_proc(nCode, wParam, lParam):
-            if nCode >= 0:
-                kb = ctypes.cast(lParam, ctypes.POINTER(_EF_KBDLL)).contents
-                if not (kb.flags & _LLKHF_INJECTED):
-                    if kb.vkCode == _VK_ESCAPE:
-                        _EF_ABORT.set()  # ESC → 중단 신호
-                    return 1  # 사용자 물리 키 차단(ESC 도 삼켜 이지폼 폼이 닫히지 않게)
-            return _user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-        def _ef_guard_thread():
+        def _ef_guard_thread(my: int):
             global _EF_GUARD_TID
             _EF_GUARD_TID = _kernel32.GetCurrentThreadId()
+
+            def live() -> bool:
+                return _EF_GUARD_WANT[0] == my
+
+            def mouse_proc(nCode, wParam, lParam):
+                if nCode >= 0 and live():
+                    ms = ctypes.cast(lParam, ctypes.POINTER(_EF_MSLL)).contents
+                    # 사람 마우스는 **움직이기만** 됨 — 누르기·휠만 막음(사용자 2026-11-24). 우리 주입 입력은 통과.
+                    if not (ms.flags & _LLMHF_INJECTED) and wParam != 0x0200:  # WM_MOUSEMOVE
+                        r = _EF_STOP_RECT[0]
+                        if wParam == 0x0201 and r and r[0] <= ms.pt.x < r[2] and r[1] <= ms.pt.y < r[3]:
+                            _EF_ABORT.set()  # [정지] 클릭 = ESC 와 같음 → 멈춤 + 잠금 바로 풂
+                            if _EF_GUARD_WANT[0] == my:
+                                _EF_GUARD_WANT[0] = 0
+                            cb = _EF_STOP_CB[0]
+                            if cb:
+                                try:
+                                    cb()
+                                except Exception:
+                                    pass
+                        return 1
+                return _user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+            def kbd_proc(nCode, wParam, lParam):
+                if nCode >= 0 and live():
+                    kb = ctypes.cast(lParam, ctypes.POINTER(_EF_KBDLL)).contents
+                    if not (kb.flags & _LLKHF_INJECTED):
+                        if kb.vkCode == _VK_ESCAPE:
+                            _EF_ABORT.set()  # ESC → 중단 신호
+                            # ESC = 멈춤 + 잠금 바로 풂(사용자 2026-11-26). 매크로는 다음 확인 지점에서 멈춘다.
+                            if _EF_GUARD_WANT[0] == my:
+                                _EF_GUARD_WANT[0] = 0
+                        return 1  # 사용자 물리 키 차단(ESC 도 삼켜 이지폼 폼이 닫히지 않게)
+                return _user32.CallNextHookEx(None, nCode, wParam, lParam)
+
             hInst = _kernel32.GetModuleHandleW(None)
-            mp = _HOOKPROC(_ef_mouse_proc)
-            kp = _HOOKPROC(_ef_kbd_proc)
-            _ef_hook_refs[:] = [mp, kp]
+            mp = _HOOKPROC(mouse_proc)
+            kp = _HOOKPROC(kbd_proc)
+            _ef_hook_refs.append((mp, kp))
             hM = _user32.SetWindowsHookExW(_WH_MOUSE_LL, mp, hInst, 0)
             hK = _user32.SetWindowsHookExW(_WH_KEYBOARD_LL, kp, hInst, 0)
+            timer = _user32.SetTimer(None, 0, 200, None)  # 0.2초마다 깨서 '아직 켜져 있어야 하나' 확인
             msg = wintypes.MSG()
-            while _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-                pass  # WM_QUIT(0) 오면 루프 종료
-            if hM:
-                _user32.UnhookWindowsHookEx(hM)
-            if hK:
-                _user32.UnhookWindowsHookEx(hK)
+            try:
+                while live() and _user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                    pass  # WM_QUIT(0) 또는 번호 바뀜 → 끝
+            finally:
+                if timer:
+                    _user32.KillTimer(None, timer)
+                if hM:
+                    _user32.UnhookWindowsHookEx(hM)
+                if hK:
+                    _user32.UnhookWindowsHookEx(hK)
+                try:
+                    _ef_hook_refs.remove((mp, kp))
+                except ValueError:
+                    pass
 
         # 겹쳐 불러도 안전하게(2026-11-24) — 예전엔 두 번 켜면 두 번째만 꺼져 훅이 남을 수 있었음. 횟수로 센다.
         _EF_GUARD_DEPTH = [0]
@@ -433,14 +473,24 @@ try:
 
         def _ef_guard_on() -> None:
             _EF_ABORT.clear()
-            threading.Thread(target=_ef_guard_thread, daemon=True).start()
+            _EF_GUARD_GEN[0] += 1
+            my = _EF_GUARD_GEN[0]
+            _EF_GUARD_WANT[0] = my
+            threading.Thread(target=_ef_guard_thread, args=(my,), daemon=True).start()
             time.sleep(0.06)  # 훅 설치 + 메시지 큐 생성 잠깐 대기
 
         def _ef_guard_off() -> None:
             global _EF_GUARD_TID
+            _EF_GUARD_WANT[0] = 0  # 훅은 이 순간부터 입력을 통과시키고, 스레드는 0.2초 안에 스스로 끝남
             if _EF_GUARD_TID:
                 _user32.PostThreadMessageW(_EF_GUARD_TID, _WM_QUIT, 0, 0)
                 _EF_GUARD_TID = 0
+
+        def ef_guard_reset() -> None:
+            """작업이 끝났을 때 — 누가 몇 번 켰든 잠금을 전부 푼다(횟수가 어긋나 남는 일 방지)."""
+            with _EF_GUARD_LOCK:
+                _EF_GUARD_DEPTH[0] = 0
+            _ef_guard_off()
 
         def ef_guard_start() -> None:
             with _EF_GUARD_LOCK:
@@ -1707,6 +1757,9 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     prog_lbl = tk.Label(run_frame, text="", font=("맑은 고딕", int(13 * s), "bold"),
                         fg="#c2410c", bg="#ffffff")
     prog_lbl.pack(pady=(int(8 * s), 0))
+    # [정지] 버튼(사용자 2026-11-26) — 판은 클릭 통과 창이라 이건 그림이고, 클릭은 입력 잠금 훅이 영역으로 받는다.
+    stop_btn = tk.Label(run_frame, text="⏹  정지", font=("맑은 고딕", int(12 * s), "bold"),
+                        fg="#ffffff", bg="#dc2626", padx=int(22 * s), pady=int(6 * s))
     esc_lbl = tk.Label(run_frame, text=EF_SUB_ESC, font=("맑은 고딕", int(11 * s)),
                        fg="#6b7280", bg="#ffffff")
     esc_lbl.pack(pady=(int(8 * s), int(16 * s)))
@@ -1866,10 +1919,36 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
     busy = {"v": False}
     mode = {"v": "fill"}  # 코너 버튼창 용도: fill(웹→이지폼 입력) / pull(이지폼→웹 가져오기)
 
+    def stop_rect_set():
+        """[정지] 버튼 화면 영역을 입력 잠금 훅에 알려 줌(보일 때만)."""
+        try:
+            if stop_btn.winfo_ismapped() and panel.winfo_viewable():
+                rc = wintypes.RECT()
+                _user32.GetWindowRect(stop_btn.winfo_id(), ctypes.byref(rc))
+                _EF_STOP_RECT[0] = (rc.left, rc.top, rc.right, rc.bottom)
+            else:
+                _EF_STOP_RECT[0] = None
+        except Exception:
+            _EF_STOP_RECT[0] = None
+
+    def stop_pressed():  # UI 스레드
+        _EF_STOP_RECT[0] = None
+        stop_btn.config(text="멈추는 중이에요…", bg="#9ca3af")
+        esc_lbl.config(text="마우스·키보드는 이제 쓰셔도 돼요.")
+
+    _EF_STOP_CB[0] = lambda: _EF_UI_QUEUE.put(("overlay_stopping",))
+
     def show_overlay(text="자동입력 중에는 마우스가 잠깁니다.", sub=None):
         run_lbl.config(text=text)
         esc_lbl.config(text=sub or EF_SUB_ESC)
         prog_lbl.config(text="")
+        # ESC 로 멈출 수 있는 작업만 [정지] 버튼(일괄 가져오기처럼 ESC 정지가 없는 건 웹 [정지]로만 — 실수 방지)
+        stop_btn.config(text="⏹  정지", bg="#dc2626")
+        _EF_STOP_RECT[0] = None
+        if (sub or EF_SUB_ESC) == EF_SUB_NOESC:
+            stop_btn.pack_forget()
+        elif not stop_btn.winfo_ismapped():
+            stop_btn.pack(before=esc_lbl, pady=(int(10 * s), 0))
         panel.update_idletasks()  # 두 줄 문구여도 다 보이게 높이 맞춤
         hh = max(ph, run_frame.winfo_reqheight())
         # 화면 아래쪽 — 가운데에 뜨는 홈페이지 진행창(k / n)과 안 겹치게(사용자 2026-11-24)
@@ -1885,8 +1964,11 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         dim.lift()
         panel.lift()
         spin_start()
+        root.after(60, stop_rect_set)
+        root.after(400, stop_rect_set)  # 자리 잡은 뒤 한 번 더
 
     def show_done(ok, msg, ok_text="✅ 자동작성이 완료되었습니다."):
+        _EF_STOP_RECT[0] = None
         spin_stop()
         run_frame.pack_forget()
         done_lbl.config(text=(ok_text if ok else "⏹ 중단되었습니다.") +
@@ -1900,6 +1982,7 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
         panel.attributes("-topmost", True)
 
     def hide_overlay():
+        _EF_STOP_RECT[0] = None
         spin_stop()
         kw_hide()
         panel.withdraw()
@@ -2446,6 +2529,8 @@ def install(root, accent="#0a9396", accent_dark="#097a7d") -> None:
                 elif cmd[0] == "auto_overlay":  # 이지폼 저장 자동반영(easyform_autosync) — 읽는/적는 동안 잠금 안내
                     if not busy["v"]:
                         show_overlay(cmd[1], cmd[2] if len(cmd) > 2 else None)
+                elif cmd[0] == "overlay_stopping":  # 잠금 판 [정지] 눌림(입력 잠금 훅에서)
+                    stop_pressed()
                 elif cmd[0] == "auto_overlay_hide":
                     if not busy["v"]:
                         hide_overlay()
