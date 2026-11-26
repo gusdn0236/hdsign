@@ -8744,7 +8744,13 @@ class App(tk.Tk):
         #   투명하게 띄워 → 옛 창 바로 뒤로 → 포커스는 원래 쓰던 창에 돌려줌 → 다시 불투명.
         try:
             if old and u32.IsIconic(old[0]):
-                self.iconify()  # 옛 창이 최소화였으면 새 창도 최소화 상태로(작업표시줄에만)
+                # 옛 창이 최소화였으면([업데이트하기] → 예 = 최소화) 새 창도 **포커스 없이** 최소화로 + 작업표시줄 깜빡임
+                # (사용자 2026-11-26: 끝난 걸 작업표시줄 색으로 알게). Tk iconify 는 활성화될 수 있어 직접 SW_SHOWMINNOACTIVE.
+                self.update_idletasks()
+                frame = int(self.wm_frame(), 16)
+                u32.ShowWindow(frame, 7)  # SW_SHOWMINNOACTIVE
+                _flash_taskbar(frame)
+                _give_focus_back()
                 return
             if old:
                 self.geometry(f"+{old[1]}+{old[2]}")
@@ -8760,6 +8766,7 @@ class App(tk.Tk):
             # SWP_NOSIZE|NOMOVE|NOACTIVATE|SHOWWINDOW
             u32.SetWindowPos(frame, old[0] if old else 1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
             self.after(1000, lambda: u32.SetWindowLongW(frame, -20, ex))
+            _flash_taskbar(frame)
             _give_focus_back()
         except Exception:
             self.deiconify()
@@ -9187,7 +9194,17 @@ class App(tk.Tk):
     # ── 무중단 업데이트 ──
 
     def _on_update_click(self):
-        self_update.begin()
+        # 묻고 → 예면 이 창은 작업표시줄로 내리고 업데이트(사용자 2026-11-26). 다 되면 새 워처가 포커스 없이
+        # 최소화로 켜지고 작업표시줄 아이콘이 깜빡인다.
+        if not messagebox.askyesno(
+                "워처 업데이트",
+                "업데이트하시겠습니까?\n\n"
+                "[예]를 누르면 이 창은 작업표시줄로 내려가요. 업데이트하는 동안에도 계속 쓰셔도 돼요.\n"
+                "다 되면 작업표시줄의 워처 아이콘이 주황색으로 깜빡여요.",
+                parent=self):
+            return
+        if self_update.begin():
+            self.iconify()
         self._poll_update(once=True)
 
     def _poll_update(self, once: bool = False):
@@ -9216,6 +9233,7 @@ class App(tk.Tk):
                     txt = "새 버전으로 바꾸는 중이에요… (몇 초)"
                 elif ph == "failed":
                     txt, btn, bg = f"업데이트 못 했어요: {u['message']}", "다시 시도", "#b91c1c"
+                    _flash_taskbar(int(self.wm_frame(), 16))  # 작업표시줄로 내려가 있으니 깜빡여 알림
                 else:
                     # 새 버전 없음 — 같은 자리에 '최신 버전이에요'(누를 수 없음)(사용자 2026-11-26)
                     m = re.match(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", u["current"] or "")
@@ -9372,6 +9390,21 @@ class App(tk.Tk):
 
 
 _TAKEOVER = {"pid": 0, "saved_printer": "", "fg": 0}
+
+
+def _flash_taskbar(frame: int) -> None:
+    """작업표시줄 아이콘을 주황으로 깜빡임 — 그 창을 열어 볼 때까지(카톡 새 메시지처럼). 포커스는 안 가져감."""
+    try:
+        from ctypes import wintypes as _wt
+
+        class _FW(ctypes.Structure):
+            _fields_ = [("cbSize", _wt.UINT), ("hwnd", _wt.HWND), ("dwFlags", _wt.DWORD),
+                        ("uCount", _wt.UINT), ("dwTimeout", _wt.DWORD)]
+
+        fi = _FW(ctypes.sizeof(_FW), frame, 0x2 | 0xC, 0, 0)  # FLASHW_TRAY | FLASHW_TIMERNOFG
+        ctypes.windll.user32.FlashWindowEx(ctypes.byref(fi))
+    except Exception:
+        pass
 
 
 def _give_focus_back() -> None:
