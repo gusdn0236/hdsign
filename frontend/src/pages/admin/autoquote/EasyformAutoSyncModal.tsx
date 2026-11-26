@@ -923,12 +923,14 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                       }
                     }}
                   >
-                    <div className="order-card-thumb-wrap efas-addcard-thumb">
-                      <span className="efas-addcard-plus" aria-hidden="true">＋</span>
-                    </div>
-                    <div className="order-card-body">
-                      <h3 className="order-card-title">다른 지시서 추가</h3>
-                      <p className="efas-addcard-sub">거래처·날짜 상관없이 찾아서 추가해요</p>
+                    <div className="efas-addcard-thumb">
+                      <span className="efas-addcard-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24">
+                          <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                        </svg>
+                      </span>
+                      <span className="efas-addcard-title">다른 지시서 추가</span>
+                      <span className="efas-addcard-sub">거래처·주문번호로 찾아서 추가</span>
                     </div>
                   </div>
                 )}
