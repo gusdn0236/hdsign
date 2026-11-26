@@ -2408,7 +2408,7 @@ def _ask_kakao_send_blocking(rooms: list[str], company: str,
 
 def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
                             done_title: str = "", done_body: str = "", warn: bool = False,
-                            ask: bool = True) -> list[str]:
+                            ask: bool = True, suffix: str = "") -> list[str]:
     """웹반영 끝난 지시서를 고른 카톡방에 보냄. 켜져 있을 때만. 실패하면 알림만(인쇄 흐름엔 영향 없음).
     done_* = 매크로 끝 완료 알림 내용 — 그 알림창에 질문을 같이 붙여 한 번에 묻는다.
     ask=False = [자동] 체크 — 묻지 않고 바로 보냄. 반환 = 보낸 방 목록."""
@@ -2416,7 +2416,7 @@ def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
         return []
     rooms = _get_kakao_rooms()
     company = _homepage_company_name(order_number)
-    text = company or order_number
+    text = (company or order_number) + (suffix or "")
     # 보내기 전에 묻기(사용자 2026-11-26) — "카톡방 'HD사인'에도 작업지시서를 전달할까요?" [예]/[아니오]
     if ask and not _ask_kakao_send_blocking(rooms, text, done_title, done_body, warn):
         ui_log(f"카톡 보내기 — 아니오 선택 ({text})")
@@ -7100,7 +7100,15 @@ def _process_printed_pdf(pdf_path: Path):
             ops_msg = f"웹 반영 + 종이 인쇄 완료 ({copies}장)."
         else:
             ops_msg = "웹 반영 완료 (종이 인쇄 없이 업로드만 진행)."
-        if _get_kakao_enabled() and _get_kakao_no_ask():
+        # 첫 등록 vs n차 수정(서버 응답) — 사용자 2026-11-26: 처음 만든 지시서만 [자동] 대로 올리고,
+        # 수정해서 다시 웹반영할 땐 [자동]이어도 꼭 묻고 거래처명 옆에 '(지시서 n차 수정됨)'.
+        _up = _LAST_UPLOAD_INFO.pop(order_number, {}) or {}
+        _first = _up.get("firstAttachment")
+        _rev = _up.get("worksheetRevisionCount")
+        _revised = (_first is False)
+        _suffix = (f" (지시서 {_rev}차 수정됨)" if isinstance(_rev, int) and _rev > 0 else " (지시서 수정됨)") \
+            if _revised else ""
+        if _get_kakao_enabled() and _get_kakao_no_ask() and not _revised:
             # [자동] — 묻지 않고 먼저 보내고, 평소 완료 알림에 결과 한 줄(실패는 따로 실패 알림창).
             try:
                 sent = send_worksheet_to_kakao(order_number, pdf_path, ask=False)
@@ -7114,7 +7122,7 @@ def _process_printed_pdf(pdf_path: Path):
             # 카톡 전달 켜져 있으면 — 이 마지막 완료 알림창에 "카톡방에도 전달할까요?" 를 같이 붙여 한 번에(사용자 2026-11-26).
             d_title, d_body, d_warn = _combined_done_text(alert_kind, ops_msg)
             try:
-                send_worksheet_to_kakao(order_number, pdf_path, d_title, d_body, d_warn)
+                send_worksheet_to_kakao(order_number, pdf_path, d_title, d_body, d_warn, suffix=_suffix)
             except Exception as e:
                 ui_log(f"카톡 보내기 예외(무시): {e}")
         else:
@@ -8133,6 +8141,9 @@ def compress_pdf_for_upload(src: Path) -> Path:
     return src
 
 
+_LAST_UPLOAD_INFO: dict = {}  # 주문번호 → 마지막 PDF 업로드 응답(firstAttachment·worksheetRevisionCount)
+
+
 def upload_worksheet_pdf(order_number: str, pdf_path: Path,
                          content_changed: bool = False,
                          change_note: str = "",
@@ -8233,9 +8244,14 @@ def upload_worksheet_pdf(order_number: str, pdf_path: Path,
     ok = False
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            resp.read()
+            raw = resp.read()
         ui_log(f"{order_number} PDF 업로드 완료")
         ok = True
+        # 카톡 전달용 — 서버가 알려주는 첫 등록 여부·n차 수정(없으면 옛 백엔드 → 빈 dict)
+        try:
+            _LAST_UPLOAD_INFO[order_number] = json.loads(raw.decode("utf-8")) or {}
+        except Exception:
+            _LAST_UPLOAD_INFO[order_number] = {}
     except urllib.error.HTTPError as e:
         ui_log(f"PDF 업로드 실패 ({e.code}): {order_number}")
     except Exception as e:

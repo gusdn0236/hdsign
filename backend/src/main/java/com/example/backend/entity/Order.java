@@ -183,6 +183,11 @@ public class Order {
     @Column
     private LocalDateTime worksheetRevisedAt;
 
+    // 지시서 재반영 횟수(n차 수정) — 첫 등록 0, 웹 재반영마다 +1. 워처가 카톡방에
+    // '거래처명 (지시서 n차 수정됨)' 으로 올릴 때 씀(사용자 2026-11-26). 여러 PC 공통이라 서버에 둔다.
+    @Column(name = "worksheet_revision_count")
+    private Integer worksheetRevisionCount;
+
     // 관리자가 마지막으로 모달을 열어 본 시각. 위 두 시각보다 늦으면 배지가 사라진다.
     @Column
     private LocalDateTime adminViewedAt;

@@ -683,6 +683,10 @@ public class PublicEvidenceController {
         // 사진 배지처럼 영구 유지된다.
         if (!firstAttachment) {
             order.setWorksheetRevisedAt(LocalDateTime.now());
+            Integer rc = order.getWorksheetRevisionCount();
+            order.setWorksheetRevisionCount((rc == null ? 0 : rc) + 1);
+        } else {
+            order.setWorksheetRevisionCount(0);
         }
         // changeNote 처리 분기:
         //   - userMarkedChanged: 새 메모로 갱신 (빈 값이면 null 로 클리어)
@@ -741,6 +745,9 @@ public class PublicEvidenceController {
         body.put("worksheetPdfUrl", androidUrl);
         body.put("worksheetOriginalPdfUrl", originalUrl);
         body.put("worksheetThumbnailUrl", thumbnailUrl);
+        // 워처 카톡 전달용 — 첫 등록이면 firstAttachment=true, 아니면 n차 수정(worksheetRevisionCount).
+        body.put("firstAttachment", firstAttachment);
+        body.put("worksheetRevisionCount", order.getWorksheetRevisionCount());
         return ResponseEntity.ok(body);
     }
 
