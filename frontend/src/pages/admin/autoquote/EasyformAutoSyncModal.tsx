@@ -153,6 +153,16 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   // 추가 발주를 같이 끊는 경우가 있어 날짜보다 거래처로 찾고, 다른 거래처를 같이 끊는 일은 없음(사용자 2026-11-20).
   const [clientDays, setClientDays] = useState(60);
   const [q, setQ] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  /** [＋ 다른 지시서 추가] — 목록에 없으면 다른 거래처·30일까지 넓히고 찾기 칸으로(사용자 2026-11-26) */
+  const openAddSearch = () => {
+    setShowAll(true);
+    setDays((d) => Math.max(d, 30));
+    setTimeout(() => {
+      searchRef.current?.focus();
+      searchRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 0);
+  };
   const [picked, setPicked] = useState<EasyformCandidateOrder | null>(null); // 추가한 줄 고르기(하나)
   const [extra, setExtra] = useState<EasyformCandidateOrder[]>([]); // 고르기·확인 화면에서 고른 지시서(여럿 = 묶기)
   const [linked, setLinked] = useState<EasyformCandidateOrder[] | null>(null); // 비고에 적힌 지시서
@@ -330,15 +340,9 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
           sameDone();
           return;
         }
-        // 줄 수가 늘었을 때만 묻는다(고치기만 했으면 같은 지시서 — 바로 반영)
-        if (base && n > 0 && pairs.length > n && fresh.length && !freshHasNo) {
-          const members = ev.nos
-            .map((no) => orders.find((o) => orderNoCore(o.orderNumber) === no))
-            .filter((o): o is EasyformCandidateOrder => !!o);
-          setAdded({ idx: fresh, evRow: pairs[fresh[0]].i, count: fresh.length, base, members: members.length ? members : [base] });
-          setPhase('added');
-          return;
-        }
+        // 줄이 늘어도 'n줄은 어느 지시서인가요?'는 더 안 묻는다(사용자 2026-11-26: 지시서를 두 번 고르는 셈) —
+        // 첫 화면에서 고른 지시서로 반영. 다른 지시서 줄이면 첫 화면에서 [＋ 다른 지시서 추가]로 같이 골라 줄을 나눈다.
+        void freshHasNo;
       } catch {
         /* 확인 못 하면 예전처럼 바로 반영 */
       }
@@ -867,7 +871,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
             <div className="efas-tools">
               <span className="efas-hint">
                 {phase === 'confirm' ? (
-                  '같은 지시서면 그대로 반영하고, 이 명세서를 같이 쓰는 지시서가 있으면 더 골라 묶어요'
+                  '추가한 줄도 이 지시서로 반영돼요. 다른 지시서 줄이 있으면 그 지시서도 같이 골라 묶어요'
                 ) : phase === 'pick' ? (
                   '여러 지시서가 같이 쓰는 명세서면 여러 개 골라 묶어요'
                 ) : phase === 'added' && added ? (
@@ -883,6 +887,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
                 )}
               </span>
               <input
+                ref={searchRef}
                 className="efas-search"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
@@ -898,6 +903,13 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
               <div className="order-card-grid efas-cards">
                 {phase === 'confirm' && (linked || []).map((o) => card(o, true))}
                 {visible.slice(0, 24).map(({ o }) => card(o))}
+                {(phase === 'confirm' || phase === 'pick') && (
+                  <button type="button" className="order-card efas-addcard" onClick={openAddSearch}>
+                    <span className="efas-addcard-plus" aria-hidden="true">＋</span>
+                    <b>다른 지시서 추가</b>
+                    <span>목록에 없으면 눌러서 거래처·주문번호로 찾아요</span>
+                  </button>
+                )}
               </div>
             ) : (
               <p className="efas-empty">

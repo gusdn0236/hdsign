@@ -972,3 +972,37 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* [＋ 다른 지시서 추가] 카드 — 지시서 카드 자리에 점선 카드(사용자 2026-11-26) */
+.efas-addcard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 200px;
+  border: 2px dashed #93c5fd;
+  background: #f8fbff;
+  color: #1e3a8a;
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+  padding: 16px;
+}
+.efas-addcard:hover,
+.efas-addcard:focus-visible {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.efas-addcard-plus {
+  font-size: 34px;
+  line-height: 1;
+  color: #2563eb;
+}
+.efas-addcard b {
+  font-size: 15px;
+}
+.efas-addcard span:last-child {
+  font-size: 12px;
+  color: #64748b;
+}
