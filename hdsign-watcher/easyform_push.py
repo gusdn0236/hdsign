@@ -265,9 +265,11 @@ def _client_like(a: str, bb: str) -> bool:
     def keys(x):  # 그대로 + 괄호 안(지점·담당자 메모 등) 뺀 것 — '디온에이(전홍진실장님)' ↔ '디온에이싸인(D.on.A.Sign)'
         k1 = _client_key(x)
         k2 = _client_key(re.sub(r"\([^)]*\)", "", x or ""))
-        return [k for k in {k1, k2} if len(k) >= 2]
+        return [k for k in {k1, k2} if k]
 
-    return any(x in y or y in x for x in keys(a) for y in keys(bb))
+    # 한 글자 이름('숨' 등)은 완전히 같을 때만 — 예전엔 아예 빼서 '숨' 명세서를 영영 못 찾았음(사용자 2026-11-26,
+    # 주문-261124-11). 들어 있음(부분일치)은 두 글자 이상끼리만('숨'이 '숨결' 같은 다른 업체에 붙지 않게).
+    return any(x == y or (len(x) >= 2 and len(y) >= 2 and (x in y or y in x)) for x in keys(a) for y in keys(bb))
 
 
 def _names(body: dict) -> list:
