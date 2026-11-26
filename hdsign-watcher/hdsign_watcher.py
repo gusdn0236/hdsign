@@ -9139,7 +9139,7 @@ class App(tk.Tk):
             self._dialog_open = dlg
             u = self_update.snapshot()
             ph = u["phase"]
-            key = (ph, u["pct"], u["message"])
+            key = (ph, u["pct"], u["message"], u["current"])  # 버전은 시작 조금 뒤에 읽혀서 키에 넣어야 다시 그림
             if key != self._upd_key:
                 self._upd_key = key
                 btn = None
