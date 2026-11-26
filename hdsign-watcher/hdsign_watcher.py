@@ -2300,6 +2300,32 @@ def _show_fail_copy_dialog(title: str, message: str, detail: str) -> None:
         ui_log(f"실패 알림창 오류: {e}")
 
 
+def _homepage_company_name(order_number: str) -> str:
+    """카톡에 올릴 거래처명 = 홈페이지 지시서 카드에 보이는 이름(관리자 주문 목록의 clientCompanyName, 사용자 2026-11-26).
+    못 읽으면 공개 상세의 companyName(같은 DB 값) 폴백. 둘 다 실패면 ''."""
+    token = _get_admin_token()
+    if token:
+        try:
+            req = urllib.request.Request(f"{API_BASE}/api/admin/orders", method="GET")
+            req.add_header("Authorization", f"Bearer {token}")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for o in data if isinstance(data, list) else []:
+                if (o.get("orderNumber") or "") == order_number:
+                    name = (o.get("clientCompanyName") or "").strip()
+                    if name:
+                        return name
+                    break
+        except Exception as e:
+            _kakao_log(f"홈페이지 거래처명 조회 실패 {order_number}: {e}")
+    try:
+        detail = fetch_public_worksheet_detail(order_number) or {}
+        return (detail.get("companyName") or "").strip()
+    except Exception as e:
+        _kakao_log(f"거래처명 조회 실패 {order_number}: {e}")
+        return ""
+
+
 def _ask_kakao_send_blocking(rooms: list[str], company: str) -> bool:
     """작업 스레드에서 호출 — UI 스레드에 예/아니오 창을 띄우고 답을 기다림. Enter=예, ESC/X=아니오."""
     holder: dict = {"v": False, "done": threading.Event()}
@@ -2365,12 +2391,7 @@ def send_worksheet_to_kakao(order_number: str, pdf_path: Path) -> None:
     if not _get_kakao_enabled():
         return
     rooms = _get_kakao_rooms()
-    company = ""
-    try:
-        detail = fetch_public_worksheet_detail(order_number) or {}
-        company = (detail.get("companyName") or "").strip()
-    except Exception as e:
-        _kakao_log(f"거래처명 조회 실패 {order_number}: {e}")
+    company = _homepage_company_name(order_number)
     text = company or order_number
     # 보내기 전에 묻기(사용자 2026-11-26) — "카톡방 'HD사인'에도 작업지시서를 전달할까요?" [예]/[아니오]
     if not _ask_kakao_send_blocking(rooms, text):
