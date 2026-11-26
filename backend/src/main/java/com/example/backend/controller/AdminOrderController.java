@@ -355,6 +355,7 @@ public class AdminOrderController {
     public ResponseEntity<?> putEstimate(
             @PathVariable Long id,
             @RequestParam(required = false) String editorName,
+            @RequestParam(required = false) Boolean review,
             @RequestBody(required = false) JsonNode body
     ) {
         Order requested = orderRepository.findById(id)
@@ -387,6 +388,8 @@ public class AdminOrderController {
         est.setGridJson(body.toString());
         est.setSavedAt(LocalDateTime.now());
         est.setEditorName(normalizeEditorName(editorName));
+        // [확인요청](review=true)만 켜고, 그 밖의 저장(일반 임시저장·이지폼 단계)은 끔 — 확인한 사람이 임시저장하면 풀림
+        est.setReviewRequested(Boolean.TRUE.equals(review) ? Boolean.TRUE : null);
         return ResponseEntity.ok(estimateResponse(estimateRepository.save(est)));
     }
 

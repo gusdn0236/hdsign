@@ -449,7 +449,7 @@ interface AutoQuoteProps {
   /** 모달 닫기(상단 ✕). 주어지면 닫기 버튼 노출. */
   onClose?: () => void;
   /** 저장 성공 시 호출 — 부모가 주문 목록의 명세서 배지를 즉시 갱신. */
-  onSaved?: () => void;
+  onSaved?: (review?: boolean) => void;
   /** 명세서를 비워 임시저장을 해제했을 때 호출 — 부모가 '임시저장' 배지를 즉시 제거. */
   onCleared?: () => void;
   /** 이지폼 입력(확정) 시 호출 — 부모가 목록 카드의 '명세서작성완료' 배지를 즉시 점등(작업중·작업완료 양쪽). */
@@ -2959,7 +2959,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
     return out;
   };
 
-  const save = async () => {
+  const save = async (review = false) => {
     if (!order) {
       cdlg('주문 컨텍스트가 없습니다. 주문 상세에서 “명세서작성”으로 들어오세요.', [{ label: '확인', sec: true }]);
       return;
@@ -2995,11 +2995,14 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
         cdlg('참고사진 업로드에 실패해 저장하지 않았어요. 잠시 후 다시 임시저장해 주세요.', [{ label: '확인', sec: true }]);
         return;
       }
-      await putEstimate(token, order.id, { grid, total, savedFrom: 'autoquote', refPhotos });
+      await putEstimate(token, order.id, { grid, total, savedFrom: 'autoquote', refPhotos }, review);
       setOrder((o) => (o ? { ...o, hasEstimate: true } : o));
-      onSaved?.();
+      onSaved?.(review);
       cdlg(
-        '임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.' +
+        (review
+          ? '확인요청과 함께 임시저장했어요. 카드에 “임시저장&확인필요”와 빨간 느낌표가 떠요.' +
+            '<br><span style="font-size:12px;color:#6b7785">확인한 사람이 [임시저장]이나 이지폼 작성을 하면 느낌표가 사라져요.</span>'
+          : '임시저장됐어요. 주문 카드에 “임시저장” 라벨이 둘러집니다.') +
           (refPhotos.length ? `<br><span style="font-size:12px;color:#6b7785">참고사진 ${refPhotos.length}장도 같이 저장했어요.</span>` : ''),
         [{ label: '확인' }],
       );
@@ -5191,7 +5194,15 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
               <span>합계</span>
               <b>{total.toLocaleString()}원</b>
             </div>
-            <button className="aq-btn ef" onClick={save} disabled={saving || !order}>
+            <button
+              className="aq-btn ef aq-btn-review"
+              onClick={() => void save(true)}
+              disabled={saving || !order}
+              title="임시저장하면서 카드에 빨간 느낌표(확인필요)를 달아요 — 다른 사람에게 확인을 부탁할 때"
+            >
+              확인요청
+            </button>
+            <button className="aq-btn ef" onClick={() => void save()} disabled={saving || !order}>
               {saving ? '임시저장 중…' : '임시저장'}
             </button>
             <button className="aq-btn sh" onClick={captureShare}>

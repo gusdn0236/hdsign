@@ -279,9 +279,11 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
   if (!deviceIdRef.current) deviceIdRef.current = getOrCreateDeviceId();
   // 저장 성공 시 해당 주문의 "명세서" 배지를 즉시 점등(재요청 없이 목록/모달 동기).
   // 작성자 = 이 PC 이름 — 배지에 "ㅇㅇㅇ님: 임시저장" 으로 바로 반영(서버 값과 동일).
-  const markEstimateSaved = useCallback((id) => {
+  const markEstimateSaved = useCallback((id, review = false) => {
     const patch = (o) =>
-      o.id === id ? { ...o, hasEstimate: true, estimateEditorName: editorName || o.estimateEditorName } : o;
+      o.id === id
+        ? { ...o, hasEstimate: true, estimateEditorName: editorName || o.estimateEditorName, estimateReviewRequested: !!review }
+        : o;
     setOrders((prev) => prev.map(patch));
     setTrashOrders((prev) => prev.map(patch));
   }, [editorName]);
@@ -1930,6 +1932,8 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
           ? "draft"
           : "none";
     const showStmtStatus = isStatementView || stmtState !== "none";
+    // [확인요청] — 임시저장&확인필요(사용자 2026-11-26). 카드 색은 임시저장 그대로, 우측 상단 빨간 느낌표만.
+    const needsReview = stmtState === "draft" && !!order.estimateReviewRequested;
     const doneAt = easyformUploaded ? formatCardTime(order.easyformUploadedAt) : "";
     const dueBadge = getDueBadge(order.dueDate);
     const isLargePdf = order.worksheetPdfSize >= WORKSHEET_SIZE_WARN_BYTES;
@@ -1951,6 +1955,14 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
         }}
       >
         {/* 카드 바탕색·완료 체크는 명세서 탭에서만 (작업중·작업완료 탭은 흰 카드 그대로) */}
+        {isStatementView && needsReview && (
+          <span className="oc2-done-check oc2-review-mark" title="임시저장 · 확인필요" aria-label="확인필요">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v9" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" />
+              <circle cx="12" cy="19" r="1.9" fill="currentColor" />
+            </svg>
+          </span>
+        )}
         {isStatementView && stmtState === "done" && (
           <span className="oc2-done-check" title="명세서 완료" aria-label="명세서 완료">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2063,12 +2075,12 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                   명세서 완료
                 </span>
               ) : stmtState === "draft" ? (
-                <span className="oc2-pill oc2-pill--draft" title="명세서 임시저장됨 (아직 이지폼 미입력)">
+                <span className="oc2-pill oc2-pill--draft" title={needsReview ? "임시저장 · 확인이 필요해요" : "명세서 임시저장됨 (아직 이지폼 미입력)"}>
                   <svg viewBox="0 0 16 16" aria-hidden="true">
                     <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
                     <path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
                   </svg>
-                  임시저장
+                  {needsReview ? "임시저장&확인필요" : "임시저장"}
                 </span>
               ) : stmtState === "editing" ? (
                 <span className="oc2-pill oc2-pill--editing" title={`${editingHolder}님이 명세서를 작성 중입니다`}>
@@ -3003,7 +3015,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
                           <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
                           <path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
                         </svg>
-                        임시저장{author ? ` · ${author}` : ""}
+                        {selectedOrder.estimateReviewRequested ? "임시저장&확인필요" : "임시저장"}{author ? ` · ${author}` : ""}
                       </span>
                     ) : null}
                   </div>
@@ -3534,7 +3546,7 @@ export default function OrderAdmin({ requestType = "ORDER" }) {
               orderId={estimateOrderId}
               onClose={() => setEstimateOrderId(null)}
               onOpenOrder={(id) => setEstimateOrderId(id)}
-              onSaved={() => markEstimateSaved(estimateOrderId)}
+              onSaved={(review) => markEstimateSaved(estimateOrderId, review)}
               onCleared={() => markEstimateCleared(estimateOrderId)}
               onEasyformUploaded={() => markEasyformDone(estimateOrderId)}
             />

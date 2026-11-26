@@ -3920,6 +3920,11 @@ html:has(.order-admin-page)::-webkit-scrollbar-thumb:hover {
   width: 14px;
   height: 14px;
 }
+/* [확인요청] — 완료 체크와 같은 크기의 빨간 느낌표(사용자 2026-11-26) */
+.oc2-review-mark {
+  background: #dc2626;
+  box-shadow: 0 0 0 2.5px #fff, 0 3px 8px rgba(220, 38, 38, 0.35);
+}
 .order-card--v2:hover .oc2-done-check {
   transform: translateY(-1px);
 }

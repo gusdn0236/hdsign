@@ -347,9 +347,11 @@ export async function putEstimate(
   orderId: number | string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   doc: any,
+  review = false, // [확인요청] — 임시저장&확인필요(카드 빨간 느낌표)
 ): Promise<EstimateDoc> {
+  const q = editorNameQuery();
   const res = await fetch(
-    `${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate${editorNameQuery()}`,
+    `${BASE_URL}/api/admin/orders/${encodeURIComponent(String(orderId))}/estimate${q}${review ? `${q ? '&' : '?'}review=true` : ''}`,
     {
       method: 'PUT',
       headers: authHeaders(token, true),

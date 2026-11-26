@@ -57,6 +57,10 @@ public class AutoQuoteEstimate {
     @Column(name = "editor_name", length = 100)
     private String editorName;
 
+    // [확인요청]으로 임시저장 → 카드에 '임시저장&확인필요' + 빨간 느낌표(사용자 2026-11-26). 일반 임시저장이면 꺼짐.
+    @Column(name = "review_requested")
+    private Boolean reviewRequested;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

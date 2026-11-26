@@ -54,6 +54,8 @@ public class OrderDto {
         private LocalDateTime easyformUploadedAt;
         // 자동견적 — 마지막으로 명세서를 처리(임시저장/이지폼)한 작성자 표시이름. 배지에 "ㅇㅇㅇ님: ..." 로 노출.
         private String estimateEditorName;
+        // 명세서 [확인요청] — 임시저장&확인필요(카드 빨간 느낌표). 이지폼 완료면 화면에서 무시.
+        private Boolean estimateReviewRequested;
         // 합친 명세서 — 이 주문과 명세서 1장을 같이 쓰는 지시서 id들(본인 포함, 2건+). 묶음이 아니면 null. 카드 🔗 표시·묶음만 보기용.
         private List<Long> linkedOrderIds;
         private LocalDateTime createdAt;
@@ -155,6 +157,7 @@ public class OrderDto {
                 .hasEstimate(estimate != null)
                 .easyformUploadedAt(estimate != null ? estimate.getEasyformUploadedAt() : null)
                 .estimateEditorName(estimate != null ? estimate.getEditorName() : null)
+                .estimateReviewRequested(estimate != null && Boolean.TRUE.equals(estimate.getReviewRequested()))
                 .linkedOrderIds(linkedIdsOf(estimate))
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())

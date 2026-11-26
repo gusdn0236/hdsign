@@ -3002,3 +3002,13 @@ tr.efnew td {
 tr.efnew td:first-child {
   box-shadow: inset 4px 0 0 #ca8a04;
 }
+
+/* [확인요청] 버튼 — 임시저장 왼쪽, 빨간 테두리(누르면 카드에 빨간 느낌표) */
+.aq-btn.ef.aq-btn-review {
+  background: #fff;
+  color: #dc2626;
+  border: 1.5px solid #f87171;
+}
+.aq-btn.ef.aq-btn-review:hover:not(:disabled) {
+  background: #fef2f2;
+}
