@@ -2445,41 +2445,27 @@ def open_kakao_room_dialog(app) -> None:
     win.configure(bg=BG)
     win.resizable(False, True)
     win.transient(app)
-    win.minsize(460, 520)
+    win.minsize(460, 440)
 
     frm = tk.Frame(win, bg=BG)
     frm.pack(padx=22, pady=18, fill="both", expand=True)
-    tk.Label(frm, text="지시서를 보낼 카톡방", bg=BG, fg=INK,
+    # 사용자 2026-11-26: 최대한 간결하게 — 찾기/이름 추가 칸 없이, 회사 단톡방 열고 새로고침만.
+    tk.Label(frm, text="카톡방 설정하기", bg=BG, fg=INK,
              font=("맑은 고딕", 13, "bold"), anchor="w").pack(fill="x")
-    tk.Label(frm, text="인쇄(웹반영)가 끝나면 고른 방에 지시서 사진 + 거래처명을 보내요. 여러 개 골라도 돼요.",
-             bg=BG, fg=SUB, font=("맑은 고딕", 9), justify="left", anchor="w", wraplength=420).pack(fill="x", pady=(3, 8))
+    tk.Label(frm, text="카톡이 전달될 회사 단톡방을 열고, 새로고침을 눌러주세요.",
+             bg=BG, fg=SUB, font=("맑은 고딕", 9), justify="left", anchor="w", wraplength=420).pack(fill="x", pady=(3, 4))
     warn_lbl = tk.Label(frm, text="", bg=BG, fg="#d97706", font=("맑은 고딕", 9), anchor="w", justify="left",
                         wraplength=420)
     warn_lbl.pack(fill="x")
-
-    # ── 찾기/추가 줄 ──
-    tk.Label(frm, text="방 이름 찾기 · 추가", bg=BG, fg=INK, font=("맑은 고딕", 9, "bold"),
-             anchor="w").pack(fill="x", pady=(8, 4))
-    srow = tk.Frame(frm, bg=BG)
-    srow.pack(fill="x")
-    q = tk.StringVar()
-    ent = tk.Entry(srow, textvariable=q, font=("맑은 고딕", 11), relief="solid", bd=1,
-                   highlightthickness=0)
-    ent.pack(side="left", fill="x", expand=True, ipady=4)
-    add_btn = tk.Button(srow, text="+ 이 이름으로 추가", font=("맑은 고딕", 9, "bold"), bg=ACC, fg="#3c1e1e",
-                        activebackground="#f5d800", relief="flat", bd=0, padx=10, pady=5, cursor="hand2")
-    add_btn.pack(side="left", padx=(6, 0))
-    tk.Label(frm, text="카톡에 보이는 방 이름과 글자 하나까지 똑같아야 해요. 목록에 없으면 이름을 적고 [추가].",
-             bg=BG, fg="#a1a1aa", font=("맑은 고딕", 8), anchor="w", justify="left",
-             wraplength=420).pack(fill="x", pady=(3, 0))
+    q = tk.StringVar()  # (찾기 칸은 없앰 — 거르기 없음)
 
     # ── 스크롤 목록 ──
     lhdr = tk.Frame(frm, bg=BG)
     lhdr.pack(fill="x", pady=(12, 4))
     count_lbl = tk.Label(lhdr, text="", bg=BG, fg=INK, font=("맑은 고딕", 9, "bold"), anchor="w")
     count_lbl.pack(side="left")
-    tk.Button(lhdr, text="↻ 열린 방 다시 읽기", font=("맑은 고딕", 8), bg="#f4f4f5", fg="#3f3f46",
-              relief="flat", bd=0, padx=8, pady=2, cursor="hand2",
+    tk.Button(lhdr, text="↻ 새로고침", font=("맑은 고딕", 9, "bold"), bg=ACC, fg="#3c1e1e",
+              activebackground="#f5d800", relief="flat", bd=0, padx=10, pady=3, cursor="hand2",
               command=lambda: (state.__setitem__("open", _open_rooms()), _render())).pack(side="right")
 
     box = tk.Frame(frm, bg=BG, highlightbackground=LINE, highlightthickness=1)
@@ -2555,30 +2541,18 @@ def open_kakao_room_dialog(app) -> None:
             for n in op:
                 _row(inner, n, False, True)
         if not ch and not op:
-            msg = (f"'{q.get().strip()}' 이(가) 목록에 없어요.\n[+ 이 이름으로 추가]를 누르면 그 이름으로 보내요."
-                   if flt else "카톡에서 보낼 방을 열어두고 [↻ 열린 방 다시 읽기]를 누르거나,\n위에 방 이름을 적어 추가하세요.")
+            msg = "열려 있는 카톡방이 없어요.\n회사 단톡방을 열고 [↻ 새로고침]을 눌러주세요."
             tk.Label(inner, text=msg, bg=BG, fg="#a1a1aa", font=("맑은 고딕", 9), justify="left").pack(
                 padx=12, pady=16, anchor="w")
         count_lbl.config(text=f"고른 방 {len(chosen)}개" + (f"  ·  {', '.join(chosen)}" if chosen else ""))
         if len(count_lbl.cget("text")) > 48:
             count_lbl.config(text=count_lbl.cget("text")[:47] + "…")
-        warn_lbl.config(text="" if _running() else
-                        "⚠ 카카오톡이 안 켜져 있어요 — 켜고 로그인하면 열린 방 목록이 보여요.")
+        if _running():
+            warn_lbl.pack_forget()  # 빈 줄이 공간 차지 안 하게
+        else:
+            warn_lbl.config(text="⚠ 카카오톡이 안 켜져 있어요 — 켜고 로그인한 뒤 새로고침을 눌러주세요.")
+            warn_lbl.pack(fill="x", before=lhdr)
         canvas.yview_moveto(0)
-
-    def _add(*_):
-        n = unicodedata.normalize("NFC", q.get().strip())
-        if not n:
-            ent.focus_set()
-            return
-        if n not in state["chosen"]:
-            state["chosen"].append(n)
-        q.set("")
-        _render()
-
-    add_btn.config(command=_add)
-    ent.bind("<Return>", _add)
-    q.trace_add("write", _render)
 
     # ── 아래 버튼 ──
     btns = tk.Frame(frm, bg=BG)
@@ -2628,13 +2602,12 @@ def open_kakao_room_dialog(app) -> None:
 
     _render()
     win.update_idletasks()
-    w, h = 480, max(600, win.winfo_reqheight())
+    w, h = 480, max(520, win.winfo_reqheight())
     x = app.winfo_rootx() + (app.winfo_width() - w) // 2
     y = max(0, app.winfo_rooty() - 40)
     sh = win.winfo_screenheight()
     h = min(h, sh - 80)
     win.geometry(f"{w}x{h}+{max(0, x)}+{min(y, max(0, sh - h - 40))}")
-    ent.focus_set()
     win.grab_set()
 
 
