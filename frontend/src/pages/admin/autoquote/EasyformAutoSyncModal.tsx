@@ -557,7 +557,7 @@ export default function EasyformAutoSyncModal({ ev, token, more, onClose: drop }
   const choosing = phase === 'pick' || phase === 'confirm' || (phase === 'added' && other); // 지시서 카드 목록을 보여줄 때
   const title =
     phase === 'pick' || phase === 'confirm'
-      ? '어느 지시서인지 선택해주세요'
+      ? '명세서에 포함된 지시서를 모두 골라주세요.'
       : phase === 'assign' && assign
         ? `${assign.step + 1}번째 지시서 — 해당되는 줄을 클릭 or 드래그해서 선택해주세요`
         : phase === 'added'
