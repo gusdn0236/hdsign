@@ -145,13 +145,24 @@ def list_open_rooms() -> list[str]:
     return [n for n in names if not (n in seen or seen.add(n))]
 
 
-def _find_room(name: str) -> int:
-    pids = _kakao_pids()
+def _rooms_named(name: str) -> list[int]:
     want = _norm(name)
-    for h in _top_windows(pids):
-        if _cls(h) == ROOM_CLASS and _norm(_txt(h)) == want and _room_input(h):
-            return h
-    return 0
+    return [h for h in _top_windows(_kakao_pids())
+            if _cls(h) == ROOM_CLASS and _norm(_txt(h)) == want and _room_input(h)]
+
+
+def _find_room(name: str) -> int:
+    """제목이 정확히 같은 방 창. ⚠ 같은 이름 방 창이 2개 이상 열려 있으면 어느 방인지 모르니 거부(다른 방에 갈까봐)."""
+    hs = _rooms_named(name)
+    if len(hs) > 1:
+        raise KakaoError(f"'{name}' 이름의 방이 {len(hs)}개 열려 있어요(어느 방인지 몰라 안 보냄) — 하나만 열어두거나 방 이름을 바꿔주세요")
+    return hs[0] if hs else 0
+
+
+def _assert_fg(h, what: str) -> None:
+    """붙여넣기·Enter 직전 — 맨 앞 창이 그 방(또는 그 방의 사진 전송 창)이 아니면 즉시 중단(다른 창에 갈까봐)."""
+    if u.GetForegroundWindow() != h:
+        raise KakaoError(f"{what} 직전에 다른 창이 앞으로 와서 중단했어요(안 보냄)")
 
 
 def _main_search_edit() -> int:
@@ -214,8 +225,8 @@ def check_room(name: str) -> tuple[bool, str]:
     """방 이름이 실제로 찾아지는지 확인만(보내지 않음). 안 열려 있으면 검색으로 열어보고 다시 닫음."""
     if not is_running():
         return False, "카카오톡이 안 켜져 있음"
-    was_open = bool(_find_room(name))
     try:
+        was_open = bool(_find_room(name))
         h = _open_room(name)
     except Exception as e:  # noqa: BLE001
         return False, str(e)
@@ -361,6 +372,7 @@ def _send_image(room: int, img_path: Path, guard_aborted) -> None:
     before = {h for h in _top_windows(_kakao_pids()) if u.IsWindowVisible(h)}
     if guard_aborted():
         raise KakaoError("ESC 로 중단")
+    _assert_fg(room, "사진 붙여넣기")
     _key(VK_CONTROL)
     _key(VK_V)
     _key(VK_V, up=True)
@@ -379,6 +391,7 @@ def _send_image(room: int, img_path: Path, guard_aborted) -> None:
         raise KakaoError("ESC 로 중단")
     time.sleep(0.3)
     _force_fg(dlg)
+    _assert_fg(dlg, "사진 전송")
     _key(VK_RETURN)
     _key(VK_RETURN, up=True)
     end = time.time() + 4.0
@@ -402,6 +415,7 @@ def _send_text(room: int, text: str) -> None:
     _click_center(inp)
     # ⚠ WM_SETTEXT 로 넣으면 카톡이 '바뀜'을 몰라 전송 버튼이 회색 → Enter 무시. 클립보드 글자 + Ctrl+V 로 넣음.
     _clipboard_set_text(text)
+    _assert_fg(room, "거래처명 붙여넣기")
     _key(VK_CONTROL)
     _key(VK_V)
     _key(VK_V, up=True)
@@ -409,6 +423,7 @@ def _send_text(room: int, text: str) -> None:
     time.sleep(0.25)
     if _text_len(inp) <= 0:
         raise KakaoError("거래처명 붙여넣기 실패")
+    _assert_fg(room, "거래처명 전송")
     _key(VK_RETURN)
     _key(VK_RETURN, up=True)
     # (보낸 뒤 입력칸 길이는 카톡이 화면상 비워도 옛 값을 돌려줘서 확인에 못 씀 — 2026-11-26 실측)
