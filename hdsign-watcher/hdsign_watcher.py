@@ -9155,20 +9155,23 @@ class App(tk.Tk):
                 elif ph == "failed":
                     txt, btn, bg = f"업데이트 못 했어요: {u['message']}", "다시 시도", "#b91c1c"
                 else:
-                    txt = ""
-                if txt:
-                    self._upd_bar.config(bg=bg)
-                    self._upd_lbl.config(text=txt, bg=bg)
-                    if btn:
-                        self._upd_btn.config(text=btn, fg=bg)
-                        if not self._upd_btn.winfo_ismapped():
-                            self._upd_btn.pack(side="right", padx=(0, 20), pady=8)
-                    else:
-                        self._upd_btn.pack_forget()
-                    if not self._upd_bar.winfo_ismapped():
-                        self._upd_bar.pack(fill="x", before=self._card)
-                elif self._upd_bar.winfo_ismapped():
-                    self._upd_bar.pack_forget()
+                    # 새 버전 없음 — 같은 자리에 '최신 버전이에요'(누를 수 없음)(사용자 2026-11-26)
+                    m = re.match(r"(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})", u["current"] or "")
+                    when = f"{int(m.group(2))}/{int(m.group(3))} {m.group(4)}:{m.group(5)} 버전" if m else "지금 버전"
+                    txt, btn, bg = f"{when}을 쓰고 있어요.", "최신 버전이에요", "#52525b"
+                self._upd_bar.config(bg=bg)
+                self._upd_lbl.config(text=txt, bg=bg)
+                if btn:
+                    latest = ph not in ("available", "failed")
+                    self._upd_btn.config(text=btn, fg=bg, state="disabled" if latest else "normal",
+                                         disabledforeground="#a1a1aa", bg="#e4e4e7" if latest else "white",
+                                         cursor="arrow" if latest else "hand2")
+                    if not self._upd_btn.winfo_ismapped():
+                        self._upd_btn.pack(side="right", padx=(0, 20), pady=8)
+                else:
+                    self._upd_btn.pack_forget()
+                if not self._upd_bar.winfo_ismapped():
+                    self._upd_bar.pack(fill="x", before=self._card)
         except Exception:
             pass
         if not once:
