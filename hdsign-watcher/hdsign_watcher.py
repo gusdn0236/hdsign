@@ -9169,6 +9169,9 @@ class App(tk.Tk):
         dev_menu.add_command(label="거래처 폴더 동기화", command=trigger_folder_sync_async)
         dev_menu.add_command(label="추적 폴더 변경", command=change_tracked_folder_async)
         dev_menu.add_command(label="FlexSign 위치 지정", command=change_flexsign_path_async)
+        # QR 코드 만들기 — 메인에서 뺌(사용자 2026-11-26). 인쇄 때 QR 없으면 같은 창이 자동으로 뜸.
+        dev_menu.add_separator()
+        dev_menu.add_command(label="QR 코드 만들기", command=open_qr_create_dialog_async)
         dev_btn.config(menu=dev_menu)
         dev_btn.pack(side="left")
         kakao_btn = tk.Button(
@@ -9181,18 +9184,6 @@ class App(tk.Tk):
             command=lambda: open_kakao_room_dialog(self),
         )
         kakao_btn.pack(side="left", padx=(8, 0))
-        # 메인 액션 — 손작업 지시서를 위한 QR 코드를 인쇄 흐름과 무관하게 즉시 발급.
-        # 액센트 컬러로 강조해 사장님/직원이 자주 쓰는 버튼임을 시각적으로 구분.
-        qr_btn = tk.Button(
-            act, text="QR 코드 만들기",
-            bg="#10b981", fg="white",
-            activebackground="#059669", activeforeground="white",
-            font=("맑은 고딕", 9, "bold"),
-            relief="flat", bd=0, highlightthickness=0,
-            cursor="hand2", padx=12, pady=6,
-            command=open_qr_create_dialog_async,
-        )
-        qr_btn.pack(side="left", padx=(8, 0))
 
         # 현재 추적 경로를 작게 표시 — 매년 1월 폴더 옮긴 후 사장님이 확인 용도.
         self._tracked_lbl = tk.Label(
