@@ -7115,12 +7115,12 @@ def _process_printed_pdf(pdf_path: Path):
         else:
             ops_msg = "웹 반영 완료 (종이 인쇄 없이 업로드만 진행)."
         # 첫 등록 vs n차 수정(서버 응답) — 사용자 2026-11-26: 처음 만든 지시서만 [자동] 대로 올리고,
-        # 수정해서 다시 웹반영할 땐 [자동]이어도 꼭 묻고 거래처명 옆에 '(지시서 n차 수정됨)'.
+        # 수정해서 다시 웹반영할 땐 [자동]이어도 꼭 묻고 거래처명 옆에 '(n번째 수정본)'.
         _up = _LAST_UPLOAD_INFO.pop(order_number, {}) or {}
         _first = _up.get("firstAttachment")
         _rev = _up.get("worksheetRevisionCount")
         _revised = (_first is False)
-        _suffix = (f" (지시서 {_rev}차 수정됨)" if isinstance(_rev, int) and _rev > 0 else " (지시서 수정됨)") \
+        _suffix = (f" ({_rev}번째 수정본)" if isinstance(_rev, int) and _rev > 0 else " (수정본)") \
             if _revised else ""
         if _get_kakao_enabled() and _get_kakao_no_ask() and not _revised:
             # [자동] — 묻지 않고 먼저 보내고, 평소 완료 알림에 결과 한 줄(실패는 따로 실패 알림창).
