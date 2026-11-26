@@ -157,11 +157,22 @@ def norm_row(r: dict) -> dict:
     return {c: _norm_cell(c, (r or {}).get(c)) for c in COLS}
 
 
+_EF_BYTE_LIMITS = {"item_code": 20, "item": 50, "spec": 50, "qty": 20, "unit_price": 20}
+
+
 def norm_target(r: dict) -> dict:
     """홈페이지 줄 → 이지폼에 들어갈 모양. 홈페이지는 수량 빈칸 = 1 로 계산하므로 단가 있는 줄은 수량 1."""
     out = norm_row(r)
     if out["unit_price"] and not out["qty"]:
         out["qty"] = "1"
+    # 이지폼 칸 바이트 제한(CP949) — 넘으면 이지폼이 'n byte 이내로 입력' 창을 띄워 먹통(사용자 2026-11-26).
+    # 홈페이지 입력칸에서도 막지만, 예전에 저장된 긴 글자용으로 여기서 한 번 더 자름.
+    for c, lim in _EF_BYTE_LIMITS.items():
+        v = out.get(c) or ""
+        if len(v.encode("cp949", "replace")) > lim:
+            while v and len(v.encode("cp949", "replace")) > lim:
+                v = v[:-1]
+            out[c] = v
     # 품목코드는 빈 채로 둔다(보통 비어 있음, 사용자 2026-11-24) — 빈 품목코드 경고창은 _Form._check 가 [OK]로 넘김
     return out
 
@@ -442,9 +453,16 @@ def _read_remarks(form) -> list:
     ctypes.windll.user32.SendMessageW(grid, 0x0115, 6, 0)
     time.sleep(0.05)
     out: list = []
-    for x, y in cells:
+    for i, (x, y) in enumerate(cells):
         v = b._cell_text(grid, x, y, 0.3)
+        if v is None and i == 0:
+            # 방금 연 명세서는 표가 늦게 그려질 때가 있음 → 첫 칸도 못 읽으면 잠깐 뒤 한 번 더(사용자 2026-11-26:
+            # 합계 다른 미완성본/완성본에서 비고에 번호가 있는데 '못 찾았어요' — 빈 비고로 오인하던 것)
+            time.sleep(0.6)
+            v = b._cell_text(grid, x, y, 0.6)
         if v is None:
+            if i == 0:
+                logging.warning("이지폼 비고 읽기 — 첫 칸을 못 읽음(표가 안 그려짐?)")
             return out
         out.append(v)
     while len(out) < 200:
@@ -1209,6 +1227,8 @@ def _find_open(body: dict, progress) -> "tuple[dict, int, dict]":
             nos = _nos([{"remark": x} for x in _read_remarks(form)])
             ok = any(no in nos for no in want_nos) if want_nos else False
             keep = ok or (it is lone and not nos)
+            logging.info("이지폼 열기 후보 %s %s %s원 %s — 비고번호 %s", m["biz"], it.get("date"), it.get("total"),
+                         it.get("client", ""), nos)
         finally:
             if not keep:
                 _close(main, form)
@@ -1217,6 +1237,8 @@ def _find_open(body: dict, progress) -> "tuple[dict, int, dict]":
             _bring_front(main, form)
             return m, form, {"biz": m["biz"], "date": it["date"], "total": it["total"],
                              "client": it.get("client", ""), "nos": nos}
+    logging.warning("이지폼 열기 못 찾음 — 주문 %s 지문 %s/%s 거래처 %s 후보 %d개", want_nos, body.get("date"), body.get("total"),
+                    _names(body), k)
     raise Stop("주식회사·개인 이지폼 모두에서 이 주문의 명세서를 못 찾았어요. (비고에 이 주문번호가 적힌 명세서가 없어요)")
 
 

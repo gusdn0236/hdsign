@@ -54,6 +54,7 @@ import {
   orderNoCore,
   startEfBulk,
   pollEfBulk,
+  efClip,
   cancelEfBulk,
   type EasyformScannedStatement,
   type EfBulkResult,
@@ -1620,8 +1621,8 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // 현재 필드(fi)를 커밋하고 다음 필드로. 마지막이면 닫는다. (다음 필드 기존값 prefill+선택은 포커스 effect 가.)
   const commitDraft = (override?: string) => {
     if (active == null) return;
-    const val = (override ?? draft).trim();
     const cur = pinsRef.current[active];
+    const val = efClip(cur ? FIELDS[cur.fi] : '', (override ?? draft).trim()); // 이지폼 칸 바이트 제한
     // 규격을 막 입력했고 계산 가능한 품목코드(아크릴·포맥스·고무스카시)면 → 단가만 자동 채우고
     // 수량 단계로 진행. 수량(글자수)은 사용자가 직접 입력(품목을 줄여 쓰는 경우가 많아 자동계산 금지).
     // OCR(글자수)로 만든 핀은 수량이 이미 채워져 있어 그 단계에서 Enter 로 확인만 하면 된다.
@@ -1861,6 +1862,7 @@ export default function AutoQuote({ orderId: orderIdProp, onClose, onSaved, onCl
   // ---- grid 편집 -------------------------------------------------------
   const setCell = (i: number, key: string, value: string) => {
     if (key === '단가') value = formatWon(value); // 단가 셀도 천 단위 콤마.
+    value = efClip(key, value); // 이지폼 칸 바이트 제한(품목코드 20·품목 50 …) 넘게는 안 들어감(사용자 2026-11-26)
     setPins((prev) => {
       const next = [...prev];
       // 중간 빈 행(예: 2행까지 있는데 5행에 입력)도 빈 핀으로 채운다 — 구멍(undefined)이 남으면

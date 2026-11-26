@@ -91,15 +91,40 @@ export function assertNoCommitDirective(payload: { rows: EasyformRow[] }): void 
  * buildGrid() 결과(한글 키 9칸) → 이지폼 행(영문 키 7칸) 매핑.
  * 7칸 모두 빈 행은 떨군다(삽입 클릭 수 = 데이터 행 수가 되도록).
  */
+/**
+ * 이지폼 칸 길이 제한(바이트, 한글 2·영숫자 1 — 이지폼은 CP949). 넘치면 이지폼이 'n byte 이내로 입력' 창을 띄우고
+ * 자동입력이 먹통이 됐음(사용자 2026-11-26) → 홈페이지 입력칸에서 미리 잘라 둔다.
+ */
+export const EF_BYTE_LIMITS: Record<string, number> = { 품목코드: 20, 품목: 50, 규격: 50, 수량: 20, 단가: 20, 공급가액: 20 };
+export function efBytes(s: string): number {
+  let n = 0;
+  for (const ch of s) n += ch.charCodeAt(0) < 0x80 ? 1 : 2;
+  return n;
+}
+/** key 칸 제한을 넘으면 앞에서부터 들어가는 만큼만 남긴다. 제한 없는 칸은 그대로. */
+export function efClip(key: string, s: string): string {
+  const lim = EF_BYTE_LIMITS[key];
+  if (!lim || efBytes(s) <= lim) return s;
+  let out = '';
+  let n = 0;
+  for (const ch of s) {
+    const w = ch.charCodeAt(0) < 0x80 ? 1 : 2;
+    if (n + w > lim) break;
+    out += ch;
+    n += w;
+  }
+  return out;
+}
+
 export function gridToEasyformRows(grid: GridRow[]): EasyformRow[] {
   return grid
     .map((g) => ({
-      item_code: g['품목코드'] ?? '',
-      item: g['품목'] ?? '',
-      spec: g['규격'] ?? '',
-      qty: g['수량'] ?? '',
-      unit_price: g['단가'] ?? '',
-      supply: g['공급가액'] ?? '',
+      item_code: efClip('품목코드', g['품목코드'] ?? ''),
+      item: efClip('품목', g['품목'] ?? ''),
+      spec: efClip('규격', g['규격'] ?? ''),
+      qty: efClip('수량', g['수량'] ?? ''),
+      unit_price: efClip('단가', g['단가'] ?? ''),
+      supply: efClip('공급가액', g['공급가액'] ?? ''),
       tax: g['세액'] ?? '',
       remark: g['비고'] ?? '',
     }))
