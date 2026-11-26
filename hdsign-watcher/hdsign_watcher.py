@@ -2439,7 +2439,7 @@ def send_worksheet_to_kakao(order_number: str, pdf_path: Path,
     if kakao_notify is not None:
         try:
             img = kakao_notify.render_pdf_image(
-                pdf_path, Path(tempfile.gettempdir()) / f"hdsign_kakao_{order_number}.jpg")
+                pdf_path, Path(tempfile.gettempdir()) / f"hdsign_kakao_{order_number}.png")
         except Exception as e:
             reasons.append(f"지시서 사진 만들기 실패: {e}")
     if kakao_notify is None or img is None:

@@ -240,8 +240,13 @@ def check_room(name: str) -> tuple[bool, str]:
 
 # ── 사진 ─────────────────────────────────────────────────────────────────────
 
-def render_pdf_image(pdf_path: Path, out_path: Path, long_side: int = 1600, quality: int = 85) -> Path:
-    """지시서 PDF 첫 장 → JPG (홈페이지 작업지시서 카드처럼 한 장 전체). 긴 변 1600px·품질 85 ≈ 200~500KB."""
+def render_pdf_image(pdf_path: Path, out_path: Path, long_side: int = 2000) -> Path:
+    """지시서 PDF 첫 장 → PNG (홈페이지 작업지시서 카드처럼 한 장 전체).
+
+    알캡처/윈도우 캡처처럼 또렷하게(사용자 2026-11-26 '흐리다'): 예전 긴 변 1600 + JPG 85 는
+    글자 가장자리가 뭉개짐 → 압축 없는 PNG + 긴 변 2000 으로. 클립보드엔 어차피 무압축 비트맵으로 들어가고
+    카톡이 받아서 자기 방식으로 한 번만 압축하므로, 우리 쪽에서 미리 손실 압축을 거치지 않는 게 핵심.
+    """
     import fitz  # type: ignore
     from PIL import Image
 
@@ -254,8 +259,9 @@ def render_pdf_image(pdf_path: Path, out_path: Path, long_side: int = 1600, qual
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
     finally:
         doc.close()
+    out_path = out_path.with_suffix(".png")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(out_path), "JPEG", quality=quality, optimize=True)
+    img.save(str(out_path), "PNG", compress_level=1)
     return out_path
 
 
